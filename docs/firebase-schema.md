@@ -153,6 +153,17 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   import_day?: 'MONDAY' | 'TUESDAY' | 'WEDNESDAY' | 'THURSDAY' | 'FRIDAY' | 'SATURDAY' | 'SUNDAY';  // deprecated
   import_hour?: number;                // deprecated: 0–23
 
+  // App access (see `spec.md` §8, `architecture.md` D23)
+  // Opt-in. `true` adds Elders Quorum President (exact title only — not the quorum's
+  // counselors or secretary) to the WARD app-access calling set for this stake; the
+  // STAKE set is never affected. ABSENT ⇒ OFF, so every reader tests `=== true` —
+  // deliberately the OPPOSITE defaulting from `notifications_enabled` below (`?? true`).
+  // `createStake` writes `false` explicitly on new stakes so the field shows up in the
+  // config form and the audit snapshot from day one; stake docs that predate the field
+  // read as off. Flipping it is not retroactive — reconciling existing `access` docs is
+  // the separate `backfillEqPresidentAccess` callable (§7).
+  eq_president_app_access?: boolean;
+
   // Notifications
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
@@ -181,7 +192,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** Bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -275,8 +286,11 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 
   // Sync-managed (Admin SDK via `syncApplyFix`; field name is historical — see
   // `architecture.md` D14). Keys = scope ('stake' or ward_code). Values = the
-  // subset of that scope's callings that are on the hard-coded churchwide
-  // app-access list (`filterAppAccessCallings(scope, callings)` — D17).
+  // subset of that scope's callings that are on the churchwide app-access list
+  // (`filterAppAccessCallings(scope, callings)` — D17). A ward scope's array may
+  // also carry 'Elders Quorum President' when the stake's
+  // `eq_president_app_access` is on (§4.1, D23) — written either by a Sync fix or
+  // by the `backfillEqPresidentAccess` callable (§7). The stake scope never does.
   importer_callings: {
     [scope: string]: string[];
   };
@@ -303,7 +317,9 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 }
 ```
 
-**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries from `filterAppAccessCallings(scope, callings)` — the subset of the seat's callings on the hard-coded churchwide app-access list, D17; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only). The `callings-mismatch` fix REPLACES the auto seat's `callings[]` with Kindoo's full parsed set and reconciles the scope's `importer_callings` in **either direction** — `writeAccessForAutoScope` when `filterAppAccessCallings(scope, newCallings)` still yields a grant, else `clearImporterCallingsForScope` (a replace can REMOVE access, not just add it). The `kindoo-unparseable` fix (auto seat forced to stake scope) reaps the OLD scope's `importer_callings[scope]` and then writes a fresh `importer_callings['stake'] = [calling]` **iff** `calling` is on the hard-coded **stake** app-access list — so a bare app-access calling (e.g. `Stake Clerk`) keeps stake-scope app access rather than silently losing it; a calling off the list earns no new entry (old scope still reaped). It does this in one coherent write (`writeStakeScopeAccessForUnparseable`, `tx.update` not `set merge` so the cleared old scope can't linger), deleting the doc only when the final `importer_callings` and `manual_grants` are both empty.
+**Written by:** Sync's `syncApplyFix` callable (writes / updates `importer_callings` entries from `filterAppAccessCallings(scope, callings)` — the subset of the seat's callings on the churchwide app-access list, D17, plus the stake-gated Elders Quorum President ward calling when `stake.eq_president_app_access` is on, D23; on `sba-only` Remove From SBA and `type-mismatch` demote, *reaps* the removed scope's `importer_callings[scope]` via `clearImporterCallingsForScope`, preserving `manual_grants` and deleting the doc only when both maps go empty — Admin SDK, bypasses rules); manager Access page (`manual_grants` only). The `callings-mismatch` fix REPLACES the auto seat's `callings[]` with Kindoo's full parsed set and reconciles the scope's `importer_callings` in **either direction** — `writeAccessForAutoScope` when `filterAppAccessCallings(scope, newCallings)` still yields a grant, else `clearImporterCallingsForScope` (a replace can REMOVE access, not just add it). The `kindoo-unparseable` fix (auto seat forced to stake scope) reaps the OLD scope's `importer_callings[scope]` and then writes a fresh `importer_callings['stake'] = [calling]` **iff** `calling` is on the hard-coded **stake** app-access list — so a bare app-access calling (e.g. `Stake Clerk`) keeps stake-scope app access rather than silently losing it; a calling off the list earns no new entry (old scope still reaped). It does this in one coherent write (`writeStakeScopeAccessForUnparseable`, `tx.update` not `set merge` so the cleared old scope can't linger), deleting the doc only when the final `importer_callings` and `manual_grants` are both empty.
+
+The `backfillEqPresidentAccess` callable (§7, D23) is the second Admin-SDK writer. It reconciles existing docs after a stake flips `eq_president_app_access`, adding or removing **only** the Elders Quorum President entry inside `importer_callings[scope]` for auto ward-scope seats holding that calling — a merge, never `writeAccessForAutoScope`'s wholesale replace, so unrelated entries in the same scope survive. `manual_grants` is never read-modified, and revoke deletes the doc only when `importer_callings` empties **and** no manual grants remain (a manual-grants-only doc is never deleted). `sort_order` is handled asymmetrically, deliberately: grant keeps the lower of the doc's prior value and the Elders Quorum President order (`pickMin`), following `writeAccessForAutoScope`'s precedent, while revoke re-derives from `seatCallingOrder()` over everything left in `importer_callings` — a removal can strand the stored value on a calling the member no longer holds. That is stricter than `clearImporterCallingsForScope`, which leaves the prior value in place.
 
 **Read by:** `syncAccessClaims` trigger; manager Access page.
 
@@ -449,12 +465,12 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
-- A Kindoo Manager may create a request in **any** scope — the stake and every ward — for every type, with no `access` row of their own (§6 create rule, [`spec.md`](spec.md) §6.1, `architecture.md` D23, PR #240). Manager authority is blanket, not an intersection with claim-derived scopes: a manager who also holds a Bishopric claim may submit for wards outside that claim. Platform superadmin status alone grants nothing. Policy 1 (`edit_auto` forbidden at `scope == 'stake'`) is an independent conjunct and binds managers too.
+- A Kindoo Manager may create a request in **any** scope — the stake and every ward — for every type, with no `access` row of their own (§6 create rule, [`spec.md`](spec.md) §6.1, `architecture.md` D24, PR #240). Manager authority is blanket, not an intersection with claim-derived scopes: a manager who also holds a Bishopric claim may submit for wards outside that claim. Platform superadmin status alone grants nothing. Policy 1 (`edit_auto` forbidden at `scope == 'stake'`) is an independent conjunct and binds managers too.
 - The manager queue, extension card, and manager notification emails display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`, with the requester's `kindooManagers/{requester_canonical}` doc (§4.4) as backstop for both fields — name when `access` has none, and the literal calling `"Kindoo Manager"` when no calling resolves for the scope. Only an `active === true` manager doc contributes; `access` wins on each field independently. The request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §9 / §15.
 
 ### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
-These two per-stake calling-template collections, their Configuration tabs, and the `give_app_access` / `auto_kindoo_access` / `sheet_order` template fields were removed (PR #192, D17). App access is now granted from a hard-coded churchwide calling list (`packages/shared/src/appAccessCallings.ts`), not from per-stake template rows — see §4.5, `spec.md` §8, and D17. Seat / access `sort_order` and roster ordering use the canonical churchwide `callingSortOrder` table, not template `sheet_order`. The `callingTemplate` shared type + zod schemas, `functions/src/lib/parser.ts`, the template audit triggers, and the extension's template classifier are deleted. No collection occupies §4.8 / §4.9 any more; the numbering is preserved so §4.10 / §4.11 cross-references stay stable. Orphaned template docs left in existing stakes are a post-merge cleanup (T-65).
+These two per-stake calling-template collections, their Configuration tabs, and the `give_app_access` / `auto_kindoo_access` / `sheet_order` template fields were removed (PR #192, D17). App access is now granted from a churchwide calling list (`packages/shared/src/appAccessCallings.ts`), not from per-stake template rows — see §4.5, `spec.md` §8, and D17. The one per-stake app-access control that survives is the boolean `stake.eq_president_app_access` (§4.1, D23), which gates a single ward calling; it is a gate on the fixed list, not a return of per-stake calling rows. Seat / access `sort_order` and roster ordering use the canonical churchwide `callingSortOrder` table, not template `sheet_order`. The `callingTemplate` shared type + zod schemas, `functions/src/lib/parser.ts`, the template audit triggers, and the extension's template classifier are deleted. No collection occupies §4.8 / §4.9 any more; the numbering is preserved so §4.10 / §4.11 cross-references stay stable. Orphaned template docs left in existing stakes are a post-merge cleanup (T-65).
 
 ### 4.9 *(unused — see §4.8)*
 
@@ -707,6 +723,9 @@ service cloud.firestore {
       // `isPlatformSuperadmin()` lets the Stake List page (`/superadmin/stakes`)
       // read every stake's parent doc, including the zero-role first-run case
       // where the superadmin holds no per-stake role on any stake.
+      // Note: `update` carries NO per-field allowlist — a manager (or the bootstrap
+      // admin pre-setup) may write any stake-doc field. Adding a config field such as
+      // `eq_president_app_access` (§4.1, D23) therefore needs no rules change.
       allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
         || isSetupInProgressReadable(stakeId)
         || isPlatformSuperadmin();
@@ -880,7 +899,7 @@ service cloud.firestore {
           //   - scope == 'stake' → caller holds `stake: true`
           //   - scope == <ward>  → caller's `wards` includes that code
           // `scope` is deliberately not checked against the wards
-          // collection — see D23.
+          // collection — see D24.
           && (
                isManager(stakeId)
             || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
@@ -928,8 +947,8 @@ service cloud.firestore {
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
-- **Requests-create role-for-scope gate** — the submit predicate admits any of three branches: `isManager(stakeId)` (every scope, every type, no `access` row required), `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. The SPA's `isScopeAllowed` / `allowedScopesFor` (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer. Two properties are load-bearing. **(a) Manager authority is blanket.** It is not intersected with the caller's claim-derived scopes, so a manager who also holds a Bishopric claim may submit for wards outside it. **(b) Platform superadmin status alone grants nothing** — only the per-stake manager claim does, which is a deliberate divergence from the nav model's superadmin-as-manager treatment. The manager branch widens WHO may create, never WHAT the payload must carry: every other create conjunct — non-empty `member_name` for add types, non-empty `building_names` for stake-scope add/edit types, the required `comment` on edit types, and Policy 1's `edit_auto`-not-at-stake — still binds a manager submit. This reverses the B-3 / T-36 hardening (PR #52) and subsumes the `add_manual` stake carve-out it had been punctured with (PR #223). See `architecture.md` D23 and PR #240.
-- **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D23).
+- **Requests-create role-for-scope gate** — the submit predicate admits any of three branches: `isManager(stakeId)` (every scope, every type, no `access` row required), `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. The SPA's `isScopeAllowed` / `allowedScopesFor` (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer. Two properties are load-bearing. **(a) Manager authority is blanket.** It is not intersected with the caller's claim-derived scopes, so a manager who also holds a Bishopric claim may submit for wards outside it. **(b) Platform superadmin status alone grants nothing** — only the per-stake manager claim does, which is a deliberate divergence from the nav model's superadmin-as-manager treatment. The manager branch widens WHO may create, never WHAT the payload must carry: every other create conjunct — non-empty `member_name` for add types, non-empty `building_names` for stake-scope add/edit types, the required `comment` on edit types, and Policy 1's `edit_auto`-not-at-stake — still binds a manager submit. This reverses the B-3 / T-36 hardening (PR #52) and subsumes the `add_manual` stake carve-out it had been punctured with (PR #223). See `architecture.md` D24 and PR #240.
+- **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D24).
 
 #### Bootstrap-admin gate
 
@@ -968,6 +987,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
 | `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
+| `backfillEqPresidentAccess` | Callable (manager-invoked from the Configuration → Config backfill dialog) | Reconciles `access` docs after a stake flips `eq_president_app_access` (§4.1). `{stakeId, direction:'grant'\|'revoke'}` → `{ok, seats_matched, docs_written, docs_deleted}`. Sweeps auto ward-scope seats holding the Elders Quorum President calling and merges that one entry into / out of `importer_callings[scope]`; `manual_grants` untouched. Auth reads `kindooManagers/{canonical}` directly (not the ~1h-stale claim); `direction` must match the stake's current flag or `failed-precondition`. Single-field `type == 'auto'` query — no composite index. Idempotent. See `spec.md` §8, D23. |
 | `backfillKindooSiteId` | Callable (superadmin-invoked from the Stake List Apply Fixes menu) | Re-derives each seat's `kindoo_site_id` from its ward's building and writes only the diffs (idempotent). **Platform superadmin only** (`isPlatformSuperadmin` claim) — the former active-Kindoo-Manager gate was removed. See `spec.md` §15. |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends over-cap warning email when the array goes from empty to non-empty |

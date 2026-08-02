@@ -71,6 +71,19 @@ export type Stake = {
   /** Optional; absent until v2.1 first-run config completes. */
   kindoo_config?: KindooConfig;
 
+  // ----- App access -----
+  /**
+   * Opt-in: when `true`, Elders Quorum President joins the ward
+   * app-access calling set for this stake (exact title only — not the
+   * quorum's counselors or secretary). Absent ⇒ off, so read it as
+   * `eq_president_app_access === true`.
+   *
+   * Note the defaulting is the OPPOSITE of `notifications_enabled`
+   * (read as `?? true`, i.e. absent ⇒ on). Don't copy that idiom here:
+   * a stake that has never been configured must not grant access.
+   */
+  eq_president_app_access?: boolean;
+
   // ----- Notifications -----
   notifications_enabled: boolean;
   /**

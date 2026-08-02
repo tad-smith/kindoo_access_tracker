@@ -10,14 +10,33 @@ describe('step1Schema', () => {
     const out = step1Schema.parse({
       stake_name: 'My Stake',
       stake_seat_cap: 200,
+      eq_president_app_access: false,
     });
     expect(out.stake_name).toBe('My Stake');
+  });
+
+  it('carries the eq_president_app_access opt-in through the parse', () => {
+    const out = step1Schema.parse({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      eq_president_app_access: true,
+    });
+    expect(out.eq_president_app_access).toBe(true);
+  });
+
+  it('rejects a step 1 payload missing eq_president_app_access', () => {
+    const r = step1Schema.safeParse({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+    });
+    expect(r.success).toBe(false);
   });
 
   it('rejects a blank stake name', () => {
     const r = step1Schema.safeParse({
       stake_name: '   ',
       stake_seat_cap: 0,
+      eq_president_app_access: false,
     });
     expect(r.success).toBe(false);
   });
@@ -26,6 +45,7 @@ describe('step1Schema', () => {
     const r = step1Schema.safeParse({
       stake_name: 'X',
       stake_seat_cap: -1,
+      eq_president_app_access: false,
     });
     expect(r.success).toBe(false);
   });
@@ -37,10 +57,12 @@ describe('step1Schema', () => {
     const r = step1Schema.parse({
       stake_name: 'My Stake',
       stake_seat_cap: 200,
+      eq_president_app_access: false,
       callings_sheet_id: 'leftover-from-pre-t-45',
     } as unknown as {
       stake_name: string;
       stake_seat_cap: number;
+      eq_president_app_access: boolean;
     });
     expect('callings_sheet_id' in r).toBe(false);
   });

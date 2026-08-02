@@ -167,6 +167,10 @@ export const createStake = onCall(
         stake_seat_cap: 0,
         // Schedules
         timezone,
+        // App access — opt-in, off for a new stake. Written explicitly
+        // (rather than left absent) so the field shows up in the config
+        // form and the audit snapshot from day one.
+        eq_president_app_access: false,
         // Notifications
         notifications_enabled: true,
         // Operational state

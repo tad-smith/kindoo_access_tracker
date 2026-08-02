@@ -136,8 +136,30 @@ describe('configuration configSchema', () => {
       stake_seat_cap: 200,
       timezone: 'America/Denver',
       notifications_enabled: true,
+      eq_president_app_access: true,
     });
     expect(r.success).toBe(true);
+  });
+  it('accepts eq_president_app_access set to false', () => {
+    const r = configSchema.safeParse({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      timezone: 'America/Denver',
+      notifications_enabled: true,
+      eq_president_app_access: false,
+    });
+    expect(r.success).toBe(true);
+  });
+  it('rejects a config missing eq_president_app_access', () => {
+    // The form always supplies the flag (resolved from the optional
+    // persisted field as `=== true`), so an absent key is a bug.
+    const r = configSchema.safeParse({
+      stake_name: 'My Stake',
+      stake_seat_cap: 200,
+      timezone: 'America/Denver',
+      notifications_enabled: true,
+    });
+    expect(r.success).toBe(false);
   });
   it('rejects a negative seat cap', () => {
     const r = configSchema.safeParse({
@@ -145,6 +167,7 @@ describe('configuration configSchema', () => {
       stake_seat_cap: -1,
       timezone: 'X',
       notifications_enabled: false,
+      eq_president_app_access: false,
     });
     expect(r.success).toBe(false);
   });

@@ -16,6 +16,9 @@ export const step1Schema = z.object({
     .number({ message: 'Seat cap must be a number.' })
     .int('Seat cap must be an integer.')
     .min(0, 'Seat cap must be 0 or greater.'),
+  // Opt-in: the persisted field is optional and absent means off, so the
+  // form resolves it as `=== true` rather than `?? true`.
+  eq_president_app_access: z.boolean(),
 });
 
 export type Step1Form = z.infer<typeof step1Schema>;
