@@ -220,6 +220,9 @@ importers:
 
   functions:
     dependencies:
+      '@firebase/app':
+        specifier: ^0.14.11
+        version: 0.14.11
       firebase-admin:
         specifier: ^13.8.0
         version: 13.8.0
