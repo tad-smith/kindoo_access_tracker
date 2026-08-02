@@ -387,19 +387,34 @@ The compiled table is global (the calling hierarchy is churchwide), so there is 
 
 ## 9. Email notifications
 
-Five notification types ship via Resend (Phase 9), fired by Firestore triggers on the relevant entity changes.
+Six notification types ship via Resend (five in Phase 9, plus the app-access welcome email), fired by Firestore triggers on the relevant entity changes.
 
 | Trigger | Recipients | Subject | Link back |
 | --- | --- | --- | --- |
-| Request submitted | active Kindoo Managers | `[Stake Building Access] New request from <requester name + calling> (<scope label>)` | `<WEB_BASE_URL>/manager/queue` |
-| Request completed | original requester | `[Stake Building Access] Your request for <member_email> has been completed` | `<WEB_BASE_URL>/my` |
-| Request rejected | original requester | `[Stake Building Access] Your request was rejected` | `<WEB_BASE_URL>/my` |
-| Request cancelled | active Kindoo Managers | `[Stake Building Access] Request cancelled by <requester name + calling>` | `<WEB_BASE_URL>/manager/queue` |
-| Over-cap detected | active Kindoo Managers | `[Stake Building Access] Over-cap warning` | `<WEB_BASE_URL>/manager/seats` |
+| Request submitted | active Kindoo Managers | `[Stake Building Access] New request from <requester name + calling> (<scope label>)` | `<base>/manager/queue` |
+| Request completed | original requester | `[Stake Building Access] Your request for <member_email> has been completed` | `<base>/my` |
+| Request rejected | original requester | `[Stake Building Access] Your request was rejected` | `<base>/my` |
+| Request cancelled | active Kindoo Managers | `[Stake Building Access] Request cancelled by <requester name + calling>` | `<base>/manager/queue` |
+| Over-cap detected | active Kindoo Managers | `[Stake Building Access] Over-cap warning` | `<base>/manager/seats` |
+| App access granted | the granted member | `[Stake Building Access] You can now request building access for <scope list>` | `<base>/` and `<base>/help/requesting-access.html` |
 
-Bodies are plain text; every email includes a link back to the relevant page (`WEB_BASE_URL` is set per project via `functions/.env.<project>`). The R-1 completion email surfaces a `Note:` line carrying `request.completion_note` so the requester knows nothing visibly changed. The over-cap email lists every flagged pool with its current count / cap and a deep-link to the filtered All Seats page.
+`<base>` is `WEB_BASE_URL` (set per project via `functions/.env.<project>`) unless the stake carries a `web_base_url_override` — see "Per-stake base URL" below. The five request-lifecycle and over-cap bodies are **plain text**. The app-access welcome email is the one that also ships an HTML part: `EmailPayload.html` alongside the always-required `text`, which Resend delivers as the multipart fallback. Every email includes a link back to the relevant page. The R-1 completion email surfaces a `Note:` line carrying `request.completion_note` so the requester knows nothing visibly changed. The over-cap email lists every flagged pool with its current count / cap and a deep-link to the filtered All Seats page.
 
 **Requester naming (manager emails).** The two manager-facing emails — new-request and cancelled — name the requester as `{Name} ({Calling})` in both subject and body, not the raw email (the new-request subject reads `New request from {Name} ({Calling}) ({scope label})`; its body opens `{Name} ({Calling}) submitted a new … request`; the cancelled subject reads `Request cancelled by {Name} ({Calling})`, body `{Name} ({Calling}) cancelled their request …`). `resolveRequesterLabel` in `EmailService.ts` derives the label live per send from the requester's `access/{requester_canonical}` doc for the request's `scope`, through the same shared `deriveRequesterDisplay` / `formatRequesterLabel` pair the manager Queue and extension card use (§5.3 / §15) — name from `member_name`, calling from `importer_callings[scope]` (falling back to `manual_grants[scope][].reason`). It falls back to the raw `requester_email` when the requester has no access doc or the doc carries no name. The completion / rejection / over-cap emails name the member, not the requester, and are unchanged.
+
+**App-access welcome email.** The `notifyOnAccessGranted` trigger watches `stakes/{stakeId}/access/{memberCanonical}` and welcomes a member the first time their access doc carries any scope. It sits on the document — the third trigger on that path, alongside `syncAccessClaims` and `auditAccessWrites` — because the document is the only hook that sees every grant path, including the manager Access page's raw client write to `manual_grants`, which goes through no callable. It fires **iff the before-doc has zero scopes and the after-doc has at least one**, computed by `scopesFromAccessDoc` (`functions/src/lib/seedClaims.ts`) over `importer_callings` and `manual_grants` together:
+
+- First grant → fires.
+- A scope added to someone who already holds one → silent (already welcomed).
+- A revoke down to zero scopes → silent.
+- A re-grant after a full revoke → fires again. Intended.
+- A doc delete → never fires.
+
+The scope list names the Stake first, then ward display names resolved from `stakes/{stakeId}/wards` via the shared `scopeLabel` (an unresolved ward code falls back to the raw code), joined as `A` / `A and B` / `A, B, and C`; `Stake` reads as `the Stake` in the sentence. Body links the app root and the requester guide (`/help/requesting-access.html`, the same path constant `apps/web` links, exported from `@kindoo/shared` so the two can't drift). The sign-in paragraph branches on the recipient's address through the shared `isGmailAddress`: a Gmail address is told to click **Continue with Google**; every other address is told to enter it and click **Send me a sign-in link**. Google Workspace addresses deliberately get the magic-link copy — they can sign in with Google too, but the address alone doesn't say so. Recipient is the doc's `member_email`, falling back to the doc ID (itself a canonical email); the greeting uses `member_name` when present, otherwise `Hello,`. `kindooManagers` grants are not app-access grants and never send this email. A send failure lands as an `email_send_failed` audit row with `entity_id: 'email:accessGranted'` and a suffix keyed on the member's canonical email.
+
+**Welcome-email send burst (operator note).** The welcome email is **not** gated on `setup_complete`. A new stake's first extension Sync creates access docs in bulk, so it sends one email per newly-granted member — roughly one per member at the ~250-seat target scale. That is intended: the burst doubles as the launch announcement. It can, however, exceed a low Resend daily quota, in which case the overflow lands as `email_send_failed` audit rows and those members are never welcomed. An operator who wants a quiet onboarding sets `notifications_enabled: false` on the stake for the duration of the initial Sync and flips it back afterwards.
+
+**Per-stake base URL.** `stake.web_base_url_override` (optional string) replaces `WEB_BASE_URL` as the base for **all** of that stake's email links — all six templates, not just the welcome email. It is a hidden operator-only escape hatch: there is no UI anywhere, and the operator sets it by hand in the Firestore console. It exists because the app is dual-hosted (§12), so a stake whose members live on the legacy host can get email links on that host. The value must start with `http://` or `https://`; absent, empty after trim, or missing the scheme means it is ignored (a rejected value emits a `logger.warn`) and the `WEB_BASE_URL` param applies. It affects email links only — never routing, hosting, or auth domains.
 
 **From address.** Fixed envelope `noreply@mail.stakebuildingaccess.org` (verified Resend subdomain per F17 / T-04). Display name interpolates the stake name: `<stake.stake_name> — Stake Building Access <noreply@mail.stakebuildingaccess.org>`. Optional `Reply-To` from `stake.notifications_reply_to` when set; otherwise the header is omitted (replies bounce off `noreply@`).
 
@@ -407,7 +422,7 @@ Bodies are plain text; every email includes a link back to the relevant page (`W
 
 **Email kill-switch.** `stake.notifications_enabled` (boolean; default `true`) gates every Resend send. Flipping it to `false` short-circuits before the API call; one log line emitted. Editable from the manager Configuration page.
 
-**Push notifications** (Phase 10.5) ship the new-request notification only. Independent kill-switch per user per device per category at `userIndex/{canonical}.notificationPrefs.push`. The remaining four notification categories (completion / rejection / cancel / over-cap) on push are Phase 10.6, deferred.
+**Push notifications** (Phase 10.5) ship the new-request notification only. Independent kill-switch per user per device per category at `userIndex/{canonical}.notificationPrefs.push`. The remaining four notification categories (completion / rejection / cancel / over-cap) on push are Phase 10.6, deferred. The app-access welcome email has no push counterpart by construction — its recipient has never opened the app, so no device is subscribed.
 
 ## 10. Bootstrap flow
 
