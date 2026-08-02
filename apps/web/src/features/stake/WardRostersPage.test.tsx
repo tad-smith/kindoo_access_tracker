@@ -78,14 +78,14 @@ vi.mock('../requests/components/NewRequestAffordance', async () => {
   };
 });
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(opts: { stake?: boolean; wards?: string[]; manager?: boolean } = {}): unknown {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
     email: 'user@example.com',
     canonical: 'user@example.com',
     isPlatformSuperadmin: false,
-    managerStakes: [],
+    managerStakes: opts.manager ? ['csnorth'] : [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
     hasAnyRole: () => true,
@@ -264,6 +264,60 @@ describe('<WardRostersPage />', () => {
       mockSeats([makeSeat({ scope: 'CO' })]);
       render(<WardRostersPage initialWard="CO" />);
       expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
+    });
+  });
+
+  // A Kindoo Manager holds request authority in every scope without an
+  // `access` row of their own. Ward Rosters is their reach into wards
+  // they hold no bishopric claim for.
+  describe('manager-only viewer (no stake / no ward claim)', () => {
+    it('shows the New Request button for a ward the manager holds no bishopric claim for', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'GE' })]);
+      render(<WardRostersPage initialWard="GE" />);
+      const btn = screen.getByTestId('ward-rosters-new-request');
+      expect(btn).toHaveTextContent('New Request');
+      expect(btn).toHaveAttribute('data-scope', 'GE');
+    });
+
+    it('opens the New Request modal from a ward the manager holds no bishopric claim for', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'GE' })]);
+      render(<WardRostersPage initialWard="GE" />);
+      await user.click(screen.getByTestId('ward-rosters-new-request'));
+      expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
+    });
+
+    it('renders Remove and Edit on rows of a ward the manager holds no bishopric claim for', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+      // Ward-scope auto seats stay editable (constrained edit_auto) but
+      // never removable.
+      expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
     });
   });
 

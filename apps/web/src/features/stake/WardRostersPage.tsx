@@ -11,7 +11,9 @@
 // `<RemovalAffordance>`, gated by `isScopeAllowed(principal, ...)` so
 // the button only appears on rows the viewer has authority for. The
 // rule is symmetric with `allowedScopesFor` — if a user can ADD for a
-// scope, they can also REMOVE for it.
+// scope, they can also REMOVE for it. A Kindoo Manager holds that
+// authority in every ward, so this page is their reach into wards they
+// hold no bishopric claim for.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
@@ -116,11 +118,12 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
     }).catch(() => {});
   };
 
-  // The header "New Request" affordance shows only when the viewer is in
-  // the bishopric of the currently-selected ward — the same predicate
-  // that gates that ward's option in the New Request dropdown. Stake-
-  // only users browsing wards don't see it (they request stake scope
-  // from the Stake Roster).
+  // The header "New Request" affordance shows when the viewer holds
+  // request authority for the currently-selected ward — the same
+  // predicate that gates that ward's option in the New Request
+  // dropdown. That's the ward's bishopric, or a Kindoo Manager (any
+  // ward). Stake-only users browsing wards don't see it (they request
+  // stake scope from the Stake Roster).
   const canRequest =
     selected !== null &&
     activeStakeId !== null &&

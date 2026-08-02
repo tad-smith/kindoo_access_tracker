@@ -15,10 +15,17 @@ import { doc, orderBy, query, serverTimestamp, setDoc, where } from 'firebase/fi
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail } from '@kindoo/shared';
-import type { Access, AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
+import type { Access, AccessRequest, Building, KindooManager, Seat, Ward } from '@kindoo/shared';
 import { useFirestoreDoc, useFirestoreCollection } from '../../lib/data';
 import { db, auth } from '../../lib/firebase';
-import { accessRef, buildingsCol, requestsCol, seatRef, wardsCol } from '../../lib/docs';
+import {
+  accessRef,
+  buildingsCol,
+  kindooManagerRef,
+  requestsCol,
+  seatRef,
+  wardsCol,
+} from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
 import { allowedScopesFor } from './scopeOptions';
@@ -61,6 +68,27 @@ export function useAccessForMember(canonical: string | null) {
     return accessRef(db, activeStakeId, canonical);
   }, [canonical, activeStakeId]);
   return useFirestoreDoc<Access>(ref);
+}
+
+/**
+ * Live subscription to a member's `kindooManagers` doc by canonical email.
+ * Kindoo Managers may submit a request in any scope without holding an
+ * `access` row, so this doc backstops the requester's name + calling on
+ * the manager Queue (`{Name} (Kindoo Manager)`). Pairs with
+ * `useAccessForMember` as the third argument to `deriveRequesterDisplay`.
+ *
+ * `kindooManagers` is manager-read-only per `firestore.rules`, which the
+ * manager-gated Queue satisfies.
+ *
+ * `null` canonical disables the subscription.
+ */
+export function useKindooManagerForMember(canonical: string | null) {
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(() => {
+    if (!canonical || !activeStakeId) return null;
+    return kindooManagerRef(db, activeStakeId, canonical);
+  }, [canonical, activeStakeId]);
+  return useFirestoreDoc<KindooManager>(ref);
 }
 
 /**

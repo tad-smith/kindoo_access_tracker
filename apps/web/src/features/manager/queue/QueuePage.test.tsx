@@ -12,6 +12,7 @@ import { makeAccess, makeRequest } from '../../../../test/fixtures';
 const usePendingMock = vi.fn();
 const useSeatForMemberMock = vi.fn();
 const useAccessForMemberMock = vi.fn();
+const useKindooManagerForMemberMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('./hooks', () => ({
@@ -21,6 +22,7 @@ vi.mock('./hooks', () => ({
 vi.mock('../../requests/hooks', () => ({
   useSeatForMember: (canonical: string | null) => useSeatForMemberMock(canonical),
   useAccessForMember: (canonical: string | null) => useAccessForMemberMock(canonical),
+  useKindooManagerForMember: (canonical: string | null) => useKindooManagerForMemberMock(canonical),
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -68,6 +70,20 @@ function liveDocResult<T>(data: T | undefined) {
   };
 }
 
+// Minimal KindooManager — `deriveRequesterDisplay` reads only name + active.
+function managerDoc(overrides: Record<string, unknown> = {}) {
+  return {
+    member_canonical: 'mary@example.com',
+    member_email: 'mary@example.com',
+    name: 'Manager Mary',
+    active: true,
+    added_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+    added_by: { email: 'a@b.c', canonical: 'a@b.c' },
+    lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
+    ...overrides,
+  };
+}
+
 // Seat subscription still in flight: `data` is undefined but the query
 // is `pending`, NOT `success`. Used to assert the edit-missing-seat
 // chip stays hidden during load (it must gate on `isSuccess`, not on
@@ -89,10 +105,11 @@ function loadingDocResult() {
 beforeEach(() => {
   vi.clearAllMocks();
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
-  // Default: no access doc resolved for the requester, so the card falls
-  // back to the requester email. Individual tests override to assert the
-  // name / calling render.
+  // Default: no access doc and no manager doc resolved for the requester,
+  // so the card falls back to the requester email. Individual tests
+  // override to assert the name / calling render.
   useAccessForMemberMock.mockReturnValue(liveDocResult(undefined));
+  useKindooManagerForMemberMock.mockReturnValue(liveDocResult(undefined));
   // jsdom does not implement scrollIntoView; stub on the prototype so
   // the focus-card effect does not throw. Using `Object.defineProperty`
   // sidesteps the readonly-element-prototype TS check; restoreAllMocks
@@ -353,6 +370,123 @@ describe('<ManagerQueuePage />', () => {
     // and no email fallback.
     expect(card.textContent).not.toMatch(/Requester:\s*Bishop Bob\s*\(/);
     expect(card.textContent).not.toMatch(/bishop@example\.com/);
+  });
+
+  // Kindoo Managers may submit in any scope without an access row, so the
+  // requester line falls back to their kindooManagers doc.
+  it('renders a manager-submitted request as "{Name} (Kindoo Manager)" when the requester has no access doc', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'mary@example.com',
+        requester_canonical: 'mary@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useKindooManagerForMemberMock.mockReturnValue(
+      liveDocResult(managerDoc({ name: 'Manager Mary' })),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*Manager Mary \(Kindoo Manager\)/);
+    expect(card.textContent).not.toMatch(/mary@example\.com/);
+  });
+
+  it('keeps the access-derived name but uses "Kindoo Manager" when no calling applies for the scope', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'mary@example.com',
+        requester_canonical: 'mary@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useAccessForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeAccess({
+          member_canonical: 'mary@example.com',
+          member_name: 'Mary Access',
+          // Calling is for a different scope than the request's (CO).
+          importer_callings: { MR: ['Bishop'] },
+        }),
+      ),
+    );
+    useKindooManagerForMemberMock.mockReturnValue(
+      liveDocResult(managerDoc({ name: 'Manager Mary' })),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*Mary Access \(Kindoo Manager\)/);
+  });
+
+  it('prefers a real calling from the access doc over "Kindoo Manager"', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'mary@example.com',
+        requester_canonical: 'mary@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useAccessForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeAccess({
+          member_canonical: 'mary@example.com',
+          member_name: 'Bishop Bob',
+          importer_callings: { CO: ['Bishop'] },
+        }),
+      ),
+    );
+    useKindooManagerForMemberMock.mockReturnValue(
+      liveDocResult(managerDoc({ name: 'Manager Mary' })),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*Bishop Bob \(Bishop\)/);
+  });
+
+  it('ignores an inactive manager doc and falls back to the requester email', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        requester_email: 'mary@example.com',
+        requester_canonical: 'mary@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useKindooManagerForMemberMock.mockReturnValue(
+      liveDocResult(managerDoc({ name: 'Manager Mary', active: false })),
+    );
+    render(<ManagerQueuePage />);
+    const card = screen.getByTestId('queue-card-r1');
+    expect(card.textContent).toMatch(/Requester:\s*mary@example\.com/);
+    expect(card.textContent).not.toMatch(/Kindoo Manager/);
+  });
+
+  it('subscribes to the manager doc keyed by the requester canonical email', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        requester_canonical: 'mary@example.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    render(<ManagerQueuePage />);
+    expect(useKindooManagerForMemberMock).toHaveBeenCalledWith('mary@example.com');
   });
 
   it('shows buildings on a dedicated card row as a comma-delimited list', () => {

@@ -56,14 +56,15 @@ vi.mock('../../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(opts: { stake?: boolean; wards?: string[]; manager?: boolean } = {}): unknown {
+  const manager = opts.manager ?? true;
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
     email: 'manager@example.com',
     canonical: 'manager@example.com',
     isPlatformSuperadmin: false,
-    managerStakes: ['csnorth'],
+    managerStakes: manager ? ['csnorth'] : [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
     hasAnyRole: () => true,
@@ -489,8 +490,9 @@ describe('<AllSeatsPage />', () => {
 
   // Per-grant Remove authority gate — symmetric with `isScopeAllowed`.
   // The button only renders on rows whose grant's scope the principal
-  // has authority for. Same predicate as today; what's new is the
-  // gate keys off the grant (per-row), not the seat's primary.
+  // has authority for; the gate keys off the grant (per-row), not the
+  // seat's primary. A Kindoo Manager has authority in every scope, so
+  // the scope-negative cases use an explicitly non-manager principal.
   describe('per-row Remove affordance — symmetric authority gate', () => {
     it('renders the Remove button on manual / temp rows whose scope the principal has authority for', () => {
       usePrincipalMock.mockReturnValue(principal({ stake: true, wards: ['CO'] }));
@@ -521,8 +523,8 @@ describe('<AllSeatsPage />', () => {
       expect(screen.getByTestId('remove-btn-stake-temp@x.com')).toBeInTheDocument();
     });
 
-    it('hides the Remove button on rows whose grant scope the principal lacks authority for', () => {
-      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+    it('hides the Remove button on rows whose grant scope a non-manager principal lacks authority for', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: false, wards: ['CO'] }));
       mockAll({
         seats: [
           makeSeat({
@@ -557,7 +559,7 @@ describe('<AllSeatsPage />', () => {
       expect(screen.queryByTestId('remove-btn-stake-manual@x.com')).toBeNull();
     });
 
-    it('hides the Remove button for a manager-only principal (no stake / no ward claim)', () => {
+    it('renders the Remove button in every scope for a manager-only principal (no stake / no ward claim)', () => {
       usePrincipalMock.mockReturnValue(principal({}));
       mockAll({
         seats: [
@@ -568,21 +570,37 @@ describe('<AllSeatsPage />', () => {
             type: 'manual',
             callings: [],
           }),
+          makeSeat({
+            scope: 'GE',
+            member_canonical: 'ge-manual@x.com',
+            member_email: 'ge-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
+          makeSeat({
+            scope: 'stake',
+            member_canonical: 'stake-manual@x.com',
+            member_email: 'stake-manual@x.com',
+            type: 'manual',
+            callings: [],
+          }),
         ],
-        wards: [makeWard({ ward_code: 'CO' })],
+        wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'GE' })],
         buildings: [],
         stake: { stake_seat_cap: 200 },
       });
       render(<AllSeatsPage />);
-      expect(screen.queryByTestId('remove-btn-co-manual@x.com')).toBeNull();
+      expect(screen.getByTestId('remove-btn-co-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-ge-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('remove-btn-stake-manual@x.com')).toBeInTheDocument();
     });
 
     // Phase B-specific: per-grant gate means the button can appear on
     // a duplicate row when the principal has authority for the
     // duplicate's scope even if they lack authority for the seat's
     // primary scope.
-    it('renders Remove on a duplicate row when the principal has authority for the duplicate scope (not the primary)', () => {
-      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+    it('renders Remove on a duplicate row when a non-manager principal has authority for the duplicate scope (not the primary)', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: false, wards: ['CO'] }));
       const NOW = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
       mockAll({
         seats: [
