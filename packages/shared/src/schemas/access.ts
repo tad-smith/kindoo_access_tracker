@@ -9,6 +9,8 @@ import { timestampLikeSchema } from './timestampLike.js';
 export const manualGrantSchema = z.object({
   grant_id: z.string(),
   reason: z.string(),
+  // Absent => full access. Never stored as `'full'`.
+  level: z.literal('limited').optional(),
   granted_by: actorRefSchema,
   granted_at: timestampLikeSchema,
 });

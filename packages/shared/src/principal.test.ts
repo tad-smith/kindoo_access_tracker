@@ -126,6 +126,66 @@ describe('principalFromClaims', () => {
     expect(p.bishopricWards).toEqual({ someother: ['LK'] });
   });
 
+  it('collects stakes whose claim block carries limited: true', () => {
+    const claims: CustomClaims = {
+      canonical: 'ltd@gmail.com',
+      stakes: { csnorth: { manager: false, stake: false, wards: ['CO'], limited: true } },
+    };
+    const p = principalFromClaims(claims, 'ltd@gmail.com');
+    expect(p.limitedStakes).toEqual(['csnorth']);
+    // Limited narrows an existing role; it doesn't change what the role is.
+    expect(p.isAuthenticated).toBe(true);
+    expect(p.bishopricWards).toEqual({ csnorth: ['CO'] });
+  });
+
+  it('treats an absent limited flag as full access', () => {
+    const claims: CustomClaims = {
+      canonical: 'full@gmail.com',
+      stakes: { csnorth: { manager: false, stake: true, wards: [] } },
+    };
+    expect(principalFromClaims(claims, 'full@gmail.com').limitedStakes).toEqual([]);
+  });
+
+  it('treats limited: false as full access', () => {
+    const claims: CustomClaims = {
+      canonical: 'full@gmail.com',
+      stakes: { csnorth: { manager: false, stake: true, wards: [], limited: false } },
+    };
+    expect(principalFromClaims(claims, 'full@gmail.com').limitedStakes).toEqual([]);
+  });
+
+  it('treats non-boolean garbage in the limited field as full access', () => {
+    // Truthy-but-not-`true` values off the wire must not confer limited
+    // status by accident — only a literal `true` counts.
+    for (const garbage of ['true', 1, {}, [], 'limited', null]) {
+      const claims = {
+        canonical: 'garbage@gmail.com',
+        stakes: { csnorth: { manager: false, stake: true, wards: [], limited: garbage } },
+      } as unknown as CustomClaims;
+      expect(principalFromClaims(claims, 'garbage@gmail.com').limitedStakes).toEqual([]);
+    }
+  });
+
+  it('resolves limited independently per stake in a mixed multi-stake token', () => {
+    const claims: CustomClaims = {
+      canonical: 'multi@gmail.com',
+      stakes: {
+        csnorth: { manager: false, stake: true, wards: [], limited: true },
+        someother: { manager: true, stake: false, wards: ['LK'] },
+      },
+    };
+    const p = principalFromClaims(claims, 'multi@gmail.com');
+    expect(p.limitedStakes).toEqual(['csnorth']);
+    expect(p.managerStakes).toEqual(['someother']);
+    expect(p.stakeMemberStakes).toEqual(['csnorth']);
+    expect(p.bishopricWards).toEqual({ someother: ['LK'] });
+  });
+
+  it('leaves limitedStakes empty on an unauthenticated principal', () => {
+    expect(principalFromClaims(null, 'someone@example.com').limitedStakes).toEqual([]);
+    expect(principalFromClaims(undefined, undefined).limitedStakes).toEqual([]);
+  });
+
   it('survives malformed stake-claim entries by treating them as no-role', () => {
     // Defense-in-depth: claims come from a network token; a wrong shape
     // shouldn't crash the SPA. Coerce to all-false/empty.
