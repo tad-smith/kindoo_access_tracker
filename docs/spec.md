@@ -301,7 +301,7 @@ The manager branch widens **who** may create, never **what** the payload must ca
 
 **The rule does not verify that the ward code exists.** A manager could write a `scope` naming a ward that isn't in the `wards` collection; the rule admits it rather than spending an `exists()` read. Accepted data-quality gap for a trusted role — see `architecture.md` D24.
 
-**Limited app access narrows the surface, it does not add a branch** (`architecture.md` D25). A requester carrying `stakes[stakeId].limited` (§4) must still satisfy one of the three branches above — the flag grants nothing on its own. On top of whichever branch admits them, four extra constraints bind at creation time:
+**Limited app access narrows the surface, it does not add a branch** (`architecture.md` D25). A requester carrying `stakes[stakeId].limited` (§4) must still satisfy one of the three branches above — the flag grants nothing on its own. **A Kindoo Manager is never narrowed by it**, and not because the manager branch out-ranks the clause: the claim minter refuses to write `limited` at all for a user with an active `kindooManagers` row (`if (!manager && limited)` in `computeStakeClaims`, §4), so a manager who also holds a limited-tier grant carries no flag for `isLimited` to find. The manager branch keeps its full reach structurally. On top of whichever branch admits them, four extra constraints bind a limited requester at creation time:
 
 | Constraint | Rule predicate | SPA mirror |
 | --- | --- | --- |
