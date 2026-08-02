@@ -142,9 +142,11 @@ function stakeDocResult(overrides: Partial<Stake> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   updateStakeConfigMock.mockResolvedValue(undefined);
+  // seats_matched is deliberately unequal to the figure the toast reports
+  // (docs_written for grant) so the assertion fails if the toast reads the wrong field.
   backfillEqPresidentAccessMock.mockResolvedValue({
     ok: true,
-    seats_matched: 3,
+    seats_matched: 7,
     docs_written: 3,
     docs_deleted: 0,
   });
@@ -1320,9 +1322,11 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
 
   it('counts written plus deleted access docs in the revoke success toast', async () => {
     const { useToastStore } = await import('../../../lib/store/toast');
+    // seats_matched is deliberately unequal to docs_written + docs_deleted so the
+    // assertion fails if the toast reads seats_matched instead.
     backfillEqPresidentAccessMock.mockResolvedValue({
       ok: true,
-      seats_matched: 5,
+      seats_matched: 7,
       docs_written: 2,
       docs_deleted: 3,
     });
