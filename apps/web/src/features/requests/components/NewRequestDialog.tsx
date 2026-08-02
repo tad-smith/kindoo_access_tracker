@@ -43,7 +43,11 @@ export function NewRequestDialog({ open, onOpenChange, scope }: NewRequestDialog
       open={open}
       onOpenChange={onOpenChange}
       title="New Request"
-      description="Submit a manual or temporary access request."
+      description={
+        limited
+          ? 'Submit a temporary access request.'
+          : 'Submit a manual or temporary access request.'
+      }
     >
       {isLoading ? (
         <LoadingSpinner variant="block" />

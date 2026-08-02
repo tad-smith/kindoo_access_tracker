@@ -458,10 +458,23 @@ describe('canRemoveSeat — per-row Remove affordance gate', () => {
     );
   });
 
-  it('manager-only (no stake / no ward claim): never removable', () => {
+  it('manager-only (no stake / no ward claim): removable in any scope — symmetric with Edit', () => {
     const principal = makePrincipal({ managerStakes: [STAKE_ID] });
     expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
-      false,
+      true,
+    );
+  });
+
+  // A manager is never minted `limited` (an active kindooManagers row
+  // short-circuits the claim), so the D24 temp-only narrowing must not
+  // reach them even if a limited grant sits alongside the manager row.
+  it('manager who also carries a limited stake: still removable on a manual seat', () => {
+    const principal = makePrincipal({
+      managerStakes: [STAKE_ID],
+      limitedStakes: [],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
+      true,
     );
   });
 
