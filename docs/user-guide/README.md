@@ -57,6 +57,7 @@ captured manually.
 - Fig 2.1 — Sign-in page (Google button above the email link form)
 - Fig 4.1 — A ward roster with utilization bar + New Request button
 - Fig 5.1 — The New Request form (modal)
+- Fig 6.1 — The New Request form as a **limited** user sees it: Temporary as the only request type, the 90-day note above the dates, and the read-only "Building:" row in place of the buildings checklist (**placeholder** — needs capturing)
 - Fig 9.1 — My Requests with mixed statuses + Cancel
 
 **kindoo-managers**
