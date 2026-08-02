@@ -28,6 +28,7 @@ function makePrincipal(overrides: Partial<Principal> = {}): Principal {
     managerStakes: ['csnorth'],
     stakeMemberStakes: [],
     bishopricWards: {},
+    limitedStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
     ...overrides,
