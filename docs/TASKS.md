@@ -7,15 +7,17 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-72] Consumer updates for stake-gated Elders Quorum President app access
-Status: in progress
+Status: done (2026-08-02 — PR #241; architecture decision D23)
 Owner: @backend-engineer / @web-engineer / @extension-engineer
 Phase: cross-cutting
 
-`packages/shared` gained the opt-in stake flag `eq_president_app_access` (absent ⇒ off), an optional `AppAccessOptions` trailing param on `appAccessCallingsForScope` / `filterAppAccessCallings`, and IO types for a new `backfillEqPresidentAccess` callable. Existing call sites compile unchanged, so each consumer must thread the flag through deliberately:
+`packages/shared` gained the opt-in stake flag `eq_president_app_access` (absent ⇒ off), an optional `AppAccessOptions` trailing param on `appAccessCallingsForScope` / `filterAppAccessCallings`, and IO types for a new `backfillEqPresidentAccess` callable. Existing call sites compile unchanged, so each consumer had to thread the flag through deliberately. All three landed in PR #241:
 
-- **functions** — pass the stake's flag into `syncApplyFix`'s app-access filtering; implement the `backfillEqPresidentAccess` callable (grant/revoke sweep over auto ward-scope seats) against the shipped IO types.
-- **apps/web** — expose the toggle on the Config tab and in the bootstrap wizard; thread the flag into client-side app-access filtering.
-- **extension** — thread the flag through the parser / detector tiebreak so drift rows agree with the SBA side.
+- **functions** — `syncApplyFix` reads the stake doc once per invocation and threads `AppAccessOptions` into `applyKindooOnly` / `applyCallingsMismatch` / `applyTypeMismatch` / `applyKindooUnparseable`; `backfillEqPresidentAccess` implements the grant/revoke sweep over auto ward-scope seats; `createStake` seeds `eq_president_app_access: false`.
+- **apps/web** — the switch ships on the Configuration → Config tab (with the flip-triggered backfill dialog) and on the bootstrap wizard's Step 1 (no dialog). No client-side app-access filtering existed to thread the flag into — the web reads `access` docs the server derives, so there was no second call site.
+- **extension** — the flag threads through `pickPrimarySegment` / `pickSegmentForSite` (parser) and `pickSegmentForSite` / `buildKindooBlock` (detector), so the primary-segment tiebreak agrees with the server.
+
+See `spec.md` §8, `architecture.md` D23, and `docs/changelog/eq-president-app-access.md`.
 
 ## [T-71] Organizations v1 deferrals — per-org pending bars + duplicate-grant inline edit
 Status: open
