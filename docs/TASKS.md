@@ -7,7 +7,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
-Status: done (2026-08-02 — PR #243)
+Status: done (2026-08-02 — PR #245)
 Owner: @infra-engineer
 Phase: cross-cutting
 
