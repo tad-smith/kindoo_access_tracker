@@ -8,6 +8,7 @@ export { removeSeatOnRequestComplete } from './triggers/removeSeatOnRequestCompl
 export { pushOnRequestSubmit } from './triggers/pushOnRequestSubmit.js';
 export { notifyOnRequestWrite } from './triggers/notifyOnRequestWrite.js';
 export { notifyOnOverCap } from './triggers/notifyOnOverCap.js';
+export { notifyOnAccessGranted } from './triggers/notifyOnAccessGranted.js';
 
 export {
   auditAccessWrites,

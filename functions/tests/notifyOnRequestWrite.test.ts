@@ -364,6 +364,20 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls[0]!.replyTo).toBe('clerk@example.org');
   });
 
+  // The override is stake-wide, not welcome-email-specific: every email
+  // this stake sends links the override host.
+  it('web_base_url_override rewrites the link in the request emails too', async () => {
+    await seedStake({ web_base_url_override: 'https://kindoo.csnorth.org/' });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-override' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toContain('Review the queue: https://kindoo.csnorth.org/manager/queue');
+  });
+
   it('omits replyTo when notifications_reply_to is unset/blank', async () => {
     await seedStake({ notifications_reply_to: '   ' });
     await seedManager('alice@gmail.com', true);
