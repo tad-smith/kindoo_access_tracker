@@ -143,12 +143,15 @@ try {
     console.log(`  ${name.padEnd(28)} ${version ?? '(absent)'}`);
   }
 
+  // Always label the target repo-relative — pnpm runs this with cwd set to
+  // functions/, so a cwd-relative path reads wrong from the repo root.
+  const packageCount = Object.keys(lock.packages).length - 1;
   if (dryRun) {
-    console.log(`\n[dry-run] not writing ${path.relative(process.cwd(), DEPLOY_LOCK_PATH)}`);
+    console.log('\n[dry-run] not writing functions/deploy-lock/package-lock.json');
   } else {
     await fs.mkdir(DEPLOY_LOCK_DIR, { recursive: true });
     await fs.copyFile(path.join(workDir, 'package-lock.json'), DEPLOY_LOCK_PATH);
-    console.log(`\nWrote functions/deploy-lock/package-lock.json (${Object.keys(lock.packages).length - 1} packages).`);
+    console.log(`\nWrote functions/deploy-lock/package-lock.json (${packageCount} packages).`);
     console.log('Commit it alongside the functions/package.json change that prompted this run.');
   }
 } finally {
