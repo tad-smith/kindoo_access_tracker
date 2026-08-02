@@ -98,10 +98,53 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    - Typechecks
    - Builds web + functions
    - Deploys Hosting + Functions + Firestore (rules + indexes)
+   - Verifies the deploy actually landed (step 3 below)
 
    Expected end state: the script exits 0 and prints `=== deploy-staging.sh complete ===`.
 
-3. **Verify the staging URL.**
+3. **Read the post-deploy verification block.**
+
+   The script does not stop at `firebase deploy`. `firebase deploy` exiting 0 only means the API accepted the upload — it does **not** mean the functions are reachable. Step 6 of the script probes every deployed callable unauthenticated and compares the deployed function set against the source exports. Full rationale, including the incident that motivated it, is in the header of `infra/scripts/lib/verify-deploy.sh`.
+
+   Expected output (names and counts will differ as the function surface changes):
+
+   ```
+   === post-deploy verification — staging ===
+       region:    us-central1
+       baseline:  syncApplyFix
+       exports:   23 (source: functions/src/index.ts)
+       callables: 5
+       project:   kindoo-staging
+
+     calibrated on 'syncApplyFix': HTTP 401, signature '401:UNAUTHENTICATED'.
+     Any callable answering with that signature is healthy — it ran our code
+     and rejected the anonymous call itself.
+
+     FUNCTION                           HTTP   RESULT
+     syncApplyFix                       401    healthy (baseline)
+     backfillKindooSiteId               401    healthy
+     createStake                        401    healthy
+     getMyPendingRequests               401    healthy
+     markRequestComplete                401    healthy
+
+     deployed set matches functions/src/index.ts (23 functions).
+
+   === post-deploy verification PASSED ===
+   ```
+
+   Every row must read `healthy`. Any `FAIL —` row exits the script non-zero and prints a remediation for that specific failure; see "Post-deploy verification failures" under Troubleshooting.
+
+   The exact HTTP status and signature are **not** fixed values — the check calibrates on a known-good long-existing callable (`syncApplyFix`) in the same run and compares everything else to it, so it survives Firebase changing its response format. Do not "fix" a changed baseline number; only a mismatch between callables matters.
+
+   To re-run just this check later, without deploying:
+
+   ```bash
+   bash infra/scripts/lib/verify-deploy.sh staging
+   ```
+
+   To deploy without it — a knowingly-partial state, a deliberately broken callable, no network — pass `--skip-verify`. The script then prints `The deploy is UNVERIFIED.` and exits 0. Prefer fixing the failure.
+
+4. **Verify the staging URL.**
 
    - Open `https://staging.stakebuildingaccess.org` (or `https://kindoo-staging.web.app`) in a browser. Expected: the SPA loads.
    - Open the browser console. Expected: no red errors.
@@ -145,7 +188,19 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    pnpm deploy:prod
    ```
 
-4. **Verify the prod URL.**
+4. **Read the post-deploy verification block.**
+
+   Identical to the staging step above, targeting `kindoo-prod`. Every callable row must read `healthy` and the deployed set must match `functions/src/index.ts`. A failure exits the script non-zero and prints `DEPLOYED, BUT VERIFICATION FAILED` — production is live and broken at that point, so either fix forward using the printed remediation or roll back per the Rollback section.
+
+   Re-run on its own with:
+
+   ```bash
+   bash infra/scripts/lib/verify-deploy.sh prod
+   ```
+
+   `--skip-verify` exists on the prod script too, but on prod an unverified deploy is a deploy you have no evidence works. Use it only when you already know why the check would fail.
+
+5. **Verify the prod URL.**
 
    - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
    - **Verify the Hosting cache headers** with the curl block from the staging step, substituting `host=stakebuildingaccess.org`. Same expected output: `no-cache, max-age=0, must-revalidate` for the shell + SW scripts, `public, max-age=31536000, immutable` for `/assets/…`.
@@ -169,6 +224,102 @@ Open TODO: walk and validate the rollback procedure end-to-end against staging, 
    ```
 
 See `infra/runbooks/restore.md` for data restore procedures (separate concern from code rollback).
+
+## Post-deploy verification failures
+
+Each of these prints its own remediation inline; this section is the background on why the symptom means what it means. All four are real failure modes that have shipped from this repo's deploy scripts while `firebase deploy` reported success.
+
+### `FAIL — iam-missing` (HTTP 403)
+
+Cloud Run rejected the request at the edge, before the container ran. The `allUsers` → `roles/run.invoker` binding is missing on that service.
+
+Firebase grants that binding only when it **creates** the Cloud Run service. If an earlier failed deploy left an empty service shell behind, the next deploy takes the **update** path instead of create — the function then deploys "successfully", reports healthy, and is still unreachable to every caller. In a browser this surfaces as a **CORS error**, not a 403, because a Cloud Run 403 on the preflight carries no `Access-Control-Allow-Origin` header. That is a deeply misleading symptom; do not go looking for a CORS config.
+
+Fix (the service name is the function name **lowercased**):
+
+```bash
+gcloud run services add-iam-policy-binding <lowercased-function-name> \
+  --region us-central1 --project kindoo-staging \
+  --member=allUsers --role=roles/run.invoker
+```
+
+Then re-run `bash infra/scripts/lib/verify-deploy.sh staging` and confirm the row flips to `healthy`.
+
+### `FAIL — crashing` (HTTP 5xx)
+
+The container is failing to start or crashing on request. The known cause is a runtime dependency missing from the generated `functions/lib/package.json`: `firebase deploy` uploads only `functions/lib`, and Cloud Build then runs its own `npm install` against that generated manifest with no lockfile. An optional peer dependency npm decides to skip takes every function down at container start.
+
+```bash
+gcloud run services logs read <lowercased-function-name> \
+  --region us-central1 --project kindoo-staging --limit 50
+```
+
+Look for `Cannot find module` at the top of the container log. The fix is to declare the module explicitly in `functions/package.json` dependencies (that workspace is `backend-engineer`'s — file it in `docs/TASKS.md`). The systemic fix, pinning the deploy artifact's dependency tree, is tracked as **T-73**.
+
+### `FAIL — not-deployed` (HTTP 404)
+
+Nothing is serving at that URL. Either the function was never deployed, or it landed under a different name, or it is in a region other than `us-central1`. Check `firebase functions:list --project staging` and redeploy the single function.
+
+### `ERROR: exported from source but NOT deployed`
+
+The deployed function set is missing something `functions/src/index.ts` exports. Almost always a wrong-branch or stale-build deploy: the checkout that produced `functions/lib` did not contain those functions. Confirm `git rev-parse HEAD` is the commit you meant to ship, then rebuild and redeploy.
+
+The mirror case — `warning: deployed but not exported from source` — is only a warning. It usually means a function was removed from source but its Cloud Run service has not been deleted yet.
+
+### `BASELINE CALIBRATION FAILED`
+
+The check probes a known-good long-existing callable first and calibrates on its response; everything else is compared to that. This message means the baseline itself did not answer like a healthy callable, so there was nothing trustworthy to compare against.
+
+Two possibilities, and the message prints the remediation for the first:
+
+1. The baseline is genuinely broken — treat it as whichever failure class its status code indicates, above. If **every** function is down, suspect the container-start mode.
+2. Firebase changed the callable protocol's error shape. In that case update `vd_baseline_is_sane` in `infra/scripts/lib/verify-deploy.sh` and re-run the unit tests.
+
+To calibrate on a different callable instead: `VD_BASELINE=markRequestComplete bash infra/scripts/lib/verify-deploy.sh staging`.
+
+## Manual verification of the deploy scripts
+
+Run these after any change to `infra/scripts/deploy-*.sh` or `infra/scripts/lib/verify-deploy.sh`. None of them touch a Firebase project.
+
+1. **Shell syntax on every script.**
+
+   ```bash
+   bash -n infra/scripts/deploy-staging.sh
+   bash -n infra/scripts/deploy-prod.sh
+   bash -n infra/scripts/lib/verify-deploy.sh
+   bash -n infra/scripts/tests/verify-deploy.test.sh
+   ```
+
+   Expected: no output, exit 0 for each.
+
+2. **Verification-logic unit tests.**
+
+   ```bash
+   bash infra/scripts/tests/verify-deploy.test.sh
+   ```
+
+   Expected last line: `=== verify-deploy.test.sh: <N> passed, 0 failed ===`, exit 0. These cover the response classifier against synthetic responses for all four failure modes, the export parser against both fixtures and the live `functions/src/index.ts`, and the whole verification run end-to-end with the network stubbed out. No emulators, no credentials, no network.
+
+3. **Dry-run both deploy scripts.**
+
+   ```bash
+   bash infra/scripts/deploy-staging.sh --dry-run
+   bash infra/scripts/deploy-prod.sh --dry-run
+   ```
+
+   Expected: every command echoed with a `[dry-run]` prefix and nothing executed. The verification block must list the callable URLs it *would* probe and end with `[dry-run] nothing probed.` If it probes anything in dry-run, that is a bug — stop.
+
+4. **Dry-run the flag combinations that change the verification path.**
+
+   ```bash
+   bash infra/scripts/deploy-staging.sh --web-only --dry-run
+   bash infra/scripts/deploy-staging.sh --skip-verify --dry-run
+   bash infra/scripts/deploy-prod.sh --skip-verify --dry-run
+   ```
+
+   Expected, respectively: `[skip] post-deploy verification (--web-only: no functions deployed)`, `The deploy is UNVERIFIED.`, `PRODUCTION IS UNVERIFIED.`
+
+5. **Live path.** The classifier's real-world behaviour can only be confirmed by an actual deploy — the calibration depends on what Firebase actually returns for an unauthenticated callable POST. On the first deploy after any change here, read the verification block carefully rather than skimming for `PASSED`, and confirm the baseline row reports a 4xx with a `UNAUTHENTICATED`-shaped signature.
 
 ## Troubleshooting
 

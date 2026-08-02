@@ -22,7 +22,15 @@ pnpm deploy:staging      # invokes infra/scripts/deploy-staging.sh
 pnpm deploy:prod         # invokes infra/scripts/deploy-prod.sh
 ```
 
-Each script stamps version, typechecks, runs tests, builds web + functions, then runs `firebase deploy` for Hosting + Functions + Firestore (rules + indexes). Both support `--dry-run`.
+Each script stamps version, typechecks, builds web + functions, runs `firebase deploy` for Hosting + Functions + Firestore (rules + indexes), then verifies the deploy actually landed. Both support `--dry-run` and `--skip-verify`.
+
+The verification step exists because `firebase deploy` exiting 0 only means the API accepted the upload. It probes every deployed callable unauthenticated and compares the deployed function set against `functions/src/index.ts`, so an unreachable-but-"successfully-deployed" function fails the deploy instead of being discovered by a user clicking a button. Rationale and the incident that motivated it: the header of `infra/scripts/lib/verify-deploy.sh`.
+
+Run it on its own, without deploying:
+
+```bash
+bash infra/scripts/lib/verify-deploy.sh staging     # or: prod
+```
 
 Full pre-flight, verification, and rollback steps: `infra/runbooks/deploy.md`.
 
@@ -36,7 +44,11 @@ infra/
 │   ├── ensure-version-gen.js         # seeds gitignored version.gen.ts placeholders on `pnpm install`
 │   ├── stamp-version.js              # writes apps/web/src/version.gen.ts + functions/src/version.gen.ts
 │   ├── generate-icons.mjs            # PWA icon generation from icon-sources/
-│   └── icon-sources/                 # source SVGs for PWA icons
+│   ├── icon-sources/                 # source SVGs for PWA icons
+│   ├── lib/
+│   │   └── verify-deploy.sh          # post-deploy verification, shared by both deploy scripts
+│   └── tests/
+│       └── verify-deploy.test.sh     # offline unit tests for verify-deploy.sh (no network, no creds)
 ├── ci/
 │   └── workflows/
 │       └── test.yml                  # source-of-truth for .github/workflows/test.yml
