@@ -40,7 +40,13 @@
 // Audit + claims are automatic. The parameterized `auditTrigger` fans
 // `create_access` / `update_access` / `delete_access` rows from the
 // resulting writes, and `syncAccessClaims` re-mints custom claims +
-// revokes refresh tokens. We write neither here.
+// revokes refresh tokens. We write neither here. One wrinkle on the
+// revoke side: the audit trigger reads the BEFORE snapshot on a delete,
+// so the branch that drops an emptied access doc stamps the manager
+// onto `lastActor` in its own committed transaction first — otherwise
+// `delete_access` would name whatever actor the doc happened to carry
+// (typically a Sync actor) instead of the manager who confirmed this
+// backfill. See the two-write note on that branch.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -96,6 +102,18 @@ function pickMin(a: number | null, b: number | null): number | null {
   return a < b ? a : b;
 }
 
+/** True iff any scope still carries at least one manual grant. */
+function hasManualGrants(access: Access): boolean {
+  return Object.values(access.manual_grants ?? {}).some((arr) => arr && arr.length > 0);
+}
+
+/**
+ * Per-seat result. `delete-pending` is internal: the first transaction
+ * stamped the actor and handed off to the second, which resolves to one
+ * of the other three.
+ */
+type Outcome = 'skipped' | 'written' | 'deleted' | 'delete-pending';
+
 /**
  * Run the reconcile over one stake. Exported so tests can drive it
  * without the callable wrapper; the callable owns auth + the
@@ -131,7 +149,7 @@ export async function backfillEqPresidentAccessForStake(
 
   for (const seat of matched) {
     const accessRef = db.doc(`stakes/${stakeId}/access/${seat.member_canonical}`);
-    const outcome = await db.runTransaction<'skipped' | 'written' | 'deleted'>(async (tx) => {
+    let outcome = await db.runTransaction<Outcome>(async (tx) => {
       const snap = await tx.get(accessRef);
       const access = snap.exists ? (snap.data() as Access) : undefined;
       const prior = access?.importer_callings?.[seat.scope] ?? [];
@@ -183,12 +201,26 @@ export async function backfillEqPresidentAccessForStake(
       if (next.length === prior.length) return 'skipped';
 
       const finalImporter = rebuildImporter(access.importer_callings, seat.scope, next);
-      const hasManual = Object.values(access.manual_grants ?? {}).some(
-        (arr) => arr && arr.length > 0,
-      );
-      if (Object.keys(finalImporter).length === 0 && !hasManual) {
-        tx.delete(accessRef);
-        return 'deleted';
+      if (Object.keys(finalImporter).length === 0 && !hasManualGrants(access)) {
+        // Nothing left to keep the doc alive, so it gets dropped — but
+        // the delete has to be a SEPARATE committed write. The audit
+        // trigger reads the BEFORE snapshot on a delete, and a stamp +
+        // delete inside one transaction coalesces to a bare delete: the
+        // stamp never lands, and `delete_access` inherits whatever actor
+        // the doc already carried instead of the confirming manager.
+        // Same split, same reason, as `syncApplyFix`'s
+        // `applySbaOnlyRemove`.
+        //
+        // Bookkeeping-only, so `isNoOpUpdate` suppresses an audit row for
+        // it — the pair still fans exactly one `delete_access`. It also
+        // keeps the seat's revoke all-or-nothing: a crash before the
+        // second write leaves the calling in place for a clean re-run.
+        tx.update(accessRef, {
+          last_modified_at: now,
+          last_modified_by: actor,
+          lastActor: actor,
+        });
+        return 'delete-pending';
       }
 
       // MIN canonical order across everything still in the map; `null`
@@ -204,6 +236,39 @@ export async function backfillEqPresidentAccessForStake(
       });
       return 'written';
     });
+
+    if (outcome === 'delete-pending') {
+      // Second committed write. It re-reads instead of trusting the
+      // first transaction's view: a Sync write landing between the two
+      // commits can re-add importer callings or a manual grant, and
+      // deleting on the strength of the stale read would destroy access
+      // the stake still wants. When that happens we fall through to the
+      // ordinary revoke update — the same write this seat would have
+      // taken had the concurrent change arrived a moment earlier — so
+      // the calling is still reaped and `docs_written` still counts it.
+      outcome = await db.runTransaction<Outcome>(async (tx) => {
+        const snap = await tx.get(accessRef);
+        // Deleted concurrently; the intended end state already holds.
+        if (!snap.exists) return 'skipped';
+        const fresh = snap.data() as Access;
+        const freshNext = (fresh.importer_callings?.[seat.scope] ?? []).filter(
+          (c) => !isEqPresident(c),
+        );
+        const freshImporter = rebuildImporter(fresh.importer_callings, seat.scope, freshNext);
+        if (Object.keys(freshImporter).length === 0 && !hasManualGrants(fresh)) {
+          tx.delete(accessRef);
+          return 'deleted';
+        }
+        tx.update(accessRef, {
+          importer_callings: freshImporter,
+          sort_order: seatCallingOrder(Object.values(freshImporter).flat()),
+          last_modified_at: FieldValue.serverTimestamp(),
+          last_modified_by: actor,
+          lastActor: actor,
+        });
+        return 'written';
+      });
+    }
 
     if (outcome === 'written') out.docs_written += 1;
     else if (outcome === 'deleted') out.docs_deleted += 1;
