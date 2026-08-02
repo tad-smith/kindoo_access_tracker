@@ -950,6 +950,16 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.seat_member_canonical)).data.type == 'temp';
       }
 
+      // Same gate for `edit_temp`, but keyed on `member_canonical` —
+      // edit requests target that seat, removals target
+      // `seat_member_canonical`.
+      function limitedEditTargetIsTemp(sid, data) {
+        return 'member_canonical' in data
+          && data.member_canonical is string
+          && data.member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.member_canonical)).data.type == 'temp';
+      }
+
       // ----- Requests -----
       match /requests/{requestId} {
         allow read: if isAuthed() && (
@@ -994,6 +1004,8 @@ service cloud.firestore {
                  request.resource.data.type in ['add_temp', 'edit_temp', 'remove']
               && (request.resource.data.type != 'remove'
                   || limitedRemoveTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type != 'edit_temp'
+                  || limitedEditTargetIsTemp(stakeId, request.resource.data))
               && (request.resource.data.type == 'remove'
                   || (
                        tempWindowWithin90Days(request.resource.data)
@@ -1046,7 +1058,7 @@ service cloud.firestore {
 - **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
 - **Requests-create role-for-scope gate** — the submit predicate admits any of three branches: `isManager(stakeId)` (every scope, every type, no `access` row required), `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. The SPA's `isScopeAllowed` / `allowedScopesFor` (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer. Two properties are load-bearing. **(a) Manager authority is blanket.** It is not intersected with the caller's claim-derived scopes, so a manager who also holds a Bishopric claim may submit for wards outside it. **(b) Platform superadmin status alone grants nothing** — only the per-stake manager claim does, which is a deliberate divergence from the nav model's superadmin-as-manager treatment. The manager branch widens WHO may create, never WHAT the payload must carry: every other create conjunct — non-empty `member_name` for add types, non-empty `building_names` for stake-scope add/edit types, the required `comment` on edit types, and Policy 1's `edit_auto`-not-at-stake — still binds a manager submit. This reverses the B-3 / T-36 hardening (PR #52) and subsumes the `add_manual` stake carve-out it had been punctured with (PR #223). See `architecture.md` D24 and PR #240.
 - **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D24).
-- **Requests-create limited-access clause** — the last conjunct of the create predicate narrows the submit surface for a caller carrying `stakes[stakeId].limited` (§2, D25): `type in ['add_temp','edit_temp','remove']`; `remove` only against a seat whose `type == 'temp'`; temp windows ≤ 90 days end-to-start; and ward-scope temp requests locked to exactly that ward's own building. Stake scope keeps the free building choice — there is no single ward to lock to. Three properties are load-bearing. **(a) It is a narrowing, not a branch.** The clause is `&&`-ed onto the predicate, so a limited caller must still satisfy the role-for-scope gate above; the flag authorises nothing by itself. **(b) Full users pay nothing.** `!isLimited(stakeId)` short-circuits the whole clause, so neither the ward/building reads nor the seat read execute for them. **(c) Position matters.** It is last so the ISO-shape and `start_date <= end_date` gates have already run, which is what makes the unguarded `split()` / `int()` inside `tempWindowWithin90Days` safe. Enforcement is **creation-time only** — deliberately no `markRequestComplete` third layer, unlike Policy 1 (`spec.md` §6.1). The ward lock resolves the building id-first with a raw-name fallback and costs at most 3 of the 10 document accesses a single-document request allows. The SPA mirrors every clause (`scopeOptions.ts`, `schemas.ts`, `NewRequestForm`, `EditSeatDialog`) and is stricter in one place — `canRemoveSeat` also requires the specific grant row to be temp, which a rules `get()` cannot cheaply prove. See `architecture.md` D25 and `spec.md` §4 / §6.1.
+- **Requests-create limited-access clause** — the last conjunct of the create predicate narrows the submit surface for a caller carrying `stakes[stakeId].limited` (§2, D25): `type in ['add_temp','edit_temp','remove']`; `remove` and `edit_temp` each only against a seat whose `type == 'temp'` (keyed on `seat_member_canonical` and `member_canonical` respectively — the two request families identify their target seat differently); temp windows ≤ 90 days end-to-start; and ward-scope temp requests locked to exactly that ward's own building. Stake scope keeps the free building choice — there is no single ward to lock to. Three properties are load-bearing. **(a) It is a narrowing, not a branch.** The clause is `&&`-ed onto the predicate, so a limited caller must still satisfy the role-for-scope gate above; the flag authorises nothing by itself. **(b) Full users pay nothing.** `!isLimited(stakeId)` short-circuits the whole clause, so neither the ward/building reads nor the seat read execute for them. **(c) Position matters.** It is last so the ISO-shape and `start_date <= end_date` gates have already run, which is what makes the unguarded `split()` / `int()` inside `tempWindowWithin90Days` safe. Enforcement is **creation-time only** — deliberately no `markRequestComplete` third layer, unlike Policy 1 (`spec.md` §6.1). The ward lock resolves the building id-first with a raw-name fallback; the whole clause costs at most 4 of the 10 document accesses a single-document request allows (ward `get`, building `exists`, building `get`, plus the seat `get` on a ward-scope `edit_temp`). The SPA mirrors every clause (`scopeOptions.ts`, `schemas.ts`, `NewRequestForm`, `EditSeatDialog`) and is stricter in one place — `canRemoveSeat` also requires the specific grant row to be temp, which a rules `get()` cannot cheaply prove. See `architecture.md` D25 and `spec.md` §4 / §6.1.
 - **No `access` rules change was needed for the tier marker** — `manual_grants` is already in the access `update` `affectedKeys()` allowlist and the `create` predicate only counts entries, so a grant object carrying an extra `level` key rides the existing rule (§4.5).
 
 #### Bootstrap-admin gate
