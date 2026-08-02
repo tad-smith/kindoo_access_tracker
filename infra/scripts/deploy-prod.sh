@@ -7,9 +7,17 @@
 #   Same as deploy-staging.sh, but targets the `prod` alias defined in
 #   .firebaserc. Both scripts now share the same `guard_main_clean`
 #   pre-flight (branch == main, local == origin/main, working tree
-#   clean). Additional prod-only gates are still TODOs until B1 lands:
+#   clean) and the same post-deploy verification
+#   (infra/scripts/lib/verify-deploy.sh). Additional prod-only gates are
+#   still TODOs until B1 lands:
 #     - explicit operator confirmation (typed yes)
 #     - staging deploy has already passed for this commit
+#
+#   After `firebase deploy` returns, the script probes every deployed
+#   callable unauthenticated and compares the deployed function set
+#   against the source exports. `firebase deploy` reporting success does
+#   NOT mean the functions are reachable; see the incident writeup in
+#   infra/scripts/lib/verify-deploy.sh.
 #
 # Steps were: stamp / typecheck / test / build-web / build-functions /
 # firebase deploy. Step 3 (test) was removed because the local script
@@ -53,6 +61,17 @@
 #   bash infra/scripts/deploy-prod.sh --dry-run         # echo every
 #                                                       # command
 #                                                       # without running
+#   bash infra/scripts/deploy-prod.sh --skip-verify     # deploy, then skip
+#                                                       # the post-deploy
+#                                                       # verification.
+#                                                       # Escape hatch only —
+#                                                       # on prod, an
+#                                                       # unverified deploy is
+#                                                       # a deploy you have no
+#                                                       # evidence works.
+#
+# Post-deploy verification can also be run on its own, without deploying:
+#   bash infra/scripts/lib/verify-deploy.sh prod
 #
 # `--from-pr` is intentionally staging-only (deploy-staging.sh).
 # Production must always ship from `main`; testing a PR on prod would
@@ -67,14 +86,18 @@
 set -euo pipefail
 
 DRY_RUN=0
+SKIP_VERIFY=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run)
       DRY_RUN=1
       ;;
+    --skip-verify)
+      SKIP_VERIFY=1
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [--dry-run]" >&2
+      echo "Usage: $0 [--dry-run] [--skip-verify]" >&2
       exit 2
       ;;
   esac
@@ -96,6 +119,7 @@ run() {
 echo "=== deploy-prod.sh — target: kindoo-prod (alias: prod) ==="
 echo "    repo root: $REPO_ROOT"
 echo "    dry run:   $DRY_RUN"
+echo "    verify:    $((1 - SKIP_VERIFY))"
 echo ""
 
 # TODO (post-B1, pre-Phase-11): require explicit confirmation before
@@ -190,6 +214,33 @@ run "pnpm --filter ./functions build"
 
 # Step 5: deploy via Firebase CLI.
 run "firebase deploy --project prod --only hosting,functions,firestore"
+
+# Step 6: post-deploy verification.
+#
+# `firebase deploy` exiting 0 means the API accepted our requests. It does
+# NOT mean the functions are reachable: a function can deploy "successfully"
+# and still be 403'd at the Cloud Run edge (missing allUsers invoker
+# binding), or 500 on every request (container fails to start), or simply
+# not be there (deployed from a checkout that lacks it). All three have
+# shipped from the staging twin of this script. See
+# infra/scripts/lib/verify-deploy.sh.
+if [[ "$SKIP_VERIFY" -eq 1 ]]; then
+  echo ""
+  echo "[skip] post-deploy verification (--skip-verify)"
+  echo "       PRODUCTION IS UNVERIFIED. To check it now:"
+  echo "         bash infra/scripts/lib/verify-deploy.sh prod"
+else
+  # shellcheck source=lib/verify-deploy.sh
+  source "$SCRIPT_DIR/lib/verify-deploy.sh"
+  if ! vd_verify_deploy prod "$DRY_RUN"; then
+    echo ""
+    echo "=== deploy-prod.sh: DEPLOYED, BUT VERIFICATION FAILED ===" >&2
+    echo "The upload succeeded; the functions above are not usable in" >&2
+    echo "PRODUCTION right now. Fix forward, or roll back per" >&2
+    echo "infra/runbooks/deploy.md § Rollback." >&2
+    exit 1
+  fi
+fi
 
 echo ""
 echo "=== deploy-prod.sh complete ==="

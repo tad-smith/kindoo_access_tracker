@@ -12,6 +12,13 @@
 #   4. Builds the Cloud Functions (`pnpm --filter ./functions build`).
 #   5. Deploys Hosting + Functions + Firestore (rules + indexes) via the
 #      Firebase CLI, targeting the `staging` alias defined in .firebaserc.
+#   6. Verifies the deploy actually landed: probes every deployed callable
+#      unauthenticated and compares the deployed function set against the
+#      source exports. See infra/scripts/lib/verify-deploy.sh for the full
+#      writeup — `firebase deploy` reporting success does NOT mean the
+#      functions are reachable, and we have shipped a broken deploy that
+#      way. Skipped under --web-only (no functions were deployed) and
+#      under --skip-verify.
 #
 # Steps were: stamp / typecheck / test / build-web / build-functions /
 # firebase deploy. Step 3 (test) was removed because the local script
@@ -74,16 +81,35 @@
 #                                                           # still runs (web bundle
 #                                                           # needs the version).
 #   bash infra/scripts/deploy-staging.sh --from-pr 26 --web-only
+#   bash infra/scripts/deploy-staging.sh --skip-verify        # deploy, then
+#                                                             # skip step 6's
+#                                                             # post-deploy
+#                                                             # verification.
+#                                                             # Escape hatch for
+#                                                             # a knowingly
+#                                                             # partial state
+#                                                             # (mid-migration,
+#                                                             # offline, a
+#                                                             # deliberately
+#                                                             # broken callable).
+#                                                             # Prefer fixing the
+#                                                             # failure.
 #
 # `--web-only` composes with `--from-pr` in either order. It is
 # intentionally staging-only — production must always ship the full
 # stack so hosting + functions + rules stay in lockstep.
+#
+# Post-deploy verification can also be run on its own, without deploying:
+#   bash infra/scripts/lib/verify-deploy.sh staging
 
 set -euo pipefail
 
 DRY_RUN=0
 FROM_PR=''
 WEB_ONLY=0
+SKIP_VERIFY=0
+
+USAGE="Usage: $0 [--dry-run] [--from-pr <number>] [--web-only] [--skip-verify]"
 
 # Two-token flag parsing: --from-pr <number>.
 while [[ $# -gt 0 ]]; do
@@ -92,10 +118,14 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=1
       shift
       ;;
+    --skip-verify)
+      SKIP_VERIFY=1
+      shift
+      ;;
     --from-pr)
       if [[ $# -lt 2 ]]; then
         echo "error: --from-pr requires a PR number argument." >&2
-        echo "Usage: $0 [--dry-run] [--from-pr <number>] [--web-only]" >&2
+        echo "$USAGE" >&2
         exit 2
       fi
       FROM_PR="$2"
@@ -107,7 +137,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      echo "Usage: $0 [--dry-run] [--from-pr <number>] [--web-only]" >&2
+      echo "$USAGE" >&2
       exit 2
       ;;
   esac
@@ -144,6 +174,7 @@ echo "    repo root: $REPO_ROOT"
 echo "    dry run:   $DRY_RUN"
 echo "    from PR:   ${FROM_PR:-<none>}"
 echo "    web-only:  $WEB_ONLY"
+echo "    verify:    $((1 - SKIP_VERIFY))"
 echo ""
 
 # Guard: deploys ship from `main`, full-stop.
@@ -350,6 +381,38 @@ if [[ "$WEB_ONLY" -eq 1 ]]; then
   run "firebase deploy --project staging --only hosting"
 else
   run "firebase deploy --project staging --only hosting,functions,firestore"
+fi
+
+# Step 6: post-deploy verification.
+#
+# `firebase deploy` exiting 0 means the API accepted our requests. It does
+# NOT mean the functions are reachable: a function can deploy "successfully"
+# and still be 403'd at the Cloud Run edge (missing allUsers invoker
+# binding), or 500 on every request (container fails to start), or simply
+# not be there (deployed from a checkout that lacks it). All three have
+# shipped from this script. See infra/scripts/lib/verify-deploy.sh.
+#
+# Skipped under --web-only: no functions were deployed, so there is nothing
+# new to verify and the currently-live functions are not this deploy's
+# concern.
+if [[ "$WEB_ONLY" -eq 1 ]]; then
+  echo ""
+  echo "[skip] post-deploy verification (--web-only: no functions deployed)"
+elif [[ "$SKIP_VERIFY" -eq 1 ]]; then
+  echo ""
+  echo "[skip] post-deploy verification (--skip-verify)"
+  echo "       The deploy is UNVERIFIED. To check it now:"
+  echo "         bash infra/scripts/lib/verify-deploy.sh staging"
+else
+  # shellcheck source=lib/verify-deploy.sh
+  source "$SCRIPT_DIR/lib/verify-deploy.sh"
+  if ! vd_verify_deploy staging "$DRY_RUN"; then
+    echo ""
+    echo "=== deploy-staging.sh: DEPLOYED, BUT VERIFICATION FAILED ===" >&2
+    echo "The upload succeeded; the functions above are not usable. Fix them" >&2
+    echo "before telling anyone staging is ready." >&2
+    exit 1
+  fi
 fi
 
 echo ""
