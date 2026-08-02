@@ -11,9 +11,10 @@
 //
 // Reads a deliberately minimal access-doc shape: presence of
 // `importer_callings` OR `manual_grants` with at least one non-empty
-// scope.
+// scope, plus each grant's access tier (D24 limited access).
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
+import { LIMITED_ACCESS_CALLINGS, isLimitedAccessCalling } from '@kindoo/shared';
 import { getDb } from './admin.js';
 import { getStakeIds } from './stakeIds.js';
 
@@ -70,47 +71,86 @@ export async function computeStakeClaims(stakeId: string, canonical: string): Pr
   const manager =
     managerSnap.exists && (managerSnap.data() as { active?: unknown } | undefined)?.active === true;
 
-  const { hasStake, wards } = scopesFromAccessDoc(
+  const { hasStake, wards, limited } = scopesFromAccessDoc(
     accessSnap.exists ? (accessSnap.data() as Record<string, unknown> | undefined) : undefined,
   );
 
-  return { manager, stake: hasStake, wards };
+  // `limited` is written present-and-true or omitted entirely — never
+  // `false`. `applyClaims`'s `claimsEqual` is a canonical-JSON compare,
+  // so emitting `limited: false` for every full user would read as a
+  // claim change on the next sync and revoke their refresh token for
+  // nothing. An active Kindoo Manager is never limited: the manager row
+  // is a full-trust role, and the rules' manager carve-outs assume it.
+  const block: StakeClaims = { manager, stake: hasStake, wards };
+  if (!manager && limited) block.limited = true;
+  return block;
 }
 
 /**
  * Walk an access doc's `importer_callings` + `manual_grants` maps and
  * compute (a) whether the user has any non-empty grant in scope
- * `'stake'`, and (b) the deduped sorted list of ward codes for which
- * the user has any non-empty grant in any other scope.
+ * `'stake'`, (b) the deduped sorted list of ward codes for which the
+ * user has any non-empty grant in any other scope, and (c) whether
+ * every one of those grants is limited-tier (D24).
+ *
+ * `limited` is true iff the user holds >=1 grant AND *every* grant
+ * across *all* scopes is limited — one full grant anywhere in the doc
+ * makes the whole stake block full. A grant counts as limited only on
+ * positive evidence: an importer calling listed in `limitedCallings`,
+ * or a manual grant object whose `level === 'limited'`. Everything else
+ * — a missing `level`, `'full'`, wrong casing, a null / string / array
+ * entry — counts as FULL. Garbage data must never be read as a
+ * restriction; the failure direction is toward more access, not less.
+ *
+ * `limitedCallings` is injectable so callers (and tests) can exercise
+ * the importer-limited path while the shipped
+ * {@link LIMITED_ACCESS_CALLINGS} set is still empty. It is the seam
+ * the Elders-Quorum-President follow-up flips.
  *
  * Tolerant of missing fields, partial shapes, and arrays of mixed
  * truthiness — the trigger should never reject inputs that are merely
  * "not yet filled in."
  */
-export function scopesFromAccessDoc(data: Record<string, unknown> | undefined): {
+export function scopesFromAccessDoc(
+  data: Record<string, unknown> | undefined,
+  limitedCallings: ReadonlySet<string> = LIMITED_ACCESS_CALLINGS,
+): {
   hasStake: boolean;
   wards: string[];
+  limited: boolean;
 } {
-  if (!data) return { hasStake: false, wards: [] };
+  if (!data) return { hasStake: false, wards: [], limited: false };
 
   const importer = isPlainObject(data['importer_callings']) ? data['importer_callings'] : {};
   const manual = isPlainObject(data['manual_grants']) ? data['manual_grants'] : {};
 
   const wardSet = new Set<string>();
   let hasStake = false;
+  let sawGrant = false;
+  let sawFullGrant = false;
 
   for (const [scope, value] of Object.entries(importer)) {
     if (!hasNonEmptyArray(value)) continue;
     if (scope === 'stake') hasStake = true;
     else wardSet.add(scope);
+    for (const calling of value) {
+      sawGrant = true;
+      if (typeof calling !== 'string' || !isLimitedAccessCalling(calling, limitedCallings)) {
+        sawFullGrant = true;
+      }
+    }
   }
   for (const [scope, value] of Object.entries(manual)) {
     if (!hasNonEmptyArray(value)) continue;
     if (scope === 'stake') hasStake = true;
     else wardSet.add(scope);
+    for (const grant of value) {
+      sawGrant = true;
+      if (!isPlainObject(grant) || grant['level'] !== 'limited') sawFullGrant = true;
+    }
   }
 
-  return { hasStake, wards: [...wardSet].sort() };
+  return { hasStake, wards: [...wardSet].sort(), limited: sawGrant && !sawFullGrant };
 }
 
 async function isPlatformSuperadmin(canonical: string): Promise<boolean> {
@@ -122,6 +162,10 @@ async function isPlatformSuperadmin(canonical: string): Promise<boolean> {
   return snap.exists;
 }
 
+// `limited` is deliberately not part of the emptiness test: it can only
+// be true when at least one non-empty grant array exists, which already
+// sets `stake` or a ward. A block that is empty by these three fields
+// can never carry `limited`.
 function isNonEmptyStakeClaims(s: StakeClaims): boolean {
   return s.manager || s.stake || s.wards.length > 0;
 }
@@ -130,6 +174,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function hasNonEmptyArray(v: unknown): boolean {
+function hasNonEmptyArray(v: unknown): v is unknown[] {
   return Array.isArray(v) && v.length > 0;
 }
