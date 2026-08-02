@@ -18,8 +18,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const setDocMock = vi.fn().mockResolvedValue(undefined);
 const updateDocMock = vi.fn().mockResolvedValue(undefined);
 const getDocMock = vi.fn();
+const deleteDocMock = vi.fn().mockResolvedValue(undefined);
 const serverTimestampMock = vi.fn(() => '__server_timestamp__');
 const arrayUnionMock = vi.fn((...values: unknown[]) => ({ __op: 'arrayUnion', values }));
+const arrayRemoveMock = vi.fn((...values: unknown[]) => ({ __op: 'arrayRemove', values }));
 
 vi.mock('firebase/firestore', async () => {
   const actual = await vi.importActual<object>('firebase/firestore');
@@ -28,7 +30,9 @@ vi.mock('firebase/firestore', async () => {
     setDoc: (...args: unknown[]) => setDocMock(...args),
     updateDoc: (...args: unknown[]) => updateDocMock(...args),
     getDoc: (...args: unknown[]) => getDocMock(...args),
+    deleteDoc: (...args: unknown[]) => deleteDocMock(...args),
     arrayUnion: (...args: unknown[]) => arrayUnionMock(...args),
+    arrayRemove: (...args: unknown[]) => arrayRemoveMock(...args),
     serverTimestamp: () => serverTimestampMock(),
   };
 });
@@ -60,7 +64,7 @@ vi.mock('../../../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
 }));
 
-import { useAddManualGrantMutation } from '../hooks';
+import { useAddManualGrantMutation, useDeleteManualGrantMutation } from '../hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
@@ -73,7 +77,9 @@ beforeEach(() => {
   setDocMock.mockClear();
   updateDocMock.mockClear();
   getDocMock.mockClear();
+  deleteDocMock.mockClear();
   arrayUnionMock.mockClear();
+  arrayRemoveMock.mockClear();
   serverTimestampMock.mockClear();
   getIdTokenResultSpy.mockClear();
   currentUserStub = {
@@ -104,6 +110,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Subject',
       scope: 'stake',
       reason: 'Visiting helper',
+      level: 'full',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     expect(getIdTokenResultSpy).toHaveBeenCalledWith(true);
@@ -117,6 +124,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Subject',
       scope: 'stake',
       reason: 'Visiting helper',
+      level: 'full',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [ref, body] = setDocMock.mock.calls[0]!;
@@ -160,6 +168,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Subject',
       scope: 'stake',
       reason: 'Visiting helper',
+      level: 'full',
     });
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
     const [, payload] = updateDocMock.mock.calls[0]!;
@@ -195,6 +204,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Subject',
       scope: 'stake',
       reason: 'Visiting helper',
+      level: 'full',
     });
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
     const [, payload] = updateDocMock.mock.calls[0]!;
@@ -232,6 +242,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Test',
       scope: 'stake',
       reason: 'Stake helper',
+      level: 'full',
     });
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
     const [, payload] = updateDocMock.mock.calls[0]!;
@@ -248,6 +259,7 @@ describe('useAddManualGrantMutation', () => {
         member_name: 'S',
         scope: 'stake',
         reason: 'r',
+        level: 'full',
       }),
     ).rejects.toThrow(/Not signed in/i);
     expect(setDocMock).not.toHaveBeenCalled();
@@ -269,6 +281,7 @@ describe('useAddManualGrantMutation', () => {
       member_name: 'Subject',
       scope: 'stake',
       reason: 'r',
+      level: 'full',
     });
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
@@ -305,8 +318,109 @@ describe('useAddManualGrantMutation', () => {
         member_name: 'Subject',
         scope: 'stake',
         reason: 'Visiting helper',
+        level: 'full',
       }),
     ).rejects.toThrow(/manual grant with that reason already exists/i);
     expect(updateDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// Access-level marker. The stored grant carries `level` ONLY for the
+// limited tier — full is encoded as the absence of the key. That
+// asymmetry is load-bearing rather than stylistic: deletion is an
+// `arrayRemove` on the stored object and Firestore matches array
+// elements by deep equality, so writing `level: 'full'` would add a key
+// the delete path can't reproduce and the grant would be undeletable.
+describe('useAddManualGrantMutation — access level', () => {
+  const LIMITED_INPUT = {
+    member_email: 'subject@example.com',
+    member_name: 'Subject',
+    scope: 'stake',
+    reason: 'Covering bishop',
+    level: 'limited',
+  } as const;
+
+  const FULL_INPUT = { ...LIMITED_INPUT, level: 'full' } as const;
+
+  it('marks the created grant limited when the Limited level is chosen', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await result.current.mutateAsync(LIMITED_INPUT);
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    expect(body.manual_grants.stake[0].level).toBe('limited');
+  });
+
+  it('writes no level key at all when the Full level is chosen', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await result.current.mutateAsync(FULL_INPUT);
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [, body] = setDocMock.mock.calls[0]!;
+    const grant = body.manual_grants.stake[0];
+    // Key ABSENCE, not falsiness — `level: undefined` would still
+    // serialise into the stored object and break the arrayRemove match.
+    expect('level' in grant).toBe(false);
+    expect(Object.keys(grant).sort()).toEqual(['grant_id', 'granted_at', 'granted_by', 'reason']);
+  });
+
+  it('marks the grant limited on the arrayUnion path for an existing access doc', async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        member_canonical: 'subject@example.com',
+        member_email: 'subject@example.com',
+        member_name: 'Subject',
+        importer_callings: { CO: ['Bishop'] },
+        manual_grants: {},
+      }),
+    });
+    const { result } = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await result.current.mutateAsync(LIMITED_INPUT);
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [appended] = arrayUnionMock.mock.calls[0]! as [Record<string, unknown>];
+    expect(appended.level).toBe('limited');
+    expect(Object.keys(appended).sort()).toEqual([
+      'grant_id',
+      'granted_at',
+      'granted_by',
+      'level',
+      'reason',
+    ]);
+  });
+
+  it('removes a limited grant with the exact object that was written', async () => {
+    // Add a limited grant and keep the object the mutation built.
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const add = renderHook(() => useAddManualGrantMutation(), { wrapper });
+    await add.result.current.mutateAsync(LIMITED_INPUT);
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const stored = setDocMock.mock.calls[0]![1].manual_grants.stake[0];
+
+    // Hand that same stored object to the delete path, the way the page
+    // does when a manager clicks Delete on a rendered grant row.
+    updateDocMock.mockClear();
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        importer_callings: { CO: ['Bishop'] },
+        manual_grants: { stake: [] },
+      }),
+    });
+    const del = renderHook(() => useDeleteManualGrantMutation(), { wrapper });
+    await del.result.current.mutateAsync({
+      member_canonical: 'subject@example.com',
+      scope: 'stake',
+      grant: stored,
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+
+    // The value handed to arrayRemove must deep-equal the written grant,
+    // level marker included.
+    expect(arrayRemoveMock).toHaveBeenCalledWith(stored);
+    const [, payload] = updateDocMock.mock.calls[0]!;
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'arrayRemove', values: [stored] });
+    // Importer callings survive, so the doc is not garbage-collected.
+    expect(deleteDocMock).not.toHaveBeenCalled();
   });
 });
