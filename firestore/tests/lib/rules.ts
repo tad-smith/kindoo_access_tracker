@@ -178,6 +178,8 @@ type RoleClaims = {
   manager?: boolean;
   stake?: boolean;
   wards?: string[];
+  /** Limited app access (D24). Omitted from the minted claim unless true. */
+  limited?: boolean;
 };
 
 /**
@@ -185,6 +187,11 @@ type RoleClaims = {
  * carrying the supplied role flags. Pass an empty `roleClaims` to
  * simulate a signed-in user with no role under that stake (the
  * "outsider" case).
+ *
+ * `limited` is spread in ONLY when true, mirroring the claim minter:
+ * production omits the key for full users rather than writing
+ * `limited: false`, and `isLimited()` in the rules leads with a
+ * `'limited' in ...` presence check against exactly that shape.
  */
 export function contextFor(
   env: RulesTestEnvironment,
@@ -201,6 +208,7 @@ export function contextFor(
         manager: roleClaims.manager === true,
         stake: roleClaims.stake === true,
         wards: roleClaims.wards ?? [],
+        ...(roleClaims.limited === true ? { limited: true } : {}),
       },
     },
   });
@@ -223,6 +231,27 @@ export function bishopricContext(
   wards: string[],
 ): RulesTestContext {
   return contextFor(env, personas.bishopric, stakeId, { wards });
+}
+
+/**
+ * Convenience: a bishopric member with limited app access (D24) under
+ * `stakeId`. Same claim block as `bishopricContext` plus
+ * `limited: true`.
+ */
+export function limitedBishopricContext(
+  env: RulesTestEnvironment,
+  stakeId: string,
+  wards: string[],
+): RulesTestContext {
+  return contextFor(env, personas.bishopric, stakeId, { wards, limited: true });
+}
+
+/** Convenience: a stake-scope member with limited app access (D24) under `stakeId`. */
+export function limitedStakeMemberContext(
+  env: RulesTestEnvironment,
+  stakeId: string,
+): RulesTestContext {
+  return contextFor(env, personas.stakeMember, stakeId, { stake: true, limited: true });
 }
 
 /**

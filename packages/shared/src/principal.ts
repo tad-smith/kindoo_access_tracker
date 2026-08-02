@@ -44,6 +44,7 @@ export function principalFromClaims(
   const managerStakes: string[] = [];
   const stakeMemberStakes: string[] = [];
   const bishopricWards: Record<string, string[]> = {};
+  const limitedStakes: string[] = [];
 
   if (claims.stakes) {
     for (const [stakeId, stake] of Object.entries(claims.stakes)) {
@@ -51,6 +52,9 @@ export function principalFromClaims(
       if (s.manager) managerStakes.push(stakeId);
       if (s.stake) stakeMemberStakes.push(stakeId);
       if (s.wards.length > 0) bishopricWards[stakeId] = [...s.wards];
+      // `limited` narrows what an existing role may do; it is not a
+      // role itself, so it stays out of the `hasAnyRole` test below.
+      if (s.limited === true) limitedStakes.push(stakeId);
     }
   }
 
@@ -68,6 +72,7 @@ export function principalFromClaims(
     managerStakes,
     stakeMemberStakes,
     bishopricWards,
+    limitedStakes,
   };
 }
 
@@ -80,6 +85,7 @@ function emptyPrincipal(email: string): Principal {
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: {},
+    limitedStakes: [],
   };
 }
 
@@ -92,5 +98,11 @@ function normaliseStakeClaims(raw: unknown): StakeClaims {
     manager: r.manager === true,
     stake: r.stake === true,
     wards: Array.isArray(r.wards) ? r.wards.filter((w): w is string => typeof w === 'string') : [],
+    // Omit-when-false, matching what the claim writer stores: a
+    // normalised block never carries `limited: false`, so it can be
+    // compared against a live token without reporting a spurious diff.
+    // Anything but a literal `true` — absent, `false`, a truthy string
+    // off the wire — reads as full access.
+    ...(r.limited === true ? { limited: true } : {}),
   };
 }
