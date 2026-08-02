@@ -33,6 +33,8 @@ const upsertBuildingMock = vi.fn();
 const upsertOrganizationMock = vi.fn();
 const deleteOrganizationMock = vi.fn();
 const useOrganizationsMock = vi.fn();
+const updateStakeConfigMock = vi.fn();
+const backfillEqPresidentAccessMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -55,7 +57,11 @@ vi.mock('./hooks', () => ({
   useDeleteKindooSiteMutation: () => ({ mutateAsync: deleteKindooSiteMock }),
   useUpsertOrganizationMutation: () => ({ mutateAsync: upsertOrganizationMock, isPending: false }),
   useDeleteOrganizationMutation: () => ({ mutateAsync: deleteOrganizationMock }),
-  useUpdateStakeConfigMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateStakeConfigMutation: () => ({ mutateAsync: updateStakeConfigMock, isPending: false }),
+  useBackfillEqPresidentAccessMutation: () => ({
+    mutateAsync: backfillEqPresidentAccessMock,
+    isPending: false,
+  }),
 }));
 
 // The Organizations tab reads its list from the neutral organizations
@@ -109,14 +115,18 @@ function Wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  useStakeDocMock.mockReturnValue({
+// Stake-doc live result. `eq_president_app_access` is deliberately
+// absent by default — the persisted field is optional and absent means
+// off, which is what the Config tab must render.
+function stakeDocResult(overrides: Partial<Stake> = {}) {
+  return {
     data: {
       stake_name: 'My Stake',
       stake_seat_cap: 200,
       timezone: 'America/Denver',
       notifications_enabled: true,
+      setup_complete: true,
+      ...overrides,
     } satisfies Partial<Stake>,
     error: null,
     status: 'success',
@@ -126,7 +136,19 @@ beforeEach(() => {
     isError: false,
     isFetching: false,
     fetchStatus: 'idle',
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  updateStakeConfigMock.mockResolvedValue(undefined);
+  backfillEqPresidentAccessMock.mockResolvedValue({
+    ok: true,
+    seats_matched: 3,
+    docs_written: 3,
+    docs_deleted: 0,
   });
+  useStakeDocMock.mockReturnValue(stakeDocResult());
   useWardsMock.mockReturnValue(liveResult<Ward>([]));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
   useManagersMock.mockReturnValue(liveResult<KindooManager>([]));
@@ -185,6 +207,23 @@ describe('<ConfigurationPage />', () => {
     const sw = screen.getByLabelText(/Email Notifications Enabled/i);
     expect(sw).toBeInTheDocument();
     expect(sw).toHaveAttribute('role', 'switch');
+  });
+
+  it('shows the Elders Quorum President switch unchecked when the stake field is absent', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const sw = screen.getByTestId('config-eq-president-access');
+    expect(sw).toHaveAttribute('role', 'switch');
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByLabelText(/Elders Quorum Presidents Get App Access/i)).toBe(sw);
+  });
+
+  it('shows the Elders Quorum President switch checked when the stake has opted in', () => {
+    useStakeDocMock.mockReturnValue(stakeDocResult({ eq_president_app_access: true }));
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-eq-president-access')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   });
 
   it('does not render a Triggers tab', () => {
@@ -1194,5 +1233,135 @@ describe('Organizations tab', () => {
     const btn = screen.getByTestId('config-organizations-add-button');
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute('title', 'Loading…');
+  });
+});
+
+// ---- Elders Quorum President app-access toggle ----------------------
+//
+// The toggle itself is an ordinary config field. What's load-bearing is
+// the post-save backfill offer: it appears only when the saved value
+// actually FLIPPED, and only once setup is complete (initial setup has
+// no seats to reconcile, so the wizard must never raise it).
+
+describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
+  async function saveConfig(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: /^Save config$/ }));
+  }
+
+  it('saves eq_president_app_access: true when the switch is turned on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await vi.waitFor(() => {
+      expect(updateStakeConfigMock).toHaveBeenCalledWith(
+        expect.objectContaining({ eq_president_app_access: true }),
+      );
+    });
+  });
+
+  it('offers to grant access to current Elders Quorum Presidents after turning the switch on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await screen.findByRole('heading', {
+      name: 'Grant access to current Elders Quorum Presidents?',
+    });
+    expect(screen.getByRole('button', { name: 'Grant access now' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not now' })).toBeInTheDocument();
+  });
+
+  it('runs the grant backfill and reports the count when the offer is confirmed', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
+    await vi.waitFor(() => {
+      expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('grant');
+    });
+    await vi.waitFor(() => {
+      const messages = useToastStore.getState().toasts.map((t) => t.message);
+      expect(messages).toContain('Granted app access to 3 member(s).');
+    });
+    expect(
+      screen.queryByRole('heading', { name: 'Grant access to current Elders Quorum Presidents?' }),
+    ).toBeNull();
+  });
+
+  it('does not run the backfill when the grant offer is declined', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await user.click(await screen.findByTestId('config-eq-backfill-cancel'));
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByRole('heading', {
+          name: 'Grant access to current Elders Quorum Presidents?',
+        }),
+      ).toBeNull();
+    });
+    expect(backfillEqPresidentAccessMock).not.toHaveBeenCalled();
+  });
+
+  it('offers to revoke access after turning the switch off', async () => {
+    useStakeDocMock.mockReturnValue(stakeDocResult({ eq_president_app_access: true }));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await screen.findByRole('heading', { name: 'Revoke access from Elders Quorum Presidents?' });
+    expect(screen.getByRole('button', { name: 'Revoke access now' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Leave access in place' })).toBeInTheDocument();
+  });
+
+  it('counts written plus deleted access docs in the revoke success toast', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    backfillEqPresidentAccessMock.mockResolvedValue({
+      ok: true,
+      seats_matched: 5,
+      docs_written: 2,
+      docs_deleted: 3,
+    });
+    useStakeDocMock.mockReturnValue(stakeDocResult({ eq_president_app_access: true }));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
+    await vi.waitFor(() => {
+      expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('revoke');
+    });
+    await vi.waitFor(() => {
+      const messages = useToastStore.getState().toasts.map((t) => t.message);
+      expect(messages).toContain('Revoked app access for 5 member(s).');
+    });
+  });
+
+  it('does not offer a backfill when the save leaves the toggle unchanged', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await saveConfig(user);
+    await vi.waitFor(() => {
+      expect(updateStakeConfigMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
+  });
+
+  it('does not offer a backfill when the toggle flips before setup is complete', async () => {
+    useStakeDocMock.mockReturnValue(stakeDocResult({ setup_complete: false }));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await saveConfig(user);
+    await vi.waitFor(() => {
+      expect(updateStakeConfigMock).toHaveBeenCalledWith(
+        expect.objectContaining({ eq_president_app_access: true }),
+      );
+    });
+    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
   });
 });

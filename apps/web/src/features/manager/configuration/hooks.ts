@@ -16,11 +16,14 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
 import type {
   AccessRequest,
+  BackfillEqPresidentAccessInput,
+  BackfillEqPresidentAccessOutput,
   Building,
   KindooManager,
   KindooSite,
@@ -31,7 +34,7 @@ import type {
   Ward,
 } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
-import { db } from '../../../lib/firebase';
+import { db, functions } from '../../../lib/firebase';
 import {
   buildingRef,
   buildingsCol,
@@ -604,6 +607,7 @@ export interface ConfigInput {
   stake_seat_cap: number;
   timezone: string;
   notifications_enabled: boolean;
+  eq_president_app_access: boolean;
 }
 
 export function useUpdateStakeConfigMutation() {
@@ -619,10 +623,43 @@ export function useUpdateStakeConfigMutation() {
         stake_seat_cap: input.stake_seat_cap,
         timezone: input.timezone,
         notifications_enabled: input.notifications_enabled,
+        eq_president_app_access: input.eq_president_app_access,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,
       });
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/**
+ * Reconcile existing access against a just-flipped
+ * `eq_president_app_access`. The config write only changes what future
+ * Sync runs derive; this callable sweeps the seats already holding the
+ * Elders Quorum President calling and grants (`'grant'`) or revokes
+ * (`'revoke'`) their auto access in one pass.
+ *
+ * Offered from the confirm dialog the Config tab opens on a flip — it is
+ * never implied by the save itself, so declining leaves existing members
+ * exactly as they were until Sync next touches their callings.
+ */
+export function useBackfillEqPresidentAccessMutation() {
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation<BackfillEqPresidentAccessOutput, Error, 'grant' | 'revoke'>({
+    mutationFn: async (direction) => {
+      const sid = requireActiveStake(activeStakeId);
+      const fn = httpsCallable<BackfillEqPresidentAccessInput, BackfillEqPresidentAccessOutput>(
+        functions,
+        'backfillEqPresidentAccess',
+      );
+      const res = await fn({ stakeId: sid, direction });
+      return res.data;
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
