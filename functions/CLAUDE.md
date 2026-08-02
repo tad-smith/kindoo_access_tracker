@@ -58,8 +58,31 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Manager auth on callables reads `kindooManagers/{canonical}` directly, not the claim.** The custom claim can be ~1h stale on an idle session. `syncApplyFix` and `backfillEqPresidentAccess` both check the doc plus `active === true`.
 - **Reconcile callables are merge-only over the field they own.** `backfillEqPresidentAccess` adds / removes exactly one calling inside `importer_callings[scope]` rather than reusing `writeAccessForAutoScope`'s wholesale replace — a rebuild would silently "fix" unrelated entries the operator didn't consent to touching. A destructive direction takes an explicit parameter guarded against current config (`failed-precondition` on mismatch), so a stale client confirmation can't write the wrong side.
 
+## Changing dependencies
+
+**Any edit to `dependencies` in `functions/package.json` — add, remove, or version bump — is a two-command change:**
+
+```bash
+pnpm install         # updates pnpm-lock.yaml
+pnpm deps:relock     # regenerates functions/deploy-lock/package-lock.json
+```
+
+Commit the regenerated `functions/deploy-lock/package-lock.json` in the same commit. You will not forget silently: `pnpm --filter @kindoo/functions build` runs the drift check and fails, which takes CI's build step and `firebase deploy`'s predeploy hook down with it. Run `pnpm deps:check` any time to see the state.
+
+Why it exists: `firebase deploy` uploads only `functions/lib`, so `lib/` is the package root Cloud Build installs from, and before T-73 every range in the generated `lib/package.json` re-resolved at deploy time against no lockfile. That deployed a tree neither local dev nor CI had exercised, and it took prod down once — `@firebase/database-compat` declares `@firebase/app` as an **optional** peer, npm skipped it, and all 24 functions died at container start on `Cannot find module '@firebase/app'` (Cloud Functions loads the whole of `index.js` in every container, and the 1st-gen `onAuthUserCreate` pulls `firebase-functions/v1`, which eagerly loads `firebase-admin/database`).
+
+Consequences for how you declare deps:
+
+- **`@firebase/app` is a load-bearing explicit dependency,** not incidental. It is an optional peer of a transitive; nothing else guarantees it. Do not remove it.
+- **Anything the bundle leaves external must be a real `dependencies` entry.** esbuild externalises exactly the keys of `dependencies`; anything else is inlined into `lib/index.js`.
+- **`@kindoo/shared` stays a devDependency** — `workspace:*` is not installable by npm. See `infra/CLAUDE.md` "Cloud Functions deploy artifact" and `docs/architecture.md` D12.
+- **The deploy tree's direct versions are pinned from `pnpm-lock.yaml`,** so what deploys is what CI tested. A caret range in `functions/package.json` no longer means the deploy floats.
+
+Details: `functions/deploy-lock/README.md`, `functions/scripts/deploy-deps.mjs`, `infra/runbooks/deploy.md` "Deploy dependency pinning".
+
 ## Don't
 
+- **Don't hand-edit `functions/deploy-lock/package-lock.json`.** Regenerate it with `pnpm deps:relock`. It is not a workspace lockfile — local dev and CI install through `pnpm-lock.yaml` and never read it.
 - **Don't write audit rows directly from non-audit functions.** The parameterized `auditTrigger` handles it. Server-driven writes stamp the synthetic actor (e.g. `RemoveTrigger`) on the entity's `lastActor` and let the trigger emit the audit row. **Exception:** `createStake` writes the `platformAuditLog` row directly (per F19). The `auditTrigger` only fans per-stake `auditLog`, not the cross-stake `platformAuditLog`, and sub-1-write-a-year doesn't justify a separate trigger — keep this in-callable.
 - **Don't reach into Firestore from outside `src/services/` helpers.** Keeps test boundaries clean and audit traceable.
 - **Don't store secrets in code.** Use Secret Manager + env vars.

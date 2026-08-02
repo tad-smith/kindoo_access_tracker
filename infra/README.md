@@ -34,6 +34,21 @@ bash infra/scripts/lib/verify-deploy.sh staging     # or: prod
 
 Full pre-flight, verification, and rollback steps: `infra/runbooks/deploy.md`.
 
+## Cloud Functions dependency pinning
+
+`firebase deploy` uploads only `functions/lib`, so `lib/` is the package root Cloud Build installs from. `functions/deploy-lock/package-lock.json` is the committed lockfile for that install — `functions/scripts/build.mjs` copies it into `lib/` on every build, and the GCP Node.js buildpack runs `npm ci` against it. Without it, every version range re-resolved at deploy time and shipped a tree nothing had tested; that took production down once (`Cannot find module '@firebase/app'`, all 24 functions, at container start).
+
+Two commands, both from the repo root:
+
+```bash
+pnpm deps:relock     # regenerate the lockfile — after ANY functions/package.json dependency change
+pnpm deps:check      # offline drift check; also runs inside every functions build
+```
+
+Direct versions are pinned to what `pnpm-lock.yaml` resolves, so the deployed direct deps match what CI exercises. Transitives are npm's own resolution and will not match pnpm's exactly — the divergence is committed and reviewable rather than invented at deploy time.
+
+Details, expected output, and the manual verification steps: `infra/runbooks/deploy.md` "Deploy dependency pinning". Rationale: `docs/TASKS.md` T-73 and `functions/deploy-lock/README.md`.
+
 ## Layout
 
 ```
@@ -49,6 +64,9 @@ infra/
 │   │   └── verify-deploy.sh          # post-deploy verification, shared by both deploy scripts
 │   └── tests/
 │       └── verify-deploy.test.sh     # offline unit tests for verify-deploy.sh (no network, no creds)
+│
+│  (the deploy artifact's dependency pinning lives with the artifact:
+│   functions/deploy-lock/ + functions/scripts/{deploy-deps,relock-deploy-deps,check-deploy-deps}.mjs)
 ├── ci/
 │   └── workflows/
 │       └── test.yml                  # source-of-truth for .github/workflows/test.yml
