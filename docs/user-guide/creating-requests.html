@@ -187,6 +187,18 @@
   </ul>
   <div class="callout"><span class="lbl">Note</span><p>You only ever request access for the scope you serve. The Stake Presidency can request for the stake; a Bishopric can request for their ward. If you serve in more than one role, the app lets you switch between them (see <a href="#around">Section 3</a>).</p></div>
 
+  <h3 id="limited">Full access and limited access</h3>
+  <p>Your Kindoo Manager gives each person either <strong>full</strong> or <strong>limited</strong> access to the app. Most leaders have full access, and everything in this guide applies to them. <strong>Limited</strong> access is for someone who needs to arrange short-term access — building cleaning, a lockup assignment, a one-off event — but isn't responsible for ongoing access in the ward.</p>
+  <p>With limited access you can:</p>
+  <ul>
+    <li>Request <strong>temporary</strong> access only. Ongoing access isn't offered.</li>
+    <li>Ask for up to <strong>90 days</strong> at a time (see <a href="#temporary">Section 6</a>).</li>
+    <li>Request <strong>your ward's building</strong> — the one your ward meets in.</li>
+    <li>Change or remove <strong>temporary</strong> seats only (Sections <a href="#remove">7</a> and <a href="#edit">8</a>).</li>
+  </ul>
+  <p>Nothing on screen is labelled "limited." You'll recognise it by what isn't there: the request form offers only <strong>Add (temporary)</strong>, it names your ward's building instead of giving you a list to tick, and the change and remove options appear only on temporary rows of your roster.</p>
+  <div class="callout"><span class="lbl">Note</span><p>If you're not sure which you have, open <span class="ui">New&nbsp;Request</span> and look at the request type. If <strong>Add (manual)</strong> is there, you have full access. Your Kindoo Manager can tell you either way, and can change it if your assignment changes.</p></div>
+
   <!-- 2 -->
   <h2 id="signin"><span class="num">2.</span> Signing in</h2>
   <ol class="steps">
@@ -261,6 +273,7 @@
         <li><strong>Add (manual)</strong> — ongoing access, kept until removed.</li>
         <li><strong>Add (temporary)</strong> — access with an end date (covered in <a href="#temporary">Section 6</a>).</li>
       </ul>
+      <p class="small">If you have <a href="#limited">limited access</a>, <strong>Add (temporary)</strong> is the only choice and it's already selected — skip to <a href="#temporary">Section 6</a>.</p>
     </li>
     <li>Fill in the details (see the table below).</li>
     <li>Click <span class="ui">Submit</span>. The form closes and your request appears in <a href="#my-requests">My Requests</a> as <em>pending</em>.</li>
@@ -275,12 +288,12 @@
   <table>
     <thead><tr><th>Field</th><th>Required?</th><th>What to enter</th></tr></thead>
     <tbody>
-      <tr><td>Request type</td><td>Yes</td><td>Add (manual) or Add (temporary).</td></tr>
-      <tr><td>Dates</td><td>Temporary only</td><td>The start and end dates for temporary access.</td></tr>
+      <tr><td>Request type</td><td>Yes</td><td>Add (manual) or Add (temporary). With <a href="#limited">limited access</a>, only Add (temporary).</td></tr>
+      <tr><td>Dates</td><td>Temporary only</td><td>The start and end dates for temporary access. With limited access, no more than 90 days apart.</td></tr>
       <tr><td>Member email</td><td>Yes</td><td>The email address of the person who needs access.</td></tr>
       <tr><td>Member name</td><td>Yes</td><td>The person's name, for the roster and the manager's reference.</td></tr>
       <tr><td>Reason</td><td>Yes</td><td>Why this person needs access (e.g. their calling or assignment).</td></tr>
-      <tr><td>Buildings</td><td><strong>Yes — at least one</strong></td><td>Tick every building this person should be able to enter. Your ward's building is ticked by default, but you can add or remove buildings.</td></tr>
+      <tr><td>Buildings</td><td><strong>Yes — at least one</strong></td><td>Tick every building this person should be able to enter. Your ward's building is ticked by default, but you can add or remove buildings. With <a href="#limited">limited access</a> there's nothing to tick — the form names your ward's building and uses that one.</td></tr>
       <tr><td>Comment</td><td>Optional</td><td>Anything else the manager should know.</td></tr>
       <tr><td>Emergency</td><td>Optional</td><td>Flag time-sensitive requests so the manager sees them first.</td></tr>
       <tr><td>Organization</td><td>Stake requests only</td><td>Assign the seat to a stake organization for reporting. Defaults to "No Organization."</td></tr>
@@ -304,6 +317,23 @@
   </ol>
   <div class="callout tip"><span class="lbl">You don't need to remember to remove it</span><p>Temporary access ends <strong>automatically</strong> on the end date — Kindoo turns it off, and the seat drops off your roster on its own. There's no need to submit a removal when a temporary seat expires.</p></div>
 
+  <h3>If you have limited access</h3>
+  <p>Temporary access is the only kind you request, so this section is your whole workflow. Two things work differently:</p>
+  <ul>
+    <li><strong>90 days is the maximum.</strong> The form says so above the dates. If the end date is more than 90 days after the start date, the form flags the end date and won't submit until you bring it inside 90 days. For something longer-running, ask your Bishopric or your Kindoo Manager.</li>
+    <li><strong>The building is your ward's.</strong> Instead of a list to tick, the form shows one line naming the building your ward meets in, and that's what the request is for. If someone needs a different building, ask your Bishopric or your Kindoo Manager to request it.</li>
+  </ul>
+
+  <figure class="shot">
+    <div class="shot-box">
+      <span class="shot-tag">Screenshot</span>
+      <span class="shot-desc">The New Request form as a limited user sees it: the request type showing <strong>Temporary (dated)</strong> as the only option, the 90-day note above the start and end dates, and the read-only <strong>Building:</strong> row naming the ward's building in place of the buildings checklist.</span>
+    </div>
+    <figcaption>Fig 6.1 — The New Request form with limited access.</figcaption>
+  </figure>
+
+  <div class="callout warn"><span class="lbl">"This ward has no building configured"</span><p>If your ward hasn't been linked to a building yet, the form says so and Submit stays off. Ask your Kindoo Manager to set your ward's building, then try again.</p></div>
+
   <!-- 7 -->
   <h2 id="remove"><span class="num">7.</span> Removing someone's access</h2>
   <p>When someone no longer needs manual or temporary access, you can request that it be removed — directly from the roster row.</p>
@@ -314,6 +344,7 @@
     <li>Submit. The row switches to a <strong>removal pending</strong> badge so you don't submit it twice.</li>
   </ol>
   <div class="callout"><span class="lbl">Why can't I remove an automatic seat?</span><p>Automatic seats follow a person's calling. The way to remove that access is for the calling to end in the Church's records — once it does, the access goes away on its own. There's no remove button on automatic rows for this reason.</p></div>
+  <div class="callout"><span class="lbl">With limited access</span><p>If you have <a href="#limited">limited access</a>, the remove option appears on <strong>temporary</strong> rows only. Ongoing (manual) access was granted by someone with wider authority, so removing it is their call — ask your Bishopric or your Kindoo Manager.</p></div>
 
   <!-- 8 -->
   <h2 id="edit"><span class="num">8.</span> Changing an existing seat</h2>
@@ -330,6 +361,7 @@
     <li>Add a <strong>comment</strong> (required for edits) explaining the change, then submit.</li>
   </ol>
   <div class="callout"><span class="lbl">Note</span><p>Like add and remove, an edit becomes a request the Kindoo Manager completes — the change takes effect once they've applied it. Stake-wide automatic seats can't be edited.</p></div>
+  <div class="callout"><span class="lbl">With limited access</span><p>If you have <a href="#limited">limited access</a>, the <span class="ui">Edit</span> option appears on <strong>temporary</strong> rows only, and the same two rules from <a href="#temporary">Section 6</a> apply: the window can't be longer than 90 days, and the building stays your ward's. If you open a temporary seat whose dates are already further apart than 90 days, shorten it before you submit — the form won't accept the change until you do.</p></div>
 
   <!-- 9 -->
   <h2 id="my-requests"><span class="num">9.</span> Tracking your requests</h2>
@@ -376,6 +408,15 @@
 
   <h4>Why do I have to pick a building?</h4>
   <p>Access is granted per building, so every add or edit needs at least one building selected. Your ward's building is ticked by default.</p>
+
+  <h4>Why is "Add (manual)" missing from my request form?</h4>
+  <p>You have <a href="#limited">limited access</a>, which covers temporary requests only. See <a href="#limited">Section 1</a> for what that includes, and ask your Kindoo Manager if you think you need more.</p>
+
+  <h4>Why won't the form accept my end date?</h4>
+  <p>With limited access a temporary window can be at most <strong>90 days</strong>. Bring the end date inside 90 days of the start date, or ask your Bishopric or Kindoo Manager to request the longer grant.</p>
+
+  <h4>Why can't I choose which building?</h4>
+  <p>With limited access, requests are for your own ward's building — the form names it instead of offering a list. For any other building, ask your Bishopric or your Kindoo Manager.</p>
 
   <h4>Can I request access for someone in a different ward?</h4>
   <p>You request for the scope you serve. The Stake Presidency requests against the stake; if you're in a Bishopric, that's your ward. If you serve in multiple roles, switch scope with the stake or ward selector.</p>

@@ -249,7 +249,7 @@
   <p>Tabs, in order: <strong>Config</strong> (seat cap, time zone, notification switch, and the <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> switch — see <a href="#appaccess">Section 8</a>), <strong>Managers</strong>, <strong>Kindoo Sites</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
 
   <h4>App Access</h4>
-  <p>Shows who can sign in to the web app. Calling-based access is managed automatically and is read-only; you can add <strong>manual</strong> access for someone whose calling isn't on the standard list. See <a href="#appaccess">Section 8</a>.</p>
+  <p>Shows who can sign in to the web app. Calling-based access is managed automatically and is read-only; you can add <strong>manual</strong> access for someone whose calling isn't on the standard list, at either <strong>Full</strong> or <strong>Limited</strong> level. See <a href="#appaccess">Section 8</a>.</p>
 
   <h4>Audit Log</h4>
   <p>A filterable history of every change. See <a href="#audit">Section 11</a>.</p>
@@ -349,7 +349,7 @@
       <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary · <em>Elders Quorum President — only when your stake's setting is turned on</em></td></tr>
     </tbody>
   </table>
-  <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span>.</p>
+  <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span> and pick the right <strong>access level</strong> — see <a href="#levels">Full and Limited access</a> below.</p>
 
   <h3>Elders Quorum Presidents</h3>
   <p>Elders Quorum Presidents can assign temporary access for building cleaning and building lockup assignments. Not every stake works that way, so this one calling is a stake setting rather than a fixed rule. Turn on <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> under <span class="ui">Configuration&nbsp;→&nbsp;Config</span> and every Elders Quorum President in your stake can sign in.</p>
@@ -366,6 +366,22 @@
   </ul>
   <p>Either way <strong>the setting itself is already saved</strong> — the question is only about people who already hold the calling. Manual access grants are never touched by this step, and it's safe to run more than once.</p>
   <div class="callout"><span class="lbl">Bishopric lag</span><p>A newly-called leader can't sign in until a Sync run has picked up their calling from Kindoo. If someone reports they can't get in, run Sync and confirm their calling is current in Kindoo.</p></div>
+
+  <h3 id="levels">Full and Limited access</h3>
+  <p>When you add a manual grant, the <span class="ui">Add&nbsp;manual&nbsp;access</span> dialog asks for an <span class="ui">Access&nbsp;level</span>. <strong>Full</strong> is the default and gives the person the same authority you'd expect of a Bishopric or Stake Presidency member for their scope. <strong>Limited</strong> is for someone who arranges short-term access — building cleaning, lockup assignments, a one-off event — without being responsible for ongoing access.</p>
+  <p>A limited person can do exactly four things, and nothing else:</p>
+  <ul>
+    <li>Submit <strong>temporary</strong> requests. The ongoing (manual) request type isn't offered to them.</li>
+    <li>Ask for a window of at most <strong>90 days</strong>.</li>
+    <li>Request their <strong>own ward's building</strong> — no building picker. (A limited grant at stake scope is the exception: there's no single ward to tie it to, so the normal building list applies.)</li>
+    <li>Change or remove <strong>temporary</strong> seats. Automatic and ongoing seats show them no Edit or Remove option at all.</li>
+  </ul>
+  <p>Everything else is unchanged: their requests land in your queue like anyone else's, and you complete or reject them the same way.</p>
+  <div class="callout"><span class="lbl">Spotting a limited grant</span><p>Grants given at the limited level carry a <span class="badge">Limited</span> badge on the <span class="ui">App&nbsp;Access</span> page — beside the calling in the table, beside the reason in the card view. A grant with no badge is full access.</p></div>
+  <div class="callout warn"><span class="lbl">To change someone's level, delete the grant and add it again</span><p>There's no way to edit a grant's access level in place. Delete the existing grant, then use <span class="ui">Add&nbsp;manual&nbsp;access</span> to re-add the person at the level you want. Their sign-in isn't affected in between — but until you re-add them, they have no app access at all, so do both steps together.</p></div>
+  <div class="callout"><span class="lbl">One full grant anywhere makes the person full</span><p>Access levels are worked out per stake, not per grant. If someone holds several grants, they're limited only when <em>every</em> one of them is limited. Add a full grant in any scope and they become full everywhere in that stake; delete their last full grant and they drop back to limited. Anyone who is an active Kindoo Manager is always full, whatever their grants say.</p></div>
+  <div class="callout"><span class="lbl">Calling-based access is always full</span><p>Access that comes from a calling is full access today. The level applies only to grants you add by hand.</p></div>
+  <p class="small">A level change takes effect the next time the person's sign-in refreshes — within a couple of seconds if they're using the app, or up to about an hour if they've left it idle. Signing out and back in applies it immediately.</p>
 
   <!-- 9 -->
   <h2 id="caps"><span class="num">9.</span> Seat caps &amp; utilization</h2>
@@ -424,6 +440,12 @@
   <h4>An Elders Quorum President can't sign in.</h4>
   <p>Check that <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> is on under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, then run Sync so their calling is picked up. If you turned that setting on and skipped the <span class="ui">Grant&nbsp;access&nbsp;now</span> step, a Sync run is what grants them access. Note the setting covers the president only — not quorum counselors or the secretary — and their calling must be current in Kindoo. (See <a href="#appaccess">Section 8</a>.)</p>
 
+  <h4>A leader says the request form only offers temporary access.</h4>
+  <p>They hold a <strong>Limited</strong> grant. Check the <span class="ui">App&nbsp;Access</span> page for a <span class="badge">Limited</span> badge on their row. If they should have full authority, delete that grant and re-add it at the <strong>Full</strong> level — there's no in-place level edit. Remember that one full grant anywhere in the stake makes them full everywhere in it. (See <a href="#levels">Section 8</a>.)</p>
+
+  <h4>Someone with limited access can't submit — "This ward has no building configured."</h4>
+  <p>A limited ward-scope request is tied to the ward's own building, and that ward has none set. Open <span class="ui">Configuration&nbsp;→&nbsp;Wards</span>, set the ward's building, and have them try again.</p>
+
   <h4>The extension shows an error right after a new deployment.</h4>
   <p>If the panel reports a connection/CORS error, the environment's functions may still be deploying. Wait a moment and reopen the panel; if it persists, contact support.</p>
 
@@ -440,6 +462,7 @@
       <tr><td><strong>Drift</strong></td><td>A difference between SBA's seat list and Kindoo's actual state, surfaced by Sync.</td></tr>
       <tr><td><strong>Provision</strong></td><td>Making the access change in Kindoo (inviting a user, granting doors) when completing a request.</td></tr>
       <tr><td><strong>Organization</strong></td><td>An optional stake-level grouping for seats, used for reporting against an organization's own cap.</td></tr>
+      <tr><td><strong>Access level</strong></td><td>Full or Limited — how much authority a manual app-access grant carries. See <a href="#levels">Section 8</a>.</td></tr>
     </tbody>
   </table>
 
