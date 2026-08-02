@@ -222,6 +222,43 @@ interface AccessTableRow {
   grant?: ManualGrant;
 }
 
+// ----- Access tier (D25) -----
+//
+// The tier is stated on every row rather than only on limited ones: an
+// empty cell used to be indistinguishable from a full grant, a render
+// bug, and a stale service-worker bundle.
+
+type AccessLevel = 'full' | 'limited';
+
+/** Manual grants carry the marker. Absent means full; `'full'` is never
+ * stored (`firebase-schema.md` §4.5). */
+function grantLevel(grant: ManualGrant | undefined): AccessLevel {
+  return grant?.level === 'limited' ? 'limited' : 'full';
+}
+
+// Importer rows are Full by construction, and the page must NOT infer
+// their tier from the calling name. `importer_callings` is a
+// `Record<scope, string[]>` of bare calling strings with nowhere to
+// record a tier, and nothing can currently mint a limited tier from an
+// importer calling. Inferring one at read time would also break the
+// moment a calling joined the limited set: claims re-mint only when the
+// access doc is written, so existing holders would still hold full
+// access while this page labelled them LIMITED. A calling-derived
+// limited tier has to be **stored on the record** before it is shown —
+// then the page and the claim minter read one fact and cannot disagree.
+
+function LevelBadge({ level, testId }: { level: AccessLevel; testId: string }) {
+  return level === 'limited' ? (
+    <Badge variant="limited" data-testid={testId}>
+      LIMITED
+    </Badge>
+  ) : (
+    <Badge variant="info" data-testid={testId}>
+      Full
+    </Badge>
+  );
+}
+
 function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTableRow[] {
   const rows: AccessTableRow[] = [];
   for (const u of users) {
@@ -290,21 +327,28 @@ function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTable
       <tbody>
         {rows.map((r, i) => (
           <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
-            <td>{scopeLabel(r.scope, wards)}</td>
+            {/* Scope + tier share a cell: a table row is exactly one grant
+                (or one importer calling), so the pairing is accurate.
+                Testid keys on the grant id for manual rows; importer rows
+                have no grant, so they key on scope + calling — the pair
+                that makes an importer row unique within a doc. */}
             <td>
-              {r.calling}
-              {r.grant?.level === 'limited' ? (
-                <>
-                  {' '}
-                  <Badge
-                    variant="info"
-                    data-testid={`access-table-level-${r.canonical}-${r.grant.grant_id}`}
-                  >
-                    Limited
-                  </Badge>
-                </>
-              ) : null}
+              {scopeLabel(r.scope, wards)}{' '}
+              {r.grant ? (
+                <LevelBadge
+                  level={grantLevel(r.grant)}
+                  testId={`access-table-level-${r.canonical}-${r.grant.grant_id}`}
+                />
+              ) : (
+                // Importer row — tier is not stored on `importer_callings`,
+                // so it is Full by construction. See the Access tier note.
+                <LevelBadge
+                  level="full"
+                  testId={`access-table-level-${r.canonical}-${r.scope}-${r.calling}`}
+                />
+              )}
             </td>
+            <td>{r.calling}</td>
             <td>
               <RosterMemberLine name={null} email={r.email} />
             </td>
@@ -340,6 +384,9 @@ interface AccessCardProps {
   onDeleteRequest: (scope: string, grant: ManualGrant) => void;
 }
 
+// Unlike the table, the card's tier chip sits beside each grant, not on
+// the scope chip: a card groups every grant for a scope under one
+// heading and those grants can differ in tier.
 function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardProps) {
   const importerScopes = Object.entries(access.importer_callings ?? {})
     .filter(([scope, callings]) => (!scopeFilter || scope === scopeFilter) && callings.length > 0)
@@ -366,7 +413,15 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
               <span className="roster-card-chip roster-card-scope">{scopeLabel(scope, wards)}</span>
               <ul className="kd-access-grants">
                 {callings.map((c) => (
-                  <li key={c}>{c}</li>
+                  <li key={c}>
+                    {c}{' '}
+                    {/* Importer calling — no stored tier, Full by
+                        construction. See the Access tier note. */}
+                    <LevelBadge
+                      level="full"
+                      testId={`access-grant-level-${access.member_canonical}-${scope}-${c}`}
+                    />
+                  </li>
                 ))}
               </ul>
             </div>
@@ -386,16 +441,10 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
                 {grants.map((g) => (
                   <li key={g.grant_id}>
                     {g.reason}{' '}
-                    {g.level === 'limited' ? (
-                      <>
-                        <Badge
-                          variant="info"
-                          data-testid={`access-grant-level-${access.member_canonical}-${g.grant_id}`}
-                        >
-                          Limited
-                        </Badge>{' '}
-                      </>
-                    ) : null}
+                    <LevelBadge
+                      level={grantLevel(g)}
+                      testId={`access-grant-level-${access.member_canonical}-${g.grant_id}`}
+                    />{' '}
                     <Button
                       variant="danger"
                       onClick={() => onDeleteRequest(scope, g)}

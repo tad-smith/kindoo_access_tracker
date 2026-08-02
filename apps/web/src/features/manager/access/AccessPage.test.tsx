@@ -41,6 +41,13 @@ vi.mock('../../../lib/principal', () => ({
 
 import { AccessPage } from './AccessPage';
 
+// The Scope cell now carries the level chip after the scope name; the
+// sort assertions care only about the name, which is the cell's first
+// child node.
+function scopeName(td: Element): string {
+  return (td.childNodes[0]?.textContent ?? '').trim();
+}
+
 function liveResult<T>(data: T[] | undefined, isLoading = false) {
   return {
     data,
@@ -479,8 +486,8 @@ describe('<AccessPage />', () => {
     render(<AccessPage />);
     const table = screen.getByTestId('access-table');
     const rows = Array.from(table.querySelectorAll('tbody tr')).map((tr) => {
-      const cells = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? '');
-      return `${cells[0]}|${cells[1]}`;
+      const cells = Array.from(tr.querySelectorAll('td'));
+      return `${scopeName(cells[0]!)}|${cells[1]?.textContent?.trim() ?? ''}`;
     });
     expect(rows).toEqual([
       'Stake|Stake President', // canonical order 0
@@ -526,8 +533,8 @@ describe('<AccessPage />', () => {
     render(<AccessPage />);
     const table = screen.getByTestId('access-table');
     const rows = Array.from(table.querySelectorAll('tbody tr')).map((tr) => {
-      const cells = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? '');
-      return `${cells[0]}|${cells[1]}`;
+      const cells = Array.from(tr.querySelectorAll('td'));
+      return `${scopeName(cells[0]!)}|${cells[1]?.textContent?.trim() ?? ''}`;
     });
     expect(rows).toEqual([
       'Stake|Stake President', // canonical order 0
@@ -572,6 +579,150 @@ describe('<AccessPage />', () => {
     expect(addManualMutate).toHaveBeenCalledWith(expect.objectContaining({ level: 'limited' }));
   });
 
+  it('renders LIMITED in the Scope cell, not the Calling/reason cell', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'lim@x.com',
+          member_email: 'lim@x.com',
+          importer_callings: {},
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'g-lim',
+                reason: 'Covering bishop',
+                level: 'limited',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const cells = Array.from(
+      screen.getByTestId('access-table').querySelectorAll('tbody tr td'),
+    ) as HTMLElement[];
+    const chip = screen.getByTestId('access-table-level-lim@x.com-g-lim');
+    expect(chip).toHaveTextContent('LIMITED');
+    expect(cells[0]).toContainElement(chip);
+    // Scope name still leads the cell; the chip trails it.
+    expect(scopeName(cells[0]!)).toBe('Maple');
+    // Calling/reason cell is now the bare reason — no chip.
+    expect(cells[1]).toHaveTextContent('Covering bishop');
+    expect(cells[1]!.querySelector('[data-testid^="access-table-level-"]')).toBeNull();
+  });
+
+  // Inverted from the pre-D25-chip behaviour, which asserted a full grant
+  // rendered NOTHING. A silent cell was indistinguishable from a render
+  // bug or a stale bundle, so full grants now say so explicitly.
+  it('renders Full in the Scope cell for a manual grant carrying no level key', () => {
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'full@x.com',
+          member_email: 'full@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              {
+                grant_id: 'g-full',
+                reason: 'Covering bishop',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const chip = screen.getByTestId('access-table-level-full@x.com-g-full');
+    expect(chip).toHaveTextContent('Full');
+    const cells = Array.from(screen.getByTestId('access-table').querySelectorAll('tbody tr td'));
+    expect(cells[0]).toContainElement(chip);
+    expect(screen.getByTestId('access-grant-level-full@x.com-g-full')).toHaveTextContent('Full');
+  });
+
+  // Importer rows are Full by construction: `importer_callings` stores
+  // bare calling strings with nowhere to put a tier, and the page must
+  // not infer one from the calling name — a read-time classifier would
+  // contradict the minted claim, which only re-mints on an access-doc
+  // write. A calling named after a would-be limited calling is still Full.
+  it('renders Full on every importer row, whatever the calling is named', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'imp@x.com',
+          member_email: 'imp@x.com',
+          importer_callings: { CO: ['Bishop', 'Elders Quorum President'] },
+          manual_grants: {},
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    // Importer rows carry no grant_id, so the chip keys on scope + calling.
+    expect(screen.getByTestId('access-table-level-imp@x.com-CO-Bishop')).toHaveTextContent('Full');
+    expect(
+      screen.getByTestId('access-table-level-imp@x.com-CO-Elders Quorum President'),
+    ).toHaveTextContent('Full');
+    expect(screen.getByTestId('access-grant-level-imp@x.com-CO-Bishop')).toHaveTextContent('Full');
+    expect(
+      screen.getByTestId('access-grant-level-imp@x.com-CO-Elders Quorum President'),
+    ).toHaveTextContent('Full');
+    // No row anywhere on the page claims the limited tier.
+    expect(screen.queryByText('LIMITED')).toBeNull();
+  });
+
+  it('reads a manual row from the grant marker, never from its reason text', () => {
+    const granted_by = { email: 'm@x.com', canonical: 'm@x.com' };
+    const granted_at = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'm@x.com',
+          member_email: 'm@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              // A reason that reads like a limited-tier calling is still a
+              // full grant — only the stored `level` marker decides.
+              {
+                grant_id: 'g1',
+                reason: 'Elders Quorum President',
+                granted_by,
+                granted_at,
+              },
+              {
+                grant_id: 'g2',
+                reason: 'Covering bishop',
+                level: 'limited',
+                granted_by,
+                granted_at,
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    expect(screen.getByTestId('access-table-level-m@x.com-g1')).toHaveTextContent('Full');
+    expect(screen.getByTestId('access-table-level-m@x.com-g2')).toHaveTextContent('LIMITED');
+  });
+
   it('badges a limited grant in both the table and the card view', () => {
     useAccessListMock.mockReturnValue(
       liveResult([
@@ -600,15 +751,52 @@ describe('<AccessPage />', () => {
     );
     render(<AccessPage />);
     // Both views are always mounted; CSS picks which one is visible.
-    expect(screen.getByTestId('access-table-level-lim@x.com-g-lim')).toHaveTextContent('Limited');
-    expect(screen.getByTestId('access-grant-level-lim@x.com-g-lim')).toHaveTextContent('Limited');
+    expect(screen.getByTestId('access-table-level-lim@x.com-g-lim')).toHaveTextContent('LIMITED');
+    expect(screen.getByTestId('access-grant-level-lim@x.com-g-lim')).toHaveTextContent('LIMITED');
   });
 
-  // A doc can hold a full grant and a limited one at once. The badge is
-  // per-grant, so the limited row must carry it while the full row stays
-  // bare — the earlier badge test used a single-grant doc and could not
-  // have caught a per-doc (rather than per-grant) regression.
-  it('badges only the limited grant when a doc holds both tiers', () => {
+  it('keeps the card-view level chip beside the reason for both tiers', () => {
+    const ts = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+    const granted_by = { email: 'm@x.com', canonical: 'm@x.com' };
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'mix@x.com',
+          member_email: 'mix@x.com',
+          importer_callings: {},
+          manual_grants: {
+            stake: [
+              { grant_id: 'g-full', reason: 'Helper', granted_by, granted_at: ts },
+              {
+                grant_id: 'g-lim',
+                reason: 'Covering bishop',
+                level: 'limited',
+                granted_by,
+                granted_at: ts,
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    const card = screen.getByTestId('access-card-mix@x.com');
+    // One <li> per grant; each carries its own chip next to its reason.
+    const items = Array.from(
+      within(card).getByTestId('access-section-manual').querySelectorAll('li'),
+    );
+    expect(items.map((li) => li.textContent?.replace(/Delete$/, '').trim())).toEqual([
+      'Helper Full',
+      'Covering bishop LIMITED',
+    ]);
+    expect(items[0]).toContainElement(screen.getByTestId('access-grant-level-mix@x.com-g-full'));
+    expect(items[1]).toContainElement(screen.getByTestId('access-grant-level-mix@x.com-g-lim'));
+  });
+
+  // A doc can hold a full grant and a limited one at once. The chip is
+  // per-grant, so the two rows must disagree — a single-grant doc could
+  // not catch a per-doc (rather than per-grant) regression.
+  it('badges each grant on its own tier when a doc holds both', () => {
     const ts = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
     useAccessListMock.mockReturnValue(
       liveResult([
@@ -640,41 +828,10 @@ describe('<AccessPage />', () => {
       ]),
     );
     render(<AccessPage />);
-    expect(screen.getByTestId('access-table-level-both@x.com-g-lim2')).toHaveTextContent('Limited');
-    expect(screen.getByTestId('access-grant-level-both@x.com-g-lim2')).toHaveTextContent('Limited');
-    expect(screen.queryByTestId('access-table-level-both@x.com-g-full')).toBeNull();
-    expect(screen.queryByTestId('access-grant-level-both@x.com-g-full')).toBeNull();
-  });
-
-  it('shows no level badge on a full grant, which carries no level key', () => {
-    useAccessListMock.mockReturnValue(
-      liveResult([
-        makeAccess({
-          member_canonical: 'full@x.com',
-          member_email: 'full@x.com',
-          importer_callings: {},
-          manual_grants: {
-            stake: [
-              {
-                grant_id: 'g-full',
-                reason: 'Covering bishop',
-                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
-                granted_at: {
-                  seconds: 0,
-                  nanoseconds: 0,
-                  toDate: () => new Date(),
-                  toMillis: () => 0,
-                },
-              },
-            ],
-          },
-        }),
-      ]),
-    );
-    render(<AccessPage />);
-    expect(screen.queryByTestId('access-table-level-full@x.com-g-full')).toBeNull();
-    expect(screen.queryByTestId('access-grant-level-full@x.com-g-full')).toBeNull();
-    expect(screen.queryByText('Limited')).toBeNull();
+    expect(screen.getByTestId('access-table-level-both@x.com-g-lim2')).toHaveTextContent('LIMITED');
+    expect(screen.getByTestId('access-grant-level-both@x.com-g-lim2')).toHaveTextContent('LIMITED');
+    expect(screen.getByTestId('access-table-level-both@x.com-g-full')).toHaveTextContent('Full');
+    expect(screen.getByTestId('access-grant-level-both@x.com-g-full')).toHaveTextContent('Full');
   });
 
   it('opens the delete confirmation dialog when a grant Delete is clicked', async () => {
