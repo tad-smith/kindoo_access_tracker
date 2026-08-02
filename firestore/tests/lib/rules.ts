@@ -178,7 +178,7 @@ type RoleClaims = {
   manager?: boolean;
   stake?: boolean;
   wards?: string[];
-  /** Limited app access (D24). Omitted from the minted claim unless true. */
+  /** Limited app access (D25). Omitted from the minted claim unless true. */
   limited?: boolean;
 };
 
@@ -234,7 +234,7 @@ export function bishopricContext(
 }
 
 /**
- * Convenience: a bishopric member with limited app access (D24) under
+ * Convenience: a bishopric member with limited app access (D25) under
  * `stakeId`. Same claim block as `bishopricContext` plus
  * `limited: true`.
  */
@@ -246,7 +246,7 @@ export function limitedBishopricContext(
   return contextFor(env, personas.bishopric, stakeId, { wards, limited: true });
 }
 
-/** Convenience: a stake-scope member with limited app access (D24) under `stakeId`. */
+/** Convenience: a stake-scope member with limited app access (D25) under `stakeId`. */
 export function limitedStakeMemberContext(
   env: RulesTestEnvironment,
   stakeId: string,

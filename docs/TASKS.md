@@ -7,7 +7,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-75] Limited-app-access code comments cite D24; the decision is D25
-Status: open
+Status: done (2026-08-02 — swept on the D25 feature branch before #244 merged)
 Owner: @backend-engineer / @web-engineer
 Phase: cross-cutting
 

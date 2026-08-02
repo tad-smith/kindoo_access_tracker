@@ -101,12 +101,12 @@ service cloud.firestore {
         && request.auth.token.stakes[stakeId].stake == true;
     }
 
-    // Limited app access (D24). An opt-in per-stake flag minted onto
+    // Limited app access (D25). An opt-in per-stake flag minted onto
     // the stake claim block alongside `manager` / `stake` / `wards`.
     // Absent (the overwhelmingly common case) means FULL access and
     // nothing about the user's write surface changes. When true, the
     // `requests` create predicate narrows to the temp / remove subset
-    // — see the D24 clause at the end of that rule.
+    // — see the D25 clause at the end of that rule.
     //
     // The `'limited' in ...` presence guard matters: the claim minter
     // omits the key entirely for full users rather than writing
@@ -587,7 +587,7 @@ service cloud.firestore {
           );
       }
 
-      // ----- Limited-app-access helpers (D24) -----
+      // ----- Limited-app-access helpers (D25) -----
       // Only ever reached from the `requests` create predicate, and
       // only when `isLimited(stakeId)` is true — so full users pay
       // none of the cost below (no extra document reads).
@@ -806,7 +806,7 @@ service cloud.firestore {
             || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
           )
-          // Limited app access (D24). A user carrying
+          // Limited app access (D25). A user carrying
           // `stakes[stakeId].limited == true` gets a narrowed submit
           // surface; everyone else is untouched — a full user short-
           // circuits on `!isLimited(stakeId)` and never evaluates a
@@ -816,7 +816,7 @@ service cloud.firestore {
           // `kindooManagers` row — so the manager branch above keeps
           // its full reach.
           //
-          // The narrowed surface, per D24:
+          // The narrowed surface, per D25:
           //   - type restricted to `add_temp` / `edit_temp` / `remove`
           //     (no manual grants, no auto edits);
           //   - temp windows capped at 90 days end-to-start;

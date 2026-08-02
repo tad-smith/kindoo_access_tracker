@@ -1434,7 +1434,7 @@ describe('<NewRequestForm /> — organization selector (stake scope only)', () =
   });
 });
 
-describe('<NewRequestForm /> — limited app access (D24)', () => {
+describe('<NewRequestForm /> — limited app access (D25)', () => {
   // A limited user's form must never offer a submit the rules reject:
   // temp-only, ≤90-day window, ward scope locked to the ward's own
   // building. The paired non-limited assertions guard the far bigger

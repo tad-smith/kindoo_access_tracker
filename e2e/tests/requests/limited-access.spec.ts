@@ -1,4 +1,4 @@
-// E2E coverage for LIMITED app access (D24) — the narrowing flag a
+// E2E coverage for LIMITED app access (D25) — the narrowing flag a
 // stake claim carries as `stakes[sid].limited`. A limited user keeps
 // their bishopric role but loses authority over the durable seat types:
 //
@@ -70,7 +70,7 @@ interface Claims {
   manager?: boolean;
   stake?: boolean;
   wards?: string[];
-  /** D24 — narrows an existing role; absent / false = full access. */
+  /** D25 — narrows an existing role; absent / false = full access. */
   limited?: boolean;
 }
 
@@ -192,7 +192,7 @@ async function openNewRequestDialog(page: Page) {
   return dialog;
 }
 
-test.describe('Limited app access (D24)', () => {
+test.describe('Limited app access (D25)', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();

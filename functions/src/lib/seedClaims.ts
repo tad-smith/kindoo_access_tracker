@@ -11,7 +11,7 @@
 //
 // Reads a deliberately minimal access-doc shape: presence of
 // `importer_callings` OR `manual_grants` with at least one non-empty
-// scope, plus each grant's access tier (D24 limited access).
+// scope, plus each grant's access tier (D25 limited access).
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
 import { LIMITED_ACCESS_CALLINGS, isLimitedAccessCalling } from '@kindoo/shared';
@@ -91,7 +91,7 @@ export async function computeStakeClaims(stakeId: string, canonical: string): Pr
  * compute (a) whether the user has any non-empty grant in scope
  * `'stake'`, (b) the deduped sorted list of ward codes for which the
  * user has any non-empty grant in any other scope, and (c) whether
- * every one of those grants is limited-tier (D24).
+ * every one of those grants is limited-tier (D25).
  *
  * `limited` is true iff the user holds >=1 grant AND *every* grant
  * across *all* scopes is limited — one full grant anywhere in the doc

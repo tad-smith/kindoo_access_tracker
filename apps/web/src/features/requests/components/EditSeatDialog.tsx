@@ -30,7 +30,7 @@
 // callable resolves the seat slot and applies the field replacement;
 // no client-side seat write here. Closes on success + toasts.
 //
-// Limited app access (D24). `canEditSeat` already hides the Edit
+// Limited app access (D25). `canEditSeat` already hides the Edit
 // affordance on auto and manual seats for a principal carrying
 // `stakes[sid].limited`, so `edit_temp` is the only sub-mode a limited
 // user can reach here — there is no auto / manual handling to add. What
@@ -154,7 +154,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   const wards = wardsResult.data ?? [];
   const buildings = buildingsResult.data ?? [];
 
-  // Limited app access (D24). Only `edit_temp` is reachable — the
+  // Limited app access (D25). Only `edit_temp` is reachable — the
   // affordance gate upstream guarantees it — so the flag drives the
   // window cap and the ward-scope building lock, nothing else.
   const limited = activeStakeId !== null && isLimitedInStake(principal, activeStakeId);
@@ -422,7 +422,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
             Buildings <small>(at least one required)</small>
           </legend>
           {wardLock ? (
-            // Limited + ward scope (D24): the grant is locked to the
+            // Limited + ward scope (D25): the grant is locked to the
             // ward's own building, so there is nothing to tick.
             lockedWardBuilding ? (
               <div className="kd-buildings-locked-row" data-testid="edit-seat-locked-building">

@@ -1049,7 +1049,7 @@ describe('<BishopricRosterPage /> — Kindoo Sites label (spec §15)', () => {
   });
 });
 
-describe('<BishopricRosterPage /> — limited app access (D24)', () => {
+describe('<BishopricRosterPage /> — limited app access (D25)', () => {
   // A limited bishopric member's authority stops at temp seats. The
   // roster must not offer Edit or Remove on the durable rows at all —
   // the rules would reject those submits.

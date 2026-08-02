@@ -1047,13 +1047,13 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
     });
   });
 
-  // Limited app access (D24). `stakes[stakeId].limited == true` narrows
+  // Limited app access (D25). `stakes[stakeId].limited == true` narrows
   // the submit surface to `add_temp` / `edit_temp` / `remove`, caps temp
   // windows at 90 days, locks ward-scope temp requests to the ward's own
   // building, and restricts `remove` to seats of `type == 'temp'`. Full
   // users (no `limited` key on the claim) are unaffected — the last
   // group in this block pins that.
-  describe('limited app access (D24)', () => {
+  describe('limited app access (D25)', () => {
     const WARD = '01';
     const WARD_BUILDING = 'Maple Building';
     const OTHER_BUILDING = 'Briargate Building';
@@ -1576,7 +1576,7 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
     });
 
     // Full users carry no `limited` key on their claim block, so
-    // `!isLimited(stakeId)` short-circuits the whole D24 clause. These
+    // `!isLimited(stakeId)` short-circuits the whole D25 clause. These
     // pin that the new rule is invisible to them.
     describe('full users are unaffected', () => {
       it('non-limited bishopric add_manual → still ok', async () => {

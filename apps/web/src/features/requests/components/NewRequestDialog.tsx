@@ -5,7 +5,7 @@
 // live in `Dialog.Footer` inside the form.
 //
 // Data (scopes / buildings / wards / `limited`) comes from the shared
-// `useNewRequestFormData` hook; `limited` narrows the form to the D24
+// `useNewRequestFormData` hook; `limited` narrows the form to the D25
 // surface (temp-only, 90-day cap, ward building locked). While the catalogue is loading the
 // dialog renders a spinner in place of the form. The dialog is always
 // launched from a scoped roster context, so it narrows the form's scope

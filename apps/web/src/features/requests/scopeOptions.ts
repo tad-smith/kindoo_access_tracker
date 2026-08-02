@@ -89,7 +89,7 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
 }
 
 /**
- * "Does this principal hold LIMITED app access in this stake?" (D24).
+ * "Does this principal hold LIMITED app access in this stake?" (D25).
  *
  * `limited` is a narrowing flag on an existing role, not a role of its
  * own — a limited user still needs the bishopric / stake claim that
@@ -114,7 +114,7 @@ export function isLimitedInStake(principal: Principal, stakeId: string): boolean
  *      locked; additions only) — Policy 1 covers the stake-scope case
  *      only.
  *
- *   2. **D24 — a limited user edits temp seats and nothing else.** Auto
+ *   2. **D25 — a limited user edits temp seats and nothing else.** Auto
  *      and manual seats are durable grants outside their authority, so
  *      the Edit affordance never renders on those rows. Placing the gate
  *      here (rather than at each roster page) means all three roster
@@ -142,7 +142,7 @@ export function canEditSeat(principal: Principal, stakeId: string, seat: Seat): 
  * "Can this principal submit a removal for this grant row?" The base
  * gate is `isScopeAllowed` against the GRANT's scope (a seat can carry
  * duplicate grants in scopes the viewer has no authority over), plus the
- * D24 narrowing: a limited user may remove temp grants only.
+ * D25 narrowing: a limited user may remove temp grants only.
  *
  * **Deliberately stricter than the rules.** `limitedRemoveTargetIsTemp`
  * checks only the SEAT's primary `type`, because a rules `get()` can

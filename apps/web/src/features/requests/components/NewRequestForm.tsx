@@ -26,7 +26,7 @@
 //         buildings to exclude).
 //       - scope == <ward>   → collapsed, that ward's building pre-selected.
 //
-// Limited app access (D24, `limited` prop). A user whose claim carries
+// Limited app access (D25, `limited` prop). A user whose claim carries
 // `stakes[sid].limited` submits a strictly narrower request; the form
 // removes the choices the rules would reject rather than letting the
 // user discover them as a permission error:
@@ -118,7 +118,7 @@ export interface NewRequestFormProps {
   /** Dialog mode: called when the Cancel button is clicked. Cancel does
    *  NOT submit the form. */
   onCancel?: () => void;
-  /** The submitter holds LIMITED app access in the active stake (D24).
+  /** The submitter holds LIMITED app access in the active stake (D25).
    *  Narrows the form to `add_temp` only, caps the temp window, and
    *  locks a ward-scope request to the ward's own building. Defaults to
    *  `false` — a full user's form is byte-for-byte unchanged. */
@@ -172,7 +172,7 @@ export function NewRequestForm({
   limited = false,
 }: NewRequestFormProps) {
   const submit = useSubmitRequest();
-  // A limited user may only ever submit `add_temp` (D24). This drives
+  // A limited user may only ever submit `add_temp` (D25). This drives
   // the `<Select>` options, the mount default, AND the page-mode
   // post-submit reset — miss any one of the three and the form quietly
   // ships an `add_manual` the rules reject.
@@ -289,7 +289,7 @@ export function NewRequestForm({
   // hydration; stake-scope default is the full catalogue per B-11),
   // while the open-state effect must NOT thrash on every push.
   // A limited user's ward-scope request is locked to exactly the ward's
-  // own building (D24). `null` when the scope is `stake` (no single ward
+  // own building (D25). `null` when the scope is `stake` (no single ward
   // to lock to — the normal checklist stands) or the ward has no
   // building configured (the form renders a blocked message instead of
   // the checklist, and Submit stays disabled on the empty selection).
@@ -429,7 +429,7 @@ export function NewRequestForm({
       <label>
         Request type
         <Select {...register('type')} data-testid="new-request-type">
-          {/* Limited access (D24): Temporary is the only submittable
+          {/* Limited access (D25): Temporary is the only submittable
               type, so it is the only option offered. */}
           {limited ? null : <option value="add_manual">Manual (ongoing)</option>}
           <option value="add_temp">Temporary (dated)</option>
@@ -545,7 +545,7 @@ export function NewRequestForm({
       ) : null}
 
       {wardLock ? (
-        // Limited + ward scope (D24): no checklist at all. The grant is
+        // Limited + ward scope (D25): no checklist at all. The grant is
         // locked to the ward's own building, so the panel collapses to a
         // read-only statement of which building that is.
         lockedBuilding ? (

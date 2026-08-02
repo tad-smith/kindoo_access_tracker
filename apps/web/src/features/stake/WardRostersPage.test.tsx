@@ -746,7 +746,7 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
   });
 });
 
-describe('<WardRostersPage /> — limited app access (D24)', () => {
+describe('<WardRostersPage /> — limited app access (D25)', () => {
   function wardSeats() {
     return [
       makeSeat({

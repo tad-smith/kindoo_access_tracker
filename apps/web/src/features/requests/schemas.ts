@@ -185,7 +185,7 @@ export const newRequestSchema = z
 
 export type NewRequestForm = z.infer<typeof newRequestSchema>;
 
-/** User-facing copy for the D24 temp-window cap. One string, three
+/** User-facing copy for the D25 temp-window cap. One string, three
  *  call sites (new-request schema, edit-seat schema, the forms' helper
  *  text) so the number the user is told matches the number enforced. */
 export const LIMITED_TEMP_WINDOW_MESSAGE = `Temporary access is limited to ${MAX_LIMITED_TEMP_WINDOW_DAYS} days.`;
@@ -193,7 +193,7 @@ export const LIMITED_TEMP_WINDOW_MESSAGE = `Temporary access is limited to ${MAX
 /** Options bag for the schema factories. */
 export interface LimitedAccessOptions {
   /**
-   * The submitter holds LIMITED app access in the active stake (D24).
+   * The submitter holds LIMITED app access in the active stake (D25).
    * Adds the narrowed gates on top of the normal shape; `false` /
    * omitted leaves validation byte-for-byte as it was for full users.
    */
@@ -208,7 +208,7 @@ export interface LimitedAccessOptions {
  * validation should keep using `newRequestSchema` directly — the
  * cross-ward rule is a UX nudge, not a defense-in-depth gate.
  *
- * `opts.limited` layers the D24 gates on top:
+ * `opts.limited` layers the D25 gates on top:
  *
  *   - the request type must be `add_temp`. The form already renders
  *     Temporary as the only option, so this is defense in depth against
@@ -356,7 +356,7 @@ export const editSeatSchema = z
 export type EditSeatForm = z.infer<typeof editSeatSchema>;
 
 /**
- * `editSeatSchema` plus the D24 temp-window cap. `opts.limited` is the
+ * `editSeatSchema` plus the D25 temp-window cap. `opts.limited` is the
  * only difference: when set, an `edit_temp` submission whose window runs
  * longer than `MAX_LIMITED_TEMP_WINDOW_DAYS` raises an issue on
  * `end_date`, matching the rules' `tempWindowWithin90Days` compare.

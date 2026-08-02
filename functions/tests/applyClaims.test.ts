@@ -137,7 +137,7 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
   );
 });
 
-// D24 limited access. `limited` rides inside the per-stake block, so the
+// D25 limited access. `limited` rides inside the per-stake block, so the
 // merge must carry it through untouched and the change-detection compare
 // must notice it appearing or disappearing — that's what revokes the
 // token when a user's tier actually flips. Both are exercised through

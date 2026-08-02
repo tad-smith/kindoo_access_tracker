@@ -39,7 +39,7 @@ vi.mock('../../organizations/hooks', async () => {
   };
 });
 
-// The dialog resolves the D24 `limited` flag from the principal + the
+// The dialog resolves the D25 `limited` flag from the principal + the
 // active stake. Both default to a FULL user in `beforeEach`, so every
 // pre-existing test in this file keeps its original behaviour; the
 // limited-access block at the bottom overrides them.
@@ -1071,7 +1071,7 @@ describe('<EditSeatDialog /> — organization selector (stake scope only)', () =
   });
 });
 
-describe('<EditSeatDialog /> — limited app access (D24)', () => {
+describe('<EditSeatDialog /> — limited app access (D25)', () => {
   // `canEditSeat` guarantees only temp seats reach this dialog for a
   // limited principal, so every case below is `edit_temp`.
 

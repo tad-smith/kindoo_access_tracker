@@ -292,9 +292,9 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
       );
     });
 
-    // Limited app access (D24). The per-grant `level: 'limited'` marker
+    // Limited app access (D25). The per-grant `level: 'limited'` marker
     // rides inside `manual_grants`, which is already the manager's lane
-    // in the affectedKeys() allowlist — so D24 required NO rules change
+    // in the affectedKeys() allowlist — so D25 required NO rules change
     // here. This test is the proof of that decision: if someone later
     // tightens the access block into per-grant field validation, the new
     // marker turns this red instead of silently breaking the feature in

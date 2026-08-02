@@ -929,7 +929,7 @@ describe('<StakeRosterPage />', () => {
   });
 });
 
-describe('<StakeRosterPage /> — limited app access (D24)', () => {
+describe('<StakeRosterPage /> — limited app access (D25)', () => {
   function stakeSeats() {
     return [
       makeSeat({

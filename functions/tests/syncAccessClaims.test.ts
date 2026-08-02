@@ -24,7 +24,7 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
   await syncAccessClaims.run(makeEvent(stakeId, memberCanonical));
 }
 
-/** Manual grant carrying the D24 limited marker. */
+/** Manual grant carrying the D25 limited marker. */
 const limitedGrant = (id: string) => ({ grant_id: id, reason: 'r', level: 'limited' });
 /** Manual grant with no `level` — the ordinary full-tier shape. */
 const fullGrant = (id: string) => ({ grant_id: id, reason: 'r' });
@@ -158,7 +158,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
   });
 });
 
-// --- D24 limited access -----------------------------------------------
+// --- D25 limited access -----------------------------------------------
 //
 // `limited` is true iff the user holds >=1 grant and EVERY grant across
 // every scope is limited. The failure direction is toward FULL: a

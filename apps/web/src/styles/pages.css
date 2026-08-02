@@ -881,7 +881,7 @@
   margin-top: 8px;
 }
 /* Read-only stand-in for the buildings checklist when a limited user
-   submits at ward scope (D24) — the grant is locked to the ward's own
+   submits at ward scope (D25) — the grant is locked to the ward's own
    building, so there is nothing to tick. */
 .kd-buildings-locked-row {
   display: flex;

@@ -2,7 +2,7 @@
 // each row in the operator-stated spec table, including the Kindoo
 // Manager branch (manager → every scope, no `access` row needed) and
 // the platform-superadmin regression guard (superadmin alone grants
-// nothing). Also covers the D24 limited-app-access gates layered on
+// nothing). Also covers the D25 limited-app-access gates layered on
 // top of the Edit / Remove affordance predicates.
 
 import { describe, expect, it } from 'vitest';
@@ -312,7 +312,7 @@ describe('canEditSeat — per-row Edit affordance gate', () => {
   });
 });
 
-describe('isLimitedInStake — D24 narrowing flag', () => {
+describe('isLimitedInStake — D25 narrowing flag', () => {
   it('reports true for a stake listed in limitedStakes', () => {
     const principal = makePrincipal({ limitedStakes: [STAKE_ID] });
     expect(isLimitedInStake(principal, STAKE_ID)).toBe(true);
@@ -334,7 +334,7 @@ describe('isLimitedInStake — D24 narrowing flag', () => {
   });
 });
 
-describe('canEditSeat — D24 limited access narrows Edit to temp seats', () => {
+describe('canEditSeat — D25 limited access narrows Edit to temp seats', () => {
   const tempSeat = (scope: string) =>
     makeSeat({
       type: 'temp',
@@ -466,7 +466,7 @@ describe('canRemoveSeat — per-row Remove affordance gate', () => {
   });
 
   // A manager is never minted `limited` (an active kindooManagers row
-  // short-circuits the claim), so the D24 temp-only narrowing must not
+  // short-circuits the claim), so the D25 temp-only narrowing must not
   // reach them even if a limited grant sits alongside the manager row.
   it('manager who also carries a limited stake: still removable on a manual seat', () => {
     const principal = makePrincipal({

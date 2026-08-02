@@ -706,7 +706,7 @@ describe('editSeatSchema', () => {
   });
 });
 
-describe('makeNewRequestSchema — D24 limited-access gates', () => {
+describe('makeNewRequestSchema — D25 limited-access gates', () => {
   // `opts.limited` narrows the submittable surface to `add_temp` inside
   // a ≤90-day window. Everything a full user could submit before must
   // still parse when the flag is absent — that regression is the point
@@ -781,7 +781,7 @@ describe('makeNewRequestSchema — D24 limited-access gates', () => {
   });
 });
 
-describe('makeEditSeatSchema — D24 temp-window cap', () => {
+describe('makeEditSeatSchema — D25 temp-window cap', () => {
   function editTemp(startDate: string, endDate: string) {
     return {
       type: 'edit_temp' as const,

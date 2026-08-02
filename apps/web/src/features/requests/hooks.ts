@@ -184,7 +184,7 @@ export interface NewRequestFormData {
    *  dialog gates the form on this). */
   isLoading: boolean;
   /** True when the principal holds LIMITED app access in the active
-   *  stake (D24) — the form then offers `add_temp` only, caps the temp
+   *  stake (D25) — the form then offers `add_temp` only, caps the temp
    *  window at 90 days, and locks a ward-scope request to the ward's own
    *  building. `false` when there is no active stake. */
   limited: boolean;
