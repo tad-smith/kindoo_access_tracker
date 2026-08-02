@@ -1,8 +1,18 @@
 // Unit tests for `allowedScopesFor` — the pure New-Request scope-filter
 // helper. Covers each row in the operator-stated spec table for B-3.
+// Also covers the D24 limited-app-access gates layered on top of the
+// Edit / Remove affordance predicates.
 
 import { describe, expect, it } from 'vitest';
-import { allowedScopesFor, canEditSeat, isScopeAllowed } from '../scopeOptions';
+import type { Seat } from '@kindoo/shared';
+import {
+  allowedScopesFor,
+  canEditSeat,
+  canRemoveSeat,
+  isLimitedInStake,
+  isScopeAllowed,
+} from '../scopeOptions';
+import type { GrantView } from '../../../lib/grants';
 import type { Principal } from '../../../lib/principal';
 import { makeSeat, makeWard } from '../../../../test/fixtures';
 
@@ -27,10 +37,16 @@ function makePrincipal(overrides: Partial<Principal>): Principal {
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: {},
+    limitedStakes: [],
     hasAnyRole: () => false,
     wardsInStake: () => [],
     ...overrides,
   };
+}
+
+/** Minimal `GrantView` — only the two fields `canRemoveSeat` reads. */
+function makeGrant(scope: string, type: Seat['type']): Pick<GrantView, 'scope' | 'type'> {
+  return { scope, type };
 }
 
 describe('allowedScopesFor — B-3 scope filter', () => {
@@ -221,5 +237,223 @@ describe('canEditSeat — per-row Edit affordance gate', () => {
   it('no role: never editable', () => {
     const principal = makePrincipal({});
     expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO' }))).toBe(false);
+  });
+});
+
+describe('isLimitedInStake — D24 narrowing flag', () => {
+  it('reports true for a stake listed in limitedStakes', () => {
+    const principal = makePrincipal({ limitedStakes: [STAKE_ID] });
+    expect(isLimitedInStake(principal, STAKE_ID)).toBe(true);
+  });
+
+  it('reports false for a stake absent from limitedStakes', () => {
+    const principal = makePrincipal({ limitedStakes: ['other'] });
+    expect(isLimitedInStake(principal, STAKE_ID)).toBe(false);
+  });
+
+  it('reports false when the principal holds no limited claim at all', () => {
+    expect(isLimitedInStake(makePrincipal({}), STAKE_ID)).toBe(false);
+  });
+
+  it('is per-stake: limited in one stake does not narrow another', () => {
+    const principal = makePrincipal({ limitedStakes: ['other'] });
+    expect(isLimitedInStake(principal, 'other')).toBe(true);
+    expect(isLimitedInStake(principal, STAKE_ID)).toBe(false);
+  });
+});
+
+describe('canEditSeat — D24 limited access narrows Edit to temp seats', () => {
+  const tempSeat = (scope: string) =>
+    makeSeat({
+      type: 'temp',
+      scope,
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-06-01',
+    });
+
+  it('limited bishopric: ward-scope temp seat stays editable', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canEditSeat(principal, STAKE_ID, tempSeat('CO'))).toBe(true);
+  });
+
+  it('limited bishopric: ward-scope AUTO seat is not editable', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'CO' }))).toBe(false);
+  });
+
+  it('limited bishopric: ward-scope MANUAL seat is not editable', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO', callings: [] })),
+    ).toBe(false);
+  });
+
+  it('limited stake user: stake-scope temp seat stays editable', () => {
+    const principal = makePrincipal({
+      stakeMemberStakes: [STAKE_ID],
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canEditSeat(principal, STAKE_ID, tempSeat('stake'))).toBe(true);
+  });
+
+  it('limited stake user: stake-scope manual seat is not editable', () => {
+    const principal = makePrincipal({
+      stakeMemberStakes: [STAKE_ID],
+      limitedStakes: [STAKE_ID],
+    });
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'stake', callings: [] })),
+    ).toBe(false);
+  });
+
+  it('limited: a temp seat in a scope the principal has no authority over stays denied', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canEditSeat(principal, STAKE_ID, tempSeat('GE'))).toBe(false);
+  });
+
+  it('limited in ANOTHER stake only: full editing authority here (manual seat editable)', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: ['other'],
+    });
+    expect(
+      canEditSeat(principal, STAKE_ID, makeSeat({ type: 'manual', scope: 'CO', callings: [] })),
+    ).toBe(true);
+  });
+
+  it('limited: Policy 1 still wins — a stake-scope auto seat is never editable', () => {
+    const principal = makePrincipal({
+      stakeMemberStakes: [STAKE_ID],
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canEditSeat(principal, STAKE_ID, makeSeat({ type: 'auto', scope: 'stake' }))).toBe(
+      false,
+    );
+  });
+});
+
+describe('canRemoveSeat — per-row Remove affordance gate', () => {
+  const manualSeat = (scope: string) => makeSeat({ type: 'manual', scope, callings: [] });
+  const tempSeat = (scope: string) =>
+    makeSeat({
+      type: 'temp',
+      scope,
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-06-01',
+    });
+
+  it('non-limited bishopric: manual grant in their ward is removable', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
+      true,
+    );
+  });
+
+  it('non-limited stake user: stake-scope manual grant is removable', () => {
+    const principal = makePrincipal({ stakeMemberStakes: [STAKE_ID] });
+    expect(
+      canRemoveSeat(principal, STAKE_ID, manualSeat('stake'), makeGrant('stake', 'manual')),
+    ).toBe(true);
+  });
+
+  it('scope mismatch: a grant outside the principal’s authority is never removable', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('GE'), makeGrant('GE', 'manual'))).toBe(
+      false,
+    );
+  });
+
+  it('gates on the GRANT scope, not the seat scope: a duplicate grant in the viewer’s ward is removable', () => {
+    const principal = makePrincipal({ bishopricWards: { [STAKE_ID]: ['CO'] } });
+    // Seat's primary lives at stake scope; the row being rendered is the
+    // CO duplicate grant, which this bishopric does control.
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('stake'), makeGrant('CO', 'manual'))).toBe(
+      true,
+    );
+  });
+
+  it('manager-only (no stake / no ward claim): never removable', () => {
+    const principal = makePrincipal({ managerStakes: [STAKE_ID] });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
+      false,
+    );
+  });
+
+  it('limited: a temp seat whose grant row is also temp is removable', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, tempSeat('CO'), makeGrant('CO', 'temp'))).toBe(true);
+  });
+
+  it('limited: a MANUAL seat is not removable even on a temp-typed grant row', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'temp'))).toBe(
+      false,
+    );
+  });
+
+  it('limited: a temp seat’s MANUAL duplicate-grant row is not removable (stricter than the rules)', () => {
+    // The rules only inspect the seat's primary `type`, so this submit
+    // would pass server-side; the UI withholds the button anyway so the
+    // limited user is never offered a manual removal.
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, tempSeat('CO'), makeGrant('CO', 'manual'))).toBe(
+      false,
+    );
+  });
+
+  it('limited: an AUTO seat is not removable', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(
+      canRemoveSeat(
+        principal,
+        STAKE_ID,
+        makeSeat({ type: 'auto', scope: 'CO' }),
+        makeGrant('CO', 'auto'),
+      ),
+    ).toBe(false);
+  });
+
+  it('limited: scope mismatch still denies, even on a temp/temp pair', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: [STAKE_ID],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, tempSeat('GE'), makeGrant('GE', 'temp'))).toBe(false);
+  });
+
+  it('limited in ANOTHER stake only: manual removal here is unaffected', () => {
+    const principal = makePrincipal({
+      bishopricWards: { [STAKE_ID]: ['CO'] },
+      limitedStakes: ['other'],
+    });
+    expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
+      true,
+    );
   });
 });

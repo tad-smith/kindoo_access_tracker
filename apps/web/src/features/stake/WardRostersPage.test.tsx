@@ -78,7 +78,7 @@ vi.mock('../requests/components/NewRequestAffordance', async () => {
   };
 });
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(opts: { stake?: boolean; wards?: string[]; limited?: boolean } = {}): unknown {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
@@ -88,6 +88,7 @@ function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
     managerStakes: [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    limitedStakes: opts.limited ? ['csnorth'] : [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };
@@ -686,5 +687,67 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
     mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<WardRostersPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
+  });
+});
+
+describe('<WardRostersPage /> — limited app access (D24)', () => {
+  function wardSeats() {
+    return [
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'auto@x.com',
+        member_email: 'auto@x.com',
+        member_name: 'Auto Person',
+        type: 'auto',
+        callings: ['Bishop'],
+      }),
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'manual@x.com',
+        member_email: 'manual@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+      }),
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'temp@x.com',
+        member_email: 'temp@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        start_date: '2026-05-01',
+        end_date: '2026-06-01',
+      }),
+    ];
+  }
+
+  it('shows neither Edit nor Remove on auto and manual rows, but both on the temp row', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'], limited: true }));
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+    mockSeats(wardSeats());
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.queryByTestId('edit-btn-auto@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+
+    expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited bishopric keeps Edit on all three rows', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+    mockSeats(wardSeats());
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
   });
 });

@@ -121,7 +121,7 @@ function mockPendingRemoveFor(canonical: string) {
 
 import { StakeRosterPage } from './RosterPage';
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(opts: { stake?: boolean; wards?: string[]; limited?: boolean } = {}): unknown {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
@@ -131,6 +131,7 @@ function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
     managerStakes: [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    limitedStakes: opts.limited ? ['csnorth'] : [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };
@@ -873,5 +874,55 @@ describe('<StakeRosterPage />', () => {
       expect(screen.queryByText(/Stake Total/)).toBeNull();
       expect(screen.getByText(/1 \/ 200 seats used/)).toBeInTheDocument();
     });
+  });
+});
+
+describe('<StakeRosterPage /> — limited app access (D24)', () => {
+  function stakeSeats() {
+    return [
+      makeSeat({
+        scope: 'stake',
+        member_canonical: 'manual@x.com',
+        member_email: 'manual@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+      }),
+      makeSeat({
+        scope: 'stake',
+        member_canonical: 'temp@x.com',
+        member_email: 'temp@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        start_date: '2026-05-01',
+        end_date: '2026-06-01',
+      }),
+    ];
+  }
+
+  it('shows neither Edit nor Remove on a stake manual row, but both on the temp row', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true, limited: true }));
+    mockSeats(stakeSeats());
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited stake user keeps Edit and Remove on both rows', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats(stakeSeats());
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
   });
 });

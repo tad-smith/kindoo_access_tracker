@@ -26,6 +26,25 @@
 //         buildings to exclude).
 //       - scope == <ward>   → collapsed, that ward's building pre-selected.
 //
+// Limited app access (D24, `limited` prop). A user whose claim carries
+// `stakes[sid].limited` submits a strictly narrower request; the form
+// removes the choices the rules would reject rather than letting the
+// user discover them as a permission error:
+//   - request type: Temporary is the ONLY option, and the default value
+//     (plus the page-mode post-submit reset) is `add_temp` instead of
+//     `add_manual`.
+//   - dates: still two free inputs, but the ≤90-day cap is stated up
+//     front as helper text and enforced by the schema on `end_date`.
+//   - ward scope: the buildings checklist is replaced by a read-only row
+//     naming the ward's own building, and `building_names` is forced to
+//     exactly that one name — mirroring the rules' `limitedWardBuildingOk`
+//     equality check. A ward with no building configured renders a
+//     blocked message and leaves Submit disabled (empty `building_names`
+//     already disables it).
+//   - stake scope: unchanged — there is no single ward to lock to, so
+//     the normal site-filtered checklist stands.
+// Everything above is inert for a full user; `limited` defaults to false.
+//
 // Cross-cutting behaviour:
 //   - `Requesting for:` fixed scope label above the form.
 //   - Inline blocking duplicate error when a seat already exists for
@@ -40,6 +59,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { canonicalEmail } from '@kindoo/shared';
 import type { Building, Seat, Ward } from '@kindoo/shared';
 import {
+  LIMITED_TEMP_WINDOW_MESSAGE,
   clampWardDefaultsToVisible,
   defaultBuildingsForScope,
   isCrossWardSelection,
@@ -98,10 +118,33 @@ export interface NewRequestFormProps {
   /** Dialog mode: called when the Cancel button is clicked. Cancel does
    *  NOT submit the form. */
   onCancel?: () => void;
+  /** The submitter holds LIMITED app access in the active stake (D24).
+   *  Narrows the form to `add_temp` only, caps the temp window, and
+   *  locks a ward-scope request to the ward's own building. Defaults to
+   *  `false` — a full user's form is byte-for-byte unchanged. */
+  limited?: boolean;
 }
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The single building a limited user's ward-scope request is locked to,
+ * or `null` when the scope isn't a ward or the ward has no building
+ * configured. Delegates to `defaultBuildingsForScope`, which resolves
+ * the ward's building id-first via the shared `resolveWardBuilding`
+ * (name-snapshot fallback) — the same resolution the non-limited ward
+ * pre-selection uses, so both paths agree on which building "the ward's
+ * building" means.
+ */
+function lockedWardBuilding(
+  scope: string,
+  wards: readonly Ward[],
+  buildings: readonly Building[],
+): string | null {
+  if (!scope || scope === 'stake') return null;
+  return defaultBuildingsForScope(scope, wards, buildings)[0] ?? null;
 }
 
 /**
@@ -126,8 +169,14 @@ export function NewRequestForm({
   initialScope: requestedScope,
   onSubmitted,
   onCancel,
+  limited = false,
 }: NewRequestFormProps) {
   const submit = useSubmitRequest();
+  // A limited user may only ever submit `add_temp` (D24). This drives
+  // the `<Select>` options, the mount default, AND the page-mode
+  // post-submit reset — miss any one of the three and the form quietly
+  // ships an `add_manual` the rules reject.
+  const defaultType: NewRequestForm['type'] = limited ? 'add_temp' : 'add_manual';
   // Dialog mode is keyed off the success callback being supplied; in
   // that mode the actions render inside a Dialog.Footer (Cancel +
   // Submit) and the post-submit reset is skipped (the form unmounts).
@@ -174,7 +223,10 @@ export function NewRequestForm({
   // ward-comment-required gate can map a ward code to its default
   // building (id-first). Memo keys on both so the resolver picks up the
   // rule once the live subscriptions hydrate.
-  const schema = useMemo(() => makeNewRequestSchema(wards, buildings), [wards, buildings]);
+  const schema = useMemo(
+    () => makeNewRequestSchema(wards, buildings, { limited }),
+    [wards, buildings, limited],
+  );
 
   // Organizations catalogue — the optional org selector that appears
   // only at stake scope. Empty until hydrated; `sortOrganizations`
@@ -188,7 +240,7 @@ export function NewRequestForm({
   const form = useForm<NewRequestForm>({
     resolver: zodResolver(schema),
     defaultValues: {
-      type: 'add_manual',
+      type: defaultType,
       scope: initialScope,
       member_email: '',
       member_name: '',
@@ -236,21 +288,41 @@ export function NewRequestForm({
   // depends on `wards` and `buildings` (live subscription late-
   // hydration; stake-scope default is the full catalogue per B-11),
   // while the open-state effect must NOT thrash on every push.
+  // A limited user's ward-scope request is locked to exactly the ward's
+  // own building (D24). `null` when the scope is `stake` (no single ward
+  // to lock to — the normal checklist stands) or the ward has no
+  // building configured (the form renders a blocked message instead of
+  // the checklist, and Submit stays disabled on the empty selection).
+  const wardLock = limited && watchedScope !== 'stake' && watchedScope !== '';
+  const lockedBuilding = useMemo(
+    () => (wardLock ? lockedWardBuilding(watchedScope, wards, buildings) : null),
+    [wardLock, watchedScope, wards, buildings],
+  );
+
   const lastScopeForBuildings = useRef<string>(initialScope);
   useEffect(() => {
-    // Defaults are drawn from the visible (site-filtered) catalogue.
-    // Stake-scope → every home-site building; ward-scope → the ward's
-    // home building when it exists in the visible set. Clamp so a
-    // legacy ward whose `building_name` is hidden by the site filter
-    // collapses to no pre-check (Risk 2 / spec §15 Phase 2).
-    const next = clampWardDefaultsToVisible(
-      watchedScope,
-      defaultBuildingsForScope(watchedScope, wards, visibleBuildings),
-      visibleBuildings,
-    );
+    // Limited + ward scope: force the selection to exactly the ward's
+    // building, matching the rules' `data.building_names == [name]`
+    // equality check. No checkboxes render in this mode, so this effect
+    // is the only writer.
+    //
+    // Otherwise defaults are drawn from the visible (site-filtered)
+    // catalogue. Stake-scope → every home-site building; ward-scope →
+    // the ward's home building when it exists in the visible set. Clamp
+    // so a legacy ward whose `building_name` is hidden by the site
+    // filter collapses to no pre-check (Risk 2 / spec §15 Phase 2).
+    const next = wardLock
+      ? lockedBuilding
+        ? [lockedBuilding]
+        : []
+      : clampWardDefaultsToVisible(
+          watchedScope,
+          defaultBuildingsForScope(watchedScope, wards, visibleBuildings),
+          visibleBuildings,
+        );
     setValue('building_names', next, { shouldDirty: false, shouldValidate: false });
     lastScopeForBuildings.current = watchedScope;
-  }, [watchedScope, wards, visibleBuildings, setValue]);
+  }, [watchedScope, wards, visibleBuildings, setValue, wardLock, lockedBuilding]);
 
   const lastScopeForOpen = useRef<string>(initialScope);
   useEffect(() => {
@@ -309,7 +381,7 @@ export function NewRequestForm({
       // defaults for buildings; otherwise a single-ward bishop would lose
       // the pre-checked ward building between submissions.
       reset({
-        type: 'add_manual',
+        type: defaultType,
         scope: input.scope,
         member_email: '',
         member_name: '',
@@ -318,6 +390,9 @@ export function NewRequestForm({
         start_date: '',
         end_date: '',
         building_names: (() => {
+          // Limited + ward scope re-applies the lock rather than the
+          // site-filtered default — same rule as the scope effect.
+          if (wardLock) return lockedBuilding ? [lockedBuilding] : [];
           const vis = filterBuildingsBySite(
             buildings,
             siteIdForScope(input.scope, wards, buildings),
@@ -354,13 +429,20 @@ export function NewRequestForm({
       <label>
         Request type
         <Select {...register('type')} data-testid="new-request-type">
-          <option value="add_manual">Manual (ongoing)</option>
+          {/* Limited access (D24): Temporary is the only submittable
+              type, so it is the only option offered. */}
+          {limited ? null : <option value="add_manual">Manual (ongoing)</option>}
           <option value="add_temp">Temporary (dated)</option>
         </Select>
       </label>
 
       {watchedType === 'add_temp' ? (
         <div className="kd-temp-fields">
+          {limited ? (
+            <p className="kd-form-hint" data-testid="new-request-temp-cap-hint">
+              {LIMITED_TEMP_WINDOW_MESSAGE}
+            </p>
+          ) : null}
           <label>
             Start date
             <Input type="date" {...register('start_date')} data-testid="new-request-start-date" />
@@ -462,77 +544,103 @@ export function NewRequestForm({
         </p>
       ) : null}
 
-      <Collapsible
-        open={buildingsOpen}
-        onOpenChange={setBuildingsOpen}
-        className="kd-buildings-collapsible"
-        data-testid="new-request-buildings"
-      >
-        <CollapsibleTrigger
-          className="kd-buildings-trigger"
-          data-testid="new-request-buildings-trigger"
-        >
-          <span className="kd-buildings-header-row" data-testid="new-request-buildings-summary">
-            <strong>{buildingsHeaderParts(watchedBuildings).label}</strong>{' '}
-            <span className="kd-buildings-header-values">
-              {buildingsHeaderParts(watchedBuildings).value}
+      {wardLock ? (
+        // Limited + ward scope (D24): no checklist at all. The grant is
+        // locked to the ward's own building, so the panel collapses to a
+        // read-only statement of which building that is.
+        lockedBuilding ? (
+          <div className="kd-buildings-locked-row" data-testid="new-request-locked-building">
+            <span className="kd-buildings-header-row">
+              <strong>Building:</strong>{' '}
+              <span className="kd-buildings-header-values">{lockedBuilding}</span>
             </span>
-            {watchedScope === 'stake' ? (
-              <small className="kd-buildings-required-marker"> (at least one required)</small>
-            ) : null}
-          </span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          {buildings.length === 0 ? (
-            <p className="kd-empty-state" data-testid="new-request-buildings-empty">
-              No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.
-            </p>
-          ) : visibleBuildings.length === 0 ? (
-            // Site-filter narrowed the catalogue to zero (e.g. a foreign-
-            // site ward with no foreign-site buildings configured yet, or
-            // a stake-scope request with zero home-site buildings). Block
-            // submission with an explicit message instead of an empty list.
-            <p className="kd-empty-state" data-testid="new-request-buildings-empty-for-scope">
-              No buildings are available for this scope. Ask a Kindoo Manager to assign a building
-              to this Kindoo site via Configuration.
-            </p>
-          ) : (
-            <ul className="kd-checkbox-list">
-              {visibleBuildings.map((b) => {
-                const checked = watchedBuildings.includes(b.building_name);
-                return (
-                  <li key={b.building_id}>
-                    <label>
-                      <input
-                        type="checkbox"
-                        value={b.building_name}
-                        checked={checked}
-                        onChange={(e) => {
-                          const current = watchedBuildings;
-                          const next = e.target.checked
-                            ? [...current, b.building_name]
-                            : current.filter((n) => n !== b.building_name);
-                          setValue('building_names', next, {
-                            shouldValidate: true,
-                            shouldDirty: true,
-                          });
-                        }}
-                        data-testid={`new-request-building-${b.building_id}`}
-                      />{' '}
-                      {b.building_name}
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CollapsibleContent>
-        {formState.errors.building_names ? (
-          <p className="kd-form-error" role="alert">
-            {formState.errors.building_names.message}
+            <small className="kd-form-hint">
+              Temporary access is limited to your ward&apos;s building.
+            </small>
+          </div>
+        ) : (
+          <p
+            className="kd-form-error"
+            role="alert"
+            data-testid="new-request-locked-building-missing"
+          >
+            This ward has no building configured, so a request can&apos;t be submitted yet. Ask your
+            Kindoo Manager to set the ward&apos;s building under Configuration.
           </p>
-        ) : null}
-      </Collapsible>
+        )
+      ) : (
+        <Collapsible
+          open={buildingsOpen}
+          onOpenChange={setBuildingsOpen}
+          className="kd-buildings-collapsible"
+          data-testid="new-request-buildings"
+        >
+          <CollapsibleTrigger
+            className="kd-buildings-trigger"
+            data-testid="new-request-buildings-trigger"
+          >
+            <span className="kd-buildings-header-row" data-testid="new-request-buildings-summary">
+              <strong>{buildingsHeaderParts(watchedBuildings).label}</strong>{' '}
+              <span className="kd-buildings-header-values">
+                {buildingsHeaderParts(watchedBuildings).value}
+              </span>
+              {watchedScope === 'stake' ? (
+                <small className="kd-buildings-required-marker"> (at least one required)</small>
+              ) : null}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            {buildings.length === 0 ? (
+              <p className="kd-empty-state" data-testid="new-request-buildings-empty">
+                No buildings configured. Ask a Kindoo Manager to add buildings via Configuration.
+              </p>
+            ) : visibleBuildings.length === 0 ? (
+              // Site-filter narrowed the catalogue to zero (e.g. a foreign-
+              // site ward with no foreign-site buildings configured yet, or
+              // a stake-scope request with zero home-site buildings). Block
+              // submission with an explicit message instead of an empty list.
+              <p className="kd-empty-state" data-testid="new-request-buildings-empty-for-scope">
+                No buildings are available for this scope. Ask a Kindoo Manager to assign a building
+                to this Kindoo site via Configuration.
+              </p>
+            ) : (
+              <ul className="kd-checkbox-list">
+                {visibleBuildings.map((b) => {
+                  const checked = watchedBuildings.includes(b.building_name);
+                  return (
+                    <li key={b.building_id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          value={b.building_name}
+                          checked={checked}
+                          onChange={(e) => {
+                            const current = watchedBuildings;
+                            const next = e.target.checked
+                              ? [...current, b.building_name]
+                              : current.filter((n) => n !== b.building_name);
+                            setValue('building_names', next, {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                            });
+                          }}
+                          data-testid={`new-request-building-${b.building_id}`}
+                        />{' '}
+                        {b.building_name}
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CollapsibleContent>
+          {formState.errors.building_names ? (
+            <p className="kd-form-error" role="alert">
+              {formState.errors.building_names.message}
+            </p>
+          ) : null}
+        </Collapsible>
+      )}
 
       {watchedScope === 'stake' ? (
         <label>
