@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   EQ_PRESIDENT_CALLING,
+  LIMITED_ACCESS_CALLINGS,
   STAKE_APP_ACCESS_CALLINGS,
   WARD_APP_ACCESS_CALLINGS,
   appAccessCallingsForScope,
   filterAppAccessCallings,
+  isLimitedAccessCalling,
 } from './appAccessCallings.js';
 import { callingSortOrder } from './callingSortOrder.js';
 
@@ -114,5 +116,38 @@ describe('filterAppAccessCallings', () => {
         { eqPresidentAccess: true },
       ),
     ).toEqual(['Elders Quorum President']);
+  });
+});
+
+describe('isLimitedAccessCalling', () => {
+  it('ships with an empty limited set — every importer calling is full-tier today', () => {
+    expect(LIMITED_ACCESS_CALLINGS.size).toBe(0);
+  });
+
+  it('returns false for every ward and stake app-access calling', () => {
+    for (const name of [...WARD_APP_ACCESS_CALLINGS, ...STAKE_APP_ACCESS_CALLINGS]) {
+      expect(isLimitedAccessCalling(name)).toBe(false);
+    }
+  });
+
+  it('returns false for Elders Quorum President until the set says otherwise', () => {
+    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING)).toBe(false);
+  });
+
+  it('returns true for a calling in an injected limited set', () => {
+    // Proves the next step's path (EQ Presidents → limited) works
+    // before the shipped set is flipped on.
+    const injected = new Set([EQ_PRESIDENT_CALLING]);
+    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING, injected)).toBe(true);
+    expect(isLimitedAccessCalling('Bishop', injected)).toBe(false);
+  });
+
+  it('matches an injected set case- and whitespace-insensitively', () => {
+    expect(
+      isLimitedAccessCalling('  eLDERS quorum PRESIDENT  ', new Set([EQ_PRESIDENT_CALLING])),
+    ).toBe(true);
+    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING, new Set(['elders quorum president']))).toBe(
+      true,
+    );
   });
 });

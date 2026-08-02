@@ -452,6 +452,36 @@ describe('manualGrantSchema', () => {
     };
     expect(manualGrantSchema.parse(seed)).toEqual(seed);
   });
+
+  it('parses a limited grant and leaves `level` absent on a full one', () => {
+    const limited = {
+      grant_id: '11111111-2222-3333-4444-555555555555',
+      reason: 'Elders Quorum President — temp seats only',
+      level: 'limited' as const,
+      granted_by: ACTOR,
+      granted_at: T,
+    };
+    expect(manualGrantSchema.parse(limited)).toEqual(limited);
+
+    const full = {
+      grant_id: '66666666-7777-8888-9999-000000000000',
+      reason: 'full access',
+      granted_by: ACTOR,
+      granted_at: T,
+    };
+    expect(manualGrantSchema.parse(full)).not.toHaveProperty('level');
+  });
+
+  it('rejects a `level` other than "limited" — full is the absent case', () => {
+    const seed = {
+      grant_id: '11111111-2222-3333-4444-555555555555',
+      reason: 'full access',
+      level: 'full',
+      granted_by: ACTOR,
+      granted_at: T,
+    };
+    expect(manualGrantSchema.safeParse(seed).success).toBe(false);
+  });
 });
 
 describe('accessSchema', () => {

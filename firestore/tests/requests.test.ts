@@ -15,6 +15,8 @@ import {
   clearAll,
   contextFor,
   lastActorOf,
+  limitedBishopricContext,
+  limitedStakeMemberContext,
   managerContext,
   outsiderContext,
   personas,
@@ -1099,6 +1101,409 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         const payload = pendingEditTempByBishopric('01');
         delete payload['comment'];
         await assertFails(db.doc(PATH).set(payload));
+      });
+    });
+  });
+
+  // Limited app access (D24). `stakes[stakeId].limited == true` narrows
+  // the submit surface to `add_temp` / `edit_temp` / `remove`, caps temp
+  // windows at 90 days, locks ward-scope temp requests to the ward's own
+  // building, and restricts `remove` to seats of `type == 'temp'`. Full
+  // users (no `limited` key on the claim) are unaffected — the last
+  // group in this block pins that.
+  describe('limited app access (D24)', () => {
+    const WARD = '01';
+    const WARD_BUILDING = 'Maple Building';
+    const OTHER_BUILDING = 'Briargate Building';
+    // Ward with `building_name: ''`, ward with the field absent, and a
+    // ward code with no doc at all — the three fail-closed inputs to
+    // `limitedWardBuildingOk`.
+    const WARD_EMPTY_BUILDING = '02';
+    const WARD_NO_BUILDING_FIELD = '03';
+    const WARD_MISSING_DOC = '04';
+    const ALL_WARDS = [WARD, WARD_EMPTY_BUILDING, WARD_NO_BUILDING_FIELD, WARD_MISSING_DOC];
+
+    const SEAT_CANONICAL = 'subject@gmail.com';
+    const SEAT_PATH = `stakes/${STAKE_ID}/seats/${SEAT_CANONICAL}`;
+
+    // Exactly 90 days apart — the inclusive cap boundary.
+    const CAP_START = '2026-10-11';
+    const CAP_END = '2027-01-09';
+    // One day over.
+    const OVER_CAP_END = '2027-01-10';
+    // Same boundary expressed with leading-zero month AND day on both
+    // sides. Firestore rules' `int()` parses '03' / '05' correctly; these
+    // two cases are the permanent regression guard for that (the feature's
+    // whole 90-day check rests on it).
+    const ZERO_PAD_START = '2026-03-05';
+    const ZERO_PAD_CAP_END = '2026-06-03';
+    const ZERO_PAD_OVER_CAP_END = '2026-06-04';
+
+    async function seedWards(): Promise<void> {
+      await seedAsAdmin(env, async (ctx) => {
+        const db = ctx.firestore();
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD}`).set({
+          ward_code: WARD,
+          ward_name: '1st Ward',
+          building_name: WARD_BUILDING,
+          seat_cap: 30,
+        });
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD_EMPTY_BUILDING}`).set({
+          ward_code: WARD_EMPTY_BUILDING,
+          ward_name: '2nd Ward',
+          building_name: '',
+          seat_cap: 30,
+        });
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD_NO_BUILDING_FIELD}`).set({
+          ward_code: WARD_NO_BUILDING_FIELD,
+          ward_name: '3rd Ward',
+          seat_cap: 30,
+        });
+        // WARD_MISSING_DOC deliberately unseeded.
+      });
+    }
+
+    async function seedSeat(type: 'temp' | 'manual' | 'auto'): Promise<void> {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(SEAT_PATH)
+          .set({
+            member_canonical: SEAT_CANONICAL,
+            member_email: 'Subject@gmail.com',
+            member_name: 'Subject Person',
+            scope: WARD,
+            type,
+            callings: type === 'auto' ? ['Ward Clerk'] : [],
+            reason: 'Seeded',
+            building_names: [WARD_BUILDING],
+            duplicate_grants: [],
+            duplicate_scopes: [],
+            created_at: new Date(),
+            last_modified_at: new Date(),
+          });
+      });
+    }
+
+    describe('allowed types', () => {
+      it('ward-scope add_temp at exactly the 90-day cap with the ward building → ok', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              start_date: CAP_START,
+              end_date: CAP_END,
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      // Regression guard for `int()` on leading-zero ISO segments —
+      // '2026-03-05' → '2026-06-03' is exactly 90 days. If `int('03')`
+      // ever stopped parsing, this flips red while the non-padded case
+      // above stays green.
+      it('ward-scope add_temp at the cap with leading-zero month AND day → ok', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              start_date: ZERO_PAD_START,
+              end_date: ZERO_PAD_CAP_END,
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope edit_temp within the cap with the ward building + comment → ok', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric(WARD, {
+              start_date: CAP_START,
+              end_date: CAP_END,
+              building_names: [WARD_BUILDING],
+              comment: 'Extending the visiting-speaker window',
+            }),
+          ),
+        );
+      });
+
+      it('ward-scope remove against a temp seat → ok', async () => {
+        await seedSeat('temp');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      // Stake scope has no single ward to lock to, so the building
+      // restriction does not apply — only the 90-day cap does.
+      it('stake-scope add_temp within the cap with arbitrary buildings → ok', async () => {
+        await seedWards();
+        const db = limitedStakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              scope: 'stake',
+              start_date: CAP_START,
+              end_date: CAP_END,
+              building_names: [WARD_BUILDING, OTHER_BUILDING],
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+        );
+      });
+    });
+
+    describe('forbidden types', () => {
+      it('add_manual → denied', async () => {
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              scope: WARD,
+              building_names: [WARD_BUILDING],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('edit_manual → denied', async () => {
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditManualByStakeMember({
+              scope: WARD,
+              building_names: [WARD_BUILDING],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('edit_auto → denied', async () => {
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditAutoByBishopric(WARD, { building_names: [WARD_BUILDING] })),
+        );
+      });
+    });
+
+    describe('90-day temp window cap', () => {
+      it('add_temp one day over the cap → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              start_date: CAP_START,
+              end_date: OVER_CAP_END,
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('add_temp one day over the cap with leading-zero month AND day → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              start_date: ZERO_PAD_START,
+              end_date: ZERO_PAD_OVER_CAP_END,
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('edit_temp one day over the cap → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric(WARD, {
+              start_date: CAP_START,
+              end_date: OVER_CAP_END,
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('stake-scope add_temp over the cap → denied (cap is scope-independent)', async () => {
+        const db = limitedStakeMemberContext(env, STAKE_ID).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              scope: 'stake',
+              start_date: CAP_START,
+              end_date: OVER_CAP_END,
+              requester_email: personas.stakeMember.email,
+              requester_canonical: personas.stakeMember.canonical,
+              lastActor: lastActorOf(personas.stakeMember),
+            }),
+          ),
+        );
+      });
+    });
+
+    describe('ward-scope building lock', () => {
+      it('a building other than the ward building → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingAddTempByBishopric(WARD, { building_names: [OTHER_BUILDING] })),
+        );
+      });
+
+      it('the ward building plus an extra building (superset) → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              building_names: [WARD_BUILDING, OTHER_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('ward whose building_name is empty → denied (fails closed)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_EMPTY_BUILDING, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('ward with no building_name field → denied (fails closed)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_NO_BUILDING_FIELD, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('ward with no doc at all → denied (fails closed)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_MISSING_DOC, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('edit_temp against a different building → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [OTHER_BUILDING] })),
+        );
+      });
+    });
+
+    describe('remove restricted to temp seats', () => {
+      it('remove against a manual seat → denied', async () => {
+        await seedSeat('manual');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      it('remove against an auto seat → denied', async () => {
+        await seedSeat('auto');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      it('remove against a missing seat doc → denied (fails closed)', async () => {
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      it('remove with no seat_member_canonical field → denied', async () => {
+        await seedSeat('temp');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        const payload = pendingRemoveByBishopric(WARD);
+        delete payload['seat_member_canonical'];
+        await assertFails(db.doc(PATH).set(payload));
+      });
+
+      it('remove with an empty seat_member_canonical → denied', async () => {
+        await seedSeat('temp');
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(pendingRemoveByBishopric(WARD, { seat_member_canonical: '' })),
+        );
+      });
+    });
+
+    // Full users carry no `limited` key on their claim block, so
+    // `!isLimited(stakeId)` short-circuits the whole D24 clause. These
+    // pin that the new rule is invisible to them.
+    describe('full users are unaffected', () => {
+      it('non-limited bishopric add_manual → still ok', async () => {
+        const db = bishopricContext(env, STAKE_ID, [WARD]).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddManualByStakeMember({
+              scope: WARD,
+              building_names: [WARD_BUILDING],
+              requester_email: personas.bishopric.email,
+              requester_canonical: personas.bishopric.canonical,
+              lastActor: lastActorOf(personas.bishopric),
+            }),
+          ),
+        );
+      });
+
+      it('non-limited bishopric add_temp over 200 days → still ok', async () => {
+        await seedWards();
+        const db = bishopricContext(env, STAKE_ID, [WARD]).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              start_date: '2026-01-01',
+              end_date: '2026-07-20',
+              // Deliberately NOT the ward's own building — the ward lock
+              // is limited-only too.
+              building_names: [OTHER_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('non-limited bishopric remove of a manual seat → still ok', async () => {
+        await seedSeat('manual');
+        const db = bishopricContext(env, STAKE_ID, [WARD]).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingRemoveByBishopric(WARD)));
+      });
+
+      it('non-limited stake member add_manual → still ok', async () => {
+        const db = stakeMemberContext(env, STAKE_ID).firestore();
+        await assertSucceeds(db.doc(PATH).set(pendingAddManualByStakeMember()));
       });
     });
   });
