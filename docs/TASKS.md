@@ -6,6 +6,17 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-72] Consumer updates for stake-gated Elders Quorum President app access
+Status: in progress
+Owner: @backend-engineer / @web-engineer / @extension-engineer
+Phase: cross-cutting
+
+`packages/shared` gained the opt-in stake flag `eq_president_app_access` (absent ⇒ off), an optional `AppAccessOptions` trailing param on `appAccessCallingsForScope` / `filterAppAccessCallings`, and IO types for a new `backfillEqPresidentAccess` callable. Existing call sites compile unchanged, so each consumer must thread the flag through deliberately:
+
+- **functions** — pass the stake's flag into `syncApplyFix`'s app-access filtering; implement the `backfillEqPresidentAccess` callable (grant/revoke sweep over auto ward-scope seats) against the shipped IO types.
+- **apps/web** — expose the toggle on the Config tab and in the bootstrap wizard; thread the flag into client-side app-access filtering.
+- **extension** — thread the flag through the parser / detector tiebreak so drift rows agree with the SBA side.
+
 ## [T-71] Organizations v1 deferrals — per-org pending bars + duplicate-grant inline edit
 Status: open
 Owner: @web-engineer

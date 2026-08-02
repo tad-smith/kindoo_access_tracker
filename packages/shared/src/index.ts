@@ -5,10 +5,12 @@
 
 // ---- Pure helpers -----------------------------------------------------
 export {
+  EQ_PRESIDENT_CALLING,
   STAKE_APP_ACCESS_CALLINGS,
   WARD_APP_ACCESS_CALLINGS,
   appAccessCallingsForScope,
   filterAppAccessCallings,
+  type AppAccessOptions,
 } from './appAccessCallings.js';
 export { auditId } from './auditId.js';
 export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
@@ -50,6 +52,8 @@ export type {
   AuditAction,
   AuditEntityType,
   AuditLog,
+  BackfillEqPresidentAccessInput,
+  BackfillEqPresidentAccessOutput,
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
