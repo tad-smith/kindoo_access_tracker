@@ -604,6 +604,48 @@ describe('<AccessPage />', () => {
     expect(screen.getByTestId('access-grant-level-lim@x.com-g-lim')).toHaveTextContent('Limited');
   });
 
+  // A doc can hold a full grant and a limited one at once. The badge is
+  // per-grant, so the limited row must carry it while the full row stays
+  // bare — the earlier badge test used a single-grant doc and could not
+  // have caught a per-doc (rather than per-grant) regression.
+  it('badges only the limited grant when a doc holds both tiers', () => {
+    const ts = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'both@x.com',
+          member_email: 'both@x.com',
+          importer_callings: {},
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'g-full',
+                reason: 'Helper',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: ts,
+              },
+            ],
+            stake: [],
+            WM: [
+              {
+                grant_id: 'g-lim2',
+                reason: 'Limited test',
+                level: 'limited',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: ts,
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    expect(screen.getByTestId('access-table-level-both@x.com-g-lim2')).toHaveTextContent('Limited');
+    expect(screen.getByTestId('access-grant-level-both@x.com-g-lim2')).toHaveTextContent('Limited');
+    expect(screen.queryByTestId('access-table-level-both@x.com-g-full')).toBeNull();
+    expect(screen.queryByTestId('access-grant-level-both@x.com-g-full')).toBeNull();
+  });
+
   it('shows no level badge on a full grant, which carries no level key', () => {
     useAccessListMock.mockReturnValue(
       liveResult([
