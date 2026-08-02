@@ -1121,7 +1121,33 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
     const WARD_EMPTY_BUILDING = '02';
     const WARD_NO_BUILDING_FIELD = '03';
     const WARD_MISSING_DOC = '04';
-    const ALL_WARDS = [WARD, WARD_EMPTY_BUILDING, WARD_NO_BUILDING_FIELD, WARD_MISSING_DOC];
+
+    // Id-first resolution fixtures. `building_id` is the preferred FK
+    // (and IS the building's doc ID); `building_name` is the legacy
+    // display-name snapshot that can go stale when a building is renamed
+    // while no seat / pending request pins the old name.
+    const WARD_BUILDING_SLUG = 'maple-building';
+    // Ward whose `building_id` resolves to a live building but whose
+    // `building_name` snapshot is stale — the drifted state that used to
+    // lock limited users out entirely.
+    const WARD_STALE_NAME = '05';
+    const STALE_NAME = 'Maple Building (Old Name)';
+    // Ward whose `building_id` points at a building doc that does not
+    // exist. Must fall back to `building_name` rather than erroring.
+    const WARD_DANGLING_ID = '06';
+    const DANGLING_SLUG = 'no-such-building';
+    // Dangling id AND an empty name — nothing resolvable either way.
+    const WARD_DANGLING_ID_NO_NAME = '07';
+
+    const ALL_WARDS = [
+      WARD,
+      WARD_EMPTY_BUILDING,
+      WARD_NO_BUILDING_FIELD,
+      WARD_MISSING_DOC,
+      WARD_STALE_NAME,
+      WARD_DANGLING_ID,
+      WARD_DANGLING_ID_NO_NAME,
+    ];
 
     const SEAT_CANONICAL = 'subject@gmail.com';
     const SEAT_PATH = `stakes/${STAKE_ID}/seats/${SEAT_CANONICAL}`;
@@ -1160,6 +1186,35 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
           seat_cap: 30,
         });
         // WARD_MISSING_DOC deliberately unseeded.
+
+        // The live building the slug FKs below point at. Its
+        // `building_name` is the CURRENT name; `WARD_STALE_NAME`'s
+        // snapshot deliberately disagrees.
+        await db.doc(`stakes/${STAKE_ID}/buildings/${WARD_BUILDING_SLUG}`).set({
+          building_id: WARD_BUILDING_SLUG,
+          building_name: WARD_BUILDING,
+        });
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD_STALE_NAME}`).set({
+          ward_code: WARD_STALE_NAME,
+          ward_name: '5th Ward',
+          building_id: WARD_BUILDING_SLUG,
+          building_name: STALE_NAME,
+          seat_cap: 30,
+        });
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD_DANGLING_ID}`).set({
+          ward_code: WARD_DANGLING_ID,
+          ward_name: '6th Ward',
+          building_id: DANGLING_SLUG,
+          building_name: OTHER_BUILDING,
+          seat_cap: 30,
+        });
+        await db.doc(`stakes/${STAKE_ID}/wards/${WARD_DANGLING_ID_NO_NAME}`).set({
+          ward_code: WARD_DANGLING_ID_NO_NAME,
+          ward_name: '7th Ward',
+          building_id: DANGLING_SLUG,
+          building_name: '',
+          seat_cap: 30,
+        });
       });
     }
 
@@ -1421,6 +1476,124 @@ describe('firestore.rules — stakes/{sid}/requests/{requestId}', () => {
         const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
         await assertFails(
           db.doc(PATH).set(pendingEditTempByBishopric(WARD, { building_names: [OTHER_BUILDING] })),
+        );
+      });
+    });
+
+    // The rules resolve the ward's building ID-FIRST with a raw-name
+    // fallback, mirroring `resolveWardBuilding` in `packages/shared`.
+    // The invariant these pin: the client must always be stricter than
+    // or equal to the rules, so the UI can never offer a submit the
+    // rules would reject.
+    describe('ward building resolution is id-first (mirrors resolveWardBuilding)', () => {
+      // THE REGRESSION TEST. Before the fix the rules read the ward's
+      // `building_name` directly, so a ward whose snapshot had gone
+      // stale (building renamed while no seat / pending request pinned
+      // the old name) demanded the stale name while the client sent the
+      // current one — the limited user could not submit at all.
+      it('id resolves + stale building_name → the CURRENT building name is allowed', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_STALE_NAME, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('id resolves + stale building_name → the STALE name is denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_STALE_NAME, {
+              building_names: [STALE_NAME],
+            }),
+          ),
+        );
+      });
+
+      it('id resolves + stale building_name → edit_temp with the CURRENT name is allowed', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingEditTempByBishopric(WARD_STALE_NAME, {
+              building_names: [WARD_BUILDING],
+              comment: 'Extending after the building was renamed',
+            }),
+          ),
+        );
+      });
+
+      // Proves the ternary short-circuits: the building `get()` is not
+      // evaluated when `exists()` is false, so a dangling slug falls
+      // through to the name path instead of erroring the predicate. If
+      // rules ever started evaluating both ternary branches eagerly,
+      // this flips red.
+      it('dangling building_id + valid building_name → the name is allowed (fallback works)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_DANGLING_ID, {
+              building_names: [OTHER_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('dangling building_id → a building other than the fallback name is denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_DANGLING_ID, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      it('dangling building_id + empty building_name → denied (fails closed)', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_DANGLING_ID_NO_NAME, {
+              building_names: [OTHER_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      // A ward with no `building_id` at all (the un-migrated shape) keeps
+      // resolving through the raw-name path exactly as before the fix.
+      it('no building_id at all → still resolves via building_name', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertSucceeds(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD, {
+              building_names: [WARD_BUILDING],
+            }),
+          ),
+        );
+      });
+
+      // The superset guard survives id-first resolution — resolving to
+      // the current name must not relax "exactly one building".
+      it('resolved current name plus an extra building (superset) → denied', async () => {
+        await seedWards();
+        const db = limitedBishopricContext(env, STAKE_ID, ALL_WARDS).firestore();
+        await assertFails(
+          db.doc(PATH).set(
+            pendingAddTempByBishopric(WARD_STALE_NAME, {
+              building_names: [WARD_BUILDING, OTHER_BUILDING],
+            }),
+          ),
         );
       });
     });

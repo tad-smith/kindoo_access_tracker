@@ -608,18 +608,54 @@ service cloud.firestore {
             <= duration.value(90, 'd');
       }
 
+      // Resolve a ward's building name the same way the client does —
+      // ID-FIRST with a raw-name fallback — mirroring
+      // `resolveWardBuilding` in `packages/shared/src/resolveWardSite.ts`.
+      //
+      // `building_id` is the preferred FK (an immutable slug that IS the
+      // building's doc ID). `building_name` is a legacy display-name
+      // snapshot that is still required but CAN go stale:
+      // `buildingRenameBlocker` only blocks a building rename while a
+      // seat or pending request references the old name — it does not
+      // check `wards`. So a ward with no seats can have its building
+      // renamed out from under its `building_name`. Reading the ward's
+      // `building_name` directly (the original form of this helper) then
+      // demanded the STALE name while the client sent the CURRENT one,
+      // locking limited users out of submitting at all.
+      //
+      // The ternary SHORT-CIRCUITS — verified against the emulator, and
+      // pinned by the dangling-`building_id` test in
+      // `tests/requests.test.ts`. The building `get()` is therefore not
+      // evaluated when `exists()` is false, so a dangling slug falls
+      // through to the name path instead of erroring the whole
+      // predicate. `Map.get(key, default)` is used over a bare field
+      // read for the same reason: an absent key yields '' (which the
+      // caller's size check rejects) rather than an error.
+      //
+      // Document access cost: 1 ward `get()`, 1 building `exists()`, and
+      // at most 1 building `get()` — 3 of the 10 allowed per
+      // single-document request.
+      function limitedWardBuildingName(sid, scope) {
+        let ward = get(/databases/$(database)/documents/stakes/$(sid)/wards/$(scope)).data;
+        let bid = ward.get('building_id', '');
+        return bid is string
+            && bid.size() > 0
+            && exists(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid))
+          ? get(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid)).data.get('building_name', '')
+          : ward.get('building_name', '');
+      }
+
       // A limited user's ward-scope temp request is locked to exactly
       // the ward's own building — no cross-building grants, no
-      // multi-building supersets. `get()` rather than the cheaper
-      // `exists()` (against this file's usual preference) because we
-      // need the ward's `building_name` VALUE, not its presence.
+      // multi-building supersets.
       //
-      // Fails closed on every degenerate input: a missing ward doc
-      // makes `get()` return null and the field read errors out
-      // (rules errors deny); an absent / non-string / empty
-      // `building_name` fails the type + size guards.
+      // Fails closed on every degenerate input: a missing ward doc makes
+      // the `get()` in `limitedWardBuildingName` return null and the
+      // field read errors out (rules errors deny); a ward with neither a
+      // resolvable `building_id` nor a non-empty `building_name`
+      // resolves to '' and fails the size guard.
       function limitedWardBuildingOk(sid, data) {
-        let name = get(/databases/$(database)/documents/stakes/$(sid)/wards/$(data.scope)).data.building_name;
+        let name = limitedWardBuildingName(sid, data.scope);
         return name is string && name.size() > 0 && data.building_names == [name];
       }
 
