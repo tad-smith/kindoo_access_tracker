@@ -111,7 +111,8 @@ await fs.copyFile(DEPLOY_LOCK_PATH, path.join(LIB_DIR, 'package-lock.json'));
 // Symlink lib/node_modules → ../node_modules so the local emulator can
 // resolve firebase-functions / firebase-admin. Cloud Build doesn't
 // upload this symlink (firebase.json's `ignore: ["node_modules"]`
-// excludes it) and runs `npm install` against lib/package.json fresh.
+// excludes it) and installs into an empty tree from the copied
+// package.json + package-lock.json pair.
 const linkPath = path.join(LIB_DIR, 'node_modules');
 try {
   const stat = await fs.lstat(linkPath);
