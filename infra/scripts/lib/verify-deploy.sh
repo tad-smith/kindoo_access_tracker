@@ -232,8 +232,12 @@ vd_remediation() {
 }
 
 # Parse `export { a, b as c } from './dir/mod.js';` statements out of an
-# index.ts. Emits one "<exported-name><TAB><module-path>" line per export.
-# Multi-line export blocks are handled; line comments are ignored.
+# index.ts. Emits one "<exported-name><TAB><module-path><TAB><local-name>" line
+# per export. Multi-line export blocks are handled; line comments are ignored.
+#
+# The exported name is what Firebase deploys under; the local name is what the
+# module actually declares. For `export { internalName as publicName }` those
+# differ, and vd_filter_callables needs the local one to find the declaration.
 vd_parse_exports() {
   local index_file="${1-}"
   [[ -f "$index_file" ]] || return 1
@@ -246,41 +250,93 @@ src = re.sub(r"(?m)^\s*//.*$", "", src)
 
 for names, module in re.findall(r"export\s*\{([^}]*)\}\s*from\s*['\"]([^'\"]+)['\"]", src):
     for raw in names.split(","):
-        name = raw.strip()
-        if not name:
+        entry = raw.strip()
+        if not entry:
             continue
-        # `X as Y` is exported under Y.
-        if " as " in name:
-            name = name.split(" as ")[-1].strip()
-        if name in ("type", "default"):
+        # `X as Y` is declared as X and exported as Y.
+        if " as " in entry:
+            local, exported = (part.strip() for part in entry.split(" as ", 1))
+        else:
+            local = exported = entry
+        if exported in ("type", "default"):
             continue
-        print(f"{name}\t{module}")
+        print(f"{exported}\t{module}\t{local}")
 PY
 }
 
 # Filter vd_parse_exports output down to the callables. Reads
-# "<name><TAB><module>" lines on stdin; emits the names whose defining module
-# contains `export const <name> = onCall(` (or `onCall<`). Matching on the name
-# rather than the module means a module exporting both a trigger and a callable
-# classifies each correctly, and a comment mentioning onCall does not.
+# "<name><TAB><module>" lines on stdin and emits the names that are defined by
+# an `onCall` in their module.
 # $1 = directory the module paths are relative to (functions/src).
+#
+# Scoping, and which way to be wrong. Comments are stripped, then the module is
+# split at top-level `export` boundaries and we look for `onCall` inside the
+# chunk belonging to this name. That deliberately tolerates definitions this
+# check cannot predict — a line-broken `export const x =\n  onCall(`, or a
+# wrapper like `withAuth(onCall(...))` — because the two errors are not
+# symmetric: wrongly INCLUDING a non-callable produces a loud false failure an
+# operator will see and can silence with VD_SKIP_CALLABLES, while wrongly
+# EXCLUDING a real callable silently shrinks the probe set and reports a
+# vacuous pass. That silent direction is exactly the class of bug this whole
+# file exists to catch, so the scan biases toward inclusion.
+#
+# The program reaches python via `-c "$(cat <<'PY' … PY)"` rather than as a
+# plain heredoc, because a heredoc on stdin would displace the TSV this function
+# reads. Going through a quoted heredoc (rather than a single-quoted `-c`
+# argument) keeps the Python free to contain quotes of any kind.
 vd_filter_callables() {
   local src_dir="${1-}"
-  local name module file
-  while IFS="$(printf '\t')" read -r name module; do
-    [[ -n "$name" ]] || continue
+  python3 -c "$(
+    cat <<'PY'
+import re, sys
+
+src_dir = sys.argv[1]
+cache = {}
+
+def callable_names(path):
+    """Names in `path` whose `export const NAME = ...` declaration mentions onCall."""
+    if path in cache:
+        return cache[path]
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        cache[path] = set()
+        return cache[path]
+
+    # Strip comments so prose mentioning onCall cannot promote a trigger.
+    text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    text = re.sub(r"(?m)^\s*//.*$", "", text)
+
+    found = set()
+    # Each top-level `export` starts a new declaration; the chunk runs to the
+    # next one. `onCall` anywhere in that chunk means this export is a callable,
+    # however it is spelled or wrapped.
+    starts = [m.start() for m in re.finditer(r"(?m)^export\b", text)]
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        chunk = text[start:end]
+        head = re.match(r"export\s+(?:const|let|var|function)\s+([A-Za-z0-9_$]+)", chunk)
+        if head and re.search(r"\bonCall\b", chunk):
+            found.add(head.group(1))
+    cache[path] = found
+    return found
+
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("\t")
+    if len(parts) < 2 or not parts[0]:
+        continue
+    exported, module = parts[0], parts[1]
+    # The declaration carries the local name; the deploy carries the exported one.
+    local = parts[2] if len(parts) > 2 and parts[2] else exported
     # './callable/foo.js' -> '<src_dir>/callable/foo.ts'
-    file="$src_dir/${module#./}"
-    file="${file%.js}.ts"
-    [[ -f "$file" ]] || continue
-    if grep -Eq "export[[:space:]]+const[[:space:]]+${name}[[:space:]]*=[[:space:]]*onCall[(<]" \
-      "$file"; then
-      printf '%s\n' "$name"
-    fi
-  done
-  # Explicit: a trailing non-callable export would otherwise leave the loop's
-  # status at grep's 1 and trip `set -e` in the caller.
-  return 0
+    rel = module[2:] if module.startswith("./") else module
+    path = f"{src_dir}/{rel}"
+    if path.endswith(".js"):
+        path = path[:-3] + ".ts"
+    if local in callable_names(path):
+        print(exported)
+PY
+  )" "$src_dir"
 }
 
 # Extract deployed function names from `firebase functions:list --json` output.
@@ -454,6 +510,19 @@ EOF
   baseline_status="$(vd_probe "$(vd_callable_url "$baseline_name" "$project_id")" "$tmp_dir/baseline")"
   baseline_body="$(cat "$tmp_dir/baseline" 2>/dev/null || true)"
 
+  # One retry, same as the per-callable loop below. The baseline is probed
+  # first, so on a sparsely-trafficked project (staging) it is the request most
+  # likely to eat a cold start and overrun the probe timeout. Without this, a
+  # slow container start aborts the entire run with BASELINE CALIBRATION FAILED
+  # and a "check connectivity" remediation that points nowhere useful.
+  if ! vd_baseline_is_sane "$baseline_status" "$baseline_body"; then
+    echo "  baseline '$baseline_name' answered HTTP $baseline_status — retrying once"
+    echo "  in case that was a cold start."
+    sleep 3
+    baseline_status="$(vd_probe "$(vd_callable_url "$baseline_name" "$project_id")" "$tmp_dir/baseline")"
+    baseline_body="$(cat "$tmp_dir/baseline" 2>/dev/null || true)"
+  fi
+
   if ! vd_baseline_is_sane "$baseline_status" "$baseline_body"; then
     echo "error: BASELINE CALIBRATION FAILED." >&2
     echo "       Probed '$baseline_name' and got HTTP $baseline_status." >&2
@@ -590,18 +659,27 @@ EOF
 # ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   set -uo pipefail
-  vd_alias="${1:-staging}"
+  vd_alias=''
   vd_dry=0
-  shift || true
+  # Flags and the alias in any order — `--dry-run staging` and `staging
+  # --dry-run` both work, and a lone `--dry-run` does not become the alias.
   for vd_arg in "$@"; do
     case "$vd_arg" in
       --dry-run) vd_dry=1 ;;
-      *)
+      -*)
         echo "Unknown argument: $vd_arg" >&2
         echo "Usage: $0 [staging|prod|<project-id>] [--dry-run]" >&2
         exit 2
         ;;
+      *)
+        if [[ -n "$vd_alias" ]]; then
+          echo "error: more than one project given ('$vd_alias' and '$vd_arg')." >&2
+          echo "Usage: $0 [staging|prod|<project-id>] [--dry-run]" >&2
+          exit 2
+        fi
+        vd_alias="$vd_arg"
+        ;;
     esac
   done
-  vd_verify_deploy "$vd_alias" "$vd_dry"
+  vd_verify_deploy "${vd_alias:-staging}" "$vd_dry"
 fi

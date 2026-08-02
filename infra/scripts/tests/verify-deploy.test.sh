@@ -223,6 +223,8 @@ export {
 } from './triggers/multi.js';
 export { internalName as renamedCallable } from './callable/renamed.js';
 export { deltaScheduled } from './scheduled/deltaScheduled.js';
+export { lineBrokenCallable, wrappedCallable } from './callable/awkward.js';
+export { mixedTrigger, mixedCallable } from './callable/mixed.js';
 FIXTURE
 
 cat >"$FIXTURE_SRC/callable/alphaCallable.ts" <<'FIXTURE'
@@ -230,16 +232,43 @@ import { onCall } from 'firebase-functions/v2/https';
 export const alphaCallable = onCall({ region: 'us-central1' }, async () => ({}));
 FIXTURE
 
+# Declared under its local name, exported under an alias. The alias is what
+# Firebase deploys, so discovery has to bridge the two.
 cat >"$FIXTURE_SRC/callable/renamed.ts" <<'FIXTURE'
 import { onCall } from 'firebase-functions/v2/https';
-export const renamedCallable = onCall<{ a: string }, void>(async () => {});
+export const internalName = onCall<{ a: string }, void>(async () => {});
+FIXTURE
+
+# Definition shapes a same-line regex would miss. Dropping a real callable is
+# the dangerous direction — it shrinks the probe set silently.
+cat >"$FIXTURE_SRC/callable/awkward.ts" <<'FIXTURE'
+import { onCall } from 'firebase-functions/v2/https';
+
+export const lineBrokenCallable =
+  onCall(
+    { memory: '512MiB' },
+    async () => ({}),
+  );
+
+export const wrappedCallable = withTracing(
+  onCall(async () => ({})),
+);
+FIXTURE
+
+# One module, one trigger and one callable. Each must classify on its own.
+cat >"$FIXTURE_SRC/callable/mixed.ts" <<'FIXTURE'
+import { onCall } from 'firebase-functions/v2/https';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+export const mixedTrigger = onDocumentWritten('c/{id}', async () => {});
+export const mixedCallable = onCall(async () => ({}));
 FIXTURE
 
 # Mentions onCall in prose only — must NOT be classified as a callable.
 cat >"$FIXTURE_SRC/triggers/multi.ts" <<'FIXTURE'
-// Fans audit rows. Unlike an onCall( handler, this is Eventarc-driven.
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+/* Fans audit rows. Unlike an onCall( handler, this is Eventarc-driven. */
 export const betaTrigger = onDocumentWritten('a/{id}', async () => {});
+// Sibling of the above; still not an onCall handler.
 export const gammaTrigger = onDocumentWritten('b/{id}', async () => {});
 FIXTURE
 
@@ -251,8 +280,11 @@ FIXTURE
 PARSED="$(vd_parse_exports "$FIXTURE_SRC/index.ts")"
 PARSED_NAMES="$(printf '%s\n' "$PARSED" | cut -f1 | sort | tr '\n' ' ')"
 assert_eq "parses single-line, multi-line and aliased exports; skips comments" \
-  "alphaCallable betaTrigger deltaScheduled gammaTrigger renamedCallable " \
+  "alphaCallable betaTrigger deltaScheduled gammaTrigger lineBrokenCallable mixedCallable mixedTrigger renamedCallable wrappedCallable " \
   "$PARSED_NAMES"
+assert_eq "records the local name alongside the exported one" \
+  "renamedCallable	./callable/renamed.js	internalName" \
+  "$(printf '%s\n' "$PARSED" | grep '^renamedCallable')"
 
 assert_false "returns non-zero for a missing index.ts" \
   vd_parse_exports "$FIXTURE_SRC/does-not-exist.ts"
@@ -261,8 +293,9 @@ echo ""
 echo "--- vd_filter_callables ---"
 
 FILTERED="$(printf '%s\n' "$PARSED" | vd_filter_callables "$FIXTURE_SRC" | sort | tr '\n' ' ')"
-assert_eq "keeps only onCall exports, including the aliased one" \
-  "alphaCallable renamedCallable " "$FILTERED"
+assert_eq "finds every callable shape and no triggers or scheduled jobs" \
+  "alphaCallable lineBrokenCallable mixedCallable renamedCallable wrappedCallable " \
+  "$FILTERED"
 
 echo ""
 echo "--- vd_parse_functions_list ---"
@@ -319,10 +352,18 @@ fi
 
 assert_contains "finds the default baseline callable" \
   "syncApplyFix" "$REAL_CALLABLES"
-assert_contains "finds another known callable" \
-  "markRequestComplete" "$REAL_CALLABLES"
 assert_contains "the full export list includes a Firestore trigger" \
   "auditAccessWrites" "$REAL_NAMES"
+
+# Cross-check the discovery mechanism against an independent signal: the repo's
+# convention that callables live in functions/src/callable/. Discovery reads
+# `onCall` out of the declaration; this reads the directory. If they disagree,
+# either a callable moved out of that directory or discovery silently dropped
+# one — and a silently-shrunk probe set is precisely the vacuous pass this file
+# is meant to prevent. Failing here is the intended prompt to go look.
+REAL_BY_DIRECTORY="$(printf '%s\n' "$REAL_EXPORTS" | awk -F'\t' '$2 ~ /^\.\/callable\// {print $1}' | sort -u)"
+assert_eq "every export under callable/ is discovered, and nothing else is" \
+  "$REAL_BY_DIRECTORY" "$REAL_CALLABLES"
 
 if printf '%s\n' "$REAL_CALLABLES" | grep -qx 'auditAccessWrites'; then
   bad "does not misclassify a Firestore trigger as a callable" \
@@ -482,6 +523,47 @@ SCENARIO_RC=$?
 assert_eq "an unreadable functions:list does not fail the run" "0" "$SCENARIO_RC"
 assert_contains "an unreadable functions:list warns and keeps the probe results" \
   "Skipping the source-vs-deployed comparison" "$SCENARIO_OUT"
+
+# The baseline is probed first, so on a sparsely-trafficked project it is the
+# request most likely to eat a cold start. A single slow response must not abort
+# the whole run.
+# The counter lives in a file: vd_probe is called inside a command
+# substitution, so a shell variable would be incremented in a subshell and lost.
+: >"$TMP_DIR/attempts"
+SCENARIO_OUT="$(
+  vd_probe() {
+    printf 'x' >>"$TMP_DIR/attempts"
+    if [[ "$(wc -c <"$TMP_DIR/attempts" | tr -d ' ')" -eq 1 ]]; then
+      : >"$2"
+      printf '000'
+    else
+      printf '%s' "$BODY_CALLABLE_AUTH" >"$2"
+      printf '401'
+    fi
+  }
+  sleep() { :; }
+  firebase() { printf '%s' "$STUB_LIST_ALL"; }
+  vd_verify_deploy staging 0 2>&1
+)"
+SCENARIO_RC=$?
+assert_eq "a cold-start timeout on the baseline retries instead of aborting" \
+  "0" "$SCENARIO_RC"
+assert_contains "the baseline retry is announced" \
+  "retrying once" "$SCENARIO_OUT"
+assert_contains "the run continues to PASSED after the retry succeeds" \
+  "post-deploy verification PASSED" "$SCENARIO_OUT"
+
+echo ""
+echo "--- standalone argument parsing ---"
+
+VD_LIB="$SCRIPT_DIR/../lib/verify-deploy.sh"
+assert_contains "flag-before-alias still targets the named project" \
+  "would resolve alias 'prod'" "$(bash "$VD_LIB" --dry-run prod 2>&1)"
+assert_contains "alias-before-flag works too" \
+  "would resolve alias 'prod'" "$(bash "$VD_LIB" prod --dry-run 2>&1)"
+assert_contains "a lone --dry-run defaults to staging, not to '--dry-run'" \
+  "would resolve alias 'staging'" "$(bash "$VD_LIB" --dry-run 2>&1)"
+assert_false "an unknown flag is rejected" bash "$VD_LIB" staging --bogus
 
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
