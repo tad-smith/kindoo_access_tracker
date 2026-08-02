@@ -2355,4 +2355,53 @@ describe('detect', () => {
       ['Pine Building', 'Mountain View Building'].sort(),
     );
   });
+
+  // --------------------------------------------------------------------
+  // Stake-gated Elders Quorum President app access. The parser's
+  // primary-segment tiebreaker prefers an app-access-granting segment;
+  // `stake.eq_president_app_access` moves EQ President into the ward
+  // app-access set. `detect()` must thread the flag all the way to the
+  // site-filtered pick (`pickSegmentForSite` → `intendedFreeText`) AND
+  // to the block builder (`buildKindooBlock` → `primaryScope`), or the
+  // extension's report disagrees with the server on the same stake.
+  // --------------------------------------------------------------------
+
+  // Both segments sit on the home site, so the site filter keeps both
+  // and the app-access tiebreaker is the only thing deciding primary.
+  const EQ_DESCRIPTION =
+    'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Elders Quorum President)';
+
+  it('stake opt-in makes EQ President win primary through the site-filtered pick', () => {
+    const result = detect({
+      stake: stake({ eq_president_app_access: true }),
+      wards: WARDS,
+      buildings: BUILDINGS,
+      seats: [],
+      kindooUsers: [kuser({ description: EQ_DESCRIPTION })],
+      activeSite: { kind: 'home' },
+    });
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    // `pickSegmentForSite` path — the segment `intendedShape` was built from.
+    expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum President');
+    // `buildKindooBlock` path — its own `pickPrimarySegment` call.
+    expect(row.kindoo?.primaryScope).toBe('CO');
+  });
+
+  it('without the stake opt-in EQ President stays inert and the stake segment wins', () => {
+    const result = detect({
+      stake: STAKE,
+      wards: WARDS,
+      buildings: BUILDINGS,
+      seats: [],
+      kindooUsers: [kuser({ description: EQ_DESCRIPTION })],
+      activeSite: { kind: 'home' },
+    });
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.kindoo?.intendedFreeText).toBe('Technology Specialist');
+    expect(row.kindoo?.primaryScope).toBe('stake');
+  });
 });

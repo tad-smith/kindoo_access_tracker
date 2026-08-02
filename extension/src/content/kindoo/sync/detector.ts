@@ -7,7 +7,15 @@
 // `SyncPanel.tsx`.
 
 import { canonicalEmail, resolveWardBuilding, resolveWardSite, scopeLabel } from '@kindoo/shared';
-import type { Building, DuplicateGrant, Seat, SeatType, Stake, Ward } from '@kindoo/shared';
+import type {
+  AppAccessOptions,
+  Building,
+  DuplicateGrant,
+  Seat,
+  SeatType,
+  Stake,
+  Ward,
+} from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
   parseDescription,
@@ -346,6 +354,7 @@ function pickSegmentForSite(
   wards: Ward[],
   buildings: Building[],
   activeSite: ActiveSite | undefined,
+  opts?: AppAccessOptions,
 ): ParsedSegment | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
   const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
@@ -360,7 +369,7 @@ function pickSegmentForSite(
   // Reuse `pickPrimarySegment`'s tiebreaker by wrapping the filter in
   // a ParsedDescription shell (`raw` / `unparseable` aren't used by
   // the picker).
-  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw });
+  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw }, opts);
 }
 
 /**
@@ -579,6 +588,13 @@ function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
  * the two counters that surface in the report header.
  */
 export function detect(inputs: DetectInputs): DetectResult {
+  // Per-stake app-access gates, read once and threaded through every
+  // primary-segment pick. The extension's tiebreaker must agree with
+  // the server's; an absent flag is off on both sides.
+  const eqOpts: AppAccessOptions = {
+    eqPresidentAccess: inputs.stake.eq_president_app_access === true,
+  };
+
   // Active-site filter: scope the union of (seats, kindoo users) to
   // grants belonging to the active Kindoo site. `unknown` returns an
   // empty diff up front (the panel renders an empty-state recovery
@@ -636,9 +652,9 @@ export function detect(inputs: DetectInputs): DetectResult {
   // SBA-side `sbaBlock` is already projected onto the active site.
   const pickRelevantSegment = (parsed: ParsedDescription): ParsedSegment | null => {
     if (inputs.activeSite) {
-      return pickSegmentForSite(parsed, inputs.wards, inputs.buildings, inputs.activeSite);
+      return pickSegmentForSite(parsed, inputs.wards, inputs.buildings, inputs.activeSite, eqOpts);
     }
-    return pickPrimarySegment(parsed);
+    return pickPrimarySegment(parsed, eqOpts);
   };
 
   for (const canon of allCanonical) {
@@ -710,7 +726,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           reason:
             'Kindoo description is blank and no church grants back this member — nothing to derive a seat from; manual review.',
           sba: null,
-          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
         });
         continue;
       }
@@ -721,7 +737,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, createdType),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, createdType),
       });
       continue;
     }
@@ -751,7 +767,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, 'auto'),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts, 'auto'),
       });
       continue;
     }
@@ -785,7 +801,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'review',
           reason: 'Kindoo description is blank — nothing to reconcile; manual review.',
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+          kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
         });
         continue;
       }
@@ -801,7 +817,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
     }
@@ -821,7 +837,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason: 'Kindoo description has no resolvable primary segment; review manually.',
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
     }
@@ -836,7 +852,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.`,
         sba: sbaBlock,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
       });
       continue;
     }
@@ -883,7 +899,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, 'auto'),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'auto'),
         });
         continue;
       }
@@ -898,7 +914,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           reason:
             'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, 'manual'),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
         });
         continue;
       }
@@ -935,7 +951,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
           sba: sbaBlock,
-          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings),
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });
         continue;
       }
@@ -976,6 +992,7 @@ export function detect(inputs: DetectInputs): DetectResult {
             parsed,
             intended,
             inputs.buildings,
+            eqOpts,
             undefined,
             kindooCallings,
           ),
@@ -1020,10 +1037,11 @@ function filterKindooUsersByActiveSite(
 ): KindooEnvironmentUser[] {
   if (!activeSite) return users;
   if (activeSite.kind === 'unknown') return [];
+  const eqOpts: AppAccessOptions = { eqPresidentAccess: stake.eq_president_app_access === true };
   return users.filter((u) => {
     const parsed = parseDescription(u.description, stake, wards);
     // Find ANY segment whose scope sits on the active site.
-    const matched = pickSegmentForSite(parsed, wards, buildings, activeSite);
+    const matched = pickSegmentForSite(parsed, wards, buildings, activeSite, eqOpts);
     if (matched) return true;
     // No matching segment. Preserve historical "show unparseable users
     // on home" behaviour: if home AND every segment is unresolved,
@@ -1043,6 +1061,11 @@ function buildKindooBlock(
   parsed: ParsedDescription,
   intended: IntendedSeatShape | null,
   buildings: Building[],
+  /** Per-stake app-access gates for the primary-segment tiebreaker.
+   * REQUIRED, and deliberately placed ahead of the optional params: a
+   * trailing optional would let a call site silently fall back to
+   * "every gate off" with no compiler error. */
+  opts: AppAccessOptions,
   /** Grant-derived target type for promote / demote `type-mismatch`
    * rows; carried onto the block so the fix dispatcher sends the
    * observed-provenance target, not the informational `intendedType`. */
@@ -1052,7 +1075,7 @@ function buildKindooBlock(
    * not a delta. */
   kindooCallings?: string[],
 ): KindooBlock {
-  const primary = pickPrimarySegment(parsed);
+  const primary = pickPrimarySegment(parsed, opts);
   const ruleIds = kuser.accessSchedules.map((s) => s.ruleId);
   const block: KindooBlock = {
     description: kuser.description,
