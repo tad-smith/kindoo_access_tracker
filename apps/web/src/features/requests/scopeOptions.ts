@@ -1,19 +1,24 @@
 // Pure helper: build the allowed `New Request` scope list from the
-// principal's role union for a given stake. The list filters strictly
-// by the roles the user actually holds — manager / superadmin status
-// alone does not grant scope options for creating requests (B-3).
-// Powers the roster-page New Request affordances' gating and the
-// dialog's scope-label lookup.
+// principal's role union for a given stake. Powers the roster-page New
+// Request affordances' gating and the dialog's scope-label lookup.
 //
 // Rules (per the operator-stated spec):
+//   - Kindoo Manager claim   → every scope: 'stake' plus every ward
 //   - `stake` claim          → 'stake' option
 //   - per-ward bishopric     → that ward's option
 //   - stake + N bishopric    → 'stake' plus those wards (no others)
-//   - no stake / no ward     → empty list (page renders not-authorized)
+//   - no manager / stake / ward → empty list (page renders not-authorized)
+//
+// A Kindoo Manager in the stake may request in any scope without
+// holding a separate `access` row; the matching `requests` create rule
+// admits `isManager(stakeId)` unconditionally. Platform superadmin
+// status alone grants nothing here — only the per-stake manager claim
+// does.
 //
 // Wards are returned in stable lexicographic order so the dropdown
 // renders deterministically across renders. The 'stake' option, when
-// present, always sorts first; ward options follow.
+// present, always sorts first; ward options follow. Overlapping claims
+// (manager + stake + bishopric) never duplicate a scope.
 
 import type { Seat, Ward } from '@kindoo/shared';
 import type { GrantView } from '../../lib/grants';
@@ -26,22 +31,33 @@ import type { ScopeOption } from './components/NewRequestForm';
  * new request against, for the given stake. The option `value` is the
  * scope key (`'stake'` or a ward_code); the `label` is the ward name,
  * resolved from `wards` (falls back to the raw code when unresolved).
- * Pure; no SDK calls. Tested in `tests/scopeOptions.test.ts`.
+ *
+ * A Kindoo Manager in `stakeId` gets `'stake'` plus every ward in the
+ * catalogue. Otherwise the list is the union of the stake claim and the
+ * per-ward bishopric claims. Pure; no SDK calls. Tested in
+ * `tests/scopeOptions.test.ts`.
  */
 export function allowedScopesFor(
   principal: Principal,
   stakeId: string,
   wards: readonly Ward[],
 ): ScopeOption[] {
+  const isManager = principal.managerStakes.includes(stakeId);
   const out: ScopeOption[] = [];
 
-  if (principal.stakeMemberStakes.includes(stakeId)) {
+  if (isManager || principal.stakeMemberStakes.includes(stakeId)) {
     out.push({ value: 'stake', label: 'Stake' });
   }
 
-  const bishopricWards = principal.bishopricWards[stakeId] ?? [];
-  const sorted = [...bishopricWards].sort((a, b) => a.localeCompare(b));
-  for (const code of sorted) {
+  // Set-union so a manager who also holds bishopric claims never gets a
+  // ward twice. A bishopric ward missing from the catalogue still
+  // appears (labelled by its raw code).
+  const codes = new Set(principal.bishopricWards[stakeId] ?? []);
+  if (isManager) {
+    for (const w of wards) codes.add(w.ward_code);
+  }
+
+  for (const code of [...codes].sort((a, b) => a.localeCompare(b))) {
     out.push({ value: code, label: scopeLabel(code, wards) });
   }
 
@@ -55,10 +71,16 @@ export function allowedScopesFor(
  * roster page so the affordance only appears where the request rule
  * would actually accept the submit.
  *
+ * A Kindoo Manager in `stakeId` holds authority over every scope —
+ * stake and every ward — with no `access` row of their own. Platform
+ * superadmin status alone grants nothing; only the per-stake manager
+ * claim does.
+ *
  * Pure; mirrors the same role logic used by the New Request scope
  * dropdown so the two surfaces stay in sync.
  */
 export function isScopeAllowed(principal: Principal, stakeId: string, scope: string): boolean {
+  if (principal.managerStakes.includes(stakeId)) return true;
   if (scope === 'stake') {
     return principal.stakeMemberStakes.includes(stakeId);
   }
@@ -103,7 +125,10 @@ export function isLimitedInStake(principal: Principal, stakeId: string): boolean
  *   3. **Role-for-scope.** Same `isScopeAllowed` predicate as the per-
  *      row Remove button — if you can Remove, you can Edit. A bishopric
  *      can edit ward-scope seats in their ward; a stake member can edit
- *      stake-scope seats; manager status alone is not enough.
+ *      stake-scope seats; a Kindoo Manager can edit any scope.
+ *
+ * Gate 1 runs first and is absolute: a manager still cannot edit a
+ * stake-scope auto seat.
  *
  * Pure helper; tested in `tests/scopeOptions.test.ts`.
  */

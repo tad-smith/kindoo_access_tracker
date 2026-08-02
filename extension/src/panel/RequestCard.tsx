@@ -22,9 +22,11 @@ import {
   scopeLabel,
   type Access,
   type AccessRequest,
+  type KindooManager,
 } from '@kindoo/shared';
 import {
   getAccessByEmail,
+  getKindooManagerByEmail,
   getSeatByEmail,
   markRequestComplete,
   writeKindooSiteEid,
@@ -119,28 +121,36 @@ export function RequestCard({
 
   // Live-derive the requester's name + calling from their `access` doc
   // for this request's scope (Option A — nothing is captured on the
-  // request; mirrors the web Queue). One-shot SW-side read; while the
-  // doc is loading or absent (or the read fails) `access` stays null,
-  // so `formatRequesterLabel` degrades to the raw email — no branching
-  // and no empty flash.
-  const [requesterAccess, setRequesterAccess] = useState<Access | null>(null);
+  // request; mirrors the web Queue). Kindoo Managers may submit in ANY
+  // scope without holding an `access` row, so their `kindooManagers`
+  // doc backstops both fields — `{Name} (Kindoo Manager)`. The access
+  // doc wins on each field independently.
+  //
+  // Both are one-shot SW-side reads resolved TOGETHER: committing them
+  // in a single `setState` keeps the label from painting once with the
+  // access-only value and again once the manager doc lands. While the
+  // reads are in flight, absent, or failed, the value stays null, so
+  // `formatRequesterLabel` degrades to the raw email — no branching and
+  // no empty flash. Each read degrades independently (per-promise
+  // `catch`), so a miss on one never discards the other's contribution.
+  const [requester, setRequester] = useState<{
+    access: Access | null;
+    manager: KindooManager | null;
+  }>({ access: null, manager: null });
   useEffect(() => {
     let cancelled = false;
-    getAccessByEmail(stakeId, request.requester_canonical)
-      .then((access) => {
-        if (!cancelled) setRequesterAccess(access);
-      })
-      .catch(() => {
-        // Degrade to the email fallback; never block the card on a
-        // requester-lookup miss.
-        if (!cancelled) setRequesterAccess(null);
-      });
+    void Promise.all([
+      getAccessByEmail(stakeId, request.requester_canonical).catch(() => null),
+      getKindooManagerByEmail(stakeId, request.requester_canonical).catch(() => null),
+    ]).then(([access, manager]) => {
+      if (!cancelled) setRequester({ access, manager });
+    });
     return () => {
       cancelled = true;
     };
   }, [stakeId, request.requester_canonical]);
   const requesterLabel = formatRequesterLabel(
-    deriveRequesterDisplay(requesterAccess, request.scope),
+    deriveRequesterDisplay(requester.access, request.scope, requester.manager),
     request.requester_email,
   );
 

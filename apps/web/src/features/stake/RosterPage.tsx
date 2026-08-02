@@ -123,8 +123,8 @@ export function StakeRosterPage() {
 
   // The header "New Request" affordance shows only for principals with
   // stake-scope request authority — the same predicate that gates the
-  // 'stake' option in the New Request dropdown. Manager-only users (who
-  // can land here but can't ADD to the stake scope) don't see it.
+  // 'stake' option in the New Request dropdown: stake members and
+  // Kindoo Managers.
   const canRequest = activeStakeId !== null && isScopeAllowed(principal, activeStakeId, 'stake');
 
   return (

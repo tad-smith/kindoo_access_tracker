@@ -31,7 +31,15 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import type { Access, Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
+import type {
+  Access,
+  Building,
+  KindooManager,
+  KindooSite,
+  Seat,
+  Stake,
+  Ward,
+} from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
@@ -415,6 +423,30 @@ export async function loadAccessByEmail(
   const snap = await getDoc(accessRef);
   if (!snap.exists()) return null;
   return snap.data() as Access;
+}
+
+/**
+ * One-shot read of `stakes/{stakeId}/kindooManagers/{canonical}`. Returns
+ * `null` when the member is not on the manager allow-list. Kindoo Managers
+ * may submit a request in ANY scope without holding an `access` row, so
+ * this doc backstops the requester line's name + calling — the panel
+ * passes it to `deriveRequesterDisplay` as the third argument to render
+ * `{Name} (Kindoo Manager)`. Managers may read any
+ * `kindooManagers/{canonical}` (`firestore.rules` gates read on
+ * `isManager(stakeId) || isBootstrapAdmin(stakeId)`), and the extension
+ * operator is always a manager, so the read is permitted; a denial
+ * surfaces a permission-denied that propagates back through the SW
+ * message pipeline, and the panel degrades the label to the raw email.
+ */
+export async function loadKindooManagerByEmail(
+  stakeId: string,
+  canonical: string,
+): Promise<KindooManager | null> {
+  const db = firestore();
+  const managerRef = doc(db, 'stakes', stakeId, 'kindooManagers', canonical);
+  const snap = await getDoc(managerRef);
+  if (!snap.exists()) return null;
+  return snap.data() as KindooManager;
 }
 
 /**

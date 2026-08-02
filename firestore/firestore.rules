@@ -691,16 +691,12 @@ service cloud.firestore {
       // `remove` may have an empty name); stake-scope add/edit-types
       // require at least one building selection. Scope must match
       // the requester's role:
+      //   - Kindoo Manager: every scope, every type — no `access` row
+      //     required
       //   - stake-scope: stake membership
       //   - ward-scope: that ward in the bishopric list
-      // Manager status alone does NOT grant creation rights (B-3 /
-      // T-36) — a pure-manager user with no stake / no ward claim
-      // has no submit surface. A manager who also holds `stake: true`
-      // or a bishopric ward inherits creation rights through those
-      // branches, like any other user. The self-approval invariant
-      // (spec §6, F12 invariant 7) still works: a manager who holds
-      // the role for the scope can submit then complete their own
-      // request.
+      // The self-approval invariant (spec §6, F12 invariant 7) still
+      // works: a manager can submit then complete their own request.
       //
       // Edit types — `edit_auto`, `edit_manual`, `edit_temp` — flow
       // through the same submit / Mark Complete path as add / remove.
@@ -790,40 +786,35 @@ service cloud.firestore {
             )
           )
           // Role-for-scope gate (defense-in-depth complement to the
-          // SPA's `allowedScopesFor` filter, B-3 / T-36). The submitter
-          // must hold the role matching the scope they are writing:
-          //   - `scope == 'stake'`  → caller holds `stake: true`
-          //   - `scope == <ward>`   → caller's `wards` includes that code
-          // Manager status alone does NOT grant creation rights — a
-          // pure-manager user with no stake / no ward claim has no
-          // submit surface. A manager who also holds `stake: true` or a
-          // bishopric ward inherits creation rights through those
-          // branches, same as any other user. This matches `scopeOptions.ts`
-          // on the SPA so a hand-crafted POST cannot bypass the dropdown
-          // filter.
+          // SPA's `allowedScopesFor` filter). Any one branch authorises:
+          //   - Kindoo Manager → every scope (stake + any ward) and
+          //     every type. Managers hold full request-creation
+          //     authority and need no `access` row of their own.
+          //   - `scope == 'stake'` → caller holds `stake: true`
+          //   - `scope == <ward>`  → caller's `wards` includes that code
+          // Stake members and bishopric members keep their own branches
+          // unchanged. The manager branch widens WHO may create, never
+          // WHAT the payload must carry — every other conjunct above
+          // still applies, including Policy 1 (`edit_auto` forbidden at
+          // `scope == 'stake'`), which binds managers too.
           //
-          // Narrow exception ("Give Access To Stake Buildings"): a Kindoo
-          // Manager may create a stake-scope request WITHOUT a stake
-          // claim, but ONLY for `add_manual` — the flow that grants a
-          // foreign-site-only ward member access to home-site stake
-          // buildings. B-3 / T-36 stays intact for every other stake-scope
-          // type (add_temp / edit_* / remove); those still require the
-          // stake claim through the branch above.
+          // `scope` is deliberately not checked against the ward list: a
+          // manager could write an unknown ward code. That is a
+          // data-quality gap for a trusted role, not an escalation.
           && (
-               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               isManager(stakeId)
+            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
-            || (
-                 request.resource.data.scope == 'stake'
-              && request.resource.data.type == 'add_manual'
-              && isManager(stakeId)
-            )
           )
           // Limited app access (D24). A user carrying
           // `stakes[stakeId].limited == true` gets a narrowed submit
           // surface; everyone else is untouched — a full user short-
           // circuits on `!isLimited(stakeId)` and never evaluates a
           // single clause below (nor pays for the two `get()` reads
-          // the ward / seat checks need).
+          // the ward / seat checks need). Managers are never limited —
+          // the claim minter refuses to mint `limited` for an active
+          // `kindooManagers` row — so the manager branch above keeps
+          // its full reach.
           //
           // The narrowed surface, per D24:
           //   - type restricted to `add_temp` / `edit_temp` / `remove`
