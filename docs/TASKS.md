@@ -6,6 +6,20 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-74] Wire the deploy-lock drift check into CI and cover it with tests
+Status: open
+Owner: @infra-engineer
+Phase: cross-cutting
+
+Follow-up to T-73, split out so its deferrals have a tracking home rather than sitting inside a `done` entry.
+
+The drift check that keeps `functions/deploy-lock/package-lock.json` honest is enforced today only as a side effect of `functions/scripts/build.mjs` running it — which happens to be gated by CI's "Build functions for emulator" step and by `firebase deploy`'s predeploy hook. Two gaps:
+
+1. **No explicit CI step.** `pnpm deps:check` should run next to Lint / Typecheck in `infra/ci/workflows/test.yml` with `continue-on-error: true`, and its outcome added to the "Verify all checks passed" list. A dedicated step names the failure instead of burying it in a build step. Deferred from PR #245 because CI workflow changes tag every engineering agent.
+2. **No committed tests for load-bearing logic.** `parsePnpmFunctionsDeps` (a hand-rolled pnpm lockfileVersion-9 parser) and `findDeployLockDrift` in `functions/scripts/deploy-deps.mjs` carry the guarantee. Both throw rather than return partial results when they meet something structurally unfamiliar, so a future pnpm layout change fails loudly rather than making the check vacuous — but that defence is itself untested in the repo. The nine cases exercised during PR #245 (dep added / removed, pnpm-lock floated, range bumped without `pnpm install`, `lockfileVersion` too old, upstream-published-nothing-changed staying green, and two parser-rejects-unknown-format cases) were run ad-hoc and should be a vitest fixture suite.
+
+Also outstanding from T-73, and not a CI concern: confirm on the next staging deploy that Cloud Build's buildpack actually installs via `npm ci` from the copied lockfile. `infra/runbooks/deploy.md` → "Manual verification of the deploy dependency pinning" step 6 has the exact check.
+
 ## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
 Status: done (2026-08-02 — PR #245)
 Owner: @infra-engineer
@@ -23,7 +37,7 @@ Phase: cross-cutting
 
 Not yet validated by a real deploy: whether Cloud Build's buildpack picks `npm ci` over `npm install` for this artifact. Either path installs the pinned tree (a present lockfile constrains `npm install` too), but `npm ci`'s manifest/lockfile sync check only proves out on the first deploy. Read the Cloud Build log's install line on the next staging deploy.
 
-Deferred: an explicit `pnpm deps:check` CI step and a unit test for the drift logic — both need `infra/ci/workflows/test.yml` changes, which tag every engineering agent.
+Deferred to **T-74**: an explicit `pnpm deps:check` CI step, vitest coverage for the drift logic, and confirming the buildpack's install command on the next staging deploy.
 
 See `infra/runbooks/deploy.md` "Deploy dependency pinning", `functions/deploy-lock/README.md`.
 
