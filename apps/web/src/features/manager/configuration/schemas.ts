@@ -78,5 +78,8 @@ export const configSchema = z.object({
     .min(0, 'Seat cap must be 0 or greater.'),
   timezone: z.string().trim().min(1, 'Timezone is required.'),
   notifications_enabled: z.boolean(),
+  // Opt-in: the persisted field is optional and absent means off, so the
+  // form resolves it as `=== true` rather than `?? true`.
+  eq_president_app_access: z.boolean(),
 });
 export type ConfigForm = z.infer<typeof configSchema>;

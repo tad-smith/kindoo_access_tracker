@@ -9,7 +9,8 @@
 //
 // Four-step layout:
 //
-//   Step 1 — Stake fields (name + stake_seat_cap).
+//   Step 1 — Stake fields (name + stake_seat_cap + the Elders Quorum
+//            President app-access opt-in).
 //   Step 2 — ≥1 Building.
 //   Step 3 — ≥1 Ward.
 //   Step 4 — Additional Kindoo Managers (optional). Bootstrap admin
@@ -27,7 +28,7 @@
 // flip means a post-setup wizard reload is invisible (the gate skips it).
 
 import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronRight } from 'lucide-react';
@@ -60,6 +61,7 @@ import {
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { Switch } from '../../components/ui/Switch';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
@@ -292,17 +294,20 @@ function Step1Form() {
     defaultValues: {
       stake_name: stake.data?.stake_name ?? '',
       stake_seat_cap: stake.data?.stake_seat_cap ?? 0,
+      // Opt-in, so absent means off.
+      eq_president_app_access: stake.data?.eq_president_app_access === true,
     },
     ...(stake.data
       ? {
           values: {
             stake_name: stake.data.stake_name ?? '',
             stake_seat_cap: stake.data.stake_seat_cap ?? 0,
+            eq_president_app_access: stake.data.eq_president_app_access === true,
           },
         }
       : {}),
   });
-  const { register, handleSubmit, formState } = form;
+  const { control, register, handleSubmit, formState } = form;
 
   async function onSubmit(input: Step1Form) {
     try {
@@ -334,6 +339,23 @@ function Step1Form() {
           {formState.errors.stake_seat_cap.message}
         </p>
       ) : null}
+      {/* No backfill dialog here: a stake still in setup has no existing
+          seats to reconcile, so the toggle just saves. */}
+      <label className="kd-switch-label" htmlFor="bootstrap-eq-president-access">
+        <Controller
+          name="eq_president_app_access"
+          control={control}
+          render={({ field }) => (
+            <Switch
+              id="bootstrap-eq-president-access"
+              checked={field.value === true}
+              onCheckedChange={field.onChange}
+              data-testid="bootstrap-eq-president-access"
+            />
+          )}
+        />
+        <span>Elders Quorum Presidents Get App Access</span>
+      </label>
       <div className="form-actions">
         <Button type="submit" disabled={mutation.isPending || formState.isSubmitting}>
           {mutation.isPending ? 'Saving…' : 'Save'}
