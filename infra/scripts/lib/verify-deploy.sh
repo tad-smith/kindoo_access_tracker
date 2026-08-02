@@ -64,11 +64,19 @@
 #   - Callables are deployed to us-central1 (firebase-functions v2 default; the
 #     repo sets no explicit region and the clients call getFunctions(app) with
 #     no region override). Override with VD_REGION if that ever changes.
-#   - Every callable performs its auth check before any side effect — the repo
-#     convention. The probe sends an empty `{"data":{}}` payload with no
-#     Authorization header, so an auth-checking callable rejects before doing
-#     anything. If a future callable ever mutates before checking auth, exclude
-#     it via VD_SKIP_CALLABLES.
+#   - Every callable rejects an anonymous call the SAME WAY the baseline does.
+#     Two parts, and the second is the stronger claim:
+#       (a) the auth check comes before any side effect — the repo convention.
+#           The probe sends an empty `{"data":{}}` with no Authorization header,
+#           so an auth-checking callable rejects before doing anything.
+#       (b) the error it throws first carries the same code as the baseline's
+#           (today: `unauthenticated`). Pass/fail is signature equality, so a
+#           callable that threw `permission-denied` first would signature
+#           `403:PERMISSION_DENIED`, miss the baseline, and be reported as
+#           `iam-missing` — a false positive naming the wrong cause.
+#     Both hold for every current callable. A future one that breaks either is
+#     a loud, wrong-cause failure rather than a silent pass; exclude it with
+#     VD_SKIP_CALLABLES and note why here.
 #   - Only `onCall` exports are probed. Firestore/Auth triggers and scheduled
 #     functions are invoked through Eventarc/Scheduler with an OIDC identity and
 #     correctly reject anonymous callers, so probing them proves nothing.

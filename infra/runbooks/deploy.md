@@ -112,8 +112,8 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    === post-deploy verification — staging ===
        region:    us-central1
        baseline:  syncApplyFix
-       exports:   23 (source: functions/src/index.ts)
-       callables: 5
+       exports:   24 (source: functions/src/index.ts)
+       callables: 6
        project:   kindoo-staging
 
      calibrated on 'syncApplyFix': HTTP 401, signature '401:UNAUTHENTICATED'.
@@ -122,12 +122,13 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
 
      FUNCTION                           HTTP   RESULT
      syncApplyFix                       401    healthy (baseline)
+     backfillEqPresidentAccess          401    healthy
      backfillKindooSiteId               401    healthy
      createStake                        401    healthy
      getMyPendingRequests               401    healthy
      markRequestComplete                401    healthy
 
-     deployed set matches functions/src/index.ts (23 functions).
+     deployed set matches functions/src/index.ts (24 functions).
 
    === post-deploy verification PASSED ===
    ```
