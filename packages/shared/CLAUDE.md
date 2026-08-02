@@ -38,6 +38,8 @@ src/
 - **zod schemas mirror types** via `z.infer<typeof schema>`. Define schema once; type comes free.
 - **Pure functions only.** No DOM access, no `fs`, no Node-only APIs, no browser-only APIs. Must work everywhere.
 - **Vitest unit tests** for every utility function and every schema (a `parse` test on representative inputs).
+- **Optional booleans declare their own default direction — never copy the neighbouring field's.** `Stake.notifications_enabled` reads `?? true` (absent ⇒ on); `Stake.eq_president_app_access` reads `=== true` (absent ⇒ off). Anything that grants access or authority defaults **off**, because the field lands absent on every pre-existing doc and "nobody has answered this question yet" must not read as "yes". State the direction in the type's doc comment so consumers don't have to infer it.
+- **App-access callings are a fixed list plus explicit gates.** `WARD_APP_ACCESS_CALLINGS` / `STAKE_APP_ACCESS_CALLINGS` are churchwide and not per-stake (`architecture.md` D17). The one exception is `AppAccessOptions`, an options bag threaded into `appAccessCallingsForScope` / `filterAppAccessCallings` that gates individual callings on stake config (D23). Add a gate there, never by making the arrays configurable.
 
 ## Don't
 

@@ -48,6 +48,7 @@ src/
 - **Tailwind classes inline.** No `@apply` in CSS files except for global tokens.
 - **Tests colocated** under each feature's `tests/` directory. One test file per source file.
 - **Types from `packages/shared/`** for any domain object (Seat, Request, Access). Don't redeclare locally.
+- **A config save never implies a data reconcile.** When flipping a stake setting leaves existing docs stale (e.g. `eq_president_app_access` — Configuration → Config), the save lands on its own and a confirm dialog offers the reconcile as a separate, declinable action. Read the persisted value *before* awaiting the mutation — the live snapshot updates underneath you — and compare against it to detect the flip.
 
 ## Don't
 
