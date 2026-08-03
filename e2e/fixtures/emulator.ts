@@ -211,6 +211,64 @@ export async function waitForServerStakeClaim(
   }
 }
 
+/**
+ * List every doc in a Firestore collection via the emulator's REST API,
+ * decoded back out of the typed-value envelope. Path is the collection
+ * path (e.g. `stakes/csnorth/requests`); an absent collection answers
+ * `[]`. Each entry carries the doc id under `__id__` alongside its
+ * fields.
+ *
+ * Lets a test assert on what actually landed in Firestore rather than
+ * only on the UI's echo of it — the write path is the thing under test
+ * when a spec drives a form submit. Uses the same `Bearer owner`
+ * rules-bypass as `writeDoc`.
+ */
+export async function listDocs(
+  collectionPath: string,
+): Promise<Array<Record<string, unknown> & { __id__: string }>> {
+  const url = `http://${FIRESTORE_HOST}/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collectionPath}?pageSize=300`;
+  const res = await fetch(url, { headers: { authorization: 'Bearer owner' } });
+  if (!res.ok) {
+    throw new Error(`listDocs(${collectionPath}) failed: ${res.status} ${await res.text()}`);
+  }
+  const body = (await res.json()) as {
+    documents?: Array<{ name: string; fields?: Record<string, unknown> }>;
+  };
+  return (body.documents ?? []).map((doc) => {
+    const out: Record<string, unknown> & { __id__: string } = {
+      __id__: doc.name.slice(doc.name.lastIndexOf('/') + 1),
+    };
+    for (const [key, value] of Object.entries(doc.fields ?? {})) {
+      out[key] = fromFirestoreValue(value);
+    }
+    return out;
+  });
+}
+
+/** Inverse of `toFirestoreValue` — unwraps one typed-value envelope. */
+function fromFirestoreValue(v: unknown): unknown {
+  const env = v as Record<string, unknown>;
+  if ('nullValue' in env) return null;
+  if ('stringValue' in env) return env['stringValue'];
+  if ('booleanValue' in env) return env['booleanValue'];
+  if ('integerValue' in env) return Number(env['integerValue']);
+  if ('doubleValue' in env) return env['doubleValue'];
+  if ('timestampValue' in env) return env['timestampValue'];
+  if ('arrayValue' in env) {
+    const arr = env['arrayValue'] as { values?: unknown[] };
+    return (arr.values ?? []).map(fromFirestoreValue);
+  }
+  if ('mapValue' in env) {
+    const map = env['mapValue'] as { fields?: Record<string, unknown> };
+    const out: Record<string, unknown> = {};
+    for (const [k, inner] of Object.entries(map.fields ?? {})) {
+      out[k] = fromFirestoreValue(inner);
+    }
+    return out;
+  }
+  return undefined;
+}
+
 function toFirestoreValue(v: unknown): object {
   if (v === null) return { nullValue: null };
   if (typeof v === 'string') return { stringValue: v };

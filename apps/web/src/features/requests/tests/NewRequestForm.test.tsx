@@ -22,7 +22,7 @@
 //     seat hook returns a hit in the same scope.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Building, Organization, Seat, Ward } from '@kindoo/shared';
 
@@ -1431,5 +1431,364 @@ describe('<NewRequestForm /> — organization selector (stake scope only)', () =
       scope: 'stake',
       organization_id: null,
     });
+  });
+});
+
+describe('<NewRequestForm /> — limited app access (D25)', () => {
+  // A limited user's form must never offer a submit the rules reject:
+  // temp-only, ≤90-day window, ward scope locked to the ward's own
+  // building. The paired non-limited assertions guard the far bigger
+  // risk — that any of this leaks into a full user's form.
+
+  const CO_WARDS = () => wards([{ code: 'CO', building_name: 'Maple Building' }]);
+
+  function typeOptionValues(): string[] {
+    const select = screen.getByTestId('new-request-type');
+    return within(select)
+      .getAllByRole('option')
+      .map((o) => (o as HTMLOptionElement).value);
+  }
+
+  it('offers Temporary as the only request type and defaults to add_temp', () => {
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    expect(typeOptionValues()).toEqual(['add_temp']);
+    expect(screen.getByTestId('new-request-type')).toHaveValue('add_temp');
+    // add_temp is live from mount, so the date fields render immediately.
+    expect(screen.getByTestId('new-request-start-date')).toBeInTheDocument();
+    expect(screen.getByTestId('new-request-end-date')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited form offers both types and defaults to add_manual', () => {
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    expect(typeOptionValues()).toEqual(['add_manual', 'add_temp']);
+    expect(screen.getByTestId('new-request-type')).toHaveValue('add_manual');
+    expect(screen.queryByTestId('new-request-start-date')).toBeNull();
+  });
+
+  it('states the 90-day cap before the user picks dates', () => {
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    expect(screen.getByTestId('new-request-temp-cap-hint')).toHaveTextContent(/90 days/i);
+  });
+
+  it('regression — a NON-limited add_temp form shows no cap hint', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    expect(screen.queryByTestId('new-request-temp-cap-hint')).toBeNull();
+  });
+
+  it('blocks a temp window longer than 90 days with an inline end-date error', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visiting speaker');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31');
+    await user.click(screen.getByTestId('new-request-submit'));
+    // The cap hint carries the same copy, so match on the alert role —
+    // the inline validation message, not the up-front helper text.
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some((el) => /limited to 90 days/i.test(el.textContent ?? ''))).toBe(true);
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('admits a temp window of exactly 90 days', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visiting speaker');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-30');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({ type: 'add_temp' });
+  });
+
+  it('ward scope: renders a read-only building row instead of the checklist', () => {
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    expect(screen.getByTestId('new-request-locked-building')).toHaveTextContent('Maple Building');
+    // No collapsible, no checkboxes — nothing for the user to change.
+    expect(screen.queryByTestId('new-request-buildings')).toBeNull();
+    expect(screen.queryByTestId('new-request-building-maple')).toBeNull();
+    expect(screen.queryByTestId('new-request-building-cedar')).toBeNull();
+  });
+
+  it('ward scope: submits exactly the ward building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visiting speaker');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-05-08');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      type: 'add_temp',
+      scope: 'CO',
+      building_names: ['Maple Building'],
+    });
+  });
+
+  it('ward scope with no building configured: blocks with a message and a disabled Submit', () => {
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'CO', building_name: '' }])}
+        initialScope="CO"
+      />,
+    );
+    expect(screen.getByTestId('new-request-locked-building-missing')).toHaveTextContent(
+      /Kindoo Manager/i,
+    );
+    expect(screen.queryByTestId('new-request-locked-building')).toBeNull();
+    expect(screen.getByTestId('new-request-submit')).toBeDisabled();
+  });
+
+  it('stake scope: keeps the ordinary site-filtered checklist', () => {
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'stake', label: 'Stake' }]}
+        buildings={buildings()}
+        wards={[]}
+        initialScope="stake"
+      />,
+    );
+    expect(screen.getByTestId('new-request-buildings')).toBeInTheDocument();
+    expect(screen.getByTestId('new-request-building-maple')).toBeInTheDocument();
+    expect(screen.getByTestId('new-request-building-cedar')).toBeInTheDocument();
+    expect(screen.queryByTestId('new-request-locked-building')).toBeNull();
+  });
+
+  it('regression — a NON-limited ward form keeps the checklist and can add a second building', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    expect(screen.queryByTestId('new-request-locked-building')).toBeNull();
+    await user.click(screen.getByTestId('new-request-buildings-trigger'));
+    await user.click(screen.getByTestId('new-request-building-cedar'));
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'sub teacher');
+    await user.type(screen.getByTestId('new-request-comment'), 'covering another building');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    expect(submitMock.mock.calls[0]?.[0]).toMatchObject({
+      type: 'add_manual',
+      building_names: ['Maple Building', 'Cedar Building'],
+    });
+  });
+
+  it('page mode: the post-submit reset restores add_temp, not add_manual', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.type(screen.getByTestId('new-request-email'), 'bob@example.com');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.type(screen.getByTestId('new-request-reason'), 'visiting speaker');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-05-08');
+    await user.click(screen.getByTestId('new-request-submit'));
+    expect(submitMock).toHaveBeenCalledTimes(1);
+    // The reset must re-seed `add_temp`; landing on `add_manual` would
+    // silently submit a type the rules reject on the NEXT submission.
+    await waitFor(() => expect(screen.getByTestId('new-request-type')).toHaveValue('add_temp'));
+    expect(screen.getByTestId('new-request-locked-building')).toHaveTextContent('Maple Building');
+  });
+});
+
+describe('<NewRequestForm /> — limited temp window reports live (D25)', () => {
+  // The ≤90-day cap must land as soon as both dates are filled, not on
+  // Submit. Scoped to limited + add_temp only: the global validation
+  // mode stays submit-time, so no other field starts erroring mid-typing.
+
+  const CO_WARDS = () => wards([{ code: 'CO', building_name: 'Maple Building' }]);
+
+  /** The inline cap error, not the always-present helper text — the two
+   *  carry identical copy and only the error has `role="alert"`. */
+  function capError(): HTMLElement | undefined {
+    return screen
+      .queryAllByRole('alert')
+      .find((el) => /limited to 90 days/i.test(el.textContent ?? ''));
+  }
+
+  function renderLimited() {
+    return render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+  }
+
+  it('shows the cap message once both dates are filled, with no submit', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the live cap message under the End date field', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31');
+    await waitFor(() => expect(capError()).toBeDefined());
+    // Placement is load-bearing: the message belongs to End date, the
+    // field the user changes to fix it.
+    const endDate = screen.getByTestId('new-request-end-date');
+    expect(endDate.compareDocumentPosition(capError() as HTMLElement)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('clears the cap message when the end date comes back to 90 days, with no submit', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    await user.clear(screen.getByTestId('new-request-end-date'));
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-30'); // 90 days
+    await waitFor(() => expect(capError()).toBeUndefined());
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('raises nothing while only the start date is filled', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    // Firing on a half-filled pair would surface "End date is required"
+    // on a field the user hasn't reached yet.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('raises nothing while only the end date is filled', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31');
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a NON-limited 200-day window stays silent and no field errors while typing', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-01-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-20'); // 200 days
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    // And the form's global validation mode is unchanged — required
+    // fields left empty mid-edit must stay quiet until Submit.
+    await user.type(screen.getByTestId('new-request-email'), 'not-an-email');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.clear(screen.getByTestId('new-request-name'));
+    await user.type(screen.getByTestId('new-request-reason'), 'x');
+    await user.clear(screen.getByTestId('new-request-reason'));
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a limited form leaves the non-date fields on submit-time validation', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-05-08');
+    await user.type(screen.getByTestId('new-request-email'), 'not-an-email');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.clear(screen.getByTestId('new-request-name'));
+    // The live check revalidates `end_date` and nothing else, so an
+    // invalid email and an emptied name stay silent until Submit.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
   });
 });

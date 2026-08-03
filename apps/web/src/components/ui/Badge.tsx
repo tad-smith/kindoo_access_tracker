@@ -19,6 +19,10 @@ export type BadgeVariant =
   | 'warning'
   | 'danger'
   | 'info'
+  // Limited app-access tier (D25). Loud on purpose: the App Access page
+  // states the tier on every row, and Limited must not read as Full at a
+  // glance.
+  | 'limited'
   // Audit-action category badges. Palette: blue for CRUD, green for
   // request lifecycle, red for system events, amber for importer.
   | 'audit-crud'
@@ -42,6 +46,8 @@ const VARIANT_CLASSES: Record<BadgeVariant, string> = {
   warning: 'bg-kd-warn-tint text-kd-warn-mid',
   danger: 'bg-kd-danger-bg text-kd-danger-fg border border-kd-danger',
   info: 'bg-kd-primary-tint text-kd-primary-hover',
+  // Danger tuple plus the audit chips' uppercase + weight emphasis.
+  limited: 'bg-kd-danger-bg text-kd-danger-fg border border-kd-danger uppercase font-semibold',
   // Audit-action chips: uppercase + font-weight 600 layered per-
   // variant so they stack with the base Badge classes (which set
   // rounded + padding + text-xs).
