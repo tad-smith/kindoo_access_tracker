@@ -17,6 +17,22 @@ Landed on `feat/remote-apply-web2` (PR #250). `spec.md` §16 and the §15 Reques
 2. **The Apply button is gated per request, not per manager.** A request's target Kindoo site is *derived* (scope → ward → building; stake scope is home), and the button appears only when a live tab is on that site. `AccessRequest.kindoo_site_id` is NOT that site — it is the site of the grant a `remove` targets — so nothing reads it here. A request whose target site can't be resolved (orphaned ward/building reference, catalogues not loaded) gets no button: an unknown target can't be routed.
 3. **Jobs carry `target_site_key`** (required; `'home'` is the reserved key for the home site, which has no `kindooSites` doc). Only a tab inside that site may claim it. Also needs a `firebase-schema.md` §3.4 field entry.
 4. **The copy changed.** The queue-header line now names *every* covered site ("You can apply requests for Colorado Springs North and East Stake from here."), a not-covered card names the site to open ("Open East Stake in Kindoo on your computer to apply this one."), and the nothing-live line reads "Open Kindoo in Chrome on your computer to apply requests from here." The top-of-queue extension note lost its "When your desktop is online" clause — spec.md §15 quotes that sentence verbatim; it now reads "Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open there, you can apply them from here."
+## [T-79] A server-side remote-apply job writer must stamp `target_site_key` itself
+Status: open
+Owner: @backend-engineer
+Phase: remote apply (D27)
+
+Pre-emptive. Nothing to do today — this exists so the assumption is written down before someone unknowingly invalidates it.
+
+A `remoteApply/{canonicalEmail}/jobs/{jobId}` doc with no `target_site_key` is **permanently stuck**, not merely malformed. The rules' `jobCoreUnchanged` reads `before.target_site_key` bare; a missing-key read errors, and an erroring condition denies — and that helper gates `allow update` ahead of all three transition branches. So such a doc can't be claimed by a desktop, can't be cancelled by the phone's no-pickup timeout, and can't be reported on. `allow delete: if false` means no client can clear it either: Console or Admin SDK only.
+
+This is unreachable today, and only for one reason: **every writer of that collection is a client**, gated by a create rule requiring `target_site_key is string && .size() > 0`. Nothing in `functions/src` writes it.
+
+If a Cloud Function ever queues remote-apply jobs server-side — an auto-provision trigger, a retry sweep, a backfill — it **bypasses rules entirely** and can mint fieldless docs for real. Such a writer must derive and stamp `target_site_key` at the write. The derivation is settled and already implemented twice (`extension/src/content/kindoo/siteCheck.ts` → `checkRequestSite`, and the phone's queue-job writer): `request.scope === 'stake'` → the home site unconditionally; a ward scope → `resolveWardSite(ward, buildings)`, where `null` also means home. Run the result through `remoteApplySiteKey` (`@kindoo/shared`).
+
+The extension defends by dropping such docs from both its queued and running queries with a warning rather than guessing a site — guessing would buy a doomed claim every poll that `claimRemoteApplyJob` misreports as "already claimed elsewhere", and would provision real Kindoo access against a guessed site if the freeze were ever lifted. That defence is deliberately inert; don't treat its existence as licence to write fieldless docs.
+
+Noted in `extension/CLAUDE.md` (remote apply bullets) and on the create rule in `firestore/firestore.rules`. Surfaced during PR #250 by `extension-engineer` and `backend-engineer` working the rules.
 
 ## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
 Status: done (2026-08-03 — `feat/remote-apply-docs2`, ahead of PR #250 merging)
