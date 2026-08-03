@@ -124,6 +124,14 @@ function claimPayload(overrides: Record<string, unknown> = {}): Record<string, u
   };
 }
 
+/**
+ * One `OverCapEntry` as `markRequestComplete` returns it — the shape the
+ * phone renders a warning row from.
+ */
+function overCapEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { pool: 'stake', count: 351, cap: 350, over_by: 1, ...overrides };
+}
+
 /** The extension's report-back payload. */
 function finishPayload(
   status: string,
@@ -706,6 +714,162 @@ describe('firestore.rules — remoteApply', () => {
         db.doc(JOB_PATH).update(
           finishPayload('failed', {
             outcome: { code: 'site_mismatch', message: 'Your desktop is on a different site.' },
+          }),
+        ),
+      );
+    });
+  });
+
+  // `outcome.over_caps` carries the pools `markRequestComplete` pushed
+  // over their seat cap, so the phone can show the warning the desktop's
+  // result dialog already shows. Without it in the `hasOnly` set the
+  // extension's terminal write was DENIED outright, stranding the job in
+  // `running` — the smoke-test failure this block pins.
+  describe('jobs — over-cap warnings on the outcome', () => {
+    it('running → applied carrying over-cap warnings', async () => {
+      await seedJob(env, { status: 'running' });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('applied', {
+            outcome: {
+              code: 'applied',
+              message: 'Access granted in Kindoo.',
+              kindoo_uid: 'kindoo-77',
+              provisioning_note: 'Rule 12 applied.',
+              over_caps: [
+                overCapEntry(),
+                overCapEntry({ pool: 'ward-3', count: 41, cap: 40, over_by: 1 }),
+              ],
+            },
+          }),
+        ),
+      );
+    });
+
+    it('an empty over_caps list is accepted (the common case — nothing over cap)', async () => {
+      await seedJob(env, { status: 'running' });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('applied', {
+            outcome: { code: 'applied', message: 'Access granted.', over_caps: [] },
+          }),
+        ),
+      );
+    });
+
+    it('an over_caps that is not a list is denied', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      for (const bad of [overCapEntry(), 'stake', 42, null]) {
+        await seedJob(env, { status: 'running' });
+        await assertFails(
+          db.doc(JOB_PATH).update(
+            finishPayload('applied', {
+              outcome: { code: 'applied', message: 'Access granted.', over_caps: bad },
+            }),
+          ),
+        );
+        await clearAll(env);
+      }
+    });
+
+    it('an over_caps list past the render bound is denied', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+
+      // 64 is several times the reachable maximum (wards-over-cap plus
+      // the stake pool), so no real completion approaches it.
+      await seedJob(env, { status: 'running' });
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('applied', {
+            outcome: {
+              code: 'applied',
+              message: 'Access granted.',
+              over_caps: Array.from({ length: 64 }, (_, i) => overCapEntry({ pool: `ward-${i}` })),
+            },
+          }),
+        ),
+      );
+      await clearAll(env);
+
+      await seedJob(env, { status: 'running' });
+      await assertFails(
+        db.doc(JOB_PATH).update(
+          finishPayload('applied', {
+            outcome: {
+              code: 'applied',
+              message: 'Access granted.',
+              over_caps: Array.from({ length: 65 }, (_, i) => overCapEntry({ pool: `ward-${i}` })),
+            },
+          }),
+        ),
+      );
+    });
+
+    it('entry contents are NOT validated — rules cannot iterate a list', async () => {
+      // Documented non-enforcement, and the reason the depth stops at
+      // `is list`: rules' CEL has no `all` / `exists` over a list, so the
+      // per-entry `OverCapEntry` shape is inexpressible at any depth. A
+      // malformed entry renders wrong in the writer's own result dialog
+      // and reaches nobody else — the same trade already made for
+      // `outcome.code`, which is typed but not pinned to its union.
+      await seedJob(env, { status: 'running' });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('applied', {
+            outcome: {
+              code: 'applied',
+              message: 'Access granted.',
+              over_caps: [{ pool: 42, smuggled: 'payload' }],
+            },
+          }),
+        ),
+      );
+    });
+
+    it('over_caps on a non-applied outcome is accepted (documented non-enforcement)', async () => {
+      // The type says `over_caps` only appears on `applied` — the
+      // `partial` path means the SBA write never landed, so the server
+      // had nothing to report. Rules deliberately do not pin that: the
+      // conjunct could only ever deny, and a denial here strands the job
+      // in `running`. It is an authoring rule for the single writer.
+      await seedJob(env, { status: 'running' });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('partial', {
+            outcome: {
+              code: 'sba_incomplete',
+              message: 'Applied in Kindoo — finish on the desktop.',
+              over_caps: [overCapEntry()],
+            },
+          }),
+        ),
+      );
+    });
+
+    it('the cancel branch shares the same outcome check', async () => {
+      // `validFinish` gates `queued → cancelled` too, so widening it
+      // widens both. Nothing writes over-cap warnings on a cancel today;
+      // this pins that the two branches did not diverge.
+      await seedJob(env, { status: 'queued' });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(JOB_PATH).update(
+          finishPayload('cancelled', {
+            outcome: { code: 'error', message: 'No desktop picked this up.', over_caps: [] },
+          }),
+        ),
+      );
+      await clearAll(env);
+
+      await seedJob(env, { status: 'queued' });
+      await assertFails(
+        db.doc(JOB_PATH).update(
+          finishPayload('cancelled', {
+            outcome: { code: 'error', message: 'No desktop picked this up.', over_caps: 'nope' },
           }),
         ),
       );
