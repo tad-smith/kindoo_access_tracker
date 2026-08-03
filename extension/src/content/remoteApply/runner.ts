@@ -16,8 +16,9 @@ import type { RemoteApplyJobRef, StakeConfigBundle } from '../../lib/extensionAp
 import { getMyPendingRequests } from '../../lib/extensionApi';
 import { applyRequest, type ApplyRequestResult } from '../kindoo/applyRequest';
 
-/** Terminal statuses the extension is allowed to write. `cancelled`
- * belongs to the phone's no-pickup timeout. */
+/** Terminal statuses a RUN can end in. `cancelled` is absent because a
+ * cancelled job was never run — the poller writes that one directly for
+ * a job it found already past the pickup window (`loop.ts`). */
 export type RemoteApplyTerminalStatus = Extract<
   RemoteApplyJobStatus,
   'applied' | 'partial' | 'failed'
@@ -47,6 +48,12 @@ export interface RunRemoteApplyJobArgs {
  * granted or revoked and only the SBA bookkeeping is missing. Reporting
  * that as `failed` would send the manager back to re-apply something
  * that already happened.
+ *
+ * `over_caps` rides only the `applied` branch. It comes from
+ * `markRequestComplete`'s response, so on `partial` — where that call is
+ * precisely what failed — there is no answer to carry, and an empty
+ * array there would read as "all clear" rather than "never asked". The
+ * desktop's own `ResultDialog` draws the same distinction.
  */
 export function toJobResult(result: ApplyRequestResult): RemoteApplyJobResult {
   if (result.status === 'applied') {
@@ -57,6 +64,10 @@ export function toJobResult(result: ApplyRequestResult): RemoteApplyJobResult {
         message: result.note,
         ...(result.kindooUid ? { kindoo_uid: result.kindooUid } : {}),
         provisioning_note: result.note,
+        // Omitted when empty rather than written as `[]`, matching how
+        // `kindoo_uid` is handled: absent and empty both mean "no pool
+        // is over cap", and the job doc is what the phone renders from.
+        ...(result.overCaps.length > 0 ? { over_caps: result.overCaps } : {}),
       },
     };
   }

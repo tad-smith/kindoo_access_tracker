@@ -31,6 +31,16 @@
 // so without it a stranded job leaves the manager watching "Your desktop
 // is applying this…" forever. See `sweepStrandedIfDue`.
 //
+// The poll carries the matching backstop for the OTHER non-terminal
+// status. A `queued` job is meant to be cancelled by the phone's pickup
+// timeout, but that timeout is a `setTimeout` in a React effect in a
+// phone browser tab: a screen lock suspends it and closing the tab kills
+// it, which is how a phone session normally ends. Left to itself the
+// poller would then claim and provision a job of any age, hours after
+// the manager walked away from it. So it expires anything past
+// REMOTE_APPLY_PICKUP_TIMEOUT_MS instead of claiming it — see
+// `expireQueued`.
+//
 // Cadence:
 //   - heartbeat every REMOTE_APPLY_HEARTBEAT_MS (60s)
 //   - poll every REMOTE_APPLY_POLL_VISIBLE_MS (10s) while the tab is
@@ -43,6 +53,7 @@
 
 import {
   REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_PICKUP_TIMEOUT_MS,
   REMOTE_APPLY_POLL_HIDDEN_MS,
   REMOTE_APPLY_POLL_VISIBLE_MS,
   canClaimRemoteApplyJob,
@@ -120,6 +131,25 @@ const STRANDED_MESSAGE =
   'Your desktop stopped partway through this request, so it never reported back. ' +
   'It may or may not have gone through in Kindoo — check this request on your desktop ' +
   'before applying again.';
+
+/**
+ * What an expired `queued` job records.
+ *
+ * The opposite wording problem to `STRANDED_MESSAGE`, and the easier
+ * one: an expired job never left `queued`, so no tab ever ran it and
+ * "nothing was changed in Kindoo" is a fact rather than a guess. Saying
+ * so is what makes re-applying safe, which is the whole point of
+ * finalising rather than skipping.
+ *
+ * The phone renders its own fixed copy for `cancelled` and never shows
+ * this string; it is here for the job trail an operator reads when a
+ * manager asks why their tap did nothing. It also distinguishes a
+ * desktop-side expiry from the phone's own timeout, which writes no
+ * outcome at all.
+ */
+const EXPIRED_MESSAGE =
+  'Your desktop did not pick this up within the time your phone waits for it, so it was ' +
+  'cancelled. Nothing was changed in Kindoo. Open Kindoo on your computer and apply it again.';
 
 export interface RemoteApplyLoopArgs {
   stakeId: string;
@@ -228,6 +258,24 @@ export function startRemoteApplyLoop(
    * "can serve no job at all".
    */
   let activeSite: ResolvedTabSite | null = null;
+  /**
+   * Epoch ms of the last `getEnvironments` ATTEMPT, and the EID it was
+   * made for — recorded whether or not it produced a site.
+   *
+   * These exist because `activeSite === null` is not a usable "re-resolve
+   * me" signal on its own. It is the resting state of two ordinary
+   * situations that persist indefinitely — a Kindoo session that expired
+   * while the tab stayed open, and an EID this stake hasn't configured —
+   * and deriving the question from it alone put a Kindoo API POST on
+   * every 10s poll tick, forever, against a third party's server.
+   *
+   * Gating on the attempt instead holds an unresolvable tab to the same
+   * one-call-per-heartbeat budget a healthy one keeps. The EID is stored
+   * alongside so the operator navigating to a different Kindoo site
+   * still re-resolves immediately: that is new information, not a retry.
+   */
+  let lastResolveAt = 0;
+  let lastResolveEid: number | null = null;
 
   /** Whether this tab could itself run `job`. The one place the claim
    * rule is consulted; the poller uses it to pick work and the sweep to
@@ -417,11 +465,33 @@ export function startRemoteApplyLoop(
    * operator can switch sites with no page load and no remount, and a
    * resolution cached against the previous EID would leave this tab
    * claiming the site it just left for up to a full heartbeat period.
+   *
+   * Nor is it driven by `activeSite === null`. Both failure modes above
+   * LEAVE it null, and neither clears on its own, so re-resolving
+   * whenever it is null means a Kindoo API POST every poll tick for as
+   * long as the tab stays open — 10 seconds apart on a visible tab,
+   * indefinitely, against someone else's server. `lastResolveAt` /
+   * `lastResolveEid` cap that at the heartbeat period, which is the
+   * documented budget of one Kindoo call per 60s per open tab, while
+   * still re-resolving the instant the EID changes. The periodic retry
+   * is what lets a tab recover on its own once the operator signs back
+   * into Kindoo, or configures the site the tab is sitting in.
    */
   const heartbeatIfDue = async (session: KindooSession): Promise<boolean> => {
-    const due = deps.now() - lastHeartbeatAt >= REMOTE_APPLY_HEARTBEAT_MS;
     const resolvedForThisSite = activeSite !== null && activeSite.kindooEid === session.eid;
-    if (!due && resolvedForThisSite) return true;
+    if (resolvedForThisSite) {
+      if (deps.now() - lastHeartbeatAt < REMOTE_APPLY_HEARTBEAT_MS) return true;
+    } else if (
+      session.eid === lastResolveEid &&
+      deps.now() - lastResolveAt < REMOTE_APPLY_HEARTBEAT_MS
+    ) {
+      // Same EID that just failed to resolve, and the retry window
+      // hasn't elapsed. Silent: the attempt that set these already said
+      // why, and repeating it every 10s would bury everything else.
+      return false;
+    }
+    lastResolveAt = deps.now();
+    lastResolveEid = session.eid;
     let envs: Awaited<ReturnType<typeof getEnvironments>>;
     try {
       envs = await deps.getEnvironments(session);
@@ -444,9 +514,12 @@ export function startRemoteApplyLoop(
     // the top of the tick. Opting out stops the loop and then publishes
     // `enabled: false`, but stopping does not abort a tick already in
     // flight — this one may have been awaiting `getEnvironments` the
-    // whole time. Both writes are `merge: true`, so an `enabled: true`
-    // landing after the disable write wins, and the phone keeps offering
-    // a button the manager just revoked for a full staleness window.
+    // whole time. Both writes REPLACE the presence doc whole (never
+    // `{ merge: true }` — the rules match an exact key set against the
+    // merged result and would deny it), so an `enabled: true` landing
+    // after the disable write overwrites it outright, and the phone
+    // keeps offering a button the manager just revoked for a full
+    // staleness window.
     if (!deps.isEnabled()) {
       console.info('[sba-ext] remote apply: opt-in cleared mid-tick; skipping presence write');
       return false;
@@ -469,6 +542,75 @@ export function startRemoteApplyLoop(
   };
 
   /**
+   * Whether a `queued` job is already past the window the phone waits
+   * for a desktop to pick it up.
+   *
+   * An unreadable `created_at` reads as NOT expired, so an unaged job
+   * stays claimable. Deliberately the opposite lean to the stranded
+   * sweep, and for a different question: there the missing age would
+   * license writing a job terminal, here it would license cancelling
+   * work the manager may have tapped seconds ago — and the phone would
+   * tell them their desktop ignored them while it was in fact running.
+   * The state is unreachable anyway from a server read, since the create
+   * rule requires `created_at is timestamp`.
+   */
+  const isPastPickup = (job: RemoteApplyJobRef): boolean =>
+    job.createdAtMs !== null && deps.now() - job.createdAtMs >= REMOTE_APPLY_PICKUP_TIMEOUT_MS;
+
+  /**
+   * Finalise a job nobody picked up in time — `queued → cancelled`, the
+   * same transition and the same terminal status the phone's own pickup
+   * timeout writes.
+   *
+   * Cancelling rather than merely skipping, because skipping leaves the
+   * job `queued` and a `queued` job is not inert on the phone: its row
+   * reads "Sent to your desktop — waiting for it to start…" and counts
+   * as in-flight, so the manager cannot tap Apply for that request
+   * again. Skipping would trade an unattended provision for a request
+   * the manager is silently locked out of, with nothing anywhere saying
+   * why. Cancelling shows them "Your desktop didn't pick this up" and
+   * gives the button back.
+   *
+   * Site-independent, unlike the claim: staleness is a fact about the
+   * job, not about this tab. The tab that could have served it is the
+   * one most likely to be closed — that is HOW the job went stale — so
+   * gating on `canServe` would leave the commonest case to the tab that
+   * just failed to exist.
+   *
+   * This can race a sibling tab's claim by up to one poll period. It
+   * loses harmlessly: the job has left `queued`, the rules' before-status
+   * check rejects this write, and the sibling's own terminal write is
+   * untouched. The reverse race is impossible for a hidden tab, which
+   * polls at 60s against a 90s pickup window and therefore always sees a
+   * claimable job while it is still fresh.
+   */
+  const expireQueued = async (job: RemoteApplyJobRef): Promise<void> => {
+    console.warn(
+      `[sba-ext] remote apply: job ${job.jobId} (request ${job.requestId}) has been queued ` +
+        `since ${new Date(job.createdAtMs ?? 0).toISOString()}, past the phone's pickup ` +
+        `window; cancelling rather than provisioning it unattended`,
+    );
+    try {
+      await deps.finishJob(job.jobId, {
+        status: 'cancelled',
+        outcome: { code: 'error', message: EXPIRED_MESSAGE },
+      });
+    } catch (err) {
+      if (isPermissionDenied(err)) {
+        // It left `queued` between the query and this write — another
+        // tab claimed it, or the phone's own timeout got there first.
+        // Both are the system working.
+        console.info(
+          `[sba-ext] remote apply: job ${job.jobId} moved on before it could be cancelled`,
+        );
+        return;
+      }
+      // Next poll retries; the job is still `queued` and still stale.
+      console.warn(`[sba-ext] remote apply: could not cancel job ${job.jobId}`, err);
+    }
+  };
+
+  /**
    * Claim and run the first queued job this tab's site can serve.
    *
    * A page of jobs rather than the single oldest one, because with two
@@ -477,11 +619,20 @@ export function startRemoteApplyLoop(
    * while the right site sits open next door; refusing to look past it
    * would let one unservable job block every servable one behind it.
    * So: skip what this tab can't do, claim the first thing it can.
+   *
+   * The age check comes before the site check, and before any claim.
+   * `expireQueued` explains why an expired job is finalised here rather
+   * than left for the phone; the ordering is what makes it a gate on
+   * provisioning rather than a report about it.
    */
   const pollOnce = async (session: KindooSession): Promise<void> => {
     const jobs = await deps.queuedJobs();
     const claimable: RemoteApplyJobRef[] = [];
     for (const candidate of jobs) {
+      if (isPastPickup(candidate)) {
+        await expireQueued(candidate);
+        continue;
+      }
       if (canServe(candidate)) {
         claimable.push(candidate);
         continue;

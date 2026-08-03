@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   REMOTE_APPLY_HEARTBEAT_MS,
   REMOTE_APPLY_HOME_SITE_KEY,
+  REMOTE_APPLY_PICKUP_TIMEOUT_MS,
   REMOTE_APPLY_POLL_HIDDEN_MS,
   REMOTE_APPLY_POLL_VISIBLE_MS,
 } from '@kindoo/shared';
@@ -35,6 +36,9 @@ import {
 
 const STAKE_ID = 'csnorth';
 const EXT_VERSION = '1.2.3';
+/** Where `makeDeps`'s mock clock starts. Job ages are expressed against
+ * it so a test can put a job either side of the pickup window. */
+const NOW = 1_000_000;
 /** EID of the stake's home Kindoo site, as `kindoo_config.site_id`. */
 const HOME_EID = 27994;
 /** EID of a second, foreign Kindoo site the same stake manages. */
@@ -69,6 +73,8 @@ function job(overrides: Partial<RemoteApplyJobRef> = {}): RemoteApplyJobRef {
     requestId: 'r1',
     stakeId: STAKE_ID,
     targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+    // Queued just now, i.e. well inside the pickup window.
+    createdAtMs: NOW,
     ...overrides,
   };
 }
@@ -83,7 +89,7 @@ function runningJob(
 /** Every dep mocked; individual tests override what they exercise.
  * Defaults put the tab on the stake's HOME Kindoo site. */
 function makeDeps(overrides: Partial<RemoteApplyLoopDeps> = {}) {
-  let clock = 1_000_000;
+  let clock = NOW;
   const base = {
     readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: HOME_EID } })),
     getEnvironments: vi.fn(async () => [
@@ -304,6 +310,105 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.writeRemotePresence).toHaveBeenCalledTimes(2);
     // Polling still runs on every tick — only the heartbeat is rate-limited.
     expect(deps.queuedJobs).toHaveBeenCalledTimes(3);
+    // And the Kindoo call that feeds the heartbeat is rate-limited with
+    // it. Asserting on the presence write alone would miss a loop that
+    // re-resolved on every tick and merely declined to publish.
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  // ---- Kindoo call budget while the site can't be resolved -----------
+  //
+  // `getEnvironments` is a POST to a third party's server. A tab that
+  // cannot resolve its site is a resting state, not a transient one, so
+  // "re-resolve while unresolved" is an unbounded retry loop at the poll
+  // cadence — 10s apart on a visible tab, for as long as it stays open.
+
+  it('calls getEnvironments at most once per heartbeat period when the Kindoo session is dead', async () => {
+    // An expired Kindoo token still reads `ok` from `readKindooSession`
+    // (it only proves a token string exists), so this tab keeps ticking
+    // and keeps failing to resolve.
+    const deps = makeDeps({
+      getEnvironments: vi.fn(async () => {
+        throw new Error('401 Unauthorized');
+      }),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(1);
+
+    deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
+    await handle.tick();
+    handle.stop();
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it('calls getEnvironments at most once per heartbeat period when the EID maps to no site', async () => {
+    // The manager clicked into a Kindoo site this stake doesn't manage.
+    // Perfectly ordinary, and it persists for as long as they stay there.
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: 99999 } })),
+      getEnvironments: vi.fn(async () => [
+        { EID: 99999, Name: 'Some Other Stake', TimeZone: 'Mountain Standard Time' },
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(1);
+
+    deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
+    await handle.tick();
+    handle.stop();
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-resolves at once when the operator leaves a site that could not be resolved', async () => {
+    // The retry window must not swallow a genuine change of site — that
+    // is new information, not a retry, and waiting on it would leave the
+    // phone unable to see a desktop that is now usable.
+    let eid = 99999;
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid } })),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await handle.tick();
+    expect(deps.writeRemotePresence).not.toHaveBeenCalled();
+
+    eid = HOME_EID;
+    deps.advance(1_000);
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+    expect(deps.writeRemotePresence).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers on its own once the Kindoo session comes back', async () => {
+    // The flip side of the retry window: it is a cap, not a shutdown.
+    const getEnvironments = vi
+      .fn<RemoteApplyLoopDeps['getEnvironments']>()
+      .mockRejectedValueOnce(new Error('401 Unauthorized'))
+      .mockResolvedValue([{ EID: HOME_EID, Name: 'CS North', TimeZone: 'Mountain Standard Time' }]);
+    const deps = makeDeps({ getEnvironments });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await handle.tick();
+    expect(deps.writeRemotePresence).not.toHaveBeenCalled();
+
+    deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
+    await handle.tick();
+    handle.stop();
+    expect(deps.writeRemotePresence).toHaveBeenCalledTimes(1);
   });
 
   it('claims a queued job, runs it, and writes the terminal status', async () => {
@@ -416,6 +521,132 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.claimJob).not.toHaveBeenCalled();
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.info).toHaveBeenCalledWith(expect.stringContaining('leaving job east'));
+  });
+
+  // ---- Pickup expiry: the unattended-provision regression -------------
+  //
+  // The phone's 90s pickup timeout lives in a React effect in a browser
+  // tab. On a phone that tab is suspended by a screen lock and killed by
+  // a close, so it cannot be the only thing that expires a `queued` job.
+  // Without a desktop-side backstop the manager taps Apply, pockets the
+  // phone, and the poller provisions the request unattended whenever
+  // Kindoo next opens — hours or a day later.
+
+  it('cancels a job that sat queued past the pickup window instead of claiming it', async () => {
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job({ createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS })]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).not.toHaveBeenCalled();
+    expect(deps.runJob).not.toHaveBeenCalled();
+    expect(deps.finishJob).toHaveBeenCalledTimes(1);
+    const [jobId, payload] = deps.finishJob.mock.calls[0] ?? [];
+    expect(jobId).toBe('j1');
+    expect(payload?.status).toBe('cancelled');
+    // Unlike a stranded job, an expired one demonstrably never ran, so
+    // the message may say so — and must, since that is what makes
+    // re-applying safe rather than licence-burning.
+    expect(payload?.outcome.message).toMatch(/Nothing was changed in Kindoo/);
+  });
+
+  it('still claims a job on the last tick before the pickup window closes', async () => {
+    // The other half of the boundary. An over-eager expiry would cancel
+    // work the manager is watching their phone for.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({ createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS + 1 }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).toHaveBeenCalledWith('j1', EXT_VERSION, HOME_EID);
+    expect(deps.finishJob).toHaveBeenCalledWith('j1', {
+      status: 'applied',
+      outcome: { code: 'applied', message: 'done' },
+    });
+  });
+
+  it('cancels an expired job for a site it cannot serve', async () => {
+    // Staleness is a fact about the job, not about this tab. The tab
+    // that could have served it is the one most likely to be closed —
+    // that is HOW the job went stale — so a `canServe` gate here would
+    // leave the commonest case to the tab that just failed to exist.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({
+          jobId: 'east',
+          targetSiteKey: EAST_SITE_ID,
+          createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS - 1,
+        }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).not.toHaveBeenCalled();
+    expect(deps.finishJob.mock.calls[0]?.[0]).toBe('east');
+    expect(deps.finishJob.mock.calls[0]?.[1].status).toBe('cancelled');
+  });
+
+  it('claims the fresh job behind an expired one in the same page', async () => {
+    // Expiring must not consume the poll: a stale job is not a reason to
+    // leave real work sitting for another 10 seconds.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({
+          jobId: 'stale',
+          requestId: 'r-stale',
+          createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS - 1,
+        }),
+        job({ jobId: 'fresh', requestId: 'r-fresh' }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.finishJob.mock.calls[0]?.[0]).toBe('stale');
+    expect(deps.claimJob).toHaveBeenCalledTimes(1);
+    expect(deps.claimJob).toHaveBeenCalledWith('fresh', EXT_VERSION, HOME_EID);
+  });
+
+  it('leaves a queued job with no readable creation time claimable', async () => {
+    // Opposite lean to the stranded sweep, and deliberately: a missing
+    // age here would license cancelling work tapped seconds ago and
+    // telling the manager their desktop ignored them.
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job({ createdAtMs: null })]) });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).toHaveBeenCalledTimes(1);
+    expect(deps.finishJob.mock.calls[0]?.[1].status).toBe('applied');
+  });
+
+  it('treats a lost cancel race as the system working, not a fault', async () => {
+    // A sibling tab claimed it between the query and the write, so the
+    // rules' before-status check rejects ours. Nothing is wrong.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({ createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS - 1 }),
+      ]),
+      finishJob: vi
+        .fn<RemoteApplyLoopDeps['finishJob']>()
+        .mockRejectedValue(Object.assign(new Error('denied'), { code: 'permission-denied' })),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    // One attempt, no retry loop, and the tick survives.
+    expect(deps.finishJob).toHaveBeenCalledTimes(1);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining('moved on before'));
   });
 
   it('clears the running flag even when finishing the job throws', async () => {
