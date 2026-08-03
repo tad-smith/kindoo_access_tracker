@@ -244,10 +244,10 @@ describe('<RemoteApplyRow /> — per-site gating', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('offers nothing for a request whose Kindoo site could not be worked out', () => {
-    // An orphaned ward→building reference, or catalogues still loading.
-    // Fail closed: there is no honest claim to make about which desktop
-    // could serve it.
+  it('offers nothing until the catalogues the target site is derived from have landed', () => {
+    // An empty wards catalogue derives every request to home, which
+    // would offer a home button for a foreign-site request during the
+    // first paint — and queue a job the desktop then refuses.
     const { container } = render(
       <RemoteApplyRow requestId="req-1" targetSiteKey={null} desktop={null} anyDesktopLive />,
     );

@@ -5,7 +5,6 @@ import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   filterBuildingsBySite,
   homeSiteName,
-  remoteApplyTargetSiteKey,
   siteIdForScope,
   siteKeyLabel,
   siteLabelForGrant,
@@ -205,54 +204,6 @@ describe('siteLabelForGrant', () => {
         [site('foreign-1', 'East'), site('foreign-2', 'West')],
       ),
     ).toBe('West');
-  });
-});
-
-describe('remoteApplyTargetSiteKey', () => {
-  it('sends a stake-scope request to the home site', () => {
-    expect(remoteApplyTargetSiteKey('stake', [], [])).toBe('home');
-  });
-
-  it("sends a ward request to its building's foreign site", () => {
-    expect(
-      remoteApplyTargetSiteKey(
-        'CO',
-        [ward('CO', 'Pine Building')],
-        [building('Pine Building', 'foreign-1')],
-      ),
-    ).toBe('foreign-1');
-  });
-
-  it('sends a ward on a home-site building to the home key, not to null', () => {
-    // Home is a site like any other for remote apply — a home request
-    // must not be servable by a tab parked on a foreign site.
-    expect(
-      remoteApplyTargetSiteKey(
-        'CO',
-        [ward('CO', 'Maple Building')],
-        [building('Maple Building', null)],
-      ),
-    ).toBe('home');
-  });
-
-  it('treats a legacy building with no site field as home', () => {
-    expect(
-      remoteApplyTargetSiteKey('CO', [ward('CO', 'Maple Building')], [building('Maple Building')]),
-    ).toBe('home');
-  });
-
-  it('refuses to guess when the ward is not in the catalogue', () => {
-    // Fail closed: an unresolvable target can't be routed to a desktop,
-    // so the phone must not offer a button for it.
-    expect(remoteApplyTargetSiteKey('CO', [], [])).toBeNull();
-  });
-
-  it("refuses to guess when the ward's building reference is orphaned", () => {
-    expect(remoteApplyTargetSiteKey('CO', [ward('CO', 'Gone Building')], [])).toBeNull();
-  });
-
-  it('refuses to guess for an empty scope', () => {
-    expect(remoteApplyTargetSiteKey('', [], [])).toBeNull();
   });
 });
 

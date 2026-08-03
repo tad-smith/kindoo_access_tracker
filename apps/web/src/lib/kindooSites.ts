@@ -14,18 +14,14 @@
 //     foreign KindooSite's `display_name` to render as a small badge on
 //     ward-scope seats, or `null` for home-site / stake-scope / when the
 //     catalogues haven't loaded.
-//   - `remoteApplyTargetSiteKey(scope, wards, buildings)` /
-//     `siteKeyLabel(...)` / `homeSiteName(...)` — the same resolution in
-//     remote apply's site-KEY vocabulary, where home is a site like any
-//     other rather than a `null`. Unresolvable stays distinguishable
-//     from home, because remote apply must fail closed on it.
+//   - `siteKeyLabel(siteKey, sites, homeName)` / `homeSiteName(stake)` —
+//     naming, in remote apply's site-KEY vocabulary, where home is a site
+//     like any other rather than a `null`. The key itself is derived by
+//     `@kindoo/shared`'s `remoteApplyTargetSiteKey`, which must stay in
+//     step with the extension's `checkRequestSite` — don't re-derive it
+//     here.
 
-import {
-  REMOTE_APPLY_HOME_SITE_KEY,
-  remoteApplySiteKey,
-  resolveWardBuilding,
-  resolveWardSite,
-} from '@kindoo/shared';
+import { REMOTE_APPLY_HOME_SITE_KEY, resolveWardSite } from '@kindoo/shared';
 import type { Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 
 /**
@@ -90,35 +86,6 @@ export function siteLabelForSeat(
   const site = sites.find((s) => s.id === siteId);
   if (!site) return null;
   return site.display_name;
-}
-
-/**
- * The Kindoo site key a request must be provisioned on — the value that
- * gates remote apply and lands on the job as `target_site_key`.
- *
- * Derived, never read off the request: `AccessRequest.kindoo_site_id`
- * means something else entirely (the site of the grant a `remove`
- * targets, absent on add/edit). Stake scope is home-only per spec §15;
- * ward scope resolves through the ward's assigned building.
- *
- * **Returns `null` when it can't be resolved** — an unknown ward, or a
- * ward whose building reference is orphaned, and also the ordinary case
- * of the catalogues not having loaded yet. Callers must fail closed on
- * `null` rather than assuming home: offering to apply a request whose
- * site is unknown produces a button the desktop then refuses.
- */
-export function remoteApplyTargetSiteKey(
-  scope: string,
-  wards: readonly Ward[],
-  buildings: readonly Building[],
-): string | null {
-  if (!scope) return null;
-  if (scope === 'stake') return REMOTE_APPLY_HOME_SITE_KEY;
-  const ward = wards.find((w) => w.ward_code === scope);
-  if (!ward) return null;
-  const building = resolveWardBuilding(ward, buildings);
-  if (!building) return null;
-  return remoteApplySiteKey(normaliseSiteId(building.kindoo_site_id));
 }
 
 /**

@@ -98,11 +98,11 @@ export function joinNames(names: readonly string[]): string {
 export interface RemoteApplyRowProps {
   requestId: string;
   /**
-   * The site key this request must be provisioned on, derived from
-   * scope → ward → building. `null` means it couldn't be derived (the
-   * catalogues haven't loaded, or the ward's building is orphaned) —
-   * the row then offers nothing, because a request whose site is
-   * unknown can't be routed to a desktop that could serve it.
+   * The site key this request must be provisioned on, from
+   * `remoteApplyTargetSiteKey`. `null` means the wards / buildings
+   * catalogues haven't landed, so the derivation isn't trustworthy yet
+   * — the row offers nothing rather than route a request to whichever
+   * site an empty catalogue implies.
    */
   targetSiteKey: string | null;
   /**

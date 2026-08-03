@@ -26,6 +26,7 @@ vi.mock('./hooks', () => ({
   // from. Empty here — the surface that reads them is stubbed below.
   useKindooSites: () => ({ data: [], isLoading: false }),
   useQueueWards: () => ({ data: [], isLoading: false }),
+
   useQueueBuildings: () => ({ data: [], isLoading: false }),
   useQueueStakeDoc: () => ({ data: undefined, isLoading: false }),
 }));

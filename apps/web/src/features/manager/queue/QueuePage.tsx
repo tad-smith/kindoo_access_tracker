@@ -29,6 +29,7 @@ import {
   deriveRequesterDisplay,
   formatRequesterLabel,
   partitionPendingRequests,
+  remoteApplyTargetSiteKey,
 } from '@kindoo/shared';
 import {
   useKindooSites,
@@ -43,7 +44,7 @@ import {
   type RemoteApplyPresenceResult,
 } from './hooks';
 import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
-import { homeSiteName, remoteApplyTargetSiteKey, siteKeyLabel } from '../../../lib/kindooSites';
+import { homeSiteName, siteKeyLabel } from '../../../lib/kindooSites';
 import {
   useAccessForMember,
   useKindooManagerForMember,
@@ -87,6 +88,12 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const wards = queueWards.data ?? [];
   const buildings = queueBuildings.data ?? [];
   const homeName = homeSiteName(stakeDoc.data);
+  // A ward missing from the catalogue derives to home, which is the
+  // right answer for genuinely-unknown wards and the wrong one for
+  // "the subscription hasn't arrived yet". Withhold the button until
+  // both catalogues have landed rather than let that window queue a
+  // home job for a foreign-site request.
+  const siteCatalogueReady = !queueWards.isLoading && !queueBuildings.isLoading;
   // The covered sites, named — every one of them. With two tabs live,
   // naming one would read as a promise about the other. A foreign site
   // missing from the catalogue falls back to the name its own tab
@@ -187,6 +194,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             wards={wards}
             buildings={buildings}
             homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -200,6 +208,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             wards={wards}
             buildings={buildings}
             homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
           <QueueSection
             title="Future Requests"
@@ -213,6 +222,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             wards={wards}
             buildings={buildings}
             homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
         </div>
       )}
@@ -228,8 +238,8 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
 function ExtensionNote() {
   return (
     <p className="kd-queue-readonly-note font-bold" data-testid="queue-extension-note" role="note">
-      Requests are completed and rejected in the Chrome extension on your computer. With Kindoo
-      open there, you can apply them from here.{' '}
+      Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open
+      there, you can apply them from here.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
         target="_blank"
@@ -254,6 +264,7 @@ interface QueueSectionProps {
   wards: readonly Ward[];
   buildings: readonly Building[];
   homeSiteName: string | null;
+  siteCatalogueReady: boolean;
 }
 
 function QueueSection({
@@ -268,6 +279,7 @@ function QueueSection({
   wards,
   buildings,
   homeSiteName,
+  siteCatalogueReady,
 }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
@@ -279,10 +291,15 @@ function QueueSection({
       </h2>
       <div className="kd-queue-cards">
         {requests.map((request) => {
-          // Derived per card, not read off the request:
-          // `AccessRequest.kindoo_site_id` is the site of the grant a
-          // `remove` targets, not the site the request provisions on.
-          const targetSiteKey = remoteApplyTargetSiteKey(request.scope, wards, buildings);
+          // Derived, not read off the request: `AccessRequest`'s own
+          // `kindoo_site_id` is the site of the grant a `remove` targets,
+          // not the site the request provisions on. The derivation lives
+          // in `@kindoo/shared` because it must give the same answer as
+          // the extension's `checkRequestSite`, which is what actually
+          // refuses a provision on the wrong site.
+          const targetSiteKey = siteCatalogueReady
+            ? remoteApplyTargetSiteKey(request, wards, buildings)
+            : null;
           return (
             <QueueCard
               key={request.request_id}
@@ -309,7 +326,7 @@ interface QueueCardProps {
   request: AccessRequest;
   isFocused: boolean;
   labelForScope: (scope: string) => string;
-  /** Site key this request provisions on; null when it didn't resolve. */
+  /** Site key this request provisions on; null until the catalogues land. */
   remoteApplyTargetSiteKey: string | null;
   /** The live tab that can apply THIS request's site, or null. */
   remoteApplyDesktop: RemoteApplyDesktopWithId | null;
