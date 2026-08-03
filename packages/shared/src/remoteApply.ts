@@ -3,6 +3,10 @@
 // definition would show the manager a button that can never be claimed.
 // Doc shapes live in `types/remoteApply.ts`.
 
+import { resolveWardSite } from './resolveWardSite.js';
+import type { AccessRequest } from './types/request.js';
+import type { Building } from './types/building.js';
+import type { Ward } from './types/ward.js';
 import type {
   RemoteApplyDesktopWithId,
   RemoteApplyJobStatus,
@@ -59,6 +63,37 @@ export const REMOTE_APPLY_HOME_SITE_KEY = 'home';
  */
 export function remoteApplySiteKey(kindooSiteId: string | null | undefined): string {
   return kindooSiteId == null ? REMOTE_APPLY_HOME_SITE_KEY : kindooSiteId;
+}
+
+/**
+ * The Kindoo site a request must be provisioned on, as a site key.
+ *
+ * This MUST stay in step with the extension's `checkRequestSite`
+ * (`content/kindoo/siteCheck.ts`), which is what actually refuses a
+ * provision on the wrong site. If the phone derives a different answer it
+ * offers a button the desktop then rejects — the exact failure the
+ * per-site model exists to remove. The rule, mirrored from there:
+ *
+ *   - `scope === 'stake'` → home, unconditionally. A stake-scope request's
+ *     `building_names` may span buildings on different sites; it is still
+ *     provisioned on home, so buildings do not enter the derivation.
+ *   - ward scope → the ward's building's site; null ⇒ home.
+ *   - ward not in the ward set → home, matching `resolveWardForeignSite`
+ *     returning null for an unknown ward.
+ *
+ * Note this can name a foreign site that has no `kindooSites` doc; the
+ * desktop raises `ProvisionForeignSiteMissingError` in that case. The
+ * phone just won't find a matching desktop and won't offer the button.
+ */
+export function remoteApplyTargetSiteKey(
+  request: Pick<AccessRequest, 'scope'>,
+  wards: readonly Ward[],
+  buildings: readonly Building[],
+): string {
+  if (request.scope === 'stake') return REMOTE_APPLY_HOME_SITE_KEY;
+  const ward = wards.find((w) => w.ward_code === request.scope);
+  if (!ward) return REMOTE_APPLY_HOME_SITE_KEY;
+  return remoteApplySiteKey(resolveWardSite(ward, buildings));
 }
 
 /** The profile-wide opt-in. Absent or false ⇒ no desktop may be used. */

@@ -10,6 +10,7 @@ import {
   isRemoteApplyTerminal,
   remoteApplyDesktopForRequest,
   remoteApplySiteKey,
+  remoteApplyTargetSiteKey,
 } from './remoteApply.js';
 import type { RemoteApplyDesktopWithId, RemoteApplyPresence } from './types/remoteApply.js';
 
@@ -176,5 +177,40 @@ describe('isRemoteApplyTerminal', () => {
     expect(isRemoteApplyTerminal('partial')).toBe(true);
     expect(isRemoteApplyTerminal('failed')).toBe(true);
     expect(isRemoteApplyTerminal('cancelled')).toBe(true);
+  });
+});
+
+describe('remoteApplyTargetSiteKey', () => {
+  const buildings = [
+    { building_id: 'b-home', building_name: 'Home Building', kindoo_site_id: null },
+    { building_id: 'b-far', building_name: 'Far Building', kindoo_site_id: 'site-b' },
+  ] as unknown as Parameters<typeof remoteApplyTargetSiteKey>[2];
+
+  const wards = [
+    { ward_code: 'CO', building_id: 'b-home', building_name: 'Home Building' },
+    { ward_code: 'PI', building_id: 'b-far', building_name: 'Far Building' },
+  ] as unknown as Parameters<typeof remoteApplyTargetSiteKey>[1];
+
+  it('sends every stake-scope request to home, whatever its buildings', () => {
+    expect(remoteApplyTargetSiteKey({ scope: 'stake' }, wards, buildings)).toBe(
+      REMOTE_APPLY_HOME_SITE_KEY,
+    );
+  });
+
+  it('follows a ward to its building’s foreign site', () => {
+    expect(remoteApplyTargetSiteKey({ scope: 'PI' }, wards, buildings)).toBe('site-b');
+  });
+
+  it('treats a ward whose building is on home as home', () => {
+    expect(remoteApplyTargetSiteKey({ scope: 'CO' }, wards, buildings)).toBe(
+      REMOTE_APPLY_HOME_SITE_KEY,
+    );
+  });
+
+  it('falls back to home for a ward that is not in the ward set', () => {
+    // Mirrors resolveWardForeignSite returning null for an unknown ward.
+    expect(remoteApplyTargetSiteKey({ scope: 'ZZ' }, wards, buildings)).toBe(
+      REMOTE_APPLY_HOME_SITE_KEY,
+    );
   });
 });

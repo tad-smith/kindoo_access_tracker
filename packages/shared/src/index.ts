@@ -35,6 +35,7 @@ export {
   isRemoteApplyTerminal,
   remoteApplyDesktopForRequest,
   remoteApplySiteKey,
+  remoteApplyTargetSiteKey,
 } from './remoteApply.js';
 export {
   deriveRequesterDisplay,
