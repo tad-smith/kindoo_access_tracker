@@ -16,6 +16,8 @@
     "lint": "pnpm -r --if-present lint && prettier --check .",
     "pretypecheck": "pnpm --filter @kindoo/web generate-route-tree",
     "typecheck": "tsc -b",
+    "deps:check": "pnpm --filter @kindoo/functions deps:check",
+    "deps:relock": "pnpm --filter @kindoo/functions deps:relock",
     "deploy:staging": "bash infra/scripts/deploy-staging.sh",
     "deploy:prod": "bash infra/scripts/deploy-prod.sh",
     "prepare": "node infra/scripts/ensure-version-gen.js"

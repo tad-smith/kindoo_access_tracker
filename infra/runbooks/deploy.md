@@ -77,6 +77,72 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    - **At deploy time:** `firebase deploy` may interactively prompt with `Enter a string value for WEB_BASE_URL:` and stash whatever you type into `functions/lib/.env.<projectId>`. If you take this path, mirror the value into `functions/.env.<projectId>` immediately — otherwise the next build overwrites lib/ with an empty value.
    - **At runtime:** `WEB_BASE_URL.value()` returns the empty string. `EmailService.buildLink()` throws `WEB_BASE_URL is not set on the function. Set it at deploy time.`; the trigger surface catches the throw via `safeBuildLink`, logs `email skipped — link build failed`, and writes one `email_send_failed` audit row tagged `type='config'` per affected request. Visible-but-not-silent surfacing of deploy-time misconfiguration, but emails do not ship and notifications stop until the value is restored.
 
+## Deploy dependency pinning
+
+**You only touch this when `functions/package.json` `dependencies` change.** Every other deploy is unaffected — the check below runs automatically inside the build and says nothing when all is well.
+
+`firebase deploy` uploads only `functions/lib`, so `lib/` is the package root Cloud Build installs from. `functions/deploy-lock/package-lock.json` is the committed lockfile for that install; `functions/scripts/build.mjs` copies it to `functions/lib/package-lock.json` on every build, beside the `lib/package.json` it generates. Before this existed, every version range re-resolved at deploy time — which took production down once, when npm skipped `@firebase/app` (an optional peer of `@firebase/database-compat`) and all 24 functions died at container start. Background: `docs/TASKS.md` T-73, `functions/deploy-lock/README.md`.
+
+### When a dependency changes
+
+After editing `functions/package.json` `dependencies` (add, remove, or version bump):
+
+```bash
+pnpm install                 # updates pnpm-lock.yaml
+pnpm deps:relock             # regenerates functions/deploy-lock/package-lock.json
+```
+
+Expected tail of `pnpm deps:relock` (versions will differ):
+
+```
+Verifying with a real `npm ci` ...
+  require('firebase-functions') OK
+  require('firebase-functions/v1') OK
+  require('firebase-admin/database') OK
+
+Resolved versions:
+  @firebase/app                0.14.11
+  firebase-admin               13.8.0
+  firebase-functions           7.2.5
+  resend                       4.8.0
+  @firebase/database-compat    2.1.5
+  @grpc/grpc-js                1.14.4
+
+Wrote functions/deploy-lock/package-lock.json (287 packages).
+```
+
+Needs network (npm registry). Commit the regenerated lockfile in the same commit as the `functions/package.json` change. Review its diff: it is the only place the deployed transitive tree is visible.
+
+`--dry-run` resolves and verifies without writing the repo file. `--keep` leaves the temp install directory in place for inspection.
+
+### Verifying the pinning
+
+```bash
+pnpm deps:check
+```
+
+Expected:
+
+```
+deploy-lock check: OK
+  functions/deploy-lock/package-lock.json
+  lockfileVersion 3, 287 packages pinned
+
+  DEPENDENCY                 DECLARED      pnpm-lock     deploy-lock
+  @firebase/app              ^0.14.11      0.14.11       0.14.11
+  firebase-admin             ^13.8.0       13.8.0        13.8.0
+  firebase-functions         ^7.2.5        7.2.5         7.2.5
+  resend                     ^4.5.1        4.8.0         4.8.0
+```
+
+Offline — no registry lookup, no `node_modules`, no credentials. It asserts the lockfile's root dependency set matches `functions/package.json` at the versions `pnpm-lock.yaml` resolves. It deliberately never re-resolves, so an upstream publishing a new version cannot turn it red; what it catches is someone editing dependencies and forgetting `pnpm deps:relock`.
+
+The same check runs inside `pnpm --filter @kindoo/functions build`, so a stale lockfile fails the deploy at the predeploy hook rather than inside Cloud Build. If a deploy stops with `Deploy lockfile is out of step with functions/package.json + pnpm-lock.yaml`, run the two commands above and retry.
+
+Do not lean on Cloud Build's `npm ci` to catch drift for you. Its sync check is one-directional — see step 3 of "Manual verification of the deploy dependency pinning" below for the measured behaviour. The case it misses is the one that caused the outage.
+
+Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the deployed direct deps are the ones CI tests. Transitives are npm's own resolution and will not match pnpm's exactly (npm and pnpm resolve differently); that divergence lives in the committed lockfile where it can be reviewed.
+
 ## Staging deploy
 
 1. **Run the deploy script in dry-run first.**
@@ -248,14 +314,22 @@ Then re-run `bash infra/scripts/lib/verify-deploy.sh staging` and confirm the ro
 
 ### `FAIL — crashing` (HTTP 5xx)
 
-The container is failing to start or crashing on request. The known cause is a runtime dependency missing from the generated `functions/lib/package.json`: `firebase deploy` uploads only `functions/lib`, and Cloud Build then runs its own `npm install` against that generated manifest with no lockfile. An optional peer dependency npm decides to skip takes every function down at container start.
+The container is failing to start or crashing on request. The historical cause was a runtime dependency missing from the generated `functions/lib/package.json`: Cloud Build ran its own `npm install` against that manifest with no lockfile, and an optional peer dependency npm decided to skip took every function down at container start.
 
 ```bash
 gcloud run services logs read <lowercased-function-name> \
   --region us-central1 --project kindoo-staging --limit 50
 ```
 
-Look for `Cannot find module` at the top of the container log. The fix is to declare the module explicitly in `functions/package.json` dependencies (that workspace is `backend-engineer`'s — file it in `docs/TASKS.md`). The systemic fix, pinning the deploy artifact's dependency tree, is tracked as **T-73**.
+Look for `Cannot find module` at the top of the container log.
+
+T-73 closed that hole: `functions/lib/package-lock.json` now ships with the artifact and pins the whole transitive tree, so npm no longer makes resolution decisions at deploy time. A `Cannot find module` after this should be rare and means something new — a genuinely undeclared dependency, or an import the bundle left external that nothing pins. Check the module against `functions/deploy-lock/package-lock.json` first:
+
+```bash
+node -e "const l=require('./functions/deploy-lock/package-lock.json'); console.log(Object.keys(l.packages).filter(p=>p.includes('<module-name>')))"
+```
+
+If it is absent from the lockfile, it must be declared in `functions/package.json` dependencies (that workspace is `backend-engineer`'s — file it in `docs/TASKS.md`), then `pnpm install && pnpm deps:relock`. If it IS in the lockfile, the artifact was built before the lockfile landed or the deploy skipped the predeploy hook — rebuild and redeploy.
 
 ### `FAIL — not-deployed` (HTTP 404)
 
@@ -321,6 +395,63 @@ Run these after any change to `infra/scripts/deploy-*.sh` or `infra/scripts/lib/
    Expected, respectively: `[skip] post-deploy verification (--web-only: no functions deployed)`, `The deploy is UNVERIFIED.`, `PRODUCTION IS UNVERIFIED.`
 
 5. **Live path.** The classifier's real-world behaviour can only be confirmed by an actual deploy — the calibration depends on what Firebase actually returns for an unauthenticated callable POST. On the first deploy after any change here, read the verification block carefully rather than skimming for `PASSED`, and confirm the baseline row reports a 4xx with a `UNAUTHENTICATED`-shaped signature.
+
+## Manual verification of the deploy dependency pinning
+
+Run these after any change to `functions/package.json` dependencies, `functions/scripts/build.mjs`, or `functions/scripts/*deploy-deps*.mjs`. None of them touch a Firebase project.
+
+1. **Drift check.**
+
+   ```bash
+   pnpm deps:check
+   ```
+
+   Expected: the `deploy-lock check: OK` table shown under "Deploy dependency pinning" above, exit 0.
+
+2. **Build emits all three artifacts.**
+
+   ```bash
+   pnpm --filter @kindoo/shared build && pnpm --filter @kindoo/functions build
+   ls functions/lib
+   ```
+
+   Expected last build line: `External (Cloud Build \`npm ci\` installs): @firebase/app@0.14.11, firebase-admin@13.8.0, ...` — exact versions, no carets. `ls` must show `index.js`, `index.js.map`, `node_modules` (symlink), `package.json`, `package-lock.json`.
+
+3. **Reproduce Cloud Build's install.** This is the only local way to prove the artifact installs; `firebase deploy` cannot be dry-run through Cloud Build.
+
+   ```bash
+   work=$(mktemp -d)
+   rsync -a --exclude node_modules functions/lib/ "$work/"
+   npm ci --no-audit --no-fund --prefix "$work"
+   ```
+
+   Expected: `added <N> packages`, exit 0. `npm ci` validates the lockfile against `lib/package.json`, so success proves the copied lockfile covers the generated manifest.
+
+   Note the check is one-directional, measured on npm 10.9.7: `npm ci` errors when the manifest declares something the lockfile lacks (`EUSAGE`) or the pin does not satisfy the declared range (`ERESOLVE`), but it **passes and silently omits** a dependency the manifest dropped. That last case is the outage's exact shape, so a green `npm ci` is not on its own evidence the artifact is correct — step 1 is. Run both.
+
+4. **Load the modules that failed in the outage.**
+
+   ```bash
+   (cd "$work" && for m in firebase-functions firebase-functions/v1 firebase-admin/database; do
+      node -e "require('$m')" && echo "OK $m"; done)
+   ls "$work/node_modules/@firebase/app"
+   rm -rf "$work"
+   ```
+
+   Expected: three `OK` lines and a populated `@firebase/app` directory. Cloud Functions loads the whole of `index.js` in every container and the 1st-gen `onAuthUserCreate` pulls `firebase-functions/v1`, which eagerly loads `firebase-admin/database` — so these three are the container-start canaries.
+
+5. **Emulator still resolves through the symlink.** `functions/lib/node_modules` is a symlink to the workspace install; the new `lib/package-lock.json` must not disturb it.
+
+   ```bash
+   printf 'WEB_BASE_URL=https://kindoo-staging.web.app\n' > functions/.env.demo-kindoo-tests
+   npx --yes firebase-tools emulators:exec --only functions,firestore,auth \
+     --project demo-kindoo-tests "true"
+   rm -f functions/.env.demo-kindoo-tests functions/lib/.env.demo-kindoo-tests
+   ```
+
+   Expected: `functions: Loaded functions definitions from source: ...` listing all 24 exports, then `Script exited successfully (code 0)`.
+
+6. **Live path.** Which install command the GCP Node.js buildpack chooses for this artifact is only observable in a real deploy. The buildpack runs `npm ci` when it finds a `package-lock.json` beside the manifest; either path installs the pinned tree, since a present lockfile also constrains `npm install`. On the first deploy after this landed, read the Cloud Build log's install line and confirm it names the lockfile and reports the pinned package count.
 
 ## Troubleshooting
 
