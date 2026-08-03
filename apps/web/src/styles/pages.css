@@ -298,6 +298,97 @@
   font-size: 0.92em;
 }
 
+/* ---- Remote apply (D27) --------------------------------------------
+   Phone-first: the manager is standing in a building holding a phone.
+   The status line under the queue header says whether their desktop can
+   act; each card grows a full-width Apply button and a live status
+   block. Nothing here renders when the desktop is offline and no job is
+   in flight, so the queue is unchanged for everyone else. */
+
+/* Desktop presence line under the queue note. The dot carries the state
+   at a glance; the sentence carries what to do about it. */
+.kd-remote-apply-presence {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: -8px 0 16px;
+  font-size: 0.9em;
+  color: var(--kd-fg-3);
+}
+
+.kd-remote-apply-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--kd-fg-3);
+  /* Nudge the dot onto the text's optical centre — the parent aligns on
+     the baseline so the sentence wraps cleanly on a narrow screen. */
+  transform: translateY(-1px);
+}
+
+.kd-remote-apply-presence[data-state='online'] {
+  color: var(--kd-success-fg);
+}
+.kd-remote-apply-presence[data-state='online'] .kd-remote-apply-dot {
+  background: var(--kd-success);
+}
+
+/* Per-card action + status. Sits below the card metadata, separated by
+   a hairline so it reads as the card's action zone. */
+.kd-remote-apply {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--kd-border-soft);
+}
+
+.kd-remote-apply-state {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+.kd-remote-apply-state-headline {
+  font-weight: 600;
+}
+
+.kd-remote-apply-state.is-progress {
+  color: var(--kd-fg-2);
+  background: var(--kd-surface-alt);
+}
+.kd-remote-apply-state.is-success {
+  color: var(--kd-success-fg);
+  background: var(--kd-success-bg);
+}
+.kd-remote-apply-state.is-warn {
+  color: var(--kd-warn-dark);
+  background: var(--kd-warn-tint);
+}
+.kd-remote-apply-state.is-error {
+  color: var(--kd-danger-fg);
+  background: var(--kd-danger-bg);
+}
+
+/* Thumb-sized tap target. Full width on a phone; content width once
+   there's room for the card to breathe. */
+.kd-remote-apply-button {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .kd-remote-apply-button {
+    width: 100%;
+  }
+}
+
 /* Prominent danger banner at the top of a dialog body (e.g. the
    license-consumption warning on the Give Access To Stake Buildings
    modal). Mirrors .kd-queue-card-warning with the danger palette. */
