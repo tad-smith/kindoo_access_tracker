@@ -25,7 +25,7 @@
 // has moved to the shared toolbar + tab bar in TabbedShell. This file
 // renders the queue sections and its Refresh control only.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   partitionPendingRequests,
   type AccessRequest,
@@ -33,6 +33,8 @@ import {
   type Seat,
 } from '@kindoo/shared';
 import { getMyPendingRequests, getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
+import { useRemoteApplyEnabled } from '../lib/remoteApplyPrefs';
+import type { RemoteApplyState } from '../content/remoteApply/useRemoteApply';
 import { RequestCard } from './RequestCard';
 
 interface QueuePanelProps {
@@ -46,6 +48,13 @@ interface QueuePanelProps {
    * root switches to `NotAuthorizedPanel`.
    */
   onPermissionDenied: () => void;
+  /**
+   * Live state of the remote-apply loop, owned by `TabbedShell`.
+   * Optional so the queue can be rendered standalone (tests, and any
+   * future host that doesn't run the loop) — absent simply means no
+   * banner and no post-job refresh.
+   */
+  remoteApply?: RemoteApplyState;
 }
 
 type FetchState =
@@ -102,7 +111,7 @@ async function fetchSeatMap(stakeId: string, requests: readonly AccessRequest[])
   return Object.fromEntries(entries.filter((e): e is [string, SeatInfo] => e !== null));
 }
 
-export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelProps) {
+export function QueuePanel({ stakeId, bundle, onPermissionDenied, remoteApply }: QueuePanelProps) {
   const [state, setState] = useState<FetchState>({ status: 'loading' });
   const [seatMap, setSeatMap] = useState<SeatMap>({});
   const [refreshing, setRefreshing] = useState(false);
@@ -137,6 +146,17 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
     void fetchQueue('initial');
   }, [fetchQueue]);
 
+  // A job the manager ran from their phone just completed a request
+  // that is still sitting in this list. Refetch so the desktop and the
+  // phone don't disagree about what happened.
+  const lastFinishedCount = useRef(remoteApply?.finishedCount ?? 0);
+  const finishedCount = remoteApply?.finishedCount ?? 0;
+  useEffect(() => {
+    if (finishedCount === lastFinishedCount.current) return;
+    lastFinishedCount.current = finishedCount;
+    void fetchQueue('refresh');
+  }, [finishedCount, fetchQueue]);
+
   const handleDismissed = useCallback(
     (requestId: string) => {
       setState((prev) =>
@@ -156,6 +176,16 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
 
   return (
     <div className="sba-body" data-testid="sba-queue">
+      <RemoteApplyToggleRow />
+      {remoteApply?.running ? (
+        <div
+          role="status"
+          className="sba-banner sba-banner-info"
+          data-testid="sba-remote-apply-running"
+        >
+          <span>Applying a request you sent from your phone…</span>
+        </div>
+      ) : null}
       <div className="sba-request-actions">
         <button
           type="button"
@@ -214,6 +244,53 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
 }
 
 const EMPTY_REQUESTS: readonly AccessRequest[] = [];
+
+/**
+ * The remote-apply opt-in. Off by default and off for every profile
+ * that predates the feature — it hands a second device the authority to
+ * provision building access, so it has to be an explicit act.
+ *
+ * The checkbox only writes `chrome.storage.local`; the loop in
+ * `TabbedShell` observes the same value and starts / stops itself,
+ * clearing `remote_apply_enabled` on the presence doc as it goes so the
+ * phone's button disappears at once rather than after the staleness
+ * window.
+ */
+function RemoteApplyToggleRow() {
+  const { enabled, loaded, setEnabled } = useRemoteApplyEnabled();
+  const [error, setError] = useState<string | null>(null);
+
+  const handleChange = (next: boolean) => {
+    setError(null);
+    void setEnabled(next).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
+  };
+
+  return (
+    <div className="sba-remote-apply" data-testid="sba-remote-apply-row">
+      <label className="sba-remote-apply-label">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={!loaded}
+          onChange={(e) => handleChange(e.target.checked)}
+          data-testid="sba-remote-apply-toggle"
+        />
+        <span>Allow requests from my phone</span>
+      </label>
+      <p className="sba-muted sba-remote-apply-hint">
+        Lets you tap <strong>Apply via extension</strong> in the SBA queue on your phone and have
+        this Chrome tab do the Kindoo work. Only while this Kindoo tab is open and signed in.
+      </p>
+      {error ? (
+        <p role="alert" className="sba-error" data-testid="sba-remote-apply-error">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 interface QueueSectionProps {
   title: string;

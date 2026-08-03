@@ -301,4 +301,70 @@ describe('QueuePanel', () => {
     await user.click(screen.getByTestId('sba-refresh'));
     await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(2));
   });
+
+  // ---- Remote apply --------------------------------------------------
+
+  it('renders the remote-apply opt-in above the queue, off by default', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
+    const toggle = screen.getByTestId('sba-remote-apply-toggle');
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByTestId('sba-remote-apply-row')).toHaveTextContent(
+      'Allow requests from my phone',
+    );
+  });
+
+  it('persists the opt-in to chrome.storage.local when switched on', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const user = userEvent.setup();
+    await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-remote-apply-toggle')).toBeEnabled());
+
+    await user.click(screen.getByTestId('sba-remote-apply-toggle'));
+
+    await waitFor(() =>
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ 'sba.remoteApplyEnabled': true }),
+    );
+    expect(screen.getByTestId('sba-remote-apply-toggle')).toBeChecked();
+  });
+
+  it('shows a banner only while a phone-initiated job is running', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { QueuePanel } = await import('./QueuePanel');
+    // Stable props apart from `remoteApply` — a fresh callback identity
+    // would re-run the queue fetch and muddy the assertion.
+    const stable = { stakeId: 'csnorth', bundle: bundle(), onPermissionDenied: vi.fn() };
+    const { rerender } = render(
+      <QueuePanel {...stable} remoteApply={{ running: null, finishedCount: 0 }} />,
+    );
+    await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument();
+
+    rerender(
+      <QueuePanel
+        {...stable}
+        remoteApply={{ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 }}
+      />,
+    );
+    expect(screen.getByTestId('sba-remote-apply-running')).toBeInTheDocument();
+  });
+
+  it('refetches the queue when a phone-initiated job finishes', async () => {
+    // Otherwise the desktop keeps showing a request the phone just
+    // completed — the two surfaces disagreeing about the same queue.
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { QueuePanel } = await import('./QueuePanel');
+    const stable = { stakeId: 'csnorth', bundle: bundle(), onPermissionDenied: vi.fn() };
+    const { rerender } = render(
+      <QueuePanel
+        {...stable}
+        remoteApply={{ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 }}
+      />,
+    );
+    await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(1));
+
+    rerender(<QueuePanel {...stable} remoteApply={{ running: null, finishedCount: 1 }} />);
+    await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(2));
+  });
 });

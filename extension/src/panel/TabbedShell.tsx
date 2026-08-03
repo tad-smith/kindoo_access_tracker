@@ -14,6 +14,7 @@
 
 import { useState } from 'react';
 import type { StakeConfigBundle } from '../lib/extensionApi';
+import { useRemoteApply } from '../content/remoteApply/useRemoteApply';
 import { ConfigurePanel } from './ConfigurePanel';
 import { QueuePanel } from './QueuePanel';
 import { SyncPanel } from './SyncPanel';
@@ -49,6 +50,10 @@ export function TabbedShell({
   onConfigComplete,
 }: TabbedShellProps) {
   const [active, setActive] = useState<TabKey>('queue');
+  // Hosted here, not in QueuePanel: the loop must keep running while
+  // the operator is on another tab (and while the slide-over is shut
+  // altogether). See `content/remoteApply/useRemoteApply`.
+  const remoteApply = useRemoteApply({ stakeId, bundle });
 
   return (
     <main className="sba-panel" data-testid="sba-tabbed-shell">
@@ -61,7 +66,12 @@ export function TabbedShell({
         aria-labelledby={`sba-tab-${active}`}
       >
         {active === 'queue' ? (
-          <QueuePanel stakeId={stakeId} bundle={bundle} onPermissionDenied={onPermissionDenied} />
+          <QueuePanel
+            stakeId={stakeId}
+            bundle={bundle}
+            onPermissionDenied={onPermissionDenied}
+            remoteApply={remoteApply}
+          />
         ) : null}
         {active === 'sync' ? <SyncPanel stakeId={stakeId} /> : null}
         {active === 'configure' ? (

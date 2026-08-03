@@ -15,17 +15,25 @@ const writeBatchMock = vi.fn(() => ({ update: updateMock, commit: commitMock }))
 const getDocMock = vi.fn();
 const getDocsMock = vi.fn();
 const updateDocMock = vi.fn();
+const setDocMock = vi.fn();
 const docMock = vi.fn((..._args: unknown[]) => ({ __doc: _args }));
 const collectionMock = vi.fn((..._args: unknown[]) => ({ __coll: _args }));
 const serverTimestampMock = vi.fn(() => '__ts__');
+const queryMock = vi.fn((..._args: unknown[]) => ({ __query: _args }));
+const whereMock = vi.fn((..._args: unknown[]) => ({ __where: _args }));
+const limitMock = vi.fn((..._args: unknown[]) => ({ __limit: _args }));
 
 vi.mock('firebase/firestore', () => ({
   collection: (...args: unknown[]) => collectionMock(...args),
   doc: (...args: unknown[]) => docMock(...args),
   getDoc: (...args: unknown[]) => getDocMock(...args),
   getDocs: (...args: unknown[]) => getDocsMock(...args),
+  limit: (...args: unknown[]) => limitMock(...args),
+  query: (...args: unknown[]) => queryMock(...args),
   serverTimestamp: () => serverTimestampMock(),
+  setDoc: (...args: unknown[]) => setDocMock(...args),
   updateDoc: (...args: unknown[]) => updateDocMock(...args),
+  where: (...args: unknown[]) => whereMock(...args),
   writeBatch: () => writeBatchMock(),
 }));
 
@@ -1069,5 +1077,177 @@ describe('rejectRequest — SW-side write (getDoc + updateDoc, no transaction)',
       rejectRequest('csnorth', 'r1', 'reason', rejectActor({ email: null })),
     ).rejects.toThrow(/no email/i);
     expect(updateDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Remote apply — the per-manager mailbox.
+//
+// The mailbox path is derived from the SW's OWN auth token, never from
+// the message. These tests pin that: `doc()` must always be called with
+// the token's canonical claim, so a forged message can't address
+// someone else's queue.
+// ---------------------------------------------------------------------------
+
+describe('remote apply — SW-side mailbox operations', () => {
+  const CANONICAL = 'mgr.name@gmail.com';
+
+  function mailboxActor(): User {
+    return {
+      email: 'Mgr.Name@Gmail.com',
+      getIdTokenResult: vi.fn().mockResolvedValue({ claims: { canonical: CANONICAL } }),
+    } as unknown as User;
+  }
+
+  beforeEach(() => {
+    setDocMock.mockReset();
+    setDocMock.mockResolvedValue(undefined);
+    updateDocMock.mockReset();
+    updateDocMock.mockResolvedValue(undefined);
+    getDocsMock.mockReset();
+    docMock.mockClear();
+    collectionMock.mockClear();
+    queryMock.mockClear();
+    whereMock.mockClear();
+    limitMock.mockClear();
+    serverTimestampMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it('writes presence under the token canonical, merging so the first heartbeat creates the doc', async () => {
+    const { writeRemotePresence } = await import('./data');
+    await writeRemotePresence(
+      {
+        stakeId: 'csnorth',
+        kindooEid: 27994,
+        kindooSiteName: 'CS North',
+        extVersion: '1.2.3',
+        enabled: true,
+      },
+      mailboxActor(),
+    );
+
+    expect(docMock).toHaveBeenCalledWith({ __firestore: true }, 'remoteApply', CANONICAL);
+    const [, payload, options] = setDocMock.mock.calls[0] as [
+      unknown,
+      Record<string, unknown>,
+      unknown,
+    ];
+    expect(payload).toEqual({
+      remote_apply_enabled: true,
+      last_seen_at: '__ts__',
+      stake_id: 'csnorth',
+      kindoo_eid: 27994,
+      kindoo_site_name: 'CS North',
+      ext_version: '1.2.3',
+      lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  it('clears the opt-in on the disable write even with no Kindoo site resolved', async () => {
+    const { writeRemotePresence } = await import('./data');
+    await writeRemotePresence(
+      {
+        stakeId: 'csnorth',
+        kindooEid: null,
+        kindooSiteName: null,
+        extVersion: '1.2.3',
+        enabled: false,
+      },
+      mailboxActor(),
+    );
+    const payload = setDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(payload.remote_apply_enabled).toBe(false);
+    expect(payload.kindoo_eid).toBeNull();
+  });
+
+  it('queries only queued jobs, one at a time', async () => {
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({ request_id: 'r1', stake_id: 'csnorth', status: 'queued' }),
+        },
+      ],
+    });
+    const { findQueuedRemoteApplyJob } = await import('./data');
+    const job = await findQueuedRemoteApplyJob(mailboxActor());
+
+    expect(collectionMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'remoteApply',
+      CANONICAL,
+      'jobs',
+    );
+    expect(whereMock).toHaveBeenCalledWith('status', '==', 'queued');
+    expect(limitMock).toHaveBeenCalledWith(1);
+    expect(job).toEqual({ jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth' });
+  });
+
+  it('returns null when the mailbox is empty', async () => {
+    getDocsMock.mockResolvedValue({ docs: [] });
+    const { findQueuedRemoteApplyJob } = await import('./data');
+    await expect(findQueuedRemoteApplyJob(mailboxActor())).resolves.toBeNull();
+  });
+
+  it('claims a job by flipping it to running with the claiming tab stamped on it', async () => {
+    const { claimRemoteApplyJob } = await import('./data');
+    await expect(claimRemoteApplyJob('job-1', '1.2.3', 27994, mailboxActor())).resolves.toBe(true);
+
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'remoteApply',
+      CANONICAL,
+      'jobs',
+      'job-1',
+    );
+    expect(updateDocMock.mock.calls[0]?.[1]).toEqual({
+      status: 'running',
+      claimed_at: '__ts__',
+      claimed_by: { ext_version: '1.2.3', kindoo_eid: 27994 },
+      lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
+    });
+  });
+
+  it('reports a lost claim race as claimed:false, not an error', async () => {
+    // The rules-enforced queued → running CAS rejects the second tab.
+    // That is the mechanism working, not a fault to surface.
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    updateDocMock.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), {
+        code: 'permission-denied',
+      }),
+    );
+    const { claimRemoteApplyJob } = await import('./data');
+    await expect(claimRemoteApplyJob('job-1', '1.2.3', 27994, mailboxActor())).resolves.toBe(false);
+  });
+
+  it('still throws on a non-permission failure so a real outage is visible', async () => {
+    updateDocMock.mockRejectedValue(
+      Object.assign(new Error('backend unavailable'), { code: 'unavailable' }),
+    );
+    const { claimRemoteApplyJob } = await import('./data');
+    await expect(claimRemoteApplyJob('job-1', '1.2.3', 27994, mailboxActor())).rejects.toThrow(
+      /backend unavailable/,
+    );
+  });
+
+  it('writes the terminal status and outcome', async () => {
+    const { finishRemoteApplyJob } = await import('./data');
+    await finishRemoteApplyJob(
+      'job-1',
+      { status: 'partial', outcome: { code: 'sba_incomplete', message: 'half done' } },
+      mailboxActor(),
+    );
+    expect(updateDocMock.mock.calls[0]?.[1]).toEqual({
+      status: 'partial',
+      finished_at: '__ts__',
+      outcome: { code: 'sba_incomplete', message: 'half done' },
+      lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
+    });
   });
 });

@@ -27,8 +27,12 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import type {
@@ -36,6 +40,7 @@ import type {
   Building,
   KindooManager,
   KindooSite,
+  RemoteApplyJob,
   Seat,
   Stake,
   Ward,
@@ -43,7 +48,13 @@ import type {
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
-import type { EidStakeCandidate, WriteKindooConfigPayload } from '../lib/messaging';
+import type {
+  DataRemoteApplyFinishJobRequest,
+  EidStakeCandidate,
+  RemoteApplyJobRef,
+  RemoteApplyPresenceInput,
+  WriteKindooConfigPayload,
+} from '../lib/messaging';
 
 /** Actor reference written onto every client-originated doc write. */
 interface ActorRef {
@@ -620,4 +631,140 @@ export async function resolveEidStakes(
     .map((o) => o.failedStakeId)
     .filter((id): id is string => id !== null);
   return { candidates, failedStakes };
+}
+
+// ---------------------------------------------------------------------------
+// Remote apply — the per-manager mailbox (`docs/architecture.md` D27).
+//
+// Every operation below addresses `remoteApply/{canonical}` where
+// `canonical` comes from the SW's OWN auth token, never from the
+// message. The content script cannot name a mailbox, so a compromised
+// page context can't reach another manager's queue even if it could
+// forge messages; the rules' `authedCanonical()` check is the second
+// lock on the same door.
+//
+// All one-shot ops (`setDoc` / `getDocs` / `updateDoc`) — `onSnapshot`
+// and `runTransaction` ride WebChannel, which needs `XMLHttpRequest`,
+// which an MV3 service worker does not have.
+// ---------------------------------------------------------------------------
+
+/**
+ * Publish this desktop's presence — the heartbeat the phone reads to
+ * decide whether to offer "Apply via extension" at all.
+ *
+ * The caller only sends this while the Kindoo session is usable, with
+ * one exception: the disable write (`enabled: false`) fires regardless,
+ * because clearing consent must never be blocked by a dead Kindoo tab.
+ *
+ * `setDoc(..., { merge: true })` rather than `updateDoc` — the first
+ * heartbeat on a new profile creates the doc.
+ */
+export async function writeRemotePresence(
+  payload: RemoteApplyPresenceInput,
+  actor: User,
+): Promise<void> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical);
+  await setDoc(
+    ref,
+    {
+      remote_apply_enabled: payload.enabled,
+      last_seen_at: serverTimestamp(),
+      stake_id: payload.stakeId,
+      kindoo_eid: payload.kindooEid,
+      kindoo_site_name: payload.kindooSiteName,
+      ext_version: payload.extVersion,
+      lastActor: actorRef,
+    },
+    { merge: true },
+  );
+}
+
+/**
+ * Return at most one `queued` job from the operator's mailbox, or
+ * `null` when the mailbox is empty. Single equality filter + `limit(1)`
+ * — no composite index required.
+ */
+export async function findQueuedRemoteApplyJob(actor: User): Promise<RemoteApplyJobRef | null> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
+  const snap = await getDocs(query(jobs, where('status', '==', 'queued'), limit(1)));
+  const first = snap.docs[0];
+  if (!first) return null;
+  const data = first.data() as RemoteApplyJob;
+  return {
+    jobId: first.id,
+    requestId: data.request_id,
+    stakeId: data.stake_id,
+  };
+}
+
+/**
+ * Claim a queued job: `queued → running`. The rules enforce the
+ * transition, which gives us a lock without a transaction — two Kindoo
+ * tabs polling the same mailbox both attempt the update, the first
+ * wins, and the loser is rejected server-side.
+ *
+ * Returns `false` on that rejection rather than throwing. Losing the
+ * race is the normal, correct outcome for the second tab; surfacing it
+ * as an error would put a scary message in the console every time the
+ * operator has two Kindoo tabs open. Any OTHER failure still throws —
+ * a network outage or a rules regression must not masquerade as a lost
+ * race, or the job would sit `queued` until the phone times it out with
+ * no diagnostic anywhere.
+ */
+export async function claimRemoteApplyJob(
+  jobId: string,
+  extVersion: string,
+  kindooEid: number | null,
+  actor: User,
+): Promise<boolean> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical, 'jobs', jobId);
+  try {
+    await updateDoc(ref, {
+      status: 'running',
+      claimed_at: serverTimestamp(),
+      claimed_by: { ext_version: extVersion, kindoo_eid: kindooEid },
+      lastActor: actorRef,
+    });
+    return true;
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      console.info(`[sba-ext] remote apply: job ${jobId} already claimed elsewhere; skipping`);
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Write a job's terminal status + outcome. `cancelled` is not writable
+ * from here — that transition belongs to the phone's no-pickup timeout.
+ */
+export async function finishRemoteApplyJob(
+  jobId: string,
+  payload: DataRemoteApplyFinishJobRequest['payload'],
+  actor: User,
+): Promise<void> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical, 'jobs', jobId);
+  await updateDoc(ref, {
+    status: payload.status,
+    finished_at: serverTimestamp(),
+    outcome: payload.outcome,
+    lastActor: actorRef,
+  });
+}
+
+/** Firestore surfaces rules rejections as an error with
+ * `code: 'permission-denied'`. Narrow defensively — plain `Error`
+ * instances don't carry the field. */
+function isPermissionDenied(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  return (err as { code?: unknown }).code === 'permission-denied';
 }

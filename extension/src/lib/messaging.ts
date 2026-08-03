@@ -24,6 +24,7 @@ import type {
   KindooSite,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  RemoteApplyOutcome,
   Seat,
   Stake,
   SyncApplyFixInput,
@@ -335,6 +336,85 @@ export interface ResolveEidStakesPayload {
   partialFailure: boolean;
 }
 
+// ---- Remote apply (phone → desktop mailbox) ---------------------------
+//
+// The mailbox lives at `remoteApply/{canonicalEmail}` with a `jobs`
+// subcollection. The canonical email is NEVER sent across this
+// boundary: the SW derives it from its own auth token, so a
+// compromised page context can't address someone else's mailbox even
+// if it could forge a message. See `docs/architecture.md` D27 and
+// `packages/shared/src/types/remoteApply.ts`.
+
+/**
+ * Publish (or clear) this desktop's presence. The content script sends
+ * this on its heartbeat, and once more with `enabled: false` the moment
+ * the operator switches the opt-in off — clearing eagerly is what makes
+ * the phone's button disappear immediately instead of after the
+ * staleness window.
+ */
+export interface DataWriteRemotePresenceRequest {
+  type: 'data.writeRemotePresence';
+  payload: RemoteApplyPresenceInput;
+}
+
+export interface RemoteApplyPresenceInput {
+  /** Stake the extension has resolved for its active Kindoo site. */
+  stakeId: string;
+  /** Active Kindoo EID; `null` only on the disable write, where the
+   * Kindoo session may already be gone. */
+  kindooEid: number | null;
+  /** Active Kindoo site's display name; `null` when unresolvable. */
+  kindooSiteName: string | null;
+  /** `chrome.runtime.getManifest().version`. */
+  extVersion: string;
+  /** Mirrors the `chrome.storage.local` opt-in toggle. */
+  enabled: boolean;
+}
+
+/**
+ * Fetch at most one `queued` job from the operator's mailbox. One
+ * `getDocs` per poll tick; no composite index needed (single equality
+ * filter + limit).
+ */
+export interface DataRemoteApplyNextJobRequest {
+  type: 'data.remoteApplyNextJob';
+}
+
+/** The fields the runner needs off a queued job doc. */
+export interface RemoteApplyJobRef {
+  jobId: string;
+  requestId: string;
+  stakeId: string;
+}
+
+/**
+ * Claim a queued job (`queued → running`). The rules enforce the
+ * compare-and-set, so a second Kindoo tab racing for the same job gets
+ * `permission-denied` — which the SW reports as `claimed: false`, NOT
+ * an error. Losing a race is the expected outcome of a healthy
+ * multi-tab setup, not a fault to surface.
+ */
+export interface DataRemoteApplyClaimJobRequest {
+  type: 'data.remoteApplyClaimJob';
+  jobId: string;
+  payload: {
+    extVersion: string;
+    kindooEid: number | null;
+  };
+}
+
+/** Write a job's terminal status + outcome. */
+export interface DataRemoteApplyFinishJobRequest {
+  type: 'data.remoteApplyFinishJob';
+  jobId: string;
+  payload: {
+    /** Terminal statuses the extension may write. `cancelled` belongs
+     * to the phone's no-pickup timeout, not to us. */
+    status: 'applied' | 'partial' | 'failed';
+    outcome: RemoteApplyOutcome;
+  };
+}
+
 /** Discriminated union of every request the panel may send. */
 export type ExtensionRequest =
   | AuthGetStateRequest
@@ -352,7 +432,11 @@ export type ExtensionRequest =
   | DataSyncApplyFixRequest
   | DataWriteKindooSiteEidRequest
   | DataResolveEidStakesRequest
-  | DataRejectRequestRequest;
+  | DataRejectRequestRequest
+  | DataWriteRemotePresenceRequest
+  | DataRemoteApplyNextJobRequest
+  | DataRemoteApplyClaimJobRequest
+  | DataRemoteApplyFinishJobRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -373,6 +457,10 @@ export type DataSyncApplyFixResponse = Result<SyncApplyFixResult>;
 export type DataWriteKindooSiteEidResponse = Result<{ ok: true }>;
 export type DataResolveEidStakesResponse = Result<ResolveEidStakesPayload>;
 export type DataRejectRequestResponse = Result<{ ok: true }>;
+export type DataWriteRemotePresenceResponse = Result<{ ok: true }>;
+export type DataRemoteApplyNextJobResponse = Result<RemoteApplyJobRef | null>;
+export type DataRemoteApplyClaimJobResponse = Result<{ claimed: boolean }>;
+export type DataRemoteApplyFinishJobResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -405,7 +493,15 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                             ? DataResolveEidStakesResponse
                             : R extends DataRejectRequestRequest
                               ? DataRejectRequestResponse
-                              : never;
+                              : R extends DataWriteRemotePresenceRequest
+                                ? DataWriteRemotePresenceResponse
+                                : R extends DataRemoteApplyNextJobRequest
+                                  ? DataRemoteApplyNextJobResponse
+                                  : R extends DataRemoteApplyClaimJobRequest
+                                    ? DataRemoteApplyClaimJobResponse
+                                    : R extends DataRemoteApplyFinishJobRequest
+                                      ? DataRemoteApplyFinishJobResponse
+                                      : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
@@ -440,6 +536,13 @@ export const STORAGE_KEYS = {
    * stake is no longer a candidate (role revocation, config change).
    */
   eidStakeChoice: 'sba.eidStakeChoice',
+  /**
+   * Remote-apply opt-in ("Allow requests from my phone"). Absent ⇒ off:
+   * this grants a second device authority to provision access, so a
+   * profile that predates the feature must never read as consent.
+   * Single owner: `lib/remoteApplyPrefs.ts`.
+   */
+  remoteApplyEnabled: 'sba.remoteApplyEnabled',
 } as const;
 
 /** Shape stored under `STORAGE_KEYS.eidStakeChoice`. */
