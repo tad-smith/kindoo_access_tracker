@@ -2,30 +2,44 @@
 // a pending request on their phone and have their own desktop Chrome
 // extension provision it in Kindoo. See `docs/architecture.md` D27.
 //
-// Two docs, both owned by the manager themself (rules gate on
+// Three levels, all owned by the manager themself (rules gate on
 // `authedCanonical()`):
-//   `remoteApply/{canonicalEmail}`            — presence + opt-in, written
-//                                               only by the extension
-//   `remoteApply/{canonicalEmail}/jobs/{id}`  — one doc per tap; created by
-//                                               the phone, driven to a
-//                                               terminal status by the
-//                                               extension
+//   `remoteApply/{canonicalEmail}`                  — the opt-in, one per
+//                                                     Chrome profile
+//   `remoteApply/{canonicalEmail}/desktops/{siteId}` — one per Kindoo site
+//                                                     the manager has a live
+//                                                     tab on, written by that
+//                                                     tab's heartbeat
+//   `remoteApply/{canonicalEmail}/jobs/{jobId}`      — one doc per tap;
+//                                                     created by the phone,
+//                                                     driven to a terminal
+//                                                     status by the extension
 //
 // The extension can only drive Kindoo from a live Kindoo tab (it needs the
-// page's session token and the active site EID), so presence is published
+// page's session token and the active site EID), so a desktop doc exists
 // only while such a tab is open and usable. Absence of a fresh heartbeat
 // is the signal that the phone must not offer the button.
 //
-// Timings and the online/terminal predicates live in
-// `src/remoteApply.ts` — both surfaces read them from there so the phone
-// and the extension can't disagree about staleness.
+// **Presence is per Kindoo site, not per manager.** A stake can have more
+// than one Kindoo site, and a tab can only provision for the site it is
+// currently inside. One doc per manager would flap between sites on every
+// heartbeat, and — worse — let a tab claim a job for a site it cannot
+// serve, which fails with a mismatch that tells the manager to open a site
+// they already have open in the next tab. Keying by `siteId` lets two tabs
+// coexist: each publishes its own liveness, and each claims only the jobs
+// it can actually run.
+//
+// Timings and the freshness predicates live in `src/remoteApply.ts` — both
+// surfaces read them from there so the phone and the extension can't
+// disagree about staleness.
 
 import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
 
 /**
- * `remoteApply/{canonicalEmail}` — what the desktop extension advertises
- * about itself. Written by the extension only; the phone reads it.
+ * `remoteApply/{canonicalEmail}` — the opt-in itself. Profile-wide, because
+ * the extension stores it in `chrome.storage.local`: ticking the box in one
+ * Kindoo tab enables every tab in that Chrome profile.
  */
 export type RemoteApplyPresence = {
   /**
@@ -35,18 +49,36 @@ export type RemoteApplyPresence = {
    * phone's button disappears without waiting out the staleness window.
    */
   remote_apply_enabled?: boolean;
-  /** Last heartbeat. Compared against `REMOTE_APPLY_STALE_MS`. */
-  last_seen_at: TimestampLike;
-  /** Stake the extension has resolved for its active Kindoo site. */
-  stake_id: string;
-  /** Active Kindoo site, or null when the extension couldn't resolve one. */
-  kindoo_eid: number | null;
-  /** Site display name — shown on the phone so the manager can sanity-check. */
-  kindoo_site_name: string | null;
   /** Extension manifest version, for diagnosing version-skewed behaviour. */
   ext_version: string;
   lastActor: ActorRef;
 };
+
+/**
+ * `remoteApply/{canonicalEmail}/desktops/{siteId}` — one live Kindoo tab,
+ * on one Kindoo site. Doc ID is the SBA-side site id
+ * (`stakes/{stakeId}/kindooSites/{siteId}`), so a second tab on a second
+ * site writes a second doc rather than overwriting the first.
+ *
+ * A tab whose active EID maps to no SBA site publishes nothing — it can't
+ * name the site it's on, and it couldn't provision for it either.
+ */
+export type RemoteApplyDesktop = {
+  /** Stake this site belongs to. Gated by `isManager` in rules. */
+  stake_id: string;
+  /** Last heartbeat. Compared against `REMOTE_APPLY_STALE_MS`. */
+  last_seen_at: TimestampLike;
+  /** The Kindoo-side environment id this tab is inside. */
+  kindoo_eid: number | null;
+  /** Site display name — shown on the phone so the manager can sanity-check. */
+  kindoo_site_name: string | null;
+  /** Extension manifest version of the tab publishing this. */
+  ext_version: string;
+  lastActor: ActorRef;
+};
+
+/** A desktop doc plus its id, which is the Kindoo site id. */
+export type RemoteApplyDesktopWithId = RemoteApplyDesktop & { site_id: string };
 
 /**
  * Job lifecycle. `partial` is its own terminal state because the desktop
@@ -98,6 +130,16 @@ export type RemoteApplyOutcome = {
 export type RemoteApplyJob = {
   request_id: string;
   stake_id: string;
+  /**
+   * The request's target Kindoo site, copied from
+   * `AccessRequest.kindoo_site_id` at tap time. Only a tab inside this site
+   * may claim the job — that is what keeps a stake's second Kindoo site
+   * from stealing work it cannot perform.
+   *
+   * Null / absent means "any site this stake's tabs are on", which is both
+   * the single-site case and the pre-existing requests that carry no site.
+   */
+  kindoo_site_id?: string | null;
   status: RemoteApplyJobStatus;
   created_at: TimestampLike;
   /** `getDeviceId()` of the phone that queued it. */

@@ -30,6 +30,8 @@ export type { KindooSite } from './kindooSite.js';
 export type { Organization } from './organization.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
 export type {
+  RemoteApplyDesktop,
+  RemoteApplyDesktopWithId,
   RemoteApplyJob,
   RemoteApplyJobStatus,
   RemoteApplyOutcome,

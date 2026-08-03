@@ -28,8 +28,11 @@ export {
   REMOTE_APPLY_POLL_VISIBLE_MS,
   REMOTE_APPLY_STALE_MS,
   REMOTE_APPLY_TERMINAL_STATUSES,
-  isRemoteApplyOnline,
+  canClaimRemoteApplyJob,
+  freshRemoteApplyDesktops,
+  isRemoteApplyEnabled,
   isRemoteApplyTerminal,
+  remoteApplyDesktopForRequest,
 } from './remoteApply.js';
 export {
   deriveRequesterDisplay,
@@ -96,6 +99,8 @@ export type {
   PlatformAuditLog,
   PlatformSuperadmin,
   Principal,
+  RemoteApplyDesktop,
+  RemoteApplyDesktopWithId,
   RemoteApplyJob,
   RemoteApplyJobStatus,
   RemoteApplyOutcome,
