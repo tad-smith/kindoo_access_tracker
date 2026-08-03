@@ -43,6 +43,8 @@ import type {
   DataRemoteApplyFinishJobResponse,
   DataRemoteApplyNextJobRequest,
   DataRemoteApplyNextJobResponse,
+  DataRemoteApplyRunningJobsRequest,
+  DataRemoteApplyRunningJobsResponse,
   DataResolveEidStakesRequest,
   DataResolveEidStakesResponse,
   DataSyncApplyFixRequest,
@@ -58,6 +60,7 @@ import type {
   ExtensionRequest,
   RemoteApplyJobRef,
   RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
   ResolveEidStakesPayload,
   ResponseFor,
   SyncDataBundle,
@@ -68,7 +71,11 @@ import { STORAGE_KEYS } from './messaging';
 
 export type { SyncDataBundle } from './messaging';
 export type { EidStakeCandidate, ResolveEidStakesPayload } from './messaging';
-export type { RemoteApplyJobRef, RemoteApplyPresenceInput } from './messaging';
+export type {
+  RemoteApplyJobRef,
+  RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
+} from './messaging';
 
 /** Public alias for the stake-config bundle the panel passes between
  * components. */
@@ -390,6 +397,16 @@ export async function writeRemotePresence(payload: RemoteApplyPresenceInput): Pr
 export async function remoteApplyNextJob(): Promise<RemoteApplyJobRef | null> {
   const req: DataRemoteApplyNextJobRequest = { type: 'data.remoteApplyNextJob' };
   const res: DataRemoteApplyNextJobResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Every `running` job in this manager's mailbox, with its claim age.
+ * Feeds the stranded-job sweep in `content/remoteApply/loop.ts`.
+ */
+export async function remoteApplyRunningJobs(): Promise<RemoteApplyRunningJobRef[]> {
+  const req: DataRemoteApplyRunningJobsRequest = { type: 'data.remoteApplyRunningJobs' };
+  const res: DataRemoteApplyRunningJobsResponse = await sendMessage(req);
   return unwrap(res);
 }
 

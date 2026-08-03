@@ -1194,6 +1194,62 @@ describe('remote apply — SW-side mailbox operations', () => {
     await expect(findQueuedRemoteApplyJob(mailboxActor())).resolves.toBeNull();
   });
 
+  it('lists running jobs with their claim age for the stranded sweep', async () => {
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({
+            request_id: 'r1',
+            stake_id: 'csnorth',
+            status: 'running',
+            created_at: { toMillis: () => 1_000 },
+            claimed_at: { toMillis: () => 2_000 },
+          }),
+        },
+      ],
+    });
+    const { findRunningRemoteApplyJobs } = await import('./data');
+    const jobs = await findRunningRemoteApplyJobs(mailboxActor());
+
+    expect(whereMock).toHaveBeenCalledWith('status', '==', 'running');
+    expect(jobs).toEqual([
+      { jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth', claimedAtMs: 2_000 },
+    ]);
+  });
+
+  it('falls back to created_at when the claim timestamp has not resolved', async () => {
+    // Rules make `claimed_at` optional, and an unresolved
+    // `serverTimestamp()` reads as null in a local snapshot. Without a
+    // fallback the sweep could never age the job and it would strand.
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({
+            request_id: 'r1',
+            stake_id: 'csnorth',
+            status: 'running',
+            created_at: { toMillis: () => 1_000 },
+            claimed_at: null,
+          }),
+        },
+      ],
+    });
+    const { findRunningRemoteApplyJobs } = await import('./data');
+    const jobs = await findRunningRemoteApplyJobs(mailboxActor());
+    expect(jobs[0]?.claimedAtMs).toBe(1_000);
+  });
+
+  it('reports no claim age when neither timestamp is readable', async () => {
+    getDocsMock.mockResolvedValue({
+      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+    });
+    const { findRunningRemoteApplyJobs } = await import('./data');
+    const jobs = await findRunningRemoteApplyJobs(mailboxActor());
+    expect(jobs[0]?.claimedAtMs).toBeNull();
+  });
+
   it('claims a job by flipping it to running with the claiming tab stamped on it', async () => {
     const { claimRemoteApplyJob } = await import('./data');
     await expect(claimRemoteApplyJob('job-1', '1.2.3', 27994, mailboxActor())).resolves.toBe(true);

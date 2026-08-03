@@ -20,6 +20,7 @@ import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/
 import {
   claimRemoteApplyJob,
   findQueuedRemoteApplyJob,
+  findRunningRemoteApplyJobs,
   finishRemoteApplyJob,
   loadAccessByEmail,
   loadKindooManagerByEmail,
@@ -315,6 +316,22 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
         }
         const job = await findQueuedRemoteApplyJob(user);
         return { ok: true, data: job };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.remoteApplyRunningJobs': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before sweeping jobs' },
+          };
+        }
+        const jobs = await findRunningRemoteApplyJobs(user);
+        return { ok: true, data: jobs };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

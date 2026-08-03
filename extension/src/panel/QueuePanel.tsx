@@ -169,6 +169,15 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied, remoteApply }:
     [fetchQueue],
   );
 
+  // The request a phone-initiated job is provisioning right now, if any.
+  // Threaded down to gate that card's own provision button: both paths
+  // run `applyRequest`, so two of them against one request can reach
+  // `provisionAddOrChange` concurrently and write Kindoo twice. For a
+  // member not yet in Kindoo the second write is a second `inviteUser` —
+  // a consumed licence that `markRequestComplete` picking one winner does
+  // nothing to undo.
+  const remoteApplyingRequestId = remoteApply?.running?.requestId ?? null;
+
   const requests = state.status === 'ready' ? state.requests : EMPTY_REQUESTS;
   // Compute "now" once per render; the day-level section boundary is
   // insensitive to sub-day drift within a session.
@@ -217,6 +226,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied, remoteApply }:
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={handleDismissed}
           />
           <QueueSection
@@ -226,6 +236,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied, remoteApply }:
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={handleDismissed}
           />
           <QueueSection
@@ -235,6 +246,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied, remoteApply }:
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={handleDismissed}
           />
         </div>
@@ -299,6 +311,8 @@ interface QueueSectionProps {
   stakeId: string;
   bundle: StakeConfigBundle;
   seatMap: SeatMap;
+  /** `request_id` a phone-initiated job is provisioning, or null. */
+  remoteApplyingRequestId: string | null;
   onDismissed: (requestId: string) => void;
 }
 
@@ -309,6 +323,7 @@ function QueueSection({
   stakeId,
   bundle,
   seatMap,
+  remoteApplyingRequestId,
   onDismissed,
 }: QueueSectionProps) {
   // Hide the whole section (header + body) when empty.
@@ -328,6 +343,7 @@ function QueueSection({
               memberHasSeat={seatMap[req.request_id]?.existence === 'present'}
               memberSeatAbsent={seatMap[req.request_id]?.existence === 'absent'}
               memberHasStakeGrant={seatMap[req.request_id]?.hasStakeGrant ?? false}
+              remoteApplyRunning={remoteApplyingRequestId === req.request_id}
               onDismissed={onDismissed}
             />
           </li>

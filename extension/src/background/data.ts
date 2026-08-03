@@ -53,6 +53,7 @@ import type {
   EidStakeCandidate,
   RemoteApplyJobRef,
   RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
   WriteKindooConfigPayload,
 } from '../lib/messaging';
 
@@ -699,6 +700,44 @@ export async function findQueuedRemoteApplyJob(actor: User): Promise<RemoteApply
     requestId: data.request_id,
     stakeId: data.stake_id,
   };
+}
+
+/**
+ * Every `running` job in the operator's mailbox — the input to the
+ * content script's stranded-job sweep.
+ *
+ * Same single-equality shape as the queued query, so no composite index.
+ * `limit(20)` is a sanity bound, not a page size: at 1–2 requests/week a
+ * mailbox with even two concurrent `running` jobs already means something
+ * went wrong.
+ *
+ * `claimed_at` is returned as epoch ms rather than a `Timestamp` — the
+ * value has to survive `chrome.runtime.sendMessage`'s structured
+ * serialisation, which strips the class. `created_at` backs it up because
+ * rules make `claimed_at` optional on the claim.
+ */
+export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApplyRunningJobRef[]> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
+  const snap = await getDocs(query(jobs, where('status', '==', 'running'), limit(20)));
+  return snap.docs.map((d) => {
+    const data = d.data() as RemoteApplyJob;
+    return {
+      jobId: d.id,
+      requestId: data.request_id,
+      stakeId: data.stake_id,
+      claimedAtMs: toMillis(data.claimed_at) ?? toMillis(data.created_at),
+    };
+  });
+}
+
+/** `TimestampLike` → epoch ms, or null for anything that isn't one
+ * (an unresolved `serverTimestamp()` reads as null in a local snapshot). */
+function toMillis(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const ts = value as { toMillis?: () => number };
+  return typeof ts.toMillis === 'function' ? ts.toMillis() : null;
 }
 
 /**
