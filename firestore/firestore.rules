@@ -276,24 +276,31 @@ service cloud.firestore {
     // ----- RemoteApply (phone → desktop-extension mailbox) -----
     // A Kindoo Manager taps a pending request on their phone; their own
     // desktop Chrome extension executes it against Kindoo. The transport
-    // is this per-manager mailbox: `remoteApply/{canonical}` carries the
-    // desktop's presence + opt-in, and `.../jobs/{jobId}` carries one doc
-    // per tap. See `docs/architecture.md` D27 and the shared contract in
-    // `packages/shared/src/types/remoteApply.ts`.
+    // is this per-manager mailbox. See `docs/architecture.md` D27 and the
+    // shared contract in `packages/shared/src/types/remoteApply.ts`.
+    //
+    //   `remoteApply/{canonical}`                   — the opt-in alone
+    //   `remoteApply/{canonical}/desktops/{siteId}` — one live Kindoo tab
+    //   `remoteApply/{canonical}/jobs/{jobId}`      — one tap
     //
     // Top-level rather than per-stake because the doc key is the
     // manager's canonical email and the desktop resolves its own stake
     // from whichever Kindoo site it happens to be in — the stake is a
-    // FIELD here, not a path segment. Both surfaces are therefore
-    // anchored on `authedCanonical()`: a manager can only ever touch
-    // their own mailbox, which makes every other predicate in this block
-    // about shape and lifecycle rather than about who.
+    // FIELD here, not a path segment. Every surface is therefore anchored
+    // on `authedCanonical()`: a manager can only ever touch their own
+    // mailbox, which makes the rest of this block about shape and
+    // lifecycle rather than about who.
     //
-    // `isManager(<the doc's stake_id>)` is the second gate on every
-    // write. It is claims-only (no document read) and exists so a
-    // non-manager can't use their own mailbox as free storage: without
-    // it, ownership alone would let any signed-in user write whatever
-    // they liked to `remoteApply/{their own email}`.
+    // **Presence is keyed by Kindoo site.** A stake can run more than one
+    // Kindoo site and a tab can only provision for the site it is inside,
+    // so liveness lives in `desktops/{siteId}` — two tabs write two docs
+    // instead of overwriting one another's EID every heartbeat, and a job
+    // naming a site is claimed by the tab that can actually serve it
+    // rather than by whichever tab polled first.
+    //
+    // `isManager(<the doc's stake_id>)` is the second gate on the
+    // `desktops` and `jobs` writes. It is claims-only (no document read)
+    // and it is what makes the mailbox useless to a non-manager.
     match /remoteApply/{memberCanonical} {
 
       // The doc key IS the owner's canonical email, so one comparison
@@ -309,56 +316,167 @@ service cloud.firestore {
         return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
       }
 
-      // `RemoteApplyPresence` shape check. `remote_apply_enabled` is the
-      // only optional key: absent means opted OUT (per the type's doc
-      // comment — a doc predating the toggle must not read as consent),
-      // so the phone treats absence and `false` identically and the rule
-      // needs only to type it when present.
+      // `RemoteApplyPresence` shape check — three keys, and only three.
+      // Everything per-site moved down to `desktops/{siteId}`.
       //
-      // `kindoo_eid` / `kindoo_site_name` are nullable: the extension
-      // publishes presence even when it can't resolve the active site,
-      // and the phone renders that as "online but no site".
+      // `remote_apply_enabled` is the only optional key: absent means
+      // opted OUT (per the type's doc comment — a doc predating the
+      // toggle must not read as consent), so the phone treats absence
+      // and `false` identically and the rule needs only to type it when
+      // present.
+      //
+      // NOTE for the extension: `hasOnly` means a `setDoc(..., {merge:
+      // true})` over a doc still carrying the retired per-site keys is
+      // DENIED, because the merged result is what rules see. The
+      // heartbeat must write this doc whole.
       function validPresence(data) {
-        return data.keys().hasOnly(['remote_apply_enabled', 'last_seen_at', 'stake_id',
-                                    'kindoo_eid', 'kindoo_site_name', 'ext_version',
-                                    'lastActor'])
-          && data.keys().hasAll(['last_seen_at', 'stake_id', 'kindoo_eid',
-                                 'kindoo_site_name', 'ext_version', 'lastActor'])
+        return data.keys().hasOnly(['remote_apply_enabled', 'ext_version', 'lastActor'])
+          && data.keys().hasAll(['ext_version', 'lastActor'])
           && (!('remote_apply_enabled' in data) || data.remote_apply_enabled is bool)
-          && data.last_seen_at is timestamp
-          && data.stake_id is string
-          && (data.kindoo_eid == null || data.kindoo_eid is int)
-          && (data.kindoo_site_name == null || data.kindoo_site_name is string)
-          && data.ext_version is string;
+          && data.ext_version is string
+          // Length bound, not a format check — see the `allow create,
+          // update` comment below for why this doc needs one.
+          && data.ext_version.size() <= 32;
       }
 
       allow read: if ownsMailbox(memberCanonical);
       // Create and update are the same predicate — the extension writes
-      // the whole presence doc on every heartbeat, so there is no
-      // narrower update surface to describe. `stake_id` is deliberately
-      // mutable: a manager moving their Kindoo tab to another site
-      // republishes a different stake, and `isManager` re-gates the new
-      // value.
+      // the whole doc on every heartbeat, so there is no narrower update
+      // surface to describe.
+      //
+      // NO `isManager` gate here, unlike `desktops` and `jobs` below.
+      // This doc used to carry `stake_id` and the gate read it; the
+      // field moved to `desktops`, and the alternatives for re-anchoring
+      // it are all worse. Rules can't ask "is this user a manager of ANY
+      // stake" (the `stakes` claim is a map and there is no way to test
+      // a predicate across its values), and keeping a `stake_id` here
+      // purely as a gate anchor would reintroduce exactly the field that
+      // flapped between sites on every heartbeat.
+      //
+      // Dropping it is safe because the doc grants nothing on its own.
+      // It is one bool, one version string and a `lastActor`; the phone
+      // requires a fresh `desktops` doc before it offers the button, and
+      // both `desktops` and `jobs` still carry `stake_id` and still gate
+      // on it. A non-manager who writes here has published consent to
+      // use a desktop they cannot register for a stake they cannot
+      // queue work under.
+      //
+      // What the gate was really guarding — free storage under any
+      // signed-in user's own canonical email — is instead bounded by the
+      // exact three-key shape plus the `ext_version` length cap, which
+      // caps the doc at a couple of hundred bytes. One such doc per
+      // Google account that has signed into this app is not a storage
+      // surface worth a per-heartbeat document read to close.
       allow create, update: if ownsMailbox(memberCanonical)
-        && isManager(request.resource.data.stake_id)
         && validPresence(request.resource.data)
         && lastActorMatchesAuth(request.resource.data);
       // Turning the feature off clears `remote_apply_enabled` rather
       // than deleting the doc, so the phone can distinguish "opted out"
-      // from "never installed the extension".
+      // from "never installed the extension". (Contrast `desktops`
+      // below, where deletion is the correct opt-out signal.)
       allow delete: if false;
+
+      // ----- desktops/{siteKey} — one live Kindoo tab, one Kindoo site -----
+      //
+      // Doc id is the tab's site KEY (`remoteApplySiteKey`), so two tabs
+      // on two sites write two docs and neither clobbers the other. It
+      // is the same value a job carries as `target_site_key`, which is
+      // what makes the routing an exact match rather than a fallback.
+      //
+      // The id is NOT constrained here. Proving it names a real
+      // `kindooSites` doc would cost a document read on every heartbeat,
+      // and the home site has no such doc at all (home lives on
+      // `stake.kindoo_config`), so home necessarily publishes under the
+      // reserved `'home'` key. An id naming nothing is inert anyway — no
+      // job targets it, so no work is ever routed to it.
+      //
+      // `kindoo_site_id` in the BODY is the underlying nullable form
+      // (null = home), mirroring how wards and buildings spell it. Both
+      // are stored because the doc id can't be null and the phone wants
+      // the nullable value back without re-deriving it.
+      //
+      // `stake_id` keeps the `isManager` gate that the parent doc lost.
+      // This is the doc that makes the phone's button appear, so it is
+      // the one that has to prove the writer manages the stake it claims
+      // to cover.
+      match /desktops/{siteKey} {
+
+        // `RemoteApplyDesktop` — every key required, three of them
+        // nullable. `kindoo_eid` / `kindoo_site_name` go null when the
+        // tab is inside a site it can't fully resolve; the phone renders
+        // that as online-but-unnamed rather than hiding the desktop.
+        //
+        // The rule does NOT check `kindoo_site_id` against `siteKey`.
+        // The two are related by `remoteApplySiteKey` (null ↔ 'home'),
+        // which rules can't express without hardcoding the home key
+        // here and pinning a shared constant in two places. The pairing
+        // is the extension's to get right; a mismatched pair misroutes
+        // only this manager's own jobs.
+        function validDesktop(data) {
+          return keysAreExactly(data, ['stake_id', 'kindoo_site_id', 'last_seen_at',
+                                       'kindoo_eid', 'kindoo_site_name', 'ext_version',
+                                       'lastActor'])
+            && data.stake_id is string
+            && (data.kindoo_site_id == null || data.kindoo_site_id is string)
+            && data.last_seen_at is timestamp
+            && (data.kindoo_eid == null || data.kindoo_eid is int)
+            && (data.kindoo_site_name == null || data.kindoo_site_name is string)
+            && data.ext_version is string;
+        }
+
+        allow read: if ownsMailbox(memberCanonical);
+
+        // Create and update share a predicate for the same reason the
+        // parent doc's do: a heartbeat rewrites the whole doc, and the
+        // first one on a new site has to create it. Two tabs on two
+        // sites therefore BOTH succeed — that is the entire point of
+        // keying by site rather than by manager.
+        allow create, update: if ownsMailbox(memberCanonical)
+          && isManager(request.resource.data.stake_id)
+          && validDesktop(request.resource.data)
+          && lastActorMatchesAuth(request.resource.data);
+
+        // Deletion allowed, gated on ownership alone.
+        //
+        // Aging out is the fallback, not the goal: a tab that closes or
+        // navigates off its Kindoo site leaves a doc that stays "fresh"
+        // for `REMOTE_APPLY_STALE_MS`, and during that window the phone
+        // names a site as covered when it isn't. That is precisely the
+        // "open a site you already have open" failure this reshape
+        // exists to remove, so the extension is allowed to retract its
+        // own presence immediately.
+        //
+        // Nothing is lost: unlike `jobs`, a desktop doc is liveness, not
+        // history. And unlike the parent doc, absence is not an
+        // ambiguous signal — the reader already treats absent and stale
+        // identically.
+        //
+        // Deliberately NOT gated on `isManager`. A manager whose claim
+        // has just been revoked must still be able to retract presence
+        // they published while they held it; denying that would strand a
+        // doc that only its owner can address.
+        allow delete: if ownsMailbox(memberCanonical);
+      }
 
       match /jobs/{jobId} {
 
-        // `request_id` / `stake_id` / `created_at` / `created_by_device`
-        // are set once by the phone and never move. The per-transition
-        // `affectedKeys()` allowlists below already exclude them; this
-        // states the invariant directly so it survives an allowlist
-        // edit, mirroring the `access` block's belt-and-braces treatment
-        // of `importer_callings`.
+        // `request_id` / `stake_id` / `target_site_key` / `created_at` /
+        // `created_by_device` are set once by the phone and never move.
+        // The per-transition `affectedKeys()` allowlists below already
+        // exclude them; this states the invariant directly so it
+        // survives an allowlist edit, mirroring the `access` block's
+        // belt-and-braces treatment of `importer_callings`.
+        //
+        // `target_site_key` matters most of the five: it is what decides
+        // WHICH desktop may claim the job, so a mutable one would let a
+        // tab retarget work to itself and run a provision on the wrong
+        // Kindoo site. A bare field read is safe here precisely because
+        // the create rule makes it required — there is no job without
+        // one to trip over.
         function jobCoreUnchanged(before, after) {
           return after.request_id == before.request_id
             && after.stake_id == before.stake_id
+            && after.target_site_key == before.target_site_key
             && after.created_at == before.created_at
             && after.created_by_device == before.created_by_device;
         }
@@ -382,19 +500,33 @@ service cloud.firestore {
 
         allow read: if ownsMailbox(memberCanonical);
 
-        // A job is born `queued` and carries exactly the six fields the
+        // A job is born `queued` and carries exactly the seven fields the
         // phone knows at tap time — no pre-baked `claimed_*` /
         // `finished_at` / `outcome`, which the transitions below are the
         // only path to.
+        //
+        // `target_site_key` is REQUIRED and never null. It is a site key
+        // (`remoteApplySiteKey`), not a raw `kindooSites` doc id: the
+        // home site has no such doc, so home is spelled with the
+        // reserved `'home'` key and matches a desktop exactly the way a
+        // foreign slug does. There is deliberately no "any site" value —
+        // a phone that can't resolve the target site must not offer the
+        // button, because it cannot know which desktop could serve it.
+        //
+        // Empty string is rejected for the same reason a null would be:
+        // it names a site no tab can be inside, so the job would sit
+        // unclaimable until the phone timed it out.
         allow create: if ownsMailbox(memberCanonical)
           && isManager(request.resource.data.stake_id)
           && request.resource.data.status == 'queued'
           && keysAreExactly(request.resource.data,
-                            ['request_id', 'stake_id', 'status', 'created_at',
-                             'created_by_device', 'lastActor'])
+                            ['request_id', 'stake_id', 'target_site_key', 'status',
+                             'created_at', 'created_by_device', 'lastActor'])
           && request.resource.data.request_id is string
           && request.resource.data.request_id.size() > 0
           && request.resource.data.stake_id is string
+          && request.resource.data.target_site_key is string
+          && request.resource.data.target_site_key.size() > 0
           && request.resource.data.created_at is timestamp
           && request.resource.data.created_by_device is string
           && lastActorMatchesAuth(request.resource.data);
