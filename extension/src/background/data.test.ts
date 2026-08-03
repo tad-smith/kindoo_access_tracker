@@ -1296,7 +1296,12 @@ describe('remote apply — SW-side mailbox operations', () => {
     ]);
   });
 
-  it('reads a job with no target site as home-only, never as claimable by anyone', async () => {
+  it('reads a legacy job with no target site as home-only, never as claimable by anyone', async () => {
+    // Rules make this unwritable now — `target_site_key` is on the jobs
+    // create allowlist as a non-empty string. This covers only docs left
+    // in a staging mailbox by earlier builds of the branch, which would
+    // otherwise deserialise to `undefined` and be claimable by no tab at
+    // all, sitting `queued` until the phone timed them out.
     getDocsMock.mockResolvedValue({
       docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
     });

@@ -786,12 +786,18 @@ export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApp
 /**
  * Job doc → the wire shape.
  *
- * `target_site_key` is required on the type but defaulted here anyway:
- * these docs are written by the phone, and a job that predates the field
- * (or arrives from a client that failed to derive one) must not read as
- * "servable by whoever asks first". Falling back to the home key keeps an
- * unlabelled job claimable only by a home tab, which is where every
- * single-site stake's work belongs.
+ * `target_site_key` is required on the type AND on the rules' create
+ * allowlist (`is string && .size() > 0`), so no phone can write a job
+ * without one. The default is purely for docs that predate that rule —
+ * earlier builds of this branch queued jobs with no site field at all,
+ * and any that are still sitting in a staging mailbox would otherwise
+ * deserialise to `undefined` and be claimable by nobody, sitting
+ * `queued` until the phone's pickup timeout cancelled them. Reading
+ * them as home-site work gives them a tab that can actually run them.
+ *
+ * Delete this once no pre-`target_site_key` job docs remain. It is not
+ * a guard against a buggy client — such a client gets a
+ * `permission-denied` on `addDoc` and never reaches this code.
  */
 function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef {
   return {
