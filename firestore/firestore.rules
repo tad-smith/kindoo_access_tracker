@@ -528,6 +528,13 @@ service cloud.firestore {
         // `allow delete: if false`. Today every writer of this
         // collection is a client gated by this rule, which is the only
         // reason that state is unreachable.
+        //
+        // Derive the value with `resolveWardSite` + `remoteApplySiteKey`
+        // from `packages/shared`; do not hand-roll the building lookup.
+        // `resolveWardBuilding` falls through to a name match when the
+        // ward's `building_id` misses, so a bare find-by-slug resolves a
+        // stale-slug ward to home and the job is then refused by the very
+        // tab it was routed to. See T-78.
         allow create: if ownsMailbox(memberCanonical)
           && isManager(request.resource.data.stake_id)
           && request.resource.data.status == 'queued'
