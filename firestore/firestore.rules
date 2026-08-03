@@ -613,7 +613,9 @@ service cloud.firestore {
              && (!('claimed_by' in request.resource.data)
                  || request.resource.data.claimed_by.ext_version is string))
             ||
-            // queued → cancelled — the phone's no-pickup timeout.
+            // queued → cancelled — the no-pickup expiry. Written by whichever
+            // side notices first: the phone's 90s timer, or a desktop tab
+            // that finds the job already past the window before claiming it.
             (resource.data.status == 'queued'
              && request.resource.data.status == 'cancelled'
              && request.resource.data.diff(resource.data).affectedKeys()
