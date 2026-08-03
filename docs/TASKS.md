@@ -6,6 +6,24 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-83] Spec §16: the result dialog raises on sight of an own-device outcome, not on a witnessed transition
+Status: open
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+`spec.md` §16 "Acknowledging the result" currently carries this paragraph, written against the first cut and now wrong:
+
+> **It raises on the transition into a terminal status, never on first sight of one.** […] Only a status change this device watched happen counts, which means the dialog belongs to the tap that is still open on screen, and a reload after the work finished gets the row alone.
+
+Operator hit the consequence live on `b3f05c6`: applied from their phone, it succeeded, no dialog. The transition rule fails for the device the feature exists for — the manager taps Apply, turns to the desktop to watch it work, and the phone locks. On wake the page has re-mounted and the job is already terminal on first sight, so the dialog was suppressed in the commonest real flow. (The desktop's `ResultDialog` never hits this: the desktop is the machine doing the work, with its panel open.)
+
+The rule is now: **a terminal job raises the dialog on sight when this device queued it and this device hasn't already acknowledged it.** The two properties the transition rule was protecting are carried by narrower facts instead:
+
+- *Not someone else's* — `RemoteApplyJob.created_by_device` is matched against `getDeviceId()`. A job the manager queued from another phone belongs to that phone's screen; the row still reports it either way. A device id that can't be read (storage locked down) matches nothing, so the dialog stays away rather than raising on an unattributable job.
+- *Not history* — dismissing is what makes an outcome history, and the acknowledgement is persisted in `localStorage` (`kindoo:remoteApplyAckedJobs`, `apps/web/src/features/manager/queue/acknowledgedJobs.ts`), not component state, because a locked phone guarantees the reload. Bounded at the 50 most recent ids, oldest evicted first: jobs are never deleted, and an id old enough to be evicted belongs to a request that left the queue long ago.
+
+One knock-on worth a sentence: a `failed` or `cancelled` card now shows its dialog before **Try again** is reachable, since the modal holds the card inert until dismissed. Read what went wrong, then retry — that ordering is intended, not incidental.
+
 ## [T-81] Spec §4.4 / §15 / §16: the web queue's duplicate gate, and the phone's result dialog
 Status: done (2026-08-03 — `feat/remote-apply-docs4`, against `feat/remote-apply-shared2` at `60c1297`)
 Owner: @docs-keeper
