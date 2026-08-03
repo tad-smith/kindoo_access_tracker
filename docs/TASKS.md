@@ -6,6 +6,19 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
+Status: open
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+`spec.md` §16 already claims "one job per request at a time"; the queue now holds that claim properly (the tap latch is synchronous, so two taps in one task can't both write). What §16 doesn't say is what the card does when a request ends up with several jobs anyway — the create rule permits it, so the display has to be defined:
+
+> The card resolves to the most conclusive job, not the newest: `applied` and `partial` outrank `running` / `queued`, which outrank `failed` / `cancelled`; newest wins within a rank. A duplicate's loser is claimed *after* the job that succeeded and comes back `failed` (`request_not_pending`), so ranking on recency alone would report a failure on a request that in fact applied.
+
+Also worth a line: the Apply button is withheld until the job subscription has resolved, so it can't be tapped against a mailbox whose contents are still unknown.
+
+Behaviour lives in `pickRemoteApplyJob` / `useRemoteApplyJobsByRequest` (`apps/web/src/features/manager/queue/hooks.ts`).
+
 ## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
 Owner: @infra-engineer

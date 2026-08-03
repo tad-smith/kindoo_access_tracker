@@ -27,9 +27,11 @@ import {
   partitionPendingRequests,
 } from '@kindoo/shared';
 import {
-  useActiveRemoteApplyJobs,
   usePendingRequests,
+  useRemoteApplyJobsByRequest,
   useRemoteApplyPresence,
+  type RemoteApplyJobsResult,
+  type RemoteApplyJobWithId,
   type RemoteApplyPresenceResult,
 } from './hooks';
 import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
@@ -61,11 +63,11 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
   const navigate = useNavigate();
   const labelForScope = useScopeLabel();
-  // Remote apply: presence + the jobs the desktop hasn't finished.
-  // Resolved once here and passed down rather than called per card —
-  // one listener each, not one per pending request.
+  // Remote apply: presence + the manager's job mailbox. Resolved once
+  // here and passed down rather than called per card — one listener
+  // each, not one per pending request.
   const remoteApply = useRemoteApplyPresence();
-  const activeJobs = useActiveRemoteApplyJobs();
+  const remoteApplyJobs = useRemoteApplyJobsByRequest();
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -153,7 +155,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             focusedId={focusedId}
             labelForScope={labelForScope}
             remoteApply={remoteApply}
-            activeJobs={activeJobs}
+            remoteApplyJobs={remoteApplyJobs}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -162,7 +164,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             focusedId={focusedId}
             labelForScope={labelForScope}
             remoteApply={remoteApply}
-            activeJobs={activeJobs}
+            remoteApplyJobs={remoteApplyJobs}
           />
           <QueueSection
             title="Future Requests"
@@ -171,7 +173,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             focusedId={focusedId}
             labelForScope={labelForScope}
             remoteApply={remoteApply}
-            activeJobs={activeJobs}
+            remoteApplyJobs={remoteApplyJobs}
           />
         </div>
       )}
@@ -207,7 +209,7 @@ interface QueueSectionProps {
   focusedId: string | undefined;
   labelForScope: (scope: string) => string;
   remoteApply: RemoteApplyPresenceResult;
-  activeJobs: Map<string, string>;
+  remoteApplyJobs: RemoteApplyJobsResult;
 }
 
 function QueueSection({
@@ -217,7 +219,7 @@ function QueueSection({
   focusedId,
   labelForScope,
   remoteApply,
-  activeJobs,
+  remoteApplyJobs,
 }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
@@ -235,7 +237,8 @@ function QueueSection({
             isFocused={focusedId === request.request_id}
             labelForScope={labelForScope}
             remoteApply={remoteApply}
-            activeJobId={activeJobs.get(request.request_id)}
+            remoteApplyJob={remoteApplyJobs.byRequest.get(request.request_id)}
+            remoteApplyJobsLoading={remoteApplyJobs.isLoading}
           />
         ))}
       </div>
@@ -248,7 +251,8 @@ interface QueueCardProps {
   isFocused: boolean;
   labelForScope: (scope: string) => string;
   remoteApply: RemoteApplyPresenceResult;
-  activeJobId: string | undefined;
+  remoteApplyJob: RemoteApplyJobWithId | undefined;
+  remoteApplyJobsLoading: boolean;
 }
 
 function QueueCard({
@@ -256,7 +260,8 @@ function QueueCard({
   isFocused,
   labelForScope,
   remoteApply,
-  activeJobId,
+  remoteApplyJob,
+  remoteApplyJobsLoading,
 }: QueueCardProps) {
   // Live duplicate check: surface inside the queue card so the manager
   // sees, at a glance, that an add request collides with an existing
@@ -409,7 +414,8 @@ function QueueCard({
         <RemoteApplyRow
           requestId={request.request_id}
           online={remoteApply.online}
-          activeJobId={activeJobId}
+          job={remoteApplyJob}
+          jobsLoading={remoteApplyJobsLoading}
         />
       )}
     </div>

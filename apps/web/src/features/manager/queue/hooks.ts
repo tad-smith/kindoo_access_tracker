@@ -14,9 +14,9 @@
 // extension and is rules-enforced.
 //
 //   - `useRemoteApplyPresence()` — is the desktop usable right now?
-//   - `useActiveRemoteApplyJobs()` — jobs the desktop hasn't finished,
-//     so a reload doesn't lose track of an in-flight apply.
-//   - `useRemoteApplyJob()` — live status of one job.
+//   - `useRemoteApplyJobsByRequest()` — the mailbox's jobs, reduced to
+//     the one job per request a card should render, so a reload doesn't
+//     lose track of an in-flight apply.
 //   - `useQueueRemoteApplyJob()` / `useCancelRemoteApplyJob()` — the two
 //     writes.
 //   - `useRemoteApplyPickupTimeout()` — cancels a job the desktop never
@@ -148,43 +148,122 @@ export function useRemoteApplyPresence(): RemoteApplyPresenceResult {
 /** A `RemoteApplyJob` body plus its Firestore doc id (read-layer only). */
 export type RemoteApplyJobWithId = RemoteApplyJob & { job_id: string };
 
+export interface RemoteApplyJobsResult {
+  /** The job each request's card should render, by `request_id`. */
+  byRequest: Map<string, RemoteApplyJobWithId>;
+  /**
+   * The subscription hasn't resolved yet, so "no job for this request"
+   * is not yet a fact. The card withholds the Apply button until it is —
+   * tapping into an unresolved mailbox is one of the ways a request ends
+   * up with two jobs.
+   */
+  isLoading: boolean;
+}
+
 /**
- * Jobs the desktop hasn't finished, keyed by `request_id`. Reload-safe:
- * a manager who taps Apply and then reloads still sees the running job
- * — and still can't queue a second one for the same request.
+ * Every job in the manager's mailbox, reduced to the one job per
+ * `request_id` a card should render. Reload-safe: a manager who taps
+ * Apply and then reloads still sees the running job — and still can't
+ * queue a second one for the same request.
  *
- * `status in ['queued','running']` uses the automatic single-field
- * index; no composite index is involved. Terminal jobs drop out of this
- * query, which is why the card subscribes to its own job doc for the
- * final status.
+ * The query is deliberately unconstrained, on both axes:
+ *
+ *   - **No status filter.** Terminal jobs have to stay visible. The
+ *     reason one request can hold several jobs is a duplicate, and a
+ *     duplicate always ends the same way — the desktop claims the loser,
+ *     finds the request no longer pending, and marks it `failed`.
+ *     Filtering to `queued`/`running` would leave the card holding that
+ *     orphan and reporting a failure on work that landed.
+ *   - **No `orderBy` / `limit`.** A just-written job carries an
+ *     unresolved `serverTimestamp()`, which reads as null locally and so
+ *     sorts *last* under `orderBy('created_at','desc')` — it would fall
+ *     out of a limited window during exactly the seconds the duplicate
+ *     guard needs it.
+ *
+ * It's one manager's own jobs at 1–2 requests a week, so reading the lot
+ * costs less than either filter would.
  */
-export function useActiveRemoteApplyJobs(): Map<string, string> {
+export function useRemoteApplyJobsByRequest(): RemoteApplyJobsResult {
   const principal = usePrincipal();
   const q = useMemo(() => {
     if (!principal.canonical) return null;
-    return query(
-      remoteApplyJobsCol(db, principal.canonical),
-      where('status', 'in', ['queued', 'running']),
-    ) as unknown as Query<RemoteApplyJobWithId>;
+    return remoteApplyJobsCol(db, principal.canonical) as unknown as Query<RemoteApplyJobWithId>;
   }, [principal.canonical]);
   const jobs = useFirestoreCollection<RemoteApplyJobWithId>(q, { idField: 'job_id' });
-  return useMemo(() => {
-    const byRequest = new Map<string, string>();
+  const byRequest = useMemo(() => {
+    const grouped = new Map<string, RemoteApplyJobWithId[]>();
     for (const job of jobs.data ?? []) {
-      byRequest.set(job.request_id, job.job_id);
+      const forRequest = grouped.get(job.request_id);
+      if (forRequest) forRequest.push(job);
+      else grouped.set(job.request_id, [job]);
     }
-    return byRequest;
+    const resolved = new Map<string, RemoteApplyJobWithId>();
+    for (const [requestId, forRequest] of grouped) {
+      const best = pickRemoteApplyJob(forRequest);
+      if (best) resolved.set(requestId, best);
+    }
+    return resolved;
   }, [jobs.data]);
+  return { byRequest, isLoading: jobs.isLoading };
 }
 
-/** Live status of one job. `null` id → no subscription. */
-export function useRemoteApplyJob(jobId: string | null) {
-  const principal = usePrincipal();
-  const ref = useMemo(
-    () => (principal.canonical && jobId ? remoteApplyJobRef(db, principal.canonical, jobId) : null),
-    [principal.canonical, jobId],
-  );
-  return useFirestoreDoc<RemoteApplyJob>(ref);
+/**
+ * The job that speaks for a request when it has more than one.
+ *
+ * Duplicates are rare — the card blocks a second tap — but the create
+ * rule permits them, so the display has to survive one. Precedence is by
+ * how conclusive the status is, NOT by recency: the orphan of a
+ * duplicate is claimed *after* the job that succeeded and comes back
+ * `failed`, so ranking on recency alone would report a failure on a
+ * request that was in fact applied. That is the single worst thing this
+ * surface can say — the manager's correct response to it is to go redo
+ * work that's already done.
+ *
+ * Within one rank, newest wins; an unresolved `created_at` counts as
+ * newest, since it belongs to a job this device just wrote.
+ */
+export function pickRemoteApplyJob(
+  jobs: readonly RemoteApplyJobWithId[],
+): RemoteApplyJobWithId | undefined {
+  let best: RemoteApplyJobWithId | undefined;
+  for (const job of jobs) {
+    if (!best || outranks(job, best)) best = job;
+  }
+  return best;
+}
+
+function outranks(job: RemoteApplyJobWithId, incumbent: RemoteApplyJobWithId): boolean {
+  const byStatus = statusRank(job.status) - statusRank(incumbent.status);
+  if (byStatus !== 0) return byStatus > 0;
+  return createdAtRank(job) > createdAtRank(incumbent);
+}
+
+/**
+ * How much a status settles the question. `applied` and `partial` both
+ * mean the Kindoo write happened, so neither may ever be displaced by a
+ * sibling that failed; `applied` outranks `partial` because a later
+ * `applied` means the request did get closed out after all. `running`
+ * outranks `queued` — of two live jobs, the claimed one is the one doing
+ * the work.
+ */
+function statusRank(status: RemoteApplyJob['status']): number {
+  switch (status) {
+    case 'applied':
+      return 5;
+    case 'partial':
+      return 4;
+    case 'running':
+      return 3;
+    case 'queued':
+      return 2;
+    case 'failed':
+    case 'cancelled':
+      return 1;
+  }
+}
+
+function createdAtRank(job: RemoteApplyJobWithId): number {
+  return toMillis(job.created_at) ?? Number.POSITIVE_INFINITY;
 }
 
 /**
