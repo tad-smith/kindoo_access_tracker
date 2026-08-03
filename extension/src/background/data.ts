@@ -46,7 +46,7 @@ import type {
   Stake,
   Ward,
 } from '@kindoo/shared';
-import { REMOTE_APPLY_HOME_SITE_KEY, canonicalEmail } from '@kindoo/shared';
+import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
 import type {
@@ -786,25 +786,24 @@ export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApp
 /**
  * Job doc → the wire shape.
  *
- * `target_site_key` is required on the type AND on the rules' create
+ * `target_site_key` is required on the type and on the rules' create
  * allowlist (`is string && .size() > 0`), so no phone can write a job
- * without one. The default is purely for docs that predate that rule —
- * earlier builds of this branch queued jobs with no site field at all,
- * and any that are still sitting in a staging mailbox would otherwise
- * deserialise to `undefined` and be claimable by nobody, sitting
- * `queued` until the phone's pickup timeout cancelled them. Reading
- * them as home-site work gives them a tab that can actually run them.
+ * without one.
  *
- * Delete this once no pre-`target_site_key` job docs remain. It is not
- * a guard against a buggy client — such a client gets a
- * `permission-denied` on `addDoc` and never reaches this code.
+ * A doc predating that rule — earlier builds of this branch queued jobs
+ * with no site field — is beyond rescue here rather than merely
+ * mis-keyed: the rules' immutability check reads the field bare, and a
+ * bare read of a missing key errors, so every transition is denied. It
+ * can't be claimed, cancelled, or reported on. Defaulting the key would
+ * only buy a claim attempt that rules reject anyway, so such docs are
+ * left alone and must be deleted server-side.
  */
 function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef {
   return {
     jobId,
     requestId: data.request_id,
     stakeId: data.stake_id,
-    targetSiteKey: data.target_site_key ?? REMOTE_APPLY_HOME_SITE_KEY,
+    targetSiteKey: data.target_site_key,
   };
 }
 

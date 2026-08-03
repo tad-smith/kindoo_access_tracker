@@ -1296,18 +1296,20 @@ describe('remote apply — SW-side mailbox operations', () => {
     ]);
   });
 
-  it('reads a legacy job with no target site as home-only, never as claimable by anyone', async () => {
+  it('leaves a legacy job with no target site unclaimable rather than guessing home', async () => {
     // Rules make this unwritable now — `target_site_key` is on the jobs
-    // create allowlist as a non-empty string. This covers only docs left
-    // in a staging mailbox by earlier builds of the branch, which would
-    // otherwise deserialise to `undefined` and be claimable by no tab at
-    // all, sitting `queued` until the phone timed them out.
+    // create allowlist as a non-empty string. Docs left in a staging
+    // mailbox by earlier builds are frozen by rules regardless: the
+    // immutability check reads the field bare, and a bare read of a
+    // missing key errors, so claim / cancel / report are all denied.
+    // Defaulting the key here would only buy a claim attempt that rules
+    // reject, so such docs are left alone and deleted server-side.
     getDocsMock.mockResolvedValue({
       docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
     });
     const { findQueuedRemoteApplyJobs } = await import('./data');
     const jobs = await findQueuedRemoteApplyJobs(mailboxActor());
-    expect(jobs[0]?.targetSiteKey).toBe(REMOTE_APPLY_HOME_SITE_KEY);
+    expect(jobs[0]?.targetSiteKey).toBeUndefined();
   });
 
   it('returns an empty page when the mailbox is empty', async () => {
