@@ -22,12 +22,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
   type AccessRequest,
+  type Building,
+  type KindooSite,
+  type RemoteApplyDesktopWithId,
+  type Ward,
   deriveRequesterDisplay,
   formatRequesterLabel,
   partitionPendingRequests,
 } from '@kindoo/shared';
 import {
+  useKindooSites,
   usePendingRequests,
+  useQueueBuildings,
+  useQueueStakeDoc,
+  useQueueWards,
   useRemoteApplyJobsByRequest,
   useRemoteApplyPresence,
   type RemoteApplyJobsResult,
@@ -35,6 +43,7 @@ import {
   type RemoteApplyPresenceResult,
 } from './hooks';
 import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
+import { homeSiteName, remoteApplyTargetSiteKey, siteKeyLabel } from '../../../lib/kindooSites';
 import {
   useAccessForMember,
   useKindooManagerForMember,
@@ -65,9 +74,27 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const labelForScope = useScopeLabel();
   // Remote apply: presence + the manager's job mailbox. Resolved once
   // here and passed down rather than called per card — one listener
-  // each, not one per pending request.
+  // each, not one per pending request. The three catalogues are what a
+  // request's target Kindoo site is derived from (scope → ward →
+  // building) and named with.
   const remoteApply = useRemoteApplyPresence();
   const remoteApplyJobs = useRemoteApplyJobsByRequest();
+  const kindooSites = useKindooSites();
+  const queueWards = useQueueWards();
+  const queueBuildings = useQueueBuildings();
+  const stakeDoc = useQueueStakeDoc();
+  const sites = kindooSites.data ?? [];
+  const wards = queueWards.data ?? [];
+  const buildings = queueBuildings.data ?? [];
+  const homeName = homeSiteName(stakeDoc.data);
+  // The covered sites, named — every one of them. With two tabs live,
+  // naming one would read as a promise about the other. A foreign site
+  // missing from the catalogue falls back to the name its own tab
+  // reported, which is at least the string Kindoo shows.
+  const coveredSiteNames = remoteApply.desktops
+    .map((d) => siteKeyLabel(d.site_key, sites, homeName) ?? d.kindoo_site_name)
+    .filter((name): name is string => !!name)
+    .sort((a, b) => a.localeCompare(b));
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -142,7 +169,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
     <section className="kd-page-medium">
       <h1>Request Queue</h1>
       <ExtensionNote />
-      <RemoteApplyPresenceNote presence={remoteApply} />
+      <RemoteApplyPresenceNote presence={remoteApply} siteNames={coveredSiteNames} />
 
       {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
@@ -156,6 +183,10 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             labelForScope={labelForScope}
             remoteApply={remoteApply}
             remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -165,6 +196,10 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             labelForScope={labelForScope}
             remoteApply={remoteApply}
             remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
           />
           <QueueSection
             title="Future Requests"
@@ -174,6 +209,10 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             labelForScope={labelForScope}
             remoteApply={remoteApply}
             remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
           />
         </div>
       )}
@@ -210,6 +249,10 @@ interface QueueSectionProps {
   labelForScope: (scope: string) => string;
   remoteApply: RemoteApplyPresenceResult;
   remoteApplyJobs: RemoteApplyJobsResult;
+  kindooSites: readonly KindooSite[];
+  wards: readonly Ward[];
+  buildings: readonly Building[];
+  homeSiteName: string | null;
 }
 
 function QueueSection({
@@ -220,6 +263,10 @@ function QueueSection({
   labelForScope,
   remoteApply,
   remoteApplyJobs,
+  kindooSites,
+  wards,
+  buildings,
+  homeSiteName,
 }: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
@@ -230,17 +277,28 @@ function QueueSection({
         {title} ({requests.length})
       </h2>
       <div className="kd-queue-cards">
-        {requests.map((request) => (
-          <QueueCard
-            key={request.request_id}
-            request={request}
-            isFocused={focusedId === request.request_id}
-            labelForScope={labelForScope}
-            remoteApply={remoteApply}
-            remoteApplyJob={remoteApplyJobs.byRequest.get(request.request_id)}
-            remoteApplyJobsLoading={remoteApplyJobs.isLoading}
-          />
-        ))}
+        {requests.map((request) => {
+          // Derived per card, not read off the request:
+          // `AccessRequest.kindoo_site_id` is the site of the grant a
+          // `remove` targets, not the site the request provisions on.
+          const targetSiteKey = remoteApplyTargetSiteKey(request.scope, wards, buildings);
+          return (
+            <QueueCard
+              key={request.request_id}
+              request={request}
+              isFocused={focusedId === request.request_id}
+              labelForScope={labelForScope}
+              remoteApplyTargetSiteKey={targetSiteKey}
+              remoteApplyDesktop={remoteApply.desktopForSite(targetSiteKey)}
+              remoteApplyAnyLive={remoteApply.state === 'live'}
+              remoteApplySiteName={
+                targetSiteKey ? siteKeyLabel(targetSiteKey, kindooSites, homeSiteName) : null
+              }
+              remoteApplyJob={remoteApplyJobs.byRequest.get(request.request_id)}
+              remoteApplyJobsLoading={remoteApplyJobs.isLoading}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -250,7 +308,14 @@ interface QueueCardProps {
   request: AccessRequest;
   isFocused: boolean;
   labelForScope: (scope: string) => string;
-  remoteApply: RemoteApplyPresenceResult;
+  /** Site key this request provisions on; null when it didn't resolve. */
+  remoteApplyTargetSiteKey: string | null;
+  /** The live tab that can apply THIS request's site, or null. */
+  remoteApplyDesktop: RemoteApplyDesktopWithId | null;
+  /** Any tab live in this stake — gates the per-card "open <site>" line. */
+  remoteApplyAnyLive: boolean;
+  /** Name of the site this request needs, when it resolves. */
+  remoteApplySiteName: string | null;
   remoteApplyJob: RemoteApplyJobWithId | undefined;
   remoteApplyJobsLoading: boolean;
 }
@@ -259,7 +324,10 @@ function QueueCard({
   request,
   isFocused,
   labelForScope,
-  remoteApply,
+  remoteApplyTargetSiteKey,
+  remoteApplyDesktop,
+  remoteApplyAnyLive,
+  remoteApplySiteName,
   remoteApplyJob,
   remoteApplyJobsLoading,
 }: QueueCardProps) {
@@ -413,7 +481,10 @@ function QueueCard({
       {blockedByDuplicate || editTargetMissing ? null : (
         <RemoteApplyRow
           requestId={request.request_id}
-          online={remoteApply.online}
+          targetSiteKey={remoteApplyTargetSiteKey}
+          desktop={remoteApplyDesktop}
+          anyDesktopLive={remoteApplyAnyLive}
+          requestSiteName={remoteApplySiteName}
           job={remoteApplyJob}
           jobsLoading={remoteApplyJobsLoading}
         />

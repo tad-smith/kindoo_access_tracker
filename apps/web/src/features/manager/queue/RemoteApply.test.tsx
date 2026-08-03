@@ -1,7 +1,14 @@
 // Component tests for the phone-facing remote-apply surface. The hooks
 // are mocked; what's under test is what the manager actually reads on a
-// phone — the presence sentence, the button's presence/absence, and the
-// wording of every job status.
+// phone — the header sentence, the button's presence/absence per card,
+// and the wording of every job status.
+//
+// Two clusters carry the weight of the per-site model:
+//   - the header copy at zero / one / several live tabs, since naming
+//     one site while two are covered is a lie about the other;
+//   - the not-covered card, which has to name the site the request
+//     needs. The old model could only say "your desktop is offline",
+//     which was wrong the moment a second Kindoo site existed.
 //
 // The `partial` case gets its own assertions on purpose: it means the
 // Kindoo write landed and only the SBA bookkeeping didn't. Wording that
@@ -11,7 +18,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { RemoteApplyJobStatus, RemoteApplyOutcome } from '@kindoo/shared';
+import type {
+  RemoteApplyDesktopWithId,
+  RemoteApplyJobStatus,
+  RemoteApplyOutcome,
+} from '@kindoo/shared';
 
 const queueMutateMock = vi.fn();
 const useQueueRemoteApplyJobMock = vi.fn();
@@ -22,14 +33,32 @@ vi.mock('./hooks', () => ({
   useRemoteApplyPickupTimeout: (...args: unknown[]) => pickupTimeoutMock(...args),
 }));
 
-import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
+import { RemoteApplyPresenceNote, RemoteApplyRow, presenceCopy } from './RemoteApply';
 import type { RemoteApplyJobWithId, RemoteApplyPresenceResult } from './hooks';
+
+function desktop(siteKey: string, siteName: string | null = null): RemoteApplyDesktopWithId {
+  return {
+    site_key: siteKey,
+    stake_id: 'csnorth',
+    kindoo_site_id: siteKey === 'home' ? null : siteKey,
+    last_seen_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(0), toMillis: () => 0 },
+    kindoo_eid: 4242,
+    kindoo_site_name: siteName,
+    ext_version: '2.5.0',
+    lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+  };
+}
 
 function presence(
   state: RemoteApplyPresenceResult['state'],
-  siteName: string | null = null,
+  desktops: RemoteApplyDesktopWithId[] = [],
 ): RemoteApplyPresenceResult {
-  return { state, online: state === 'online', siteName, presence: undefined };
+  return {
+    state,
+    desktops,
+    desktopForSite: (key) => desktops.find((d) => d.site_key === key) ?? null,
+    presence: undefined,
+  };
 }
 
 function job(status: RemoteApplyJobStatus, outcome?: RemoteApplyOutcome): RemoteApplyJobWithId {
@@ -37,12 +66,24 @@ function job(status: RemoteApplyJobStatus, outcome?: RemoteApplyOutcome): Remote
     job_id: 'job-1',
     request_id: 'req-1',
     stake_id: 'csnorth',
+    target_site_key: 'home',
     status,
     created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(0), toMillis: () => 0 },
     created_by_device: 'device-1',
     lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
     ...(outcome ? { outcome } : {}),
   };
+}
+
+/** A card the manager's live tab can serve. */
+function covered(overrides: Partial<React.ComponentProps<typeof RemoteApplyRow>> = {}) {
+  return {
+    requestId: 'req-1',
+    targetSiteKey: 'home',
+    desktop: desktop('home', 'Colorado Springs North'),
+    anyDesktopLive: true,
+    ...overrides,
+  } as React.ComponentProps<typeof RemoteApplyRow>;
 }
 
 beforeEach(() => {
@@ -54,71 +95,196 @@ beforeEach(() => {
   });
 });
 
-describe('<RemoteApplyPresenceNote />', () => {
-  it('names the Kindoo site the desktop is in when it is online', () => {
-    render(<RemoteApplyPresenceNote presence={presence('online', 'Colorado Springs North')} />);
-    expect(screen.getByTestId('remote-apply-presence')).toHaveTextContent(
-      'Desktop online — Kindoo site: Colorado Springs North',
+describe('queue header copy', () => {
+  it('names the one Kindoo site the manager can apply for', () => {
+    expect(presenceCopy('live', ['Colorado Springs North'])).toBe(
+      'You can apply requests for Colorado Springs North from here.',
     );
   });
 
-  it('tells the manager to open Kindoo on their computer when the desktop went quiet', () => {
-    render(<RemoteApplyPresenceNote presence={presence('stale')} />);
+  it('names both sites when two Kindoo tabs are live, rather than picking one', () => {
+    expect(presenceCopy('live', ['Colorado Springs North', 'East Stake'])).toBe(
+      'You can apply requests for Colorado Springs North and East Stake from here.',
+    );
+  });
+
+  it('lists three live sites without dropping any', () => {
+    expect(presenceCopy('live', ['Alpine', 'Maple', 'Pine Ridge'])).toBe(
+      'You can apply requests for Alpine, Maple and Pine Ridge from here.',
+    );
+  });
+
+  it('still says apply is available when a live tab reported no site name', () => {
+    expect(presenceCopy('live', [])).toMatch(/you can apply requests from here/i);
+  });
+
+  it('tells the manager to open Kindoo when no tab is live', () => {
+    expect(presenceCopy('stale', [])).toBe(
+      'Open Kindoo in Chrome on your computer to apply requests from here.',
+    );
+  });
+});
+
+describe('<RemoteApplyPresenceNote />', () => {
+  it('names every Kindoo site covered by a live tab', () => {
+    render(
+      <RemoteApplyPresenceNote
+        presence={presence('live', [desktop('home'), desktop('east')])}
+        siteNames={['Colorado Springs North', 'East Stake']}
+      />,
+    );
     expect(screen.getByTestId('remote-apply-presence')).toHaveTextContent(
-      /isn't online — open Kindoo in Chrome on your computer/i,
+      'You can apply requests for Colorado Springs North and East Stake from here.',
+    );
+  });
+
+  it('tells the manager to open Kindoo on their computer when no tab is live', () => {
+    render(<RemoteApplyPresenceNote presence={presence('stale')} siteNames={[]} />);
+    expect(screen.getByTestId('remote-apply-presence')).toHaveTextContent(
+      /Open Kindoo in Chrome on your computer/i,
     );
   });
 
   it('points at the extension toggle when remote apply was never turned on', () => {
-    render(<RemoteApplyPresenceNote presence={presence('off')} />);
+    render(<RemoteApplyPresenceNote presence={presence('off')} siteNames={[]} />);
     expect(screen.getByTestId('remote-apply-presence')).toHaveTextContent(
       /Allow requests from my phone/i,
     );
   });
 
-  it('says the desktop is in a different stake rather than blaming the connection', () => {
-    render(<RemoteApplyPresenceNote presence={presence('other-stake')} />);
+  it('says the computer is in a different stake rather than blaming the connection', () => {
+    render(<RemoteApplyPresenceNote presence={presence('other-stake')} siteNames={[]} />);
     const note = screen.getByTestId('remote-apply-presence');
     expect(note).toHaveTextContent(/different stake open in Kindoo/i);
-    expect(note).not.toHaveTextContent(/isn't online/i);
+    expect(note).not.toHaveTextContent(/Open Kindoo in Chrome/i);
   });
 
   it('shows nothing until presence resolves, so no advice flashes at a working desktop', () => {
-    render(<RemoteApplyPresenceNote presence={presence('loading')} />);
+    render(<RemoteApplyPresenceNote presence={presence('loading')} siteNames={[]} />);
     expect(screen.queryByTestId('remote-apply-presence')).toBeNull();
   });
 });
 
-describe('<RemoteApplyRow />', () => {
-  it('renders nothing at all when the desktop is offline and no job is in flight', () => {
-    const { container } = render(<RemoteApplyRow requestId="req-1" online={false} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('offers Apply via extension when the desktop is online', () => {
-    render(<RemoteApplyRow requestId="req-1" online />);
+describe('<RemoteApplyRow /> — per-site gating', () => {
+  it('offers Apply when a live tab is on the site this request needs', () => {
+    render(<RemoteApplyRow {...covered()} />);
     expect(screen.getByTestId('remote-apply-button-req-1')).toHaveTextContent(
       'Apply via extension',
     );
+    expect(screen.queryByTestId('remote-apply-needs-site-req-1')).toBeNull();
   });
 
-  it('queues a job for this request when the button is tapped', async () => {
+  it('withholds Apply and names the site to open when the live tab is on a different one', () => {
+    // The failure the per-site model exists to prevent: the manager's
+    // Kindoo tab is open on the wrong site, and the old copy told them
+    // their desktop was offline.
+    render(
+      <RemoteApplyRow
+        requestId="req-1"
+        targetSiteKey="east"
+        desktop={null}
+        anyDesktopLive
+        requestSiteName="East Stake"
+      />,
+    );
+    expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
+    expect(screen.getByTestId('remote-apply-needs-site-req-1')).toHaveTextContent(
+      'Open East Stake in Kindoo on your computer to apply this one.',
+    );
+  });
+
+  it('gates each card on its own site when two Kindoo tabs are live', () => {
+    const live = [desktop('home', 'Colorado Springs North'), desktop('east', 'East Stake')];
+    const resolved = presence('live', live);
+    render(
+      <>
+        <RemoteApplyRow
+          requestId="req-home"
+          targetSiteKey="home"
+          desktop={resolved.desktopForSite('home')}
+          anyDesktopLive
+          requestSiteName="Colorado Springs North"
+        />
+        <RemoteApplyRow
+          requestId="req-east"
+          targetSiteKey="east"
+          desktop={resolved.desktopForSite('east')}
+          anyDesktopLive
+          requestSiteName="East Stake"
+        />
+        <RemoteApplyRow
+          requestId="req-pine"
+          targetSiteKey="pine"
+          desktop={resolved.desktopForSite('pine')}
+          anyDesktopLive
+          requestSiteName="Pine Ridge"
+        />
+      </>,
+    );
+    expect(screen.getByTestId('remote-apply-button-req-home')).toBeInTheDocument();
+    expect(screen.getByTestId('remote-apply-button-req-east')).toBeInTheDocument();
+    expect(screen.queryByTestId('remote-apply-button-req-pine')).toBeNull();
+    expect(screen.getByTestId('remote-apply-needs-site-req-pine')).toHaveTextContent(
+      /Open Pine Ridge in Kindoo/i,
+    );
+  });
+
+  it('renders nothing at all when no tab is live and no job is in flight', () => {
+    // With nothing open, the header already says to open Kindoo —
+    // repeating it under every card would be noise.
+    const { container } = render(
+      <RemoteApplyRow
+        requestId="req-1"
+        targetSiteKey="east"
+        desktop={null}
+        anyDesktopLive={false}
+        requestSiteName="East Stake"
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('offers nothing for a request whose Kindoo site could not be worked out', () => {
+    // An orphaned ward→building reference, or catalogues still loading.
+    // Fail closed: there is no honest claim to make about which desktop
+    // could serve it.
+    const { container } = render(
+      <RemoteApplyRow requestId="req-1" targetSiteKey={null} desktop={null} anyDesktopLive />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('falls back to generic wording when the site the request needs has no name', () => {
+    render(
+      <RemoteApplyRow requestId="req-1" targetSiteKey="ghost" desktop={null} anyDesktopLive />,
+    );
+    expect(screen.getByTestId('remote-apply-needs-site-req-1')).toHaveTextContent(
+      /Open this request's Kindoo site in Chrome/i,
+    );
+  });
+});
+
+describe('<RemoteApplyRow />', () => {
+  it('queues a job carrying the site the request must be applied on', async () => {
     const user = userEvent.setup();
-    render(<RemoteApplyRow requestId="req-1" online />);
+    render(<RemoteApplyRow {...covered({ targetSiteKey: 'east' })} />);
     await user.click(screen.getByTestId('remote-apply-button-req-1'));
     expect(queueMutateMock).toHaveBeenCalledTimes(1);
-    expect(queueMutateMock.mock.calls[0]?.[0]).toBe('req-1');
+    expect(queueMutateMock.mock.calls[0]?.[0]).toEqual({
+      requestId: 'req-1',
+      targetSiteKey: 'east',
+    });
   });
 
   it('does not queue a second job for the same request after the first tap', async () => {
     // Phones double-tap for free, and two jobs would provision twice.
     const user = userEvent.setup();
-    const { rerender } = render(<RemoteApplyRow requestId="req-1" online />);
+    const { rerender } = render(<RemoteApplyRow {...covered()} />);
     await user.click(screen.getByTestId('remote-apply-button-req-1'));
 
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
     // …and it stays gone once the job that tap wrote reaches the mailbox.
-    rerender(<RemoteApplyRow requestId="req-1" online job={job('queued')} />);
+    rerender(<RemoteApplyRow {...covered({ job: job('queued') })} />);
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
     expect(queueMutateMock).toHaveBeenCalledTimes(1);
   });
@@ -130,7 +296,7 @@ describe('<RemoteApplyRow />', () => {
     // job it used to write became an orphan — claimed after the first
     // had already applied, refused as `request_not_pending`, and
     // reported to the manager as a failure on work that succeeded.
-    render(<RemoteApplyRow requestId="req-1" online />);
+    render(<RemoteApplyRow {...covered()} />);
     const button = screen.getByTestId('remote-apply-button-req-1');
     fireEvent.click(button);
     fireEvent.click(button);
@@ -140,7 +306,7 @@ describe('<RemoteApplyRow />', () => {
   it('withholds Apply until the mailbox subscription has resolved', () => {
     // "No job for this request" isn't a fact yet — a job queued from the
     // manager's other device may be about to arrive.
-    render(<RemoteApplyRow requestId="req-1" online jobsLoading />);
+    render(<RemoteApplyRow {...covered({ jobsLoading: true })} />);
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
   });
 
@@ -148,9 +314,7 @@ describe('<RemoteApplyRow />', () => {
     const user = userEvent.setup();
     render(
       <RemoteApplyRow
-        requestId="req-1"
-        online
-        job={job('failed', { code: 'error', message: 'Kindoo said no.' })}
+        {...covered({ job: job('failed', { code: 'error', message: 'Kindoo said no.' }) })}
       />,
     );
     await user.click(screen.getByTestId('remote-apply-button-req-1'));
@@ -159,43 +323,65 @@ describe('<RemoteApplyRow />', () => {
   });
 
   it('does not offer Apply while a job for this request is already running', () => {
-    render(<RemoteApplyRow requestId="req-1" online job={job('running')} />);
+    render(<RemoteApplyRow {...covered({ job: job('running') })} />);
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
   });
 
   it('shows the job status even after the desktop drops offline mid-apply', () => {
-    render(<RemoteApplyRow requestId="req-1" online={false} job={job('running')} />);
+    render(
+      <RemoteApplyRow
+        requestId="req-1"
+        targetSiteKey="home"
+        desktop={null}
+        anyDesktopLive={false}
+        job={job('running')}
+      />,
+    );
     expect(screen.getByTestId('remote-apply-status-req-1')).toBeInTheDocument();
   });
 
   it('says the job is waiting for the desktop while it sits queued', () => {
-    render(<RemoteApplyRow requestId="req-1" online job={job('queued')} />);
+    render(<RemoteApplyRow {...covered({ job: job('queued') })} />);
     const status = screen.getByTestId('remote-apply-status-req-1');
     expect(status).toHaveAttribute('data-status', 'queued');
     expect(status).toHaveTextContent(/waiting for it to start/i);
   });
 
   it('says the desktop is working on it while the job runs', () => {
-    render(<RemoteApplyRow requestId="req-1" online job={job('running')} />);
+    render(<RemoteApplyRow {...covered({ job: job('running') })} />);
     expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent(
       /your desktop is applying this/i,
     );
   });
 
   it('confirms the apply landed, and stops offering the button', () => {
-    render(<RemoteApplyRow requestId="req-1" online job={job('applied')} />);
+    render(<RemoteApplyRow {...covered({ job: job('applied') })} />);
     expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent('Applied ✓');
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
+  });
+
+  it('does not nag about opening another site once the request has been applied', () => {
+    render(
+      <RemoteApplyRow
+        requestId="req-1"
+        targetSiteKey="east"
+        desktop={null}
+        anyDesktopLive
+        requestSiteName="East Stake"
+        job={job('applied')}
+      />,
+    );
+    expect(screen.queryByTestId('remote-apply-needs-site-req-1')).toBeNull();
   });
 
   it('tells the manager to finish on the desktop when the Kindoo write landed but SBA did not', () => {
     render(
       <RemoteApplyRow
-        requestId="req-1"
-        online
-        job={job('partial', {
-          code: 'sba_incomplete',
-          message: 'Kindoo was updated, but marking the request complete failed.',
+        {...covered({
+          job: job('partial', {
+            code: 'sba_incomplete',
+            message: 'Kindoo was updated, but marking the request complete failed.',
+          }),
         })}
       />,
     );
@@ -210,11 +396,11 @@ describe('<RemoteApplyRow />', () => {
   it("shows the desktop's own failure message, and offers another try", () => {
     render(
       <RemoteApplyRow
-        requestId="req-1"
-        online
-        job={job('failed', {
-          code: 'site_mismatch',
-          message: 'Your desktop is on Site A; this request needs Site B.',
+        {...covered({
+          job: job('failed', {
+            code: 'site_mismatch',
+            message: 'Your desktop is on Site A; this request needs Site B.',
+          }),
         })}
       />,
     );
@@ -231,14 +417,14 @@ describe('<RemoteApplyRow />', () => {
     // headline would go redo a provision that may already be done.
     render(
       <RemoteApplyRow
-        requestId="req-1"
-        online
-        job={job('failed', {
-          code: 'error',
-          message:
-            'Your desktop stopped partway through this request, so it never reported back. ' +
-            'It may or may not have gone through in Kindoo — check this request on your ' +
-            'desktop before applying again.',
+        {...covered({
+          job: job('failed', {
+            code: 'error',
+            message:
+              'Your desktop stopped partway through this request, so it never reported back. ' +
+              'It may or may not have gone through in Kindoo — check this request on your ' +
+              'desktop before applying again.',
+          }),
         })}
       />,
     );
@@ -251,7 +437,7 @@ describe('<RemoteApplyRow />', () => {
   });
 
   it('explains a job the desktop never picked up, and offers another try', () => {
-    render(<RemoteApplyRow requestId="req-1" online job={job('cancelled')} />);
+    render(<RemoteApplyRow {...covered({ job: job('cancelled') })} />);
     const status = screen.getByTestId('remote-apply-status-req-1');
     expect(status).toHaveAttribute('data-status', 'cancelled');
     expect(status).toHaveTextContent(/didn't pick this up/i);
@@ -264,7 +450,7 @@ describe('<RemoteApplyRow />', () => {
       isPending: false,
       isError: true,
     });
-    render(<RemoteApplyRow requestId="req-1" online />);
+    render(<RemoteApplyRow {...covered()} />);
     expect(screen.getByRole('alert')).toHaveTextContent(/Couldn't send this to your desktop/i);
   });
 
@@ -274,7 +460,7 @@ describe('<RemoteApplyRow />', () => {
       isPending: true,
       isError: false,
     });
-    render(<RemoteApplyRow requestId="req-1" online />);
+    render(<RemoteApplyRow {...covered()} />);
     expect(screen.getByText(/Sending to your desktop/i)).toBeInTheDocument();
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
   });

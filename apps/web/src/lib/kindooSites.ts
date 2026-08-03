@@ -14,9 +14,19 @@
 //     foreign KindooSite's `display_name` to render as a small badge on
 //     ward-scope seats, or `null` for home-site / stake-scope / when the
 //     catalogues haven't loaded.
+//   - `remoteApplyTargetSiteKey(scope, wards, buildings)` /
+//     `siteKeyLabel(...)` / `homeSiteName(...)` — the same resolution in
+//     remote apply's site-KEY vocabulary, where home is a site like any
+//     other rather than a `null`. Unresolvable stays distinguishable
+//     from home, because remote apply must fail closed on it.
 
-import { resolveWardSite } from '@kindoo/shared';
-import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
+import {
+  REMOTE_APPLY_HOME_SITE_KEY,
+  remoteApplySiteKey,
+  resolveWardBuilding,
+  resolveWardSite,
+} from '@kindoo/shared';
+import type { Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 
 /**
  * Normalise a building's `kindoo_site_id`. Legacy docs may have the
@@ -80,6 +90,70 @@ export function siteLabelForSeat(
   const site = sites.find((s) => s.id === siteId);
   if (!site) return null;
   return site.display_name;
+}
+
+/**
+ * The Kindoo site key a request must be provisioned on — the value that
+ * gates remote apply and lands on the job as `target_site_key`.
+ *
+ * Derived, never read off the request: `AccessRequest.kindoo_site_id`
+ * means something else entirely (the site of the grant a `remove`
+ * targets, absent on add/edit). Stake scope is home-only per spec §15;
+ * ward scope resolves through the ward's assigned building.
+ *
+ * **Returns `null` when it can't be resolved** — an unknown ward, or a
+ * ward whose building reference is orphaned, and also the ordinary case
+ * of the catalogues not having loaded yet. Callers must fail closed on
+ * `null` rather than assuming home: offering to apply a request whose
+ * site is unknown produces a button the desktop then refuses.
+ */
+export function remoteApplyTargetSiteKey(
+  scope: string,
+  wards: readonly Ward[],
+  buildings: readonly Building[],
+): string | null {
+  if (!scope) return null;
+  if (scope === 'stake') return REMOTE_APPLY_HOME_SITE_KEY;
+  const ward = wards.find((w) => w.ward_code === scope);
+  if (!ward) return null;
+  const building = resolveWardBuilding(ward, buildings);
+  if (!building) return null;
+  return remoteApplySiteKey(normaliseSiteId(building.kindoo_site_id));
+}
+
+/**
+ * Human label for a Kindoo site key. Home has no catalogue doc — its
+ * name lives on the stake parent — so the caller passes it in.
+ *
+ * Returns `null` when the key names a site the catalogue doesn't carry,
+ * which callers render as "no name to show" rather than as an empty
+ * string.
+ */
+export function siteKeyLabel(
+  siteKey: string,
+  sites: readonly KindooSite[],
+  homeName: string | null,
+): string | null {
+  if (siteKey === REMOTE_APPLY_HOME_SITE_KEY) return homeName;
+  return sites.find((s) => s.id === siteKey)?.display_name ?? null;
+}
+
+/**
+ * The name to show for the stake's home Kindoo site. `kindoo_config`
+ * captures what Kindoo itself calls the site, which is what a manager
+ * sees in the tab they're being asked to open; the expected-name
+ * override and the stake name are progressively weaker stand-ins.
+ */
+export function homeSiteName(
+  stake:
+    | Pick<Stake, 'stake_name' | 'kindoo_expected_site_name' | 'kindoo_config'>
+    | null
+    | undefined,
+): string | null {
+  if (!stake) return null;
+  return (
+    stake.kindoo_config?.site_name || stake.kindoo_expected_site_name || stake.stake_name || null
+  );
 }
 
 /**

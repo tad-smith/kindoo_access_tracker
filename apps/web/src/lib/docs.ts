@@ -41,6 +41,7 @@ import type {
   Organization,
   PlatformAuditLog,
   PlatformSuperadmin,
+  RemoteApplyDesktop,
   RemoteApplyJob,
   RemoteApplyPresence,
   Seat,
@@ -111,10 +112,10 @@ export function platformAuditLogCol(db: Firestore): CollectionReference<Platform
 
 /**
  * `remoteApply/{canonicalEmail}` — the manager's own remote-apply
- * mailbox: presence + opt-in published by their desktop extension.
- * Top-level (not per-stake) because the extension publishes one
- * presence doc per person, carrying the stake it resolved; the phone
- * compares that against its active stake.
+ * mailbox parent: the profile-wide opt-in and nothing else. Top-level
+ * (not per-stake) because the key is the manager's canonical email and
+ * the extension resolves the stake from whichever Kindoo site its tab
+ * is in — stake is a field on the child docs, not a path segment.
  */
 export function remoteApplyRef(
   db: Firestore,
@@ -122,6 +123,21 @@ export function remoteApplyRef(
 ): DocumentReference<RemoteApplyPresence> {
   return doc(db, 'remoteApply', canonicalEmail).withConverter(
     passthroughConverter<RemoteApplyPresence>(),
+  );
+}
+
+/**
+ * `remoteApply/{canonicalEmail}/desktops` — one doc per Kindoo site the
+ * manager has a live tab on, keyed by the SBA site id. A stake can run
+ * more than one Kindoo site and a tab can only provision for the site
+ * it is inside, so liveness is per site rather than per manager.
+ */
+export function remoteApplyDesktopsCol(
+  db: Firestore,
+  canonicalEmail: string,
+): CollectionReference<RemoteApplyDesktop> {
+  return collection(db, 'remoteApply', canonicalEmail, 'desktops').withConverter(
+    passthroughConverter<RemoteApplyDesktop>(),
   );
 }
 

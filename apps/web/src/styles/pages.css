@@ -327,10 +327,10 @@
   transform: translateY(-1px);
 }
 
-.kd-remote-apply-presence[data-state='online'] {
+.kd-remote-apply-presence[data-state='live'] {
   color: var(--kd-success-fg);
 }
-.kd-remote-apply-presence[data-state='online'] .kd-remote-apply-dot {
+.kd-remote-apply-presence[data-state='live'] .kd-remote-apply-dot {
   background: var(--kd-success);
 }
 
@@ -375,6 +375,17 @@
 .kd-remote-apply-state.is-error {
   color: var(--kd-danger-fg);
   background: var(--kd-danger-bg);
+}
+
+/* "Open <site> in Kindoo to apply this one." Sits where the button
+   would be when the manager's live Kindoo tabs are on other sites.
+   Deliberately quiet — nothing has gone wrong, the card just isn't
+   actionable from this phone until they open that site. */
+.kd-remote-apply-needs-site {
+  margin: 0;
+  width: 100%;
+  font-size: 0.92em;
+  color: var(--kd-fg-3);
 }
 
 /* Thumb-sized tap target. Full width on a phone; content width once

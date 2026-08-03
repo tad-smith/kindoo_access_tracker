@@ -22,6 +22,12 @@ vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
   useRemoteApplyPresence: () => useRemoteApplyPresenceMock(),
   useRemoteApplyJobsByRequest: () => ({ byRequest: new Map(), isLoading: false }),
+  // The catalogues remote apply derives a request's target Kindoo site
+  // from. Empty here — the surface that reads them is stubbed below.
+  useKindooSites: () => ({ data: [], isLoading: false }),
+  useQueueWards: () => ({ data: [], isLoading: false }),
+  useQueueBuildings: () => ({ data: [], isLoading: false }),
+  useQueueStakeDoc: () => ({ data: undefined, isLoading: false }),
 }));
 
 // The remote-apply surface has its own test file; stub it out here so
@@ -120,8 +126,8 @@ beforeEach(() => {
   // it did before remote apply existed.
   useRemoteApplyPresenceMock.mockReturnValue({
     state: 'off',
-    online: false,
-    siteName: null,
+    desktops: [],
+    desktopForSite: () => null,
     presence: undefined,
   });
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));

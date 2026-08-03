@@ -23,8 +23,10 @@ import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import {
+  REMOTE_APPLY_HOME_SITE_KEY,
   REMOTE_APPLY_PICKUP_TIMEOUT_MS,
   REMOTE_APPLY_STALE_MS,
+  type RemoteApplyDesktopWithId,
   type RemoteApplyJob,
   type RemoteApplyPresence,
   type TimestampLike,
@@ -67,6 +69,11 @@ vi.mock('../../../lib/firebase', () => ({
 
 vi.mock('../../../lib/docs', () => ({
   remoteApplyRef: (db: unknown, canonical: string) => ({ __ref: 'remoteApply', canonical, db }),
+  remoteApplyDesktopsCol: (db: unknown, canonical: string) => ({
+    __col: 'desktops',
+    canonical,
+    db,
+  }),
   remoteApplyJobsCol: (db: unknown, canonical: string) => ({ __col: 'jobs', canonical, db }),
   remoteApplyJobRef: (db: unknown, canonical: string, jobId: string) => ({
     __ref: 'job',
@@ -75,6 +82,10 @@ vi.mock('../../../lib/docs', () => ({
     db,
   }),
   requestsCol: (db: unknown, stakeId: string) => ({ __col: 'requests', stakeId, db }),
+  kindooSitesCol: (db: unknown, stakeId: string) => ({ __col: 'kindooSites', stakeId, db }),
+  wardsCol: (db: unknown, stakeId: string) => ({ __col: 'wards', stakeId, db }),
+  buildingsCol: (db: unknown, stakeId: string) => ({ __col: 'buildings', stakeId, db }),
+  stakeRef: (db: unknown, stakeId: string) => ({ __ref: 'stake', stakeId, db }),
 }));
 
 import {
@@ -98,14 +109,29 @@ function ts(atMs: number): TimestampLike {
   };
 }
 
+/** The mailbox parent: the profile-wide opt-in, and nothing else. */
 function presenceDoc(overrides: Partial<RemoteApplyPresence> = {}): RemoteApplyPresence {
   return {
     remote_apply_enabled: true,
-    last_seen_at: ts(T0),
+    ext_version: '2.5.0',
+    lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    ...overrides,
+  };
+}
+
+/** One live Kindoo tab, on one site. Doc id is the site key. */
+function desktopDoc(
+  siteKey: string,
+  overrides: Partial<RemoteApplyDesktopWithId> = {},
+): RemoteApplyDesktopWithId {
+  return {
+    site_key: siteKey,
     stake_id: 'csnorth',
+    kindoo_site_id: siteKey === REMOTE_APPLY_HOME_SITE_KEY ? null : siteKey,
+    last_seen_at: ts(T0),
     kindoo_eid: 4242,
-    kindoo_site_name: 'Colorado Springs North',
-    ext_version: '2.4.0',
+    kindoo_site_name: siteKey === REMOTE_APPLY_HOME_SITE_KEY ? 'Colorado Springs North' : siteKey,
+    ext_version: '2.5.0',
     lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
     ...overrides,
   };
@@ -148,61 +174,127 @@ afterEach(() => {
 });
 
 describe('useRemoteApplyPresence', () => {
-  it('reports the desktop online, with its Kindoo site name, on a fresh opted-in heartbeat', () => {
+  it('reports live, and lists a fresh tab per Kindoo site', () => {
     useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY), desktopDoc('east')]),
+    );
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
-    expect(result.current.state).toBe('online');
-    expect(result.current.online).toBe(true);
-    expect(result.current.siteName).toBe('Colorado Springs North');
+    expect(result.current.state).toBe('live');
+    expect(result.current.desktops.map((d) => d.site_key)).toEqual(['home', 'east']);
   });
 
-  it('reports stale when the heartbeat has aged past the staleness window', () => {
-    useFirestoreDocMock.mockReturnValue(
-      docResult(presenceDoc({ last_seen_at: ts(T0 - REMOTE_APPLY_STALE_MS - 1000) })),
+  it('reads the desktops subcollection, keyed by site so two tabs coexist', () => {
+    renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    const [q, options] = useFirestoreCollectionMock.mock.calls[0] as [unknown, unknown];
+    expect(q).toEqual({ __col: 'desktops', canonical: 'mgr@gmail.com', db: { __db: true } });
+    expect(options).toEqual({ idField: 'site_key' });
+  });
+
+  it('serves a request only from the tab that is on its site', () => {
+    // The whole point of the split: a tab on the home site cannot
+    // provision for a foreign site, however alive it is.
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY)]));
+    const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    expect(result.current.desktopForSite(REMOTE_APPLY_HOME_SITE_KEY)?.site_key).toBe('home');
+    expect(result.current.desktopForSite('east')).toBeNull();
+  });
+
+  it('offers no desktop for a request whose target site could not be resolved', () => {
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY)]));
+    const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    expect(result.current.desktopForSite(null)).toBeNull();
+  });
+
+  it('reports stale when every tab heartbeat has aged past the staleness window', () => {
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([
+        desktopDoc(REMOTE_APPLY_HOME_SITE_KEY, {
+          last_seen_at: ts(T0 - REMOTE_APPLY_STALE_MS - 1000),
+        }),
+      ]),
     );
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
     expect(result.current.state).toBe('stale');
-    expect(result.current.online).toBe(false);
+    expect(result.current.desktops).toEqual([]);
+  });
+
+  it('reports stale when the manager opted in but never had a Kindoo tab open', () => {
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(docResult([]));
+    const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    expect(result.current.state).toBe('stale');
   });
 
   it('reports off when the extension opt-in has not been turned on', () => {
     useFirestoreDocMock.mockReturnValue(docResult(presenceDoc({ remote_apply_enabled: false })));
+    useFirestoreCollectionMock.mockReturnValue(docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY)]));
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
     expect(result.current.state).toBe('off');
+    // A live tab without consent must not leak into the gate either.
+    expect(result.current.desktops).toEqual([]);
   });
 
-  it('reports off when the manager has no presence doc at all', () => {
+  it('reports off when the manager has no opt-in doc at all', () => {
     useFirestoreDocMock.mockReturnValue(docResult(undefined));
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
     expect(result.current.state).toBe('off');
   });
 
-  it('reports other-stake when a fresh desktop is sitting in a different stake', () => {
-    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc({ stake_id: 'otherstake' })));
+  it('reports other-stake when every fresh tab is sitting in a different stake', () => {
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY, { stake_id: 'otherstake' })]),
+    );
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
     expect(result.current.state).toBe('other-stake');
-    expect(result.current.online).toBe(false);
+    expect(result.current.desktops).toEqual([]);
   });
 
-  it('renders nothing-yet (loading) until the presence subscription resolves', () => {
+  it('renders nothing-yet (loading) until both subscriptions resolve', () => {
     useFirestoreDocMock.mockReturnValue(docResult(undefined, true));
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
     expect(result.current.state).toBe('loading');
+
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(docResult(undefined, true));
+    const second = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    expect(second.result.current.state).toBe('loading');
   });
 
   it('goes stale on the clock alone, with no new snapshot to trigger it', () => {
     // A desktop that closes its Kindoo tab stops writing. There is no
     // further snapshot, so the badge has to age itself out.
     useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(docResult([desktopDoc(REMOTE_APPLY_HOME_SITE_KEY)]));
     const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
-    expect(result.current.state).toBe('online');
+    expect(result.current.state).toBe('live');
 
     act(() => {
       vi.advanceTimersByTime(REMOTE_APPLY_STALE_MS + 30_000);
     });
 
     expect(result.current.state).toBe('stale');
-    expect(result.current.online).toBe(false);
+    expect(result.current.desktopForSite(REMOTE_APPLY_HOME_SITE_KEY)).toBeNull();
+  });
+
+  it('drops only the tab that went quiet, keeping its live sibling', () => {
+    useFirestoreDocMock.mockReturnValue(docResult(presenceDoc()));
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([
+        desktopDoc(REMOTE_APPLY_HOME_SITE_KEY, {
+          last_seen_at: ts(T0 - REMOTE_APPLY_STALE_MS - 1000),
+        }),
+        desktopDoc('east'),
+      ]),
+    );
+    const { result } = renderHook(() => useRemoteApplyPresence(), { wrapper: Wrapper });
+    expect(result.current.state).toBe('live');
+    expect(result.current.desktops.map((d) => d.site_key)).toEqual(['east']);
+    expect(result.current.desktopForSite(REMOTE_APPLY_HOME_SITE_KEY)).toBeNull();
   });
 });
 
@@ -216,6 +308,7 @@ describe('pickRemoteApplyJob', () => {
       job_id: jobId,
       request_id: 'req-7',
       stake_id: 'csnorth',
+      target_site_key: REMOTE_APPLY_HOME_SITE_KEY,
       status,
       created_at: (createdAtMs === null ? null : ts(createdAtMs)) as TimestampLike,
       created_by_device: 'device-1',
@@ -292,6 +385,7 @@ describe('useRemoteApplyJobsByRequest', () => {
       job_id: jobId,
       request_id: requestId,
       stake_id: 'csnorth',
+      target_site_key: REMOTE_APPLY_HOME_SITE_KEY,
       status,
       created_at: ts(createdAtMs),
       created_by_device: 'device-1',
@@ -339,7 +433,10 @@ describe('useQueueRemoteApplyJob', () => {
   it('creates the job at queued with only the fields the rules allow', async () => {
     const { result } = renderHook(() => useQueueRemoteApplyJob(), { wrapper: Wrapper });
     await act(async () => {
-      await result.current.mutateAsync('req-7');
+      await result.current.mutateAsync({
+        requestId: 'req-7',
+        targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+      });
     });
 
     expect(addDocMock).toHaveBeenCalledTimes(1);
@@ -352,6 +449,7 @@ describe('useQueueRemoteApplyJob', () => {
       'request_id',
       'stake_id',
       'status',
+      'target_site_key',
     ]);
     expect(body.status).toBe('queued');
     expect(body.request_id).toBe('req-7');
@@ -361,11 +459,39 @@ describe('useQueueRemoteApplyJob', () => {
     expect(body.lastActor).toEqual({ email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' });
   });
 
+  it('stamps the job with the Kindoo site it must be applied on', async () => {
+    // Only a tab inside this site may claim it — that is what stops the
+    // stake's other Kindoo tab taking work it cannot perform.
+    const { result } = renderHook(() => useQueueRemoteApplyJob(), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ requestId: 'req-7', targetSiteKey: 'east' });
+    });
+    const [, body] = addDocMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(body.target_site_key).toBe('east');
+  });
+
+  it('stamps the home key on a request that provisions on the home site', async () => {
+    // Home is a site like any other here: a home job must not be
+    // claimable by a tab parked on a foreign site.
+    const { result } = renderHook(() => useQueueRemoteApplyJob(), { wrapper: Wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({
+        requestId: 'req-7',
+        targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+      });
+    });
+    const [, body] = addDocMock.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(body.target_site_key).toBe('home');
+  });
+
   it('resolves to the new job id so the card can follow it', async () => {
     const { result } = renderHook(() => useQueueRemoteApplyJob(), { wrapper: Wrapper });
     let jobId = '';
     await act(async () => {
-      jobId = await result.current.mutateAsync('req-7');
+      jobId = await result.current.mutateAsync({
+        requestId: 'req-7',
+        targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+      });
     });
     expect(jobId).toBe('job-1');
   });
@@ -402,6 +528,7 @@ describe('useRemoteApplyPickupTimeout', () => {
     return {
       request_id: 'req-7',
       stake_id: 'csnorth',
+      target_site_key: REMOTE_APPLY_HOME_SITE_KEY,
       status: 'queued',
       created_at: ts(T0),
       created_by_device: 'device-1',

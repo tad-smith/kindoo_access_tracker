@@ -13,7 +13,14 @@
 // (the no-pickup timeout) — every other transition belongs to the
 // extension and is rules-enforced.
 //
-//   - `useRemoteApplyPresence()` — is the desktop usable right now?
+// Liveness is **per Kindoo site**, not per manager: a stake can run
+// more than one Kindoo site and a tab can only provision for the site
+// it is inside. So the opt-in lives on the mailbox parent and one
+// `desktops/{siteKey}` doc exists per live tab, and whether a request
+// can be applied is a question about *that request's* site.
+//
+//   - `useRemoteApplyPresence()` — the opt-in plus every live tab, and
+//     `desktopForSite()` to ask about one request's target site key.
 //   - `useRemoteApplyJobsByRequest()` — the mailbox's jobs, reduced to
 //     the one job per request a card should render, so a reload doesn't
 //     lose track of an in-flight apply.
@@ -21,6 +28,9 @@
 //     writes.
 //   - `useRemoteApplyPickupTimeout()` — cancels a job the desktop never
 //     claimed.
+//   - `useKindooSites()` / `useQueueWards()` / `useQueueBuildings()` /
+//     `useQueueStakeDoc()` — the catalogues a request's target site is
+//     derived and named from.
 
 import { useMutation } from '@tanstack/react-query';
 import {
@@ -32,23 +42,35 @@ import {
   where,
   type Query,
 } from 'firebase/firestore';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   REMOTE_APPLY_PICKUP_TIMEOUT_MS,
   canonicalEmail,
-  isRemoteApplyOnline,
+  freshRemoteApplyDesktops,
+  isRemoteApplyEnabled,
+  remoteApplyDesktopForRequest,
   type AccessRequest,
+  type Building,
+  type KindooSite,
+  type RemoteApplyDesktopWithId,
   type RemoteApplyJob,
   type RemoteApplyPresence,
+  type Stake,
   type TimestampLike,
+  type Ward,
 } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
 import {
+  buildingsCol,
+  kindooSitesCol,
+  remoteApplyDesktopsCol,
   remoteApplyJobRef,
   remoteApplyJobsCol,
   remoteApplyRef,
   requestsCol,
+  stakeRef,
+  wardsCol,
 } from '../../../lib/docs';
 import { usePrincipal, type Principal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -71,6 +93,45 @@ export function usePendingRequests() {
   return useFirestoreCollection<AccessRequest>(q);
 }
 
+// A request's target Kindoo site is derived — scope → ward → building →
+// site — so remote apply needs the three catalogues that derivation and
+// its labelling walk through. All small (12 wards, a handful of
+// buildings, 0–2 foreign sites) and already live elsewhere in the app.
+
+/** The stake's foreign Kindoo sites, for naming a site key. */
+export function useKindooSites() {
+  const activeStakeId = useActiveStake();
+  const col = useMemo(
+    () => (activeStakeId ? kindooSitesCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreCollection<KindooSite>(col);
+}
+
+/** Wards, for resolving a ward-scope request to its building. */
+export function useQueueWards() {
+  const activeStakeId = useActiveStake();
+  const col = useMemo(() => (activeStakeId ? wardsCol(db, activeStakeId) : null), [activeStakeId]);
+  return useFirestoreCollection<Ward>(col);
+}
+
+/** Buildings, which carry the `kindoo_site_id` the target key comes from. */
+export function useQueueBuildings() {
+  const activeStakeId = useActiveStake();
+  const col = useMemo(
+    () => (activeStakeId ? buildingsCol(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreCollection<Building>(col);
+}
+
+/** The stake parent doc — the only place the home site has a name. */
+export function useQueueStakeDoc() {
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(() => (activeStakeId ? stakeRef(db, activeStakeId) : null), [activeStakeId]);
+  return useFirestoreDoc<Stake>(ref);
+}
+
 /**
  * How often the presence badge re-evaluates freshness. Presence goes
  * stale by the clock, not by a write: a desktop that closes its Kindoo
@@ -82,34 +143,50 @@ export function usePendingRequests() {
 const PRESENCE_RECHECK_MS = 30_000;
 
 /**
- * Why the desktop can (or can't) act right now.
- *   `loading`     — presence subscription hasn't resolved yet; render nothing.
- *   `online`      — opted in, fresh heartbeat, same stake. Show the button.
- *   `stale`       — opted in but the heartbeat aged out (Kindoo tab closed,
- *                   computer asleep, signed out of Kindoo).
- *   `other-stake` — fresh, but the desktop is in a different stake's Kindoo
- *                   site, so it can't apply what's on this screen.
- *   `off`         — no presence doc, or the extension toggle is off. Also the
+ * What the manager's desktop can do for this stake right now.
+ *   `loading`     — a subscription hasn't resolved yet; render nothing.
+ *   `live`        — opted in, with at least one fresh tab in this stake.
+ *                   WHICH requests can be applied is still per-site — ask
+ *                   {@link RemoteApplyPresenceResult.desktopForSite}.
+ *   `stale`       — opted in, but no tab anywhere is heartbeating (Kindoo
+ *                   tab closed, computer asleep, signed out of Kindoo).
+ *   `other-stake` — tabs are alive, all of them in another stake, so none
+ *                   can apply what's on this screen.
+ *   `off`         — no opt-in doc, or the extension toggle is off. Also the
  *                   fallback when the read errors, since the advice ("turn it
  *                   on over there") is the same.
  */
-export type RemoteApplyPresenceState = 'loading' | 'online' | 'stale' | 'other-stake' | 'off';
+export type RemoteApplyPresenceState = 'loading' | 'live' | 'stale' | 'other-stake' | 'off';
 
 export interface RemoteApplyPresenceResult {
   state: RemoteApplyPresenceState;
-  /** Convenience: `state === 'online'`. Gates the Apply button. */
-  online: boolean;
-  /** Kindoo site the desktop is sitting in, when it published one. */
-  siteName: string | null;
+  /**
+   * Every fresh tab in the active stake, one per Kindoo site. This is
+   * what the queue header describes — with two sites live it names
+   * both, because naming one would be a lie about the other.
+   */
+  desktops: RemoteApplyDesktopWithId[];
+  /**
+   * The tab that can run a request whose target site key is
+   * `targetSiteKey`, or `null` when none can. A `null` key — the caller
+   * couldn't derive the request's site — never matches, which is the
+   * fail-closed behaviour: an unknown target can't be routed anywhere.
+   */
+  desktopForSite: (targetSiteKey: string | null) => RemoteApplyDesktopWithId | null;
   presence: RemoteApplyPresence | undefined;
 }
 
 /**
- * Live presence for the signed-in manager's own desktop extension.
+ * Live remote-apply presence for the signed-in manager: the profile-wide
+ * opt-in on the mailbox parent, plus one `desktops/{siteKey}` doc per
+ * Kindoo site they have a live tab on.
  *
- * Freshness is derived from `isRemoteApplyOnline` (shared with the
- * extension) against a clock that ticks every {@link PRESENCE_RECHECK_MS},
- * so an abandoned heartbeat ages out on its own.
+ * Two subscriptions because the two facts have different lifetimes — the
+ * opt-in survives every tab closing, and a tab's liveness is scoped to
+ * the site it is inside. Freshness comes from the shared predicates
+ * against a clock that ticks every {@link PRESENCE_RECHECK_MS}: a closed
+ * tab simply stops writing, which produces no snapshot to react to, so
+ * the page has to age it out itself.
  */
 export function useRemoteApplyPresence(): RemoteApplyPresenceResult {
   const principal = usePrincipal();
@@ -118,31 +195,67 @@ export function useRemoteApplyPresence(): RemoteApplyPresenceResult {
     () => (principal.canonical ? remoteApplyRef(db, principal.canonical) : null),
     [principal.canonical],
   );
+  const desktopsQuery = useMemo(
+    () =>
+      principal.canonical
+        ? (remoteApplyDesktopsCol(
+            db,
+            principal.canonical,
+          ) as unknown as Query<RemoteApplyDesktopWithId>)
+        : null,
+    [principal.canonical],
+  );
   const presenceDoc = useFirestoreDoc<RemoteApplyPresence>(ref);
+  const desktopsCol = useFirestoreCollection<RemoteApplyDesktopWithId>(desktopsQuery, {
+    idField: 'site_key',
+  });
   const now = useNowTick(PRESENCE_RECHECK_MS);
 
   const presence = presenceDoc.data;
+  const allDesktops = desktopsCol.data;
+
+  const desktops = useMemo(
+    () => freshRemoteApplyDesktops(presence, allDesktops, activeStakeId ?? '', now),
+    [presence, allDesktops, activeStakeId, now],
+  );
+
+  // Tabs alive somewhere else. Told apart from "no tab at all" because
+  // the advice differs: a manager whose desktop is heartbeating fine
+  // should switch stakes in Kindoo, not go hunting for a dead tab.
+  // Evaluated by re-running the same freshness predicate per stake, so
+  // the staleness window stays defined in exactly one place.
+  const liveElsewhere = useMemo(() => {
+    const stakes = new Set((allDesktops ?? []).map((d) => d.stake_id));
+    stakes.delete(activeStakeId ?? '');
+    return [...stakes].some(
+      (stakeId) => freshRemoteApplyDesktops(presence, allDesktops, stakeId, now).length > 0,
+    );
+  }, [presence, allDesktops, activeStakeId, now]);
+
   const state: RemoteApplyPresenceState = (() => {
     if (!ref) return 'off';
-    if (presenceDoc.isLoading) return 'loading';
-    if (!presence || presence.remote_apply_enabled !== true) return 'off';
+    if (presenceDoc.isLoading || desktopsCol.isLoading) return 'loading';
+    if (!isRemoteApplyEnabled(presence)) return 'off';
     if (!activeStakeId) return 'off';
-    if (isRemoteApplyOnline(presence, activeStakeId, now)) return 'online';
-    // Opted in but unusable. Distinguish "wrong stake" from "not there"
-    // — telling a manager whose desktop is heartbeating fine to go open
-    // Kindoo sends them chasing the wrong problem. Freshness alone is
-    // `isRemoteApplyOnline` evaluated against the presence's own stake,
-    // so the staleness window stays defined in exactly one place.
-    const heartbeatFresh = isRemoteApplyOnline(presence, presence.stake_id, now);
-    return heartbeatFresh ? 'other-stake' : 'stale';
+    if (desktops.length > 0) return 'live';
+    return liveElsewhere ? 'other-stake' : 'stale';
   })();
 
-  return {
-    state,
-    online: state === 'online',
-    siteName: presence?.kindoo_site_name ?? null,
-    presence,
-  };
+  const desktopForSite = useCallback(
+    (targetSiteKey: string | null) =>
+      targetSiteKey === null
+        ? null
+        : remoteApplyDesktopForRequest(
+            presence,
+            allDesktops,
+            activeStakeId ?? '',
+            targetSiteKey,
+            now,
+          ),
+    [presence, allDesktops, activeStakeId, now],
+  );
+
+  return { state, desktops, desktopForSite, presence };
 }
 
 /** A `RemoteApplyJob` body plus its Firestore doc id (read-layer only). */
@@ -266,6 +379,17 @@ function createdAtRank(job: RemoteApplyJobWithId): number {
   return toMillis(job.created_at) ?? Number.POSITIVE_INFINITY;
 }
 
+export interface QueueRemoteApplyJobInput {
+  requestId: string;
+  /**
+   * The site key this request must be provisioned on, derived by
+   * `remoteApplyTargetSiteKey`. Required — only a tab inside this site
+   * may claim the job, and a request whose site we couldn't derive
+   * never got a button to tap in the first place.
+   */
+  targetSiteKey: string;
+}
+
 /**
  * Queue one apply for the desktop. Resolves to the new job id, which
  * the card holds so it keeps rendering the outcome once the job goes
@@ -283,12 +407,13 @@ export function useQueueRemoteApplyJob() {
   // subscription from the local cache on the next tick, and the card
   // subscribes to the new doc directly.
   return useMutation({
-    mutationFn: async (requestId: string): Promise<string> => {
+    mutationFn: async (input: QueueRemoteApplyJobInput): Promise<string> => {
       if (!principal.canonical) throw new Error('Not signed in.');
       if (!activeStakeId) throw new Error('No active stake.');
       const created = await addDoc(remoteApplyJobsCol(db, principal.canonical), {
-        request_id: requestId,
+        request_id: input.requestId,
         stake_id: activeStakeId,
+        target_site_key: input.targetSiteKey,
         status: 'queued',
         created_at: serverTimestamp(),
         created_by_device: getDeviceId(),

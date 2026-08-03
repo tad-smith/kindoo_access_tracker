@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   filterBuildingsBySite,
+  homeSiteName,
+  remoteApplyTargetSiteKey,
   siteIdForScope,
+  siteKeyLabel,
   siteLabelForGrant,
   siteLabelForSeat,
 } from './kindooSites';
@@ -202,5 +205,98 @@ describe('siteLabelForGrant', () => {
         [site('foreign-1', 'East'), site('foreign-2', 'West')],
       ),
     ).toBe('West');
+  });
+});
+
+describe('remoteApplyTargetSiteKey', () => {
+  it('sends a stake-scope request to the home site', () => {
+    expect(remoteApplyTargetSiteKey('stake', [], [])).toBe('home');
+  });
+
+  it("sends a ward request to its building's foreign site", () => {
+    expect(
+      remoteApplyTargetSiteKey(
+        'CO',
+        [ward('CO', 'Pine Building')],
+        [building('Pine Building', 'foreign-1')],
+      ),
+    ).toBe('foreign-1');
+  });
+
+  it('sends a ward on a home-site building to the home key, not to null', () => {
+    // Home is a site like any other for remote apply — a home request
+    // must not be servable by a tab parked on a foreign site.
+    expect(
+      remoteApplyTargetSiteKey(
+        'CO',
+        [ward('CO', 'Maple Building')],
+        [building('Maple Building', null)],
+      ),
+    ).toBe('home');
+  });
+
+  it('treats a legacy building with no site field as home', () => {
+    expect(
+      remoteApplyTargetSiteKey('CO', [ward('CO', 'Maple Building')], [building('Maple Building')]),
+    ).toBe('home');
+  });
+
+  it('refuses to guess when the ward is not in the catalogue', () => {
+    // Fail closed: an unresolvable target can't be routed to a desktop,
+    // so the phone must not offer a button for it.
+    expect(remoteApplyTargetSiteKey('CO', [], [])).toBeNull();
+  });
+
+  it("refuses to guess when the ward's building reference is orphaned", () => {
+    expect(remoteApplyTargetSiteKey('CO', [ward('CO', 'Gone Building')], [])).toBeNull();
+  });
+
+  it('refuses to guess for an empty scope', () => {
+    expect(remoteApplyTargetSiteKey('', [], [])).toBeNull();
+  });
+});
+
+describe('siteKeyLabel', () => {
+  it('names the home site from the stake, which has no catalogue doc', () => {
+    expect(siteKeyLabel('home', [], 'Colorado Springs North')).toBe('Colorado Springs North');
+  });
+
+  it('names a foreign site from the catalogue', () => {
+    expect(siteKeyLabel('foreign-1', [site('foreign-1', 'East Stake')], 'Home')).toBe('East Stake');
+  });
+
+  it('has no name for a site the catalogue does not carry', () => {
+    expect(siteKeyLabel('ghost', [], 'Home')).toBeNull();
+  });
+});
+
+describe('homeSiteName', () => {
+  it("prefers the name Kindoo itself shows for the stake's site", () => {
+    expect(
+      homeSiteName({
+        stake_name: 'CS North Stake',
+        kindoo_expected_site_name: 'Expected Name',
+        kindoo_config: {
+          site_id: 42,
+          site_name: 'Colorado Springs North',
+          configured_at: stamp,
+          configured_by: actor,
+        },
+      }),
+    ).toBe('Colorado Springs North');
+  });
+
+  it('falls back to the expected-name override before the stake name', () => {
+    expect(
+      homeSiteName({ stake_name: 'STAGING - CS North', kindoo_expected_site_name: 'CS North' }),
+    ).toBe('CS North');
+  });
+
+  it('falls back to the stake name when Kindoo was never configured', () => {
+    expect(homeSiteName({ stake_name: 'CS North Stake' })).toBe('CS North Stake');
+  });
+
+  it('has no name before the stake doc has loaded', () => {
+    expect(homeSiteName(undefined)).toBeNull();
   });
 });
