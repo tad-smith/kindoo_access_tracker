@@ -1,6 +1,6 @@
 # packages/shared — Claude Code guidance
 
-Shared TypeScript types, zod schemas, and pure utility functions consumed by both `apps/web/` and `functions/`. The single source of truth for domain types.
+Shared TypeScript types, zod schemas, and pure utility functions consumed by `apps/web/`, `functions/`, and `extension/`. The single source of truth for domain types.
 
 **Owner agents:** co-owned by `web-engineer` and `backend-engineer`. Coordinate changes via `TASKS.md`.
 
@@ -29,12 +29,15 @@ src/
 ├── canonicalEmail.ts       # the Gmail-aware canonicalization
 ├── hash.ts                 # source-row-hash equivalent (if still needed)
 ├── buildingSlug.ts         # building name → URL-safe slug
+├── existingSeatGate.ts     # can an add be provisioned onto an existing seat
+├── remoteApply.ts          # remote-apply timings, freshness, site keys, claim rule
 └── index.ts
 ```
 
 ## Conventions
 
 - **One source of truth per domain type.** No duplicate `Seat` / `Request` types anywhere else in the monorepo.
+- **A predicate two surfaces must agree on lives here, not in each of them.** A gate expressed twice drifts, and the drift is invisible from either copy — neither surface can see the other's. It also rarely fails safe: the broader copy silently removes a capability for a class of input the other handles, which reads to the user as a bug in the feature rather than a disagreement between two files. `addBlockedByExistingSeat` (`existingSeatGate.ts`), `canClaimRemoteApplyJob` / `remoteApplySiteKey` / `remoteApplyTargetSiteKey` (`remoteApply.ts`), `partitionPendingRequests`, and `deriveRequesterDisplay` are all here for that reason. Take the facts as arguments, not the surface's own data shapes, so a caller can consume it without reshaping its props.
 - **zod schemas mirror types** via `z.infer<typeof schema>`. Define schema once; type comes free.
 - **Pure functions only.** No DOM access, no `fs`, no Node-only APIs, no browser-only APIs. Must work everywhere.
 - **Vitest unit tests** for every utility function and every schema (a `parse` test on representative inputs).
