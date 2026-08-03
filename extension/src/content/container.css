@@ -34,8 +34,8 @@
 
 .sba-slideover {
   /* Vertical offset of the handle. Single knob — nudge this one value
-   * (to ~76px) if Kindoo's own top-right page chrome collides. */
-  --sba-handle-top: 12px;
+   * if Kindoo's own top-right page chrome collides. */
+  --sba-handle-top: 40px;
   --sba-handle-width: 74px;
   --sba-handle-height: 28px;
   --sba-panel-border: 1px;
