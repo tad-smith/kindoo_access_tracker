@@ -76,8 +76,13 @@ extension/
 │   │   ├── NotAuthorizedPanel.tsx
 │   │   ├── StakePicker.tsx        # full-takeover gate when an EID has >1 candidate stake (12.5)
 │   │   ├── ConfigurePanel.tsx     # v2.1 first-run + reconfigure wizard
-│   │   ├── QueuePanel.tsx
+│   │   ├── TabbedShell.tsx        # Toolbar + TabBar + active tab; HOSTS the remote-apply
+│   │   │                          # loop, so it survives a tab switch (D27)
+│   │   ├── Toolbar.tsx            # gray header — signed-in email + Sign out
+│   │   ├── TabBar.tsx             # Request Queue / Sync / gear tab strip
+│   │   ├── QueuePanel.tsx         # queue sections + the remote-apply opt-in row
 │   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
+│   │   ├── RejectDialog.tsx       # per-card reject + required reason
 │   │   ├── ResultDialog.tsx       # v2.2 post-provision result + retry
 │   │   ├── SyncPanel.tsx          # Sync — drift report + per-row Fix actions (Phase 2)
 │   │   └── panel.css              # panel styles (Shadow DOM scoped)

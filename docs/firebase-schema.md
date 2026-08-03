@@ -120,6 +120,104 @@ Audit trail for cross-stake operations (stake creation, superadmin changes) that
 
 **Rules:** read by superadmins; writes server-only.
 
+### 3.4 `remoteApply/{canonicalEmail}` — remote-apply mailbox
+
+The transport for **remote apply** (`architecture.md` D27, `spec.md` §16): a Kindoo Manager taps a pending request on their phone and their own desktop Chrome extension provisions it in Kindoo. The parent doc carries the desktop's presence + opt-in; the `jobs` subcollection carries one doc per tap.
+
+**Top-level, not per-stake.** The doc key is the manager's canonical email and the stake is a **field**, because the desktop resolves its own stake from whichever Kindoo site its active session is in — there is no stake in the path to scope by. The phone compares the published `stake_id` against its active stake (§2.1 of `spec.md`) and treats a mismatch as "your desktop is in another stake".
+
+**Doc ID:** canonical email — the same canonicalization used for `userIndex`, `access`, and `seats` (§3.1). The extension never sends it across the content-script → service-worker boundary; `background/data.ts` derives it from the service worker's own Firebase Auth token, so a compromised page context cannot address another manager's mailbox.
+
+**Fields (presence):**
+
+```typescript
+{
+  remote_apply_enabled?: boolean;  // the extension-side opt-in; ABSENT ⇒ OFF
+  last_seen_at: Timestamp;         // heartbeat, every 60s while a usable Kindoo tab is open
+  stake_id: string;                // stake the extension resolved for its active Kindoo site
+  kindoo_eid: number | null;       // active Kindoo site; null when unresolved
+  kindoo_site_name: string | null; // display name, shown on the phone
+  ext_version: string;             // manifest version, for diagnosing version skew
+  lastActor: { email: string; canonical: string };
+}
+```
+
+`remote_apply_enabled` is the only optional key and reads **absent ⇒ off**, the same defaulting direction as `ManualGrant.level` and `stake.eq_president_app_access` (§2, §4.5): the flag grants a second device authority to provision building access, so a doc predating the toggle must not read as consent. Turning the toggle off rewrites the doc with `remote_apply_enabled: false` rather than deleting it, so the phone can tell "opted out" from "never installed the extension" — and so the button disappears at once instead of after the staleness window.
+
+**Written by:** the extension only — `writeRemotePresence` in `extension/src/background/data.ts`, a `setDoc(..., { merge: true })` so the first heartbeat on a new profile creates the doc. Published **only while the Kindoo session is usable** (the loop resolves the site name via Kindoo's `getEnvironments` each heartbeat and skips the write on rejection); the one exception is the `enabled: false` disable write, which fires regardless because clearing consent must never be blocked by a dead Kindoo tab.
+
+**Read by:** the manager's own phone — `useRemoteApplyPresence()` (`apps/web/src/features/manager/queue/hooks.ts`), a live subscription. Freshness is `isRemoteApplyOnline()` from `@kindoo/shared` (opted in **and** `stake_id` matches the active stake **and** `now - last_seen_at < REMOTE_APPLY_STALE_MS`), re-evaluated on a 30s UI tick because presence goes stale by the clock, not by a write.
+
+**Rules:** read / create / update if `isAuthed() && authedCanonical() == memberCanonical` **and** `isManager(request.resource.data.stake_id)` **and** the field allowlist above **and** `lastActorMatchesAuth`. `delete: false`. The `isManager` conjunct is claims-only (no document read) and exists so a signed-in non-manager can't use their own mailbox as free storage. `stake_id` is deliberately mutable — a manager moving their Kindoo tab to another site republishes a different stake, and `isManager` re-gates the new value.
+
+#### `remoteApply/{canonicalEmail}/jobs/{jobId}`
+
+One doc per tap. **Doc ID:** Firestore auto-id (`addDoc`).
+
+```typescript
+{
+  request_id: string;              // the pending request to apply
+  stake_id: string;                // active stake at tap time
+  status: 'queued' | 'running' | 'applied' | 'partial' | 'failed' | 'cancelled';
+  created_at: Timestamp;
+  created_by_device: string;       // getDeviceId() — the same per-device UUID push uses
+  claimed_at?: Timestamp;
+  claimed_by?: { ext_version: string; kindoo_eid: number | null };
+  finished_at?: Timestamp;
+  outcome?: {
+    code: 'applied' | 'sba_incomplete' | 'site_mismatch' | 'kindoo_session_lost'
+        | 'building_rule_missing' | 'request_not_pending' | 'error';
+    message: string;               // operator-facing sentence, authored on the desktop
+    kindoo_uid?: string;
+    provisioning_note?: string;
+  };
+  lastActor: { email: string; canonical: string };
+}
+```
+
+**Status lifecycle.** Only these transitions exist; each is a separate rule branch pinned on the before-status.
+
+```
+                    phone taps Apply
+                           |
+                           v
+                        queued
+                       /       \
+   extension claims   /         \   phone's 90s no-pickup timeout
+      (queued→running)           (queued→cancelled)
+                     /             \
+                    v               v
+                 running         cancelled
+                /   |   \
+   applied ◄───┘    |    └───► failed
+                    v
+                 partial
+```
+
+- **`queued`** — created by the phone. The create rule admits **no other status** and no pre-baked `claimed_*` / `finished_at` / `outcome`.
+- **`running`** — the extension's claim. This is the lock (see below).
+- **`applied`** — Kindoo write succeeded and `markRequestComplete` succeeded.
+- **`partial`** — Kindoo write succeeded, `markRequestComplete` did **not**. A distinct terminal status, not a failure: access has been granted or revoked and only the SBA bookkeeping is missing. The phone says so and offers no Retry (a retry would consume a second Kindoo licence).
+- **`failed`** — nothing landed in Kindoo. `outcome.code` says which wall was hit.
+- **`cancelled`** — the phone gave up after `REMOTE_APPLY_PICKUP_TIMEOUT_MS` in `queued`. The only transition the phone may write besides the create.
+
+Terminal statuses (`applied` / `partial` / `failed` / `cancelled`) are frozen — no rule branch admits a terminal before-status. Jobs are never deleted; at 1–2 requests/week the collection stays trivially small and the trail is useful when a provision misbehaves.
+
+**Written by:** the phone (`useQueueRemoteApplyJob` creates at `queued`; `useCancelRemoteApplyJob` writes `cancelled`) and the extension's service worker (`claimRemoteApplyJob` writes `running`; `finishRemoteApplyJob` writes the terminal status + outcome).
+
+**Read by:** the extension's poller (`findQueuedRemoteApplyJob` — `where('status','==','queued')` + `limit(1)`, one `getDocs` per tick) and the phone (`useActiveRemoteApplyJobs` — `where('status','in',['queued','running'])`, plus a per-card live subscription to the specific job doc).
+
+**Rules:**
+
+- `read` — owner only, same predicate as the presence doc.
+- `create` — owner + `isManager(stake_id)` + `status == 'queued'` + **an exact key set** (`request_id`, `stake_id`, `status`, `created_at`, `created_by_device`, `lastActor` — `hasOnly` AND `hasAll`, so adding a field to the job doc later requires widening this rule first) + non-empty `request_id` + `lastActorMatchesAuth`.
+- `update` — owner + `lastActorMatchesAuth` + the four core fields unchanged + exactly one of the three transition branches above, each with its own `affectedKeys()` allowlist.
+- `delete: false`.
+
+**The transitions are the lock.** There is no transaction available on the consuming side — the extension's MV3 service worker can't run `runTransaction` (WebChannel needs `XMLHttpRequest`) — so the compare-and-set lives in the rules, the same technique the request reject / complete rules use. Two Kindoo tabs polling the same mailbox both see `queued` and both fire the claim; the first commits, the second now finds `running` where its branch required `queued` and is denied. `claimRemoteApplyJob` maps that single `permission-denied` to `claimed: false` and the tab skips silently; every other error still throws. The same mechanism settles the timeout-versus-claim race in the other direction — the phone's `cancelled` write swallows `permission-denied` because it means the desktop picked the job up after all.
+
+**Two deliberate gaps in the terminal-write rule, both load-bearing.** `finished_at` / `outcome` / `claimed_at` / `claimed_by` are **typed when present but never required** — a denial on the extension's report-back would strand the job in `running` with the phone spinning forever, a worse failure than a terminal row missing a timestamp. And `outcome.code` is checked as `is string`, **not** against the code union above — the union is the desktop's vocabulary and must be able to grow without a rules deploy. Do not tighten either.
+
 ## 4. Per-stake collections
 
 All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` tab in the Apps Script app.
@@ -656,6 +754,8 @@ Combinations beyond these (e.g. `action AND entity_type AND date range`) Firesto
 
 **`access`, `kindooManagers`, `wards`, `buildings`, `kindooSites`, `organizations`:** small enough to load fully and filter client-side. No composite indexes.
 
+**`remoteApply` / `remoteApply/{canonical}/jobs`: no composite index, deliberately.** Both queries against the jobs subcollection filter on one field and order by nothing — the extension's poller runs `where('status','==','queued')` with `limit(1)`, and the phone's active-jobs subscription runs `where('status','in',['queued','running'])`. Single-field filters are served by the automatic index. The presence doc is read by path. If a future query adds a second field or an `orderBy`, it needs an entry in `firestore.indexes.json` — nothing here does today (§3.4).
+
 ### 5.2 Firestore TTL policy
 
 Configured once via `gcloud`:
@@ -762,6 +862,133 @@ service cloud.firestore {
     match /platformAuditLog/{auditId} {
       allow read: if isPlatformSuperadmin();
       allow write: if false;
+    }
+
+    // ----- RemoteApply (phone → desktop-extension mailbox; D27, §3.4) -----
+    // Top-level because the doc key is the manager's canonical email and the
+    // stake is a FIELD — the desktop resolves its own stake from whichever
+    // Kindoo site it is in. Ownership is therefore the anchor on every rule,
+    // and `isManager(<the doc's stake_id>)` is the second gate so a signed-in
+    // non-manager can't use their own mailbox as free storage.
+    match /remoteApply/{memberCanonical} {
+
+      function ownsMailbox(owner) {
+        return isAuthed() && authedCanonical() == owner;
+      }
+
+      // Rules' List API has hasAll / hasOnly but no hasExactly.
+      function keysAreExactly(data, fields) {
+        return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
+      }
+
+      // `remote_apply_enabled` is the only optional key: absent ⇒ opted out.
+      // `kindoo_eid` / `kindoo_site_name` are nullable — the extension may be
+      // online with the active site unresolved.
+      function validPresence(data) {
+        return data.keys().hasOnly(['remote_apply_enabled', 'last_seen_at', 'stake_id',
+                                    'kindoo_eid', 'kindoo_site_name', 'ext_version',
+                                    'lastActor'])
+          && data.keys().hasAll(['last_seen_at', 'stake_id', 'kindoo_eid',
+                                 'kindoo_site_name', 'ext_version', 'lastActor'])
+          && (!('remote_apply_enabled' in data) || data.remote_apply_enabled is bool)
+          && data.last_seen_at is timestamp
+          && data.stake_id is string
+          && (data.kindoo_eid == null || data.kindoo_eid is int)
+          && (data.kindoo_site_name == null || data.kindoo_site_name is string)
+          && data.ext_version is string;
+      }
+
+      allow read: if ownsMailbox(memberCanonical);
+      // Create and update share a predicate: the extension rewrites the whole
+      // presence doc on every heartbeat. `stake_id` is deliberately mutable.
+      allow create, update: if ownsMailbox(memberCanonical)
+        && isManager(request.resource.data.stake_id)
+        && validPresence(request.resource.data)
+        && lastActorMatchesAuth(request.resource.data);
+      // Opting out clears the flag; it never deletes the doc.
+      allow delete: if false;
+
+      match /jobs/{jobId} {
+
+        // Set once by the phone, never moved. The per-transition allowlists
+        // below already exclude these; this states the invariant directly.
+        function jobCoreUnchanged(before, after) {
+          return after.request_id == before.request_id
+            && after.stake_id == before.stake_id
+            && after.created_at == before.created_at
+            && after.created_by_device == before.created_by_device;
+        }
+
+        // Terminal-write shape. `finished_at` / `outcome` are typed when
+        // present but NOT required — a denial here would strand the job in
+        // `running` and leave the phone spinning forever. `outcome.code` is
+        // checked as a string, not against the RemoteApplyOutcomeCode union,
+        // so the desktop's vocabulary can grow without a rules deploy.
+        function validFinish(data) {
+          return (!('finished_at' in data) || data.finished_at is timestamp)
+            && (!('outcome' in data)
+                || (data.outcome.keys()
+                      .hasOnly(['code', 'message', 'kindoo_uid', 'provisioning_note'])
+                    && data.outcome.code is string
+                    && data.outcome.message is string));
+        }
+
+        allow read: if ownsMailbox(memberCanonical);
+
+        // Born `queued`, carrying exactly the six fields the phone knows at
+        // tap time. Exact key set, not a minimum — adding a field to the job
+        // doc requires widening this rule first.
+        allow create: if ownsMailbox(memberCanonical)
+          && isManager(request.resource.data.stake_id)
+          && request.resource.data.status == 'queued'
+          && keysAreExactly(request.resource.data,
+                            ['request_id', 'stake_id', 'status', 'created_at',
+                             'created_by_device', 'lastActor'])
+          && request.resource.data.request_id is string
+          && request.resource.data.request_id.size() > 0
+          && request.resource.data.stake_id is string
+          && request.resource.data.created_at is timestamp
+          && request.resource.data.created_by_device is string
+          && lastActorMatchesAuth(request.resource.data);
+
+        // The status transitions ARE the lock — no runTransaction is
+        // available in an MV3 service worker. Each branch pins the BEFORE
+        // status, which is what resolves the two-tab claim race and freezes
+        // a job once it reaches a terminal status.
+        allow update: if ownsMailbox(memberCanonical)
+          && lastActorMatchesAuth(request.resource.data)
+          && jobCoreUnchanged(resource.data, request.resource.data)
+          && (
+            // queued → running — a Kindoo tab claiming the job.
+            (resource.data.status == 'queued'
+             && request.resource.data.status == 'running'
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'claimed_at', 'claimed_by', 'lastActor'])
+             && (!('claimed_at' in request.resource.data)
+                 || request.resource.data.claimed_at is timestamp)
+             && (!('claimed_by' in request.resource.data)
+                 || request.resource.data.claimed_by.ext_version is string))
+            ||
+            // queued → cancelled — the phone's 90s no-pickup timeout.
+            (resource.data.status == 'queued'
+             && request.resource.data.status == 'cancelled'
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'finished_at', 'outcome', 'lastActor'])
+             && validFinish(request.resource.data))
+            ||
+            // running → terminal — the extension reporting back. `partial` is
+            // a distinct outcome, not a failure: Kindoo took the write and
+            // markRequestComplete did not.
+            (resource.data.status == 'running'
+             && request.resource.data.status in ['applied', 'partial', 'failed']
+             && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['status', 'finished_at', 'outcome', 'lastActor'])
+             && validFinish(request.resource.data))
+          );
+
+        // Jobs are history.
+        allow delete: if false;
+      }
     }
 
     // ===== Per-stake collections =====
@@ -1092,6 +1319,8 @@ service cloud.firestore {
 - **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D24).
 - **Requests-create limited-access clause** — the last conjunct of the create predicate narrows the submit surface for a caller carrying `stakes[stakeId].limited` (§2, D25): `type in ['add_temp','edit_temp','remove']`; `remove` and `edit_temp` each only against a seat whose `type == 'temp'` (keyed on `seat_member_canonical` and `member_canonical` respectively — the two request families identify their target seat differently); temp windows ≤ 90 days end-to-start; and ward-scope temp requests locked to exactly that ward's own building. Stake scope keeps the free building choice — there is no single ward to lock to. Three properties are load-bearing. **(a) It is a narrowing, not a branch.** The clause is `&&`-ed onto the predicate, so a limited caller must still satisfy the role-for-scope gate above; the flag authorises nothing by itself. **(b) Full users pay nothing.** `!isLimited(stakeId)` short-circuits the whole clause, so neither the ward/building reads nor the seat read execute for them. **(c) Position matters.** It is last so the ISO-shape and `start_date <= end_date` gates have already run, which is what makes the unguarded `split()` / `int()` inside `tempWindowWithin90Days` safe. Enforcement is **creation-time only** — deliberately no `markRequestComplete` third layer, unlike Policy 1 (`spec.md` §6.1). The ward lock resolves the building id-first with a raw-name fallback; the whole clause costs at most 4 of the 10 document accesses a single-document request allows (ward `get`, building `exists`, building `get`, plus the seat `get` on a ward-scope `edit_temp`). The SPA mirrors every clause (`scopeOptions.ts`, `schemas.ts`, `NewRequestForm`, `EditSeatDialog`) and is stricter in one place — `canRemoveSeat` also requires the specific grant row to be temp, which a rules `get()` cannot cheaply prove. See `architecture.md` D25 and `spec.md` §4 / §6.1.
 - **No `access` rules change was needed for the tier marker** — `manual_grants` is already in the access `update` `affectedKeys()` allowlist and the `create` predicate only counts entries, so a grant object carrying an extra `level` key rides the existing rule (§4.5).
+- **`remoteApply` is the only place a status transition substitutes for a transaction on the *client* side** — the request `reject` / `complete` rules use the same pin-the-before-status technique, but there a transaction was available and merely redundant. Here the consumer is an MV3 service worker where `runTransaction` throws at runtime, so the rule is the entire concurrency control. Three properties are load-bearing and should survive any edit. **(a) Every branch pins `resource.data.status`,** which is what makes a lost claim race a clean `permission-denied` rather than a double-provision, and what freezes a terminal job. **(b) The terminal fields are typed, not required** — requiring them would convert a malformed report-back into a job stuck in `running` forever, with the phone showing a spinner and no way out. **(c) `outcome.code` is `is string`, not a union match** — the codes are the desktop extension's vocabulary and it ships through Chrome Web Store review on its own cadence; pinning them here would mean a rules deploy is a prerequisite for an extension release. See §3.4 and `architecture.md` D27.
+- **Both `remoteApply` write predicates carry `isManager` as well as ownership** — ownership alone would let any signed-in user write arbitrary documents to `remoteApply/{their own email}`, since the doc key is their own email. The `isManager` conjunct reads the claim only (no `get()`), so it costs nothing on the heartbeat path.
 
 #### Bootstrap-admin gate
 
@@ -1140,6 +1369,8 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `reconcileAuditGaps` | Cloud Scheduler nightly | Diffs entity collections vs auditLog; pages on gaps |
 
 Total: ~10–12 Cloud Functions. None hot-path; all run on free tier at this scale.
+
+**Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 
 **Organizations deltas (PR #224).** The parameterized `auditTrigger` gains `auditOrganizationWrites` on `stakes/{sid}/organizations/{orgId}`, fanning rows as `entity_type='stake'`, `entity_id='organization:<slug>'` (same pattern as wards / buildings / kindooSites — organizations are not a first-class audit entity type). `reconcileAuditGaps` adds `organizations` to its `AUDITED_COLLECTIONS` list. Inline seat org edits audit automatically as `update_seat` (the existing `auditSeatWrites` path). `markRequestComplete` carries the request's `organization_id` onto the seat on stake-scope add/edit completion (new-seat primary, the stake-grant slot in the auto-merge path, and the resolved edit slot). Add vs edit are asymmetric: an **add** auto-merge onto an existing stake grant re-stamps `organization_id` **only when the request carries a non-null id** (the add form never pre-fills org, so a `null` add must not silently clear an existing org); the brand-new-seat add still writes `null` when none is picked. An **edit** is authoritative — the form pre-fills, so `null` clears. `syncApplyFix` preserves a client-set `organization_id` through auto-seat rewrites and clears it in `applyScopeMismatch` when a seat moves off stake scope to a ward. No new composite index.
 
