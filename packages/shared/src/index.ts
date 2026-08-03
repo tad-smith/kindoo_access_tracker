@@ -23,6 +23,7 @@ export { REQUESTER_GUIDE_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
 export {
   REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_HOME_SITE_KEY,
   REMOTE_APPLY_PICKUP_TIMEOUT_MS,
   REMOTE_APPLY_POLL_HIDDEN_MS,
   REMOTE_APPLY_POLL_VISIBLE_MS,
@@ -33,6 +34,7 @@ export {
   isRemoteApplyEnabled,
   isRemoteApplyTerminal,
   remoteApplyDesktopForRequest,
+  remoteApplySiteKey,
 } from './remoteApply.js';
 export {
   deriveRequesterDisplay,

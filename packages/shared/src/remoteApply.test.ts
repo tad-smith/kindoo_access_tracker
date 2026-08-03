@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_HOME_SITE_KEY,
   REMOTE_APPLY_STALE_MS,
   canClaimRemoteApplyJob,
   freshRemoteApplyDesktops,
   isRemoteApplyEnabled,
   isRemoteApplyTerminal,
   remoteApplyDesktopForRequest,
+  remoteApplySiteKey,
 } from './remoteApply.js';
 import type { RemoteApplyDesktopWithId, RemoteApplyPresence } from './types/remoteApply.js';
 
@@ -30,10 +32,11 @@ const enabled: RemoteApplyPresence = {
 };
 
 function desktop(
-  overrides: Partial<RemoteApplyDesktopWithId> & { site_id: string },
+  overrides: Partial<RemoteApplyDesktopWithId> & { site_key: string },
 ): RemoteApplyDesktopWithId {
   return {
     stake_id: 'stake-a',
+    kindoo_site_id: null,
     last_seen_at: ts(NOW - 5_000),
     kindoo_eid: 1001,
     kindoo_site_name: 'North Building',
@@ -43,8 +46,8 @@ function desktop(
   };
 }
 
-const siteA = desktop({ site_id: 'site-a' });
-const siteB = desktop({ site_id: 'site-b', kindoo_eid: 1002, kindoo_site_name: 'South Building' });
+const siteA = desktop({ site_key: 'site-a' });
+const siteB = desktop({ site_key: 'site-b', kindoo_eid: 1002, kindoo_site_name: 'South Building' });
 
 describe('isRemoteApplyEnabled', () => {
   it('treats an absent opt-in as off', () => {
@@ -61,7 +64,7 @@ describe('isRemoteApplyEnabled', () => {
 describe('freshRemoteApplyDesktops', () => {
   it('returns every fresh tab in the active stake', () => {
     const fresh = freshRemoteApplyDesktops(enabled, [siteA, siteB], 'stake-a', NOW);
-    expect(fresh.map((d) => d.site_id)).toEqual(['site-a', 'site-b']);
+    expect(fresh.map((d) => d.site_key)).toEqual(['site-a', 'site-b']);
   });
 
   it('returns nothing while the profile is opted out, however fresh the tabs', () => {
@@ -69,29 +72,40 @@ describe('freshRemoteApplyDesktops', () => {
   });
 
   it('drops tabs sitting in another stake', () => {
-    const other = desktop({ site_id: 'site-c', stake_id: 'stake-b' });
+    const other = desktop({ site_key: 'site-c', stake_id: 'stake-b' });
     const fresh = freshRemoteApplyDesktops(enabled, [siteA, other], 'stake-a', NOW);
-    expect(fresh.map((d) => d.site_id)).toEqual(['site-a']);
+    expect(fresh.map((d) => d.site_key)).toEqual(['site-a']);
   });
 
   it('survives one missed heartbeat but drops a tab past the window', () => {
     const blinked = desktop({
-      site_id: 'site-a',
+      site_key: 'site-a',
       last_seen_at: ts(NOW - REMOTE_APPLY_HEARTBEAT_MS * 2),
     });
     const gone = desktop({
-      site_id: 'site-b',
+      site_key: 'site-b',
       last_seen_at: ts(NOW - REMOTE_APPLY_STALE_MS - 1),
     });
     const fresh = freshRemoteApplyDesktops(enabled, [blinked, gone], 'stake-a', NOW);
-    expect(fresh.map((d) => d.site_id)).toEqual(['site-a']);
+    expect(fresh.map((d) => d.site_key)).toEqual(['site-a']);
+  });
+});
+
+describe('remoteApplySiteKey', () => {
+  it('maps home (null / undefined) to the reserved key', () => {
+    expect(remoteApplySiteKey(null)).toBe(REMOTE_APPLY_HOME_SITE_KEY);
+    expect(remoteApplySiteKey(undefined)).toBe(REMOTE_APPLY_HOME_SITE_KEY);
+  });
+
+  it('passes a foreign site id through unchanged', () => {
+    expect(remoteApplySiteKey('site-b')).toBe('site-b');
   });
 });
 
 describe('remoteApplyDesktopForRequest', () => {
   it('picks the tab sitting in the request’s own site', () => {
     const picked = remoteApplyDesktopForRequest(enabled, [siteA, siteB], 'stake-a', 'site-b', NOW);
-    expect(picked?.site_id).toBe('site-b');
+    expect(picked?.site_key).toBe('site-b');
     expect(picked?.kindoo_site_name).toBe('South Building');
   });
 
@@ -102,13 +116,21 @@ describe('remoteApplyDesktopForRequest', () => {
     expect(remoteApplyDesktopForRequest(enabled, [siteA], 'stake-a', 'site-b', NOW)).toBeNull();
   });
 
-  it('lets any fresh tab serve a request that names no site', () => {
-    expect(remoteApplyDesktopForRequest(enabled, [siteB], 'stake-a', null, NOW)?.site_id).toBe(
-      'site-b',
-    );
+  it('treats home as a site like any other — a foreign tab cannot serve it', () => {
+    const home = desktop({ site_key: REMOTE_APPLY_HOME_SITE_KEY, kindoo_site_id: null });
+    const foreign = desktop({ site_key: 'site-b', kindoo_site_id: 'site-b' });
     expect(
-      remoteApplyDesktopForRequest(enabled, [siteB], 'stake-a', undefined, NOW),
-    ).not.toBeNull();
+      remoteApplyDesktopForRequest(enabled, [foreign], 'stake-a', REMOTE_APPLY_HOME_SITE_KEY, NOW),
+    ).toBeNull();
+    expect(
+      remoteApplyDesktopForRequest(
+        enabled,
+        [foreign, home],
+        'stake-a',
+        REMOTE_APPLY_HOME_SITE_KEY,
+        NOW,
+      )?.site_key,
+    ).toBe(REMOTE_APPLY_HOME_SITE_KEY);
   });
 
   it('refuses when nothing is online at all', () => {
@@ -117,7 +139,7 @@ describe('remoteApplyDesktopForRequest', () => {
 });
 
 describe('canClaimRemoteApplyJob', () => {
-  const job = { stake_id: 'stake-a', kindoo_site_id: 'site-b' };
+  const job = { stake_id: 'stake-a', target_site_key: 'site-b' };
 
   it('lets the tab on the matching site claim', () => {
     expect(canClaimRemoteApplyJob(job, 'stake-a', 'site-b')).toBe(true);
@@ -131,14 +153,14 @@ describe('canClaimRemoteApplyJob', () => {
     expect(canClaimRemoteApplyJob(job, 'stake-b', 'site-b')).toBe(false);
   });
 
-  it('lets any tab in the stake claim a job that names no site', () => {
-    expect(canClaimRemoteApplyJob({ stake_id: 'stake-a' }, 'stake-a', 'site-a')).toBe(true);
-    expect(
-      canClaimRemoteApplyJob({ stake_id: 'stake-a', kindoo_site_id: null }, 'stake-a', null),
-    ).toBe(true);
+  it('matches home against home', () => {
+    const homeJob = { stake_id: 'stake-a', target_site_key: REMOTE_APPLY_HOME_SITE_KEY };
+    expect(canClaimRemoteApplyJob(homeJob, 'stake-a', REMOTE_APPLY_HOME_SITE_KEY)).toBe(true);
+    expect(canClaimRemoteApplyJob(homeJob, 'stake-a', 'site-b')).toBe(false);
   });
 
-  it('refuses a site-specific job when the tab has no site resolved', () => {
+  it('refuses when the tab has no site resolved', () => {
+    // A tab whose EID maps to no SBA site can't provision anywhere.
     expect(canClaimRemoteApplyJob(job, 'stake-a', null)).toBe(false);
   });
 });

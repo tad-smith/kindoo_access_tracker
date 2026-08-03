@@ -39,6 +39,28 @@ export const REMOTE_APPLY_TERMINAL_STATUSES: readonly RemoteApplyJobStatus[] = [
   'cancelled',
 ];
 
+/**
+ * Doc-id form of "the home site". Home has no `kindooSites` document — it
+ * lives on `stake.kindoo_config` — so the codebase represents it as
+ * `kindoo_site_id: null` on wards and buildings. A Firestore doc id can't
+ * be null, hence this reserved key.
+ *
+ * A manager-chosen foreign-site slug of `'home'` would collide. That is
+ * why every surface derives its key through `remoteApplySiteKey` rather
+ * than hand-rolling the `?? 'home'`: if the collision ever needs handling,
+ * it is one function to change.
+ */
+export const REMOTE_APPLY_HOME_SITE_KEY = 'home';
+
+/**
+ * Kindoo site id → the key used for `desktops/{siteKey}` doc ids and for
+ * a job's `target_site_key`. Null / undefined (home) becomes the reserved
+ * home key; a foreign site keeps its `kindooSites` doc id.
+ */
+export function remoteApplySiteKey(kindooSiteId: string | null | undefined): string {
+  return kindooSiteId == null ? REMOTE_APPLY_HOME_SITE_KEY : kindooSiteId;
+}
+
 /** The profile-wide opt-in. Absent or false ⇒ no desktop may be used. */
 export function isRemoteApplyEnabled(presence: RemoteApplyPresence | null | undefined): boolean {
   return presence?.remote_apply_enabled === true;
@@ -64,12 +86,14 @@ export function freshRemoteApplyDesktops(
 }
 
 /**
- * The desktop that can run a given request, or null if none can.
+ * The desktop that can run a request targeting `targetSiteKey`, or null if
+ * none can. A tab can only provision for the site it is currently inside,
+ * so this is per-request, not per-manager.
  *
- * A request names its target Kindoo site, and a tab can only provision for
- * the site it is currently inside — so this is per-request, not per-manager.
- * A request with no site (single-site stakes, and every request predating
- * multi-site) is servable by any fresh tab in the stake.
+ * The match is exact, with no "any tab will do" fallback: home is a site
+ * like any other here (`REMOTE_APPLY_HOME_SITE_KEY`), so a home request
+ * routed to a foreign tab would be a doomed button — the phone would offer
+ * it and the desktop's own site check would refuse it.
  *
  * Returning the desktop rather than a boolean lets the caller name the site
  * in the UI, which is the difference between "your desktop is offline" and
@@ -79,28 +103,26 @@ export function remoteApplyDesktopForRequest(
   presence: RemoteApplyPresence | null | undefined,
   desktops: readonly RemoteApplyDesktopWithId[] | null | undefined,
   activeStakeId: string,
-  kindooSiteId: string | null | undefined,
+  targetSiteKey: string,
   nowMs: number,
 ): RemoteApplyDesktopWithId | null {
   const fresh = freshRemoteApplyDesktops(presence, desktops, activeStakeId, nowMs);
-  if (fresh.length === 0) return null;
-  if (kindooSiteId == null) return fresh[0] ?? null;
-  return fresh.find((d) => d.site_id === kindooSiteId) ?? null;
+  return fresh.find((d) => d.site_key === targetSiteKey) ?? null;
 }
 
 /**
- * Whether a tab inside `kindooSiteId` may claim `job`. The extension's
+ * Whether a tab sitting in `tabSiteKey` may claim `job`. The extension's
  * poller consults this before claiming: a job it cannot serve must be left
  * for the sibling tab that can, not claimed and failed.
  */
 export function canClaimRemoteApplyJob(
-  job: { stake_id: string; kindoo_site_id?: string | null },
+  job: { stake_id: string; target_site_key: string },
   tabStakeId: string,
-  tabSiteId: string | null,
+  tabSiteKey: string | null,
 ): boolean {
   if (job.stake_id !== tabStakeId) return false;
-  if (job.kindoo_site_id == null) return true;
-  return job.kindoo_site_id === tabSiteId;
+  if (tabSiteKey == null) return false;
+  return job.target_site_key === tabSiteKey;
 }
 
 /** True once a job has reached a state the extension will no longer touch. */

@@ -66,6 +66,14 @@ export type RemoteApplyPresence = {
 export type RemoteApplyDesktop = {
   /** Stake this site belongs to. Gated by `isManager` in rules. */
   stake_id: string;
+  /**
+   * The foreign site's `kindooSites` doc id, or null when this tab is on
+   * the stake's home site (which has no `kindooSites` doc — home lives on
+   * `stake.kindoo_config`). Mirrors the `kindoo_site_id: string | null`
+   * convention wards and buildings already use. The doc id is the same
+   * value run through `remoteApplySiteKey`, since a doc id cannot be null.
+   */
+  kindoo_site_id: string | null;
   /** Last heartbeat. Compared against `REMOTE_APPLY_STALE_MS`. */
   last_seen_at: TimestampLike;
   /** The Kindoo-side environment id this tab is inside. */
@@ -77,8 +85,8 @@ export type RemoteApplyDesktop = {
   lastActor: ActorRef;
 };
 
-/** A desktop doc plus its id, which is the Kindoo site id. */
-export type RemoteApplyDesktopWithId = RemoteApplyDesktop & { site_id: string };
+/** A desktop doc plus its id, which is its `remoteApplySiteKey`. */
+export type RemoteApplyDesktopWithId = RemoteApplyDesktop & { site_key: string };
 
 /**
  * Job lifecycle. `partial` is its own terminal state because the desktop
@@ -131,15 +139,18 @@ export type RemoteApplyJob = {
   request_id: string;
   stake_id: string;
   /**
-   * The request's target Kindoo site, copied from
-   * `AccessRequest.kindoo_site_id` at tap time. Only a tab inside this site
-   * may claim the job — that is what keeps a stake's second Kindoo site
-   * from stealing work it cannot perform.
+   * The Kindoo site this request must be provisioned on, as a site key
+   * (see `remoteApplySiteKey`). Only a tab inside this site may claim the
+   * job — that is what keeps a stake's second Kindoo site from stealing
+   * work it cannot perform.
    *
-   * Null / absent means "any site this stake's tabs are on", which is both
-   * the single-site case and the pre-existing requests that carry no site.
+   * Derived at tap time from scope + ward → building → site, NOT read from
+   * `AccessRequest.kindoo_site_id` (that field means something else: the
+   * site of the grant a `remove` targets, absent on add/edit). Required —
+   * a phone that cannot resolve the target site must not offer the button
+   * at all, since it cannot know which desktop could serve it.
    */
-  kindoo_site_id?: string | null;
+  target_site_key: string;
   status: RemoteApplyJobStatus;
   created_at: TimestampLike;
   /** `getDeviceId()` of the phone that queued it. */
