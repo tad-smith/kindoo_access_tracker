@@ -516,6 +516,18 @@ service cloud.firestore {
         // Empty string is rejected for the same reason a null would be:
         // it names a site no tab can be inside, so the job would sit
         // unclaimable until the phone timed it out.
+        //
+        // IF YOU ARE WRITING A CLOUD FUNCTION THAT QUEUES JOBS: stamp
+        // `target_site_key` yourself. Admin SDK writes bypass this rule,
+        // and a job without the key is not merely malformed — it is
+        // permanently stuck. The immutability check below reads the
+        // field bare, a bare read of a missing key errors, and so every
+        // transition is denied: it cannot be claimed, cannot be
+        // cancelled by the phone's timeout, and cannot be reported
+        // terminal. Nothing but admin credentials can clear it, since
+        // `allow delete: if false`. Today every writer of this
+        // collection is a client gated by this rule, which is the only
+        // reason that state is unreachable.
         allow create: if ownsMailbox(memberCanonical)
           && isManager(request.resource.data.stake_id)
           && request.resource.data.status == 'queued'
