@@ -488,14 +488,50 @@ service cloud.firestore {
         // its timestamp. `outcome.code` is checked as a string, not
         // against the `RemoteApplyOutcomeCode` union — the union is the
         // desktop's vocabulary and should be extensible without a rules
-        // deploy.
+        // deploy. Everything added here has to preserve that property:
+        // a conjunct that can only ever deny buys a stranded job.
+        //
+        // `over_caps` (the pools `markRequestComplete` reported over their
+        // seat cap, carried so the phone shows the same warning the
+        // desktop's result dialog does) is checked as a LIST and no
+        // deeper. Rules' CEL has no iteration — no `all` / `exists` over
+        // a list — so the per-entry `OverCapEntry` map shape is not
+        // expressible at ANY depth, and a partial check (typing
+        // `over_caps[0]`) would error on the empty list while proving
+        // nothing about the rest. Entry contents are the desktop's to get
+        // right for the same reason `outcome.code` is: a malformed entry
+        // renders wrong in the writer's OWN result dialog and reaches
+        // nobody else.
+        //
+        // The size bound is a RENDER bound, not a storage one — `message`
+        // beside it is an unbounded string, so bytes were never what this
+        // block was defending. `over_caps` is the one field the phone
+        // draws a row per element from. 64 sits several times above
+        // anything reachable (entries are wards-over-cap plus the stake
+        // pool, so a 12-ward stake tops out at 13), which is what keeps
+        // the bound from ever denying a real completion.
+        //
+        // DELIBERATELY NOT ENFORCED: that `over_caps` only appears on an
+        // `applied` outcome (the `partial` path means the SBA write never
+        // landed, so the server had nothing to report). That is an
+        // authoring rule for the single writer, not a security property —
+        // a stray warning on a `partial` misinforms the manager about
+        // their own completion and is visible to no one else. Pinning it
+        // would mean threading the target status into this helper, which
+        // the `queued → cancelled` branch also calls, to gain a conjunct
+        // that can only ever deny. The constraint is documented on
+        // `RemoteApplyOutcome` in `packages/shared`.
         function validFinish(data) {
           return (!('finished_at' in data) || data.finished_at is timestamp)
             && (!('outcome' in data)
                 || (data.outcome.keys()
-                      .hasOnly(['code', 'message', 'kindoo_uid', 'provisioning_note'])
+                      .hasOnly(['code', 'message', 'kindoo_uid', 'provisioning_note',
+                                'over_caps'])
                     && data.outcome.code is string
-                    && data.outcome.message is string));
+                    && data.outcome.message is string
+                    && (!('over_caps' in data.outcome)
+                        || (data.outcome.over_caps is list
+                            && data.outcome.over_caps.size() <= 64))));
         }
 
         allow read: if ownsMailbox(memberCanonical);
