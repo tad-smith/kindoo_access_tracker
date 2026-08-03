@@ -1296,18 +1296,53 @@ describe('remote apply — SW-side mailbox operations', () => {
     ]);
   });
 
-  it('reads a legacy job with no target site as home-only, never as claimable by anyone', async () => {
-    // Rules make this unwritable now — `target_site_key` is on the jobs
-    // create allowlist as a non-empty string. This covers only docs left
-    // in a staging mailbox by earlier builds of the branch, which would
-    // otherwise deserialise to `undefined` and be claimable by no tab at
-    // all, sitting `queued` until the phone timed them out.
+  it('drops a legacy job with no target site rather than guessing one', async () => {
+    // Such a doc is FROZEN, not merely unlabelled: rules' `jobCoreUnchanged`
+    // reads `before.target_site_key` bare, a missing-key read errors, and
+    // an erroring condition denies — so no transition on it can succeed.
+    // Guessing `home` would buy a doomed claim every 10s, reported by
+    // `claimRemoteApplyJob` as "already claimed elsewhere" (the wrong
+    // diagnosis), and would provision against a guessed site if the
+    // freeze were ever lifted.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     getDocsMock.mockResolvedValue({
-      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+      docs: [
+        { id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) },
+        {
+          id: 'job-2',
+          data: () => ({ request_id: 'r2', stake_id: 'csnorth', target_site_key: 'home' }),
+        },
+      ],
     });
     const { findQueuedRemoteApplyJobs } = await import('./data');
     const jobs = await findQueuedRemoteApplyJobs(mailboxActor());
-    expect(jobs[0]?.targetSiteKey).toBe(REMOTE_APPLY_HOME_SITE_KEY);
+
+    // The healthy sibling still comes through — one bad doc must not
+    // take the whole page down with it.
+    expect(jobs.map((j) => j.jobId)).toEqual(['job-2']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('job-1 has no target_site_key'));
+  });
+
+  it('drops a frozen job from the sweep’s input too', async () => {
+    // The sweep's only move is a terminal write, denied for the same
+    // reason the claim is. Handing it over buys a rejected write a
+    // minute and no cleanup.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({
+            request_id: 'r1',
+            stake_id: 'csnorth',
+            status: 'running',
+            claimed_at: { toMillis: () => 2_000 },
+          }),
+        },
+      ],
+    });
+    const { findRunningRemoteApplyJobs } = await import('./data');
+    await expect(findRunningRemoteApplyJobs(mailboxActor())).resolves.toEqual([]);
   });
 
   it('returns an empty page when the mailbox is empty', async () => {
@@ -1358,6 +1393,7 @@ describe('remote apply — SW-side mailbox operations', () => {
           data: () => ({
             request_id: 'r1',
             stake_id: 'csnorth',
+            target_site_key: 'home',
             status: 'running',
             created_at: { toMillis: () => 1_000 },
             claimed_at: null,
@@ -1372,7 +1408,12 @@ describe('remote apply — SW-side mailbox operations', () => {
 
   it('reports no claim age when neither timestamp is readable', async () => {
     getDocsMock.mockResolvedValue({
-      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({ request_id: 'r1', stake_id: 'csnorth', target_site_key: 'home' }),
+        },
+      ],
     });
     const { findRunningRemoteApplyJobs } = await import('./data');
     const jobs = await findRunningRemoteApplyJobs(mailboxActor());
