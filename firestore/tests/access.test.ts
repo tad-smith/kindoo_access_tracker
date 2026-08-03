@@ -9,10 +9,10 @@
 // Update: manager touching only `manual_grants` + bookkeeping fields;
 //         importer_callings byte-equal pre/post.
 // Delete: manager deletes a now-empty doc (both maps empty).
-import { afterAll, afterEach, beforeAll, describe, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { deleteField } from 'firebase/firestore';
+import { arrayRemove, deleteField } from 'firebase/firestore';
 import {
   clearAll,
   lastActorOf,
@@ -508,6 +508,150 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
         await ctx.firestore().doc(PATH).set(emptyAccessDoc());
       });
       const db = stakeMemberContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(PATH).delete());
+    });
+  });
+
+  // The delete tests above all seed `manual_grants: {}` directly, which
+  // is a state no client write path ever produces. These exercise the
+  // real removal sequence the SPA runs, because that is where the
+  // production bug lived: `arrayRemove` on a scope's last grant leaves
+  // `{ CO: [] }`, the delete predicate is `manual_grants == {}`, and an
+  // empty array is not an absent key — so the doc-cleanup delete was
+  // denied while the grant itself was already gone.
+  describe('delete — after the real client removal sequence', () => {
+    const SCOPE = 'CO';
+
+    /**
+     * Read `manual_grants` back with rules off, to inspect what a client
+     * write actually produced. Values are reduced to entry counts: the
+     * shape under test is which KEYS survive, and stored `granted_at`
+     * comes back as a Timestamp rather than the seeded Date.
+     */
+    async function manualGrantsAfter(): Promise<Record<string, number>> {
+      let counts: Record<string, number> = {};
+      await seedAsAdmin(env, async (ctx) => {
+        const snap = await ctx.firestore().doc(PATH).get();
+        const map = ((snap.data() ?? {})['manual_grants'] ?? {}) as Record<string, unknown[]>;
+        counts = Object.fromEntries(Object.entries(map).map(([k, v]) => [k, v.length]));
+      });
+      return counts;
+    }
+
+    async function seedOneGrant(
+      manual_grants: Record<string, unknown[]> = { [SCOPE]: [SAMPLE_GRANT] },
+    ): Promise<void> {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(emptyAccessDoc({ manual_grants }));
+      });
+    }
+
+    const bookkeeping = {
+      last_modified_at: new Date(),
+      last_modified_by: lastActorOf(personas.manager),
+      lastActor: lastActorOf(personas.manager),
+    };
+
+    it('arrayRemove of the last grant leaves an empty array, not an absent key', async () => {
+      await seedOneGrant();
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.${SCOPE}`]: arrayRemove(SAMPLE_GRANT),
+          ...bookkeeping,
+        }),
+      );
+      expect(await manualGrantsAfter()).toEqual({ [SCOPE]: 0 });
+    });
+
+    it('deleting a doc whose manual_grants is { CO: [] } is denied (the production bug)', async () => {
+      await seedOneGrant();
+      const db = managerContext(env, STAKE_ID).firestore();
+      await db.doc(PATH).update({
+        [`manual_grants.${SCOPE}`]: arrayRemove(SAMPLE_GRANT),
+        ...bookkeeping,
+      });
+      await assertFails(db.doc(PATH).delete());
+    });
+
+    it('deleteField on the scope key removes it, and the doc then deletes', async () => {
+      await seedOneGrant();
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.${SCOPE}`]: deleteField(),
+          ...bookkeeping,
+        }),
+      );
+      expect(await manualGrantsAfter()).toEqual({});
+      await assertSucceeds(db.doc(PATH).delete());
+    });
+
+    // The update rule's allowlist is on TOP-LEVEL keys. A `deleteField()`
+    // aimed at `manual_grants.CO` has to report `manual_grants` as the
+    // affected key for the fixed client write to pass — asserted against
+    // the emulator rather than assumed.
+    it('deleteField on a nested manual_grants key satisfies the affectedKeys allowlist', async () => {
+      await seedOneGrant({ [SCOPE]: [SAMPLE_GRANT], stake: [SAMPLE_GRANT] });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.${SCOPE}`]: deleteField(),
+          ...bookkeeping,
+        }),
+      );
+      expect(await manualGrantsAfter()).toEqual({ stake: 1 });
+    });
+
+    it('a nested deleteField carrying a non-allowlisted key is still denied', async () => {
+      await seedOneGrant();
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          [`manual_grants.${SCOPE}`]: deleteField(),
+          member_name: 'Renamed',
+          ...bookkeeping,
+        }),
+      );
+    });
+
+    // Docs written before the fix carry grant-less scope keys from every
+    // past removal. The fixed client sweeps them in the same update, so
+    // one write can drop several keys.
+    it('sweeping a stale empty scope key alongside the target key clears the doc', async () => {
+      await seedOneGrant({ [SCOPE]: [SAMPLE_GRANT], stake: [] });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.${SCOPE}`]: deleteField(),
+          'manual_grants.stake': deleteField(),
+          ...bookkeeping,
+        }),
+      );
+      expect(await manualGrantsAfter()).toEqual({});
+      await assertSucceeds(db.doc(PATH).delete());
+    });
+
+    it('a doc left with a stale empty scope key cannot be deleted', async () => {
+      // Why the sweep exists: without it, a doc that still carries
+      // `{ stake: [] }` from an earlier removal stays undeletable even
+      // after its real last grant goes.
+      await seedOneGrant({ [SCOPE]: [SAMPLE_GRANT], stake: [] });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await db.doc(PATH).update({
+        [`manual_grants.${SCOPE}`]: deleteField(),
+        ...bookkeeping,
+      });
+      await assertFails(db.doc(PATH).delete());
+    });
+
+    it('the doc survives while another scope still holds a grant', async () => {
+      await seedOneGrant({ [SCOPE]: [SAMPLE_GRANT], stake: [SAMPLE_GRANT] });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await db.doc(PATH).update({
+        [`manual_grants.${SCOPE}`]: deleteField(),
+        ...bookkeeping,
+      });
       await assertFails(db.doc(PATH).delete());
     });
   });

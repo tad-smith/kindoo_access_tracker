@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ManualGrant } from '@kindoo/shared';
 
 const setDocMock = vi.fn().mockResolvedValue(undefined);
 const updateDocMock = vi.fn().mockResolvedValue(undefined);
@@ -22,6 +23,18 @@ const deleteDocMock = vi.fn().mockResolvedValue(undefined);
 const serverTimestampMock = vi.fn(() => '__server_timestamp__');
 const arrayUnionMock = vi.fn((...values: unknown[]) => ({ __op: 'arrayUnion', values }));
 const arrayRemoveMock = vi.fn((...values: unknown[]) => ({ __op: 'arrayRemove', values }));
+const deleteFieldMock = vi.fn(() => ({ __op: 'deleteField' }));
+
+// runTransaction shim — the delete path decides its write shape from a
+// transactional read, so the tx's `get` / `update` delegate to the same
+// mocks the non-transactional paths use.
+const runTransactionMock = vi.fn(
+  async (_db: unknown, fn: (tx: unknown) => Promise<unknown>) =>
+    await fn({
+      get: (...args: unknown[]) => getDocMock(...args),
+      update: (...args: unknown[]) => updateDocMock(...args),
+    }),
+);
 
 vi.mock('firebase/firestore', async () => {
   const actual = await vi.importActual<object>('firebase/firestore');
@@ -33,6 +46,9 @@ vi.mock('firebase/firestore', async () => {
     deleteDoc: (...args: unknown[]) => deleteDocMock(...args),
     arrayUnion: (...args: unknown[]) => arrayUnionMock(...args),
     arrayRemove: (...args: unknown[]) => arrayRemoveMock(...args),
+    deleteField: () => deleteFieldMock(),
+    runTransaction: (db: unknown, fn: (tx: unknown) => Promise<unknown>) =>
+      runTransactionMock(db, fn),
     serverTimestamp: () => serverTimestampMock(),
   };
 });
@@ -80,6 +96,8 @@ beforeEach(() => {
   deleteDocMock.mockClear();
   arrayUnionMock.mockClear();
   arrayRemoveMock.mockClear();
+  deleteFieldMock.mockClear();
+  runTransactionMock.mockClear();
   serverTimestampMock.mockClear();
   getIdTokenResultSpy.mockClear();
   currentUserStub = {
@@ -398,13 +416,15 @@ describe('useAddManualGrantMutation — access level', () => {
     const stored = setDocMock.mock.calls[0]![1].manual_grants.stake[0];
 
     // Hand that same stored object to the delete path, the way the page
-    // does when a manager clicks Delete on a rendered grant row.
+    // does when a manager clicks Delete on a rendered grant row. A
+    // sibling grant keeps the scope populated so the arrayRemove branch
+    // is the one under test.
     updateDocMock.mockClear();
     getDocMock.mockResolvedValue({
       exists: () => true,
       data: () => ({
         importer_callings: { CO: ['Bishop'] },
-        manual_grants: { stake: [] },
+        manual_grants: { stake: [stored, otherGrant('g-sibling')] },
       }),
     });
     const del = renderHook(() => useDeleteManualGrantMutation(), { wrapper });
@@ -421,6 +441,139 @@ describe('useAddManualGrantMutation — access level', () => {
     const [, payload] = updateDocMock.mock.calls[0]!;
     expect(payload['manual_grants.stake']).toEqual({ __op: 'arrayRemove', values: [stored] });
     // Importer callings survive, so the doc is not garbage-collected.
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// Removal shape. `arrayRemove` on a scope's LAST grant leaves
+// `manual_grants: { CO: [] }`, which is not `{}` — the rules' delete
+// predicate (`resource.data.manual_grants == {}`) then denies the
+// doc-cleanup delete, and the manager sees "insufficient permissions"
+// on a removal that in fact succeeded. Dropping the scope KEY is what
+// keeps "the doc exists iff some grant exists" true.
+function otherGrant(id: string): ManualGrant {
+  return {
+    grant_id: id,
+    reason: `reason-${id}`,
+    granted_by: { email: 'Mgr@x.com', canonical: 'mgr@x.com' },
+    // Same `Date`-as-Timestamp shortcut the add mutation writes with.
+    granted_at: new Date('2026-01-01T00:00:00Z') as unknown as ManualGrant['granted_at'],
+  };
+}
+
+describe('useDeleteManualGrantMutation — scope-key cleanup', () => {
+  const TARGET = otherGrant('g-target');
+
+  function seedDoc(doc: {
+    importer_callings?: Record<string, string[]>;
+    manual_grants: Record<string, unknown[]>;
+  }) {
+    getDocMock.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ importer_callings: {}, ...doc }),
+    });
+  }
+
+  async function removeTarget(scope = 'stake') {
+    const del = renderHook(() => useDeleteManualGrantMutation(), { wrapper });
+    await del.result.current.mutateAsync({
+      member_canonical: 'subject@example.com',
+      scope,
+      grant: TARGET,
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    return updateDocMock.mock.calls[0]![1] as Record<string, unknown>;
+  }
+
+  it('drops the scope key instead of leaving an empty array when the last grant goes', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET] } });
+    const payload = await removeTarget();
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'deleteField' });
+    expect(arrayRemoveMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes the doc once its last grant leaves and no importer callings remain', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET] } });
+    await removeTarget();
+    await waitFor(() => expect(deleteDocMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('uses arrayRemove and keeps the doc when other grants share the scope', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET, otherGrant('g-2')] } });
+    const payload = await removeTarget();
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'arrayRemove', values: [TARGET] });
+    expect(deleteFieldMock).not.toHaveBeenCalled();
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('drops the scope key but keeps the doc when importer callings remain', async () => {
+    seedDoc({ importer_callings: { CO: ['Bishop'] }, manual_grants: { stake: [TARGET] } });
+    const payload = await removeTarget();
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'deleteField' });
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the doc when another scope still holds a grant', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET], CO: [otherGrant('g-co')] } });
+    const payload = await removeTarget();
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'deleteField' });
+    expect(payload).not.toHaveProperty('manual_grants.CO');
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('sweeps grant-less scope keys an earlier removal left behind, then deletes the doc', async () => {
+    // `{ CO: [] }` is what every pre-fix removal wrote. Left in place it
+    // would keep `manual_grants != {}` forever and the doc could never
+    // be cleaned up.
+    seedDoc({ manual_grants: { stake: [TARGET], CO: [] } });
+    const payload = await removeTarget();
+    expect(payload['manual_grants.stake']).toEqual({ __op: 'deleteField' });
+    expect(payload['manual_grants.CO']).toEqual({ __op: 'deleteField' });
+    await waitFor(() => expect(deleteDocMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('writes only keys inside the update rule allowlist', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET], CO: [] } });
+    const payload = await removeTarget();
+    // Every key must resolve to one of: manual_grants, last_modified_at,
+    // last_modified_by, lastActor.
+    const roots = new Set(Object.keys(payload).map((k) => k.split('.')[0]));
+    expect([...roots].sort()).toEqual([
+      'lastActor',
+      'last_modified_at',
+      'last_modified_by',
+      'manual_grants',
+    ]);
+    expect(payload['lastActor']).toEqual({
+      email: 'Tad.E.Smith@gmail.com',
+      canonical: 'tadesmith@gmail.com',
+    });
+  });
+
+  it('decides the write shape inside one transaction so a concurrent add is not lost', async () => {
+    // `deleteField()` is not an atomic array op: read-then-write outside
+    // a transaction would clobber a grant added in between.
+    seedDoc({ manual_grants: { stake: [TARGET] } });
+    await removeTarget();
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(getDocMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('force-refreshes the ID token before the write', async () => {
+    seedDoc({ manual_grants: { stake: [TARGET] } });
+    await removeTarget();
+    expect(getIdTokenResultSpy).toHaveBeenCalledWith(true);
+  });
+
+  it('does nothing when the access doc has already been deleted', async () => {
+    getDocMock.mockResolvedValue({ exists: () => false });
+    const del = renderHook(() => useDeleteManualGrantMutation(), { wrapper });
+    await del.result.current.mutateAsync({
+      member_canonical: 'subject@example.com',
+      scope: 'stake',
+      grant: TARGET,
+    });
+    expect(updateDocMock).not.toHaveBeenCalled();
     expect(deleteDocMock).not.toHaveBeenCalled();
   });
 });

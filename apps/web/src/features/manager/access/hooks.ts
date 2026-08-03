@@ -2,8 +2,9 @@
 // collection; rendering is split into per-user cards (each card has an
 // importer block + a manual block — see firebase-schema.md §4.5).
 //
-// Manual-grant write paths: add (arrayUnion-style) and delete
-// (arrayRemove-style). The split-ownership rule means
+// Manual-grant write paths: add (arrayUnion) and delete (arrayRemove,
+// or `deleteField()` on the scope key when its last grant goes — see
+// `useDeleteManualGrantMutation`). The split-ownership rule means
 // `importer_callings` is never touched by the client; manager-only
 // writes mutate `manual_grants` exclusively (rules enforce).
 
@@ -12,11 +13,14 @@ import {
   arrayRemove,
   arrayUnion,
   deleteDoc,
+  deleteField,
   getDoc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
+import type { UpdateData } from 'firebase/firestore';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Access, ManualGrant } from '@kindoo/shared';
 import { canonicalEmail } from '@kindoo/shared';
@@ -250,12 +254,24 @@ export interface DeleteManualGrantInput {
 }
 
 /**
- * Delete a single manual grant by `arrayRemove`. The grant payload must
- * be byte-equal to a value currently in the array — Firestore's
- * arrayRemove uses deep equality, so the caller passes the exact
- * `ManualGrant` object from the displayed list. If the resulting doc
- * has empty `importer_callings` AND empty `manual_grants` we delete
- * the doc entirely (per the rules' delete predicate).
+ * Delete a single manual grant. Removing one of several grants in a
+ * scope is an `arrayRemove` of the exact stored object (Firestore
+ * matches array elements by deep equality, so the caller passes the
+ * `ManualGrant` straight from the displayed list). Removing the LAST
+ * grant in a scope drops the scope KEY instead, then the now grant-less
+ * doc is deleted.
+ *
+ * Why the two shapes: `arrayRemove` on the last entry leaves
+ * `manual_grants: { CO: [] }`, and the rules' delete predicate is
+ * `resource.data.manual_grants == {}` — an empty array is not an absent
+ * key, so the follow-up delete was denied and the manager got a
+ * "insufficient permissions" toast on an otherwise successful removal.
+ * A grant-less scope key is a remnant, not a grant; it must not linger.
+ *
+ * The read that decides the shape and the write that applies it run in
+ * one `runTransaction`: `deleteField()` is not an atomic array op, so a
+ * concurrent add into the same scope between read and write would
+ * otherwise be wiped. The transaction re-runs instead.
  */
 export function useDeleteManualGrantMutation() {
   const qc = useQueryClient();
@@ -268,24 +284,52 @@ export function useDeleteManualGrantMutation() {
       const refreshed = await readRefreshedActor();
       const actor = { email: refreshed.email, canonical: refreshed.canonical };
       const ref = accessRef(db, activeStakeId, member_canonical);
-      await updateDoc(ref, {
-        [`manual_grants.${scope}`]: arrayRemove(grant),
-        last_modified_at: serverTimestamp(),
-        last_modified_by: actor,
-        lastActor: actor,
+
+      const docNowGrantless = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return false;
+        const data = snap.data() as Access;
+        const scopes = data.manual_grants ?? {};
+        // `grant_id` is unique inside its (canonical, scope) array, so it
+        // alone settles which entry is going away.
+        const remaining = (scopes[scope] ?? []).filter((g) => g.grant_id !== grant.grant_id);
+
+        // Keys MUST stay a subset of the update rule's `affectedKeys()`
+        // allowlist: ['manual_grants', 'last_modified_by',
+        // 'last_modified_at', 'lastActor']. A `deleteField()` on the
+        // nested `manual_grants.{scope}` path still reports
+        // `manual_grants` as the affected key (pinned by a rules test).
+        const payload: Record<string, unknown> = {
+          [`manual_grants.${scope}`]: remaining.length === 0 ? deleteField() : arrayRemove(grant),
+          last_modified_at: serverTimestamp(),
+          last_modified_by: actor,
+          lastActor: actor,
+        };
+        // Sweep grant-less keys other removals left behind. Every
+        // pre-fix delete of a scope's last grant wrote one, and a doc
+        // carrying such a remnant can never satisfy the delete
+        // predicate either.
+        for (const [key, grants] of Object.entries(scopes)) {
+          if (key !== scope && grants.length === 0) {
+            payload[`manual_grants.${key}`] = deleteField();
+          }
+        }
+        tx.update(ref, payload as UpdateData<Access>);
+
+        // Emptiness is key-count on BOTH maps, symmetric with the rule's
+        // `== {}` on each. The keys that survive this write are exactly
+        // the ones still holding a grant.
+        const importerEmpty = Object.keys(data.importer_callings ?? {}).length === 0;
+        const survivingScopes = Object.entries(scopes).filter(([key, grants]) =>
+          key === scope ? remaining.length > 0 : grants.length > 0,
+        );
+        return importerEmpty && survivingScopes.length === 0;
       });
 
-      // Doc-cleanup: if all manual + importer maps are empty after the
-      // arrayRemove, delete the doc entirely (matches the rules' delete
-      // predicate). We re-read because arrayRemove's return value
-      // doesn't tell us the new array length.
-      const after = await getDoc(ref);
-      if (!after.exists()) return;
-      const data = after.data() as Access;
-      const importerEmpty = Object.keys(data.importer_callings ?? {}).length === 0;
-      const manualScopes = data.manual_grants ?? {};
-      const manualEmpty = Object.values(manualScopes).every((arr) => arr.length === 0);
-      if (importerEmpty && manualEmpty) {
+      // Second write by necessity: rules evaluate `delete` against the
+      // PRE-write doc, so the doc has to be emptied and deleted in two
+      // separate operations.
+      if (docNowGrantless) {
         await deleteDoc(ref);
       }
     },
