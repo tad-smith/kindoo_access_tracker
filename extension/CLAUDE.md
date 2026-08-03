@@ -11,6 +11,7 @@ Chrome MV3 extension that bridges the Stake Building Access (SBA) pending-reques
 - **Auth flow:** `chrome.identity.getAuthToken` → Firebase `GoogleAuthProvider.credential(null, accessToken)` → `signInWithCredential`. The SW keeps Firebase Auth state across suspends via the SDK's IndexedDB persistence; access token + a slim principal snapshot are also persisted to `chrome.storage.local`.
 - **Firestore from the SW (not the content script).** The SW reads and writes Firestore directly as the signed-in manager via the client SDK (`background/data.ts` — `getDoc` / `getDocs` / `updateDoc` / `writeBatch`), with Firestore rules gating authorisation. Request-list reads still go through the `getMyPendingRequests` callable, and `markRequestComplete` remains a callable; but config reads/writes, seat lookups, the foreign-EID auto-populate, and the request **reject** transition are direct SW-side Firestore operations. The content script never imports the Firebase SDK — it round-trips every read/write through the SW. **No `runTransaction` / `onSnapshot` in the SW:** those ride the WebChannel transport, which needs `XMLHttpRequest` — undefined in an MV3 service worker, so they throw `ReferenceError: XMLHttpRequest is not defined` at runtime. Use discrete one-shot ops (`getDoc` / `getDocs` / `updateDoc` / `setDoc` / `writeBatch`), which use the fetch-based RestConnection. Server-enforced preconditions (e.g. the reject rule's `status == 'pending'` check) replace the atomicity a transaction would have given.
 - **Toolbar action** posts a `panel.togglePushedFromSw` message to the active tab; the content script flips the slide-over open / closed and persists the state in `chrome.storage.local`.
+- **Remote apply** (`docs/architecture.md` D27) lets a manager tap a pending request on their phone and have this extension provision it. Opt-in per profile ("Allow requests from my phone", top of the Queue tab). While opted in, the content script heartbeats presence to `remoteApply/{canonicalEmail}` and polls `remoteApply/{canonicalEmail}/jobs` for `queued` work — both through SW handlers, both one-shot. **The heartbeat is gated on a usable Kindoo session:** absence of a fresh heartbeat is precisely how the phone learns the desktop cannot act, so never publish presence from a tab that couldn't run a job. The claim is a rules-enforced `queued → running` compare-and-set, so a second Kindoo tab losing the race gets `permission-denied` and must skip silently.
 
 ## Stack
 
@@ -44,8 +45,14 @@ extension/
 │   │   ├── content-script.ts      # CS entry — calls mountPanel
 │   │   ├── mount.tsx              # Shadow-DOM + React mount + toggle wiring
 │   │   ├── container.css          # slide-over chrome (Shadow DOM)
+│   │   ├── remoteApply/           # Remote apply — phone-queued jobs (D27)
+│   │   │   ├── loop.ts            # heartbeat + poll tick loop
+│   │   │   ├── runner.ts          # claim → resolve → applyRequest → report
+│   │   │   └── useRemoteApply.ts  # React binding, hosted by TabbedShell
 │   │   └── kindoo/                # Kindoo API client (CS-side; v2.1+v2.2)
 │   │       ├── auth.ts            # read SessionTokenID + EID from localStorage
+│   │       ├── applyRequest.ts    # THE provisioning orchestration — shared by
+│   │       │                      # RequestCard's button and the remote runner
 │   │       ├── client.ts          # multipart-form POST helper
 │   │       ├── endpoints.ts       # typed wrappers: getEnvironments, getEnvironmentRules,
 │   │       │                      # checkUserType, inviteUser, editUser,
@@ -79,6 +86,7 @@ extension/
 │       ├── auth.ts                # chrome.identity → Firebase credential exchange (SW)
 │       ├── api.ts                 # callable client wrappers (SW)
 │       ├── messaging.ts           # shared SW <-> CS wire protocol
+│       ├── remoteApplyPrefs.ts    # owner of the remote-apply opt-in storage key
 │       └── extensionApi.ts        # CS-side wrappers over chrome.runtime.sendMessage
 └── CLAUDE.md
 ```
@@ -104,7 +112,8 @@ extension/
 - **Don't read Kindoo's `localStorage` outside the documented `kindoo/auth.ts` helper.** The keys are documented in the Kindoo runtime state section; readers route through that helper so we have one place to handle missing/expired state.
 - **Don't bundle production credentials.** Firebase web SDK config is public; the Google OAuth client ID is public-by-design; nothing else ships in the bundle.
 - **Don't depend on `apps/web/` code.** Share types via `@kindoo/shared`. The extension is its own consumer.
-- **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside their owning module. Each key has a single owner: `googleAccessToken` + `principalSnapshot` belong to the SW (`lib/auth.ts`), `panelOpen` belongs to the CS mount (`content/mount.tsx`), and `eidStakeChoice` belongs to `lib/extensionApi.ts`'s `readEidStakeChoice` / `writeEidStakeChoice` / `clearEidStakeChoice` helpers. If you need a new key, give it one owner module and route every other reader / writer through that owner.
+- **Don't touch the Chrome storage keys** declared in `lib/messaging.ts` `STORAGE_KEYS` from outside their owning module. Each key has a single owner: `googleAccessToken` + `principalSnapshot` belong to the SW (`lib/auth.ts`), `panelOpen` belongs to the CS mount (`content/mount.tsx`), `eidStakeChoice` belongs to `lib/extensionApi.ts`'s `readEidStakeChoice` / `writeEidStakeChoice` / `clearEidStakeChoice` helpers, and `remoteApplyEnabled` belongs to `lib/remoteApplyPrefs.ts`. If you need a new key, give it one owner module and route every other reader / writer through that owner.
+- **Don't fork the provisioning flow.** `content/kindoo/applyRequest.ts` is the only path from a pending request to a Kindoo write plus `markRequestComplete`. Both the panel's button (`panel/RequestCard.tsx`) and the phone-initiated runner (`content/remoteApply/runner.ts`) call it. A second copy would let the two surfaces report different results for the same request, with no way to tell which one was right.
 
 ## Kindoo runtime state — reference
 

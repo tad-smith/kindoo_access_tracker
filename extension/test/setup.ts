@@ -26,6 +26,7 @@ import { vi } from 'vitest';
   runtime: {
     lastError: undefined,
     id: 'sba-ext-test',
+    getManifest: vi.fn(() => ({ version: '0.0.0-test' })),
     onInstalled: { addListener: vi.fn() },
     onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
     sendMessage: vi.fn(),
@@ -39,6 +40,9 @@ import { vi } from 'vitest';
       set: vi.fn(() => Promise.resolve()),
       remove: vi.fn(() => Promise.resolve()),
     },
+    // `remoteApplyPrefs` registers a cross-context listener at module
+    // load; the stub keeps that import-time call from throwing.
+    onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
   },
   tabs: {
     query: vi.fn((_query: unknown, cb: (tabs: unknown[]) => void) => cb([])),

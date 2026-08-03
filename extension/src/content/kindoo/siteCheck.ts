@@ -68,17 +68,28 @@ export type SiteCheckResult =
  * Active Kindoo session doesn't match the EID the request needs. The
  * caller renders `error.message` inline on the request card and stops
  * before any Kindoo write fires.
+ *
+ * The message names BOTH sites when the active one is resolvable.
+ * Remote apply serialises this same message onto the job doc for a
+ * phone that deliberately does not duplicate the site check — "switch
+ * sites" is unactionable there unless the sentence says which site the
+ * desktop is sitting in.
  */
 export class ProvisionSiteMismatchError extends Error {
   readonly code = 'site-mismatch' as const;
   readonly expectedSiteName: string;
-  constructor(expectedSiteName: string) {
+  /** Site the active Kindoo session is in; `''` when `getEnvironments`
+   * didn't list the active EID. */
+  readonly activeSiteName: string;
+  constructor(expectedSiteName: string, activeSiteName = '') {
     super(
       `This request needs to be provisioned on '${expectedSiteName}'. ` +
+        (activeSiteName.length > 0 ? `You are currently in '${activeSiteName}'. ` : '') +
         `Switch Kindoo sites and try again.`,
     );
     this.name = 'ProvisionSiteMismatchError';
     this.expectedSiteName = expectedSiteName;
+    this.activeSiteName = activeSiteName;
   }
 }
 
@@ -252,7 +263,7 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
             populate: { kindooSiteId: wardSite.id, kindooEid: session.eid },
           };
         }
-        return { ok: false, error: new ProvisionSiteMismatchError(expectedSiteName) };
+        return { ok: false, error: new ProvisionSiteMismatchError(expectedSiteName, actual) };
       }
     }
   }
@@ -261,7 +272,10 @@ export function checkRequestSite(args: CheckRequestSiteArgs): SiteCheckResult {
   if (expectedEid === session.eid) {
     return { ok: true };
   }
-  return { ok: false, error: new ProvisionSiteMismatchError(expectedSiteName) };
+  return {
+    ok: false,
+    error: new ProvisionSiteMismatchError(expectedSiteName, activeSiteName(envs, session)),
+  };
 }
 
 // ---------------------------------------------------------------------------

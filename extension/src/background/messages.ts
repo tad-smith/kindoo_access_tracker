@@ -18,6 +18,9 @@ import {
 } from '../lib/auth';
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
+  claimRemoteApplyJob,
+  findQueuedRemoteApplyJob,
+  finishRemoteApplyJob,
   loadAccessByEmail,
   loadKindooManagerByEmail,
   loadSeatByEmail,
@@ -27,6 +30,7 @@ import {
   resolveEidStakes,
   writeKindooConfig,
   writeKindooSiteEid,
+  writeRemotePresence,
 } from './data';
 import type {
   AuthSnapshot,
@@ -272,6 +276,82 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             partialFailure: failedStakes.length > 0,
           },
         };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    // ---- Remote apply -------------------------------------------------
+    //
+    // Every branch waits for auth hydration before reading
+    // `currentUser()`: these arrive on a background timer, so they are
+    // the likeliest messages to hit a service worker that has just
+    // woken from suspend with its Firebase Auth state still loading
+    // from IndexedDB.
+    case 'data.writeRemotePresence': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before publishing presence' },
+          };
+        }
+        await writeRemotePresence(req.payload, user);
+        return { ok: true, data: { ok: true } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.remoteApplyNextJob': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before polling for jobs' },
+          };
+        }
+        const job = await findQueuedRemoteApplyJob(user);
+        return { ok: true, data: job };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.remoteApplyClaimJob': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before claiming a job' },
+          };
+        }
+        const claimed = await claimRemoteApplyJob(
+          req.jobId,
+          req.payload.extVersion,
+          req.payload.kindooEid,
+          user,
+        );
+        return { ok: true, data: { claimed } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.remoteApplyFinishJob': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before finishing a job' },
+          };
+        }
+        await finishRemoteApplyJob(req.jobId, req.payload, user);
+        return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }
