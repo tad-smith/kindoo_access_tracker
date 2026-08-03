@@ -1,7 +1,7 @@
 # Elders Quorum President app access is limited-tier
 
 **Shipped:** 2026-08-02
-**Commits:** branches `feat/eq-president-limited-backend`, `feat/eq-president-limited-web`, `feat/eq-president-limited-docs`, folded onto `feat/eq-president-limited`; architecture decision D26.
+**PR:** #248 · architecture decision D26.
 
 ## What shipped
 
