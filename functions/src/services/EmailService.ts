@@ -281,8 +281,11 @@ export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
 }
 
 export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
+  // Font names quote with SINGLE quotes: these strings land inside
+  // double-quoted `style="…"` attributes, and a `"` would terminate the
+  // attribute early and drop every declaration after it.
   const wrapper =
-    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;' +
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;" +
     'font-size:16px;line-height:1.5;color:#1a202c;max-width:560px;margin:0 auto;padding:24px';
   const para = 'margin:0 0 16px';
   const button =

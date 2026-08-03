@@ -403,6 +403,28 @@ describe('EmailService — pure builders', () => {
     expect(html).not.toContain('Send me a sign-in link');
   });
 
+  // Regression: a raw `"` inside an inline style (an unquoted-with-double-
+  // quotes font name) terminates the `style="…"` attribute early and every
+  // declaration after it is silently dropped by the mail client.
+  it('welcome html wrapper style survives attribute parsing intact', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_GMAIL);
+    // `[^"]*` stops at the first `"` — exactly where a parser would.
+    const wrapperStyle = /^<div style="([^"]*)"/.exec(html)?.[1] ?? '';
+    expect(wrapperStyle).toContain('max-width:560px');
+    expect(wrapperStyle).toContain('padding:24px');
+    expect(wrapperStyle).toContain('font-size:16px');
+    expect(wrapperStyle).toContain('margin:0 auto');
+  });
+
+  it('no welcome html attribute value is truncated by a raw double quote', () => {
+    const html = buildWelcomeHtmlBody({ ...WELCOME_GMAIL, memberName: 'Jane "JD" Doe' });
+    // Every quoted attribute must close right before the tag end or the
+    // next attribute — never mid-value.
+    for (const m of html.matchAll(/(?:style|href)="[^"]*"(.?)/g)) {
+      expect(['>', ' ']).toContain(m[1]);
+    }
+  });
+
   it('welcome html body carries the non-gmail copy', () => {
     const html = buildWelcomeHtmlBody(WELCOME_NON_GMAIL);
     expect(html).toContain('Send me a sign-in link');
