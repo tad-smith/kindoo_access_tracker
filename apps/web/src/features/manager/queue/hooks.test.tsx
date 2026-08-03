@@ -7,6 +7,10 @@
 //     wrong-stake case and — the one that can't be covered by a
 //     snapshot — a desktop that goes stale purely with the passage of
 //     time, producing no new snapshot at all.
+//   - `useRemoteApplyJobsByRequest` / `pickRemoteApplyJob` reduce a
+//     request's jobs to the one the card speaks with — the half of the
+//     duplicate defence that decides what a manager reads when a
+//     request ends up with two jobs anyway.
 //   - `useQueueRemoteApplyJob` writes exactly the six fields rules
 //     allow, at `queued`.
 //   - `useCancelRemoteApplyJob` writes `cancelled`, and swallows the
@@ -74,10 +78,13 @@ vi.mock('../../../lib/docs', () => ({
 }));
 
 import {
+  pickRemoteApplyJob,
   useCancelRemoteApplyJob,
   useQueueRemoteApplyJob,
+  useRemoteApplyJobsByRequest,
   useRemoteApplyPickupTimeout,
   useRemoteApplyPresence,
+  type RemoteApplyJobWithId,
 } from './hooks';
 
 const T0 = new Date('2026-08-03T18:00:00.000Z').getTime();
@@ -196,6 +203,135 @@ describe('useRemoteApplyPresence', () => {
 
     expect(result.current.state).toBe('stale');
     expect(result.current.online).toBe(false);
+  });
+});
+
+describe('pickRemoteApplyJob', () => {
+  function jobDoc(
+    jobId: string,
+    status: RemoteApplyJob['status'],
+    createdAtMs: number | null = T0,
+  ): RemoteApplyJobWithId {
+    return {
+      job_id: jobId,
+      request_id: 'req-7',
+      stake_id: 'csnorth',
+      status,
+      created_at: (createdAtMs === null ? null : ts(createdAtMs)) as TimestampLike,
+      created_by_device: 'device-1',
+      lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    };
+  }
+
+  it('keeps the applied job when a later duplicate came back failed', () => {
+    // The duplicate's loser is always claimed second and always fails
+    // with `request_not_pending`. Reporting that as the request's
+    // outcome tells a manager to redo a provision that already landed.
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'applied', T0),
+      jobDoc('job-b', 'failed', T0 + 30_000),
+    ]);
+    expect(best?.job_id).toBe('job-a');
+  });
+
+  it('keeps a partial job over a later failed duplicate', () => {
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'partial', T0),
+      jobDoc('job-b', 'failed', T0 + 30_000),
+    ]);
+    expect(best?.job_id).toBe('job-a');
+  });
+
+  it('prefers the job the desktop actually claimed over one still queued', () => {
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'running', T0),
+      jobDoc('job-b', 'queued', T0 + 30_000),
+    ]);
+    expect(best?.job_id).toBe('job-a');
+  });
+
+  it('prefers a fresh attempt over the failure it is retrying', () => {
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'failed', T0),
+      jobDoc('job-b', 'queued', T0 + 30_000),
+    ]);
+    expect(best?.job_id).toBe('job-b');
+  });
+
+  it('takes the newest of two jobs that say the same thing', () => {
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'cancelled', T0),
+      jobDoc('job-b', 'failed', T0 + 30_000),
+    ]);
+    expect(best?.job_id).toBe('job-b');
+  });
+
+  it('treats a job whose created_at has not resolved yet as the newest', () => {
+    // A `serverTimestamp()` reads as null in the writing device's own
+    // first snapshot — that job is the one just tapped.
+    const best = pickRemoteApplyJob([
+      jobDoc('job-a', 'queued', T0),
+      jobDoc('job-b', 'queued', null),
+    ]);
+    expect(best?.job_id).toBe('job-b');
+  });
+
+  it('has nothing to say about a request with no jobs', () => {
+    expect(pickRemoteApplyJob([])).toBeUndefined();
+  });
+});
+
+describe('useRemoteApplyJobsByRequest', () => {
+  function jobDoc(
+    jobId: string,
+    requestId: string,
+    status: RemoteApplyJob['status'],
+    createdAtMs = T0,
+  ): RemoteApplyJobWithId {
+    return {
+      job_id: jobId,
+      request_id: requestId,
+      stake_id: 'csnorth',
+      status,
+      created_at: ts(createdAtMs),
+      created_by_device: 'device-1',
+      lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
+    };
+  }
+
+  it('reads the whole mailbox, so a terminal job is still there to be read', () => {
+    // A status filter would drop the `applied` job and leave the card
+    // holding its failed duplicate.
+    renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    const [q] = useFirestoreCollectionMock.mock.calls[0] as [unknown];
+    expect(q).toEqual({ __col: 'jobs', canonical: 'mgr@gmail.com', db: { __db: true } });
+  });
+
+  it('renders a request that applied as applied, not as its failed duplicate', () => {
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([
+        jobDoc('job-a', 'req-7', 'applied', T0),
+        jobDoc('job-b', 'req-7', 'failed', T0 + 30_000),
+      ]),
+    );
+    const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    expect(result.current.byRequest.get('req-7')?.status).toBe('applied');
+  });
+
+  it('keeps each request on its own job', () => {
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([jobDoc('job-a', 'req-7', 'running'), jobDoc('job-b', 'req-8', 'queued')]),
+    );
+    const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    expect(result.current.byRequest.get('req-7')?.job_id).toBe('job-a');
+    expect(result.current.byRequest.get('req-8')?.job_id).toBe('job-b');
+  });
+
+  it('reports itself unresolved so the card withholds the button', () => {
+    useFirestoreCollectionMock.mockReturnValue(docResult(undefined, true));
+    const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.byRequest.size).toBe(0);
   });
 });
 

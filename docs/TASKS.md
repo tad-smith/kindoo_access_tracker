@@ -6,6 +6,25 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
+Status: open
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+`spec.md` §16 already claims "one job per request at a time"; the queue now holds that claim properly (the tap latch is synchronous, so two taps in one task can't both write). What §16 doesn't say is what the card does when a request ends up with several jobs anyway — the create rule permits it, so the display has to be defined:
+
+> The card resolves to the most conclusive job, not the newest: `applied` and `partial` outrank `running` / `queued`, which outrank `failed` / `cancelled`; newest wins within a rank. A duplicate's loser is claimed *after* the job that succeeded and comes back `failed` (`request_not_pending`), so ranking on recency alone would report a failure on a request that in fact applied.
+
+Also worth a line: the Apply button is withheld until the job subscription has resolved, so it can't be tapped against a mailbox whose contents are still unknown.
+
+And one string change in the §16 status table (line ~753). The `failed` row currently reads:
+
+> | `failed` | "Your desktop couldn't apply this." plus the desktop's message. |
+
+The headline is now **"Your desktop didn't finish this."** The extension finalises a job stranded mid-run as `failed`, with a message that explicitly refuses to say whether Kindoo took the write ("It may or may not have gone through in Kindoo — check this request on your desktop before applying again."). The old headline contradicted that line, and a manager reading only the headline would go redo a provision that may already have consumed a licence.
+
+Behaviour lives in `pickRemoteApplyJob` / `useRemoteApplyJobsByRequest` and `statusView` (`apps/web/src/features/manager/queue/hooks.ts`, `RemoteApply.tsx`).
+
 ## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
 Owner: @infra-engineer

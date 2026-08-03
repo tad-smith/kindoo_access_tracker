@@ -10,8 +10,9 @@
 // Presence is seeded through the emulator's REST bypass, standing in for
 // the desktop extension's heartbeat. The desktop half — claiming the job
 // and reporting an outcome — has no Playwright harness (it needs a
-// signed-in Kindoo tab), so the job's later transitions are covered by
-// the rules tests and the extension's own unit tests.
+// signed-in Kindoo tab), so the job's later transitions are seeded the
+// same way, and their rules are covered by the rules tests and the
+// extension's own unit tests.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -105,6 +106,25 @@ async function seedPresence(overrides: Record<string, unknown> = {}): Promise<vo
   });
 }
 
+/** A job the desktop already finished, written straight into the mailbox. */
+async function seedJob(
+  jobId: string,
+  status: string,
+  createdAt: Date,
+  outcome?: Record<string, unknown>,
+): Promise<void> {
+  await writeDoc(`remoteApply/${MANAGER_EMAIL}/jobs/${jobId}`, {
+    request_id: REQUEST_ID,
+    stake_id: 'csnorth',
+    status,
+    created_at: createdAt,
+    created_by_device: 'device-1',
+    finished_at: createdAt,
+    lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+    ...(outcome ? { outcome } : {}),
+  });
+}
+
 test.describe('manager Request Queue — remote apply', () => {
   test.beforeEach(async ({ page }) => {
     // Phone viewport: this whole feature exists because the manager is
@@ -157,6 +177,37 @@ test.describe('manager Request Queue — remote apply', () => {
     expect(job['stake_id']).toBe('csnorth');
     expect(job['created_by_device']).toEqual(expect.any(String));
     expect(job['lastActor']).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
+  });
+
+  test('reports a request that applied as applied, not as its failed duplicate', async ({
+    page,
+  }) => {
+    // Two jobs for one request: the one that applied, and the orphan the
+    // desktop claimed afterwards and refused because the request was no
+    // longer pending. The orphan is the NEWER of the two and the only
+    // one carrying a message, so anything that resolves by recency —
+    // or by whichever doc a Map happened to keep last — reads this
+    // request out as a failure. It is the one thing this surface must
+    // never say: a manager told their apply failed goes and redoes a
+    // provision that already consumed a licence.
+    await seedPresence();
+    await seedJob('job-applied', 'applied', new Date('2026-04-20T09:00:00Z'), {
+      code: 'applied',
+      message: 'Seat created in Kindoo.',
+    });
+    await seedJob('job-orphan', 'failed', new Date('2026-04-20T09:00:30Z'), {
+      code: 'request_not_pending',
+      message: 'That request is no longer pending.',
+    });
+    await openQueueAsManager(page);
+
+    const status = page.getByTestId(`remote-apply-status-${REQUEST_ID}`);
+    await expect(status).toHaveAttribute('data-status', 'applied');
+    await expect(status).toContainText('Applied ✓');
+    await expect(status).not.toContainText(/didn't finish/i);
+    await expect(status).not.toContainText(/no longer pending/i);
+    // Settled: no retry button to double-provision with.
+    await expect(page.getByTestId(`remote-apply-button-${REQUEST_ID}`)).toHaveCount(0);
   });
 
   test('hides the button and says to open Kindoo when the heartbeat has gone stale', async ({

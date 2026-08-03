@@ -21,7 +21,7 @@ const useRemoteApplyPresenceMock = vi.fn();
 vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
   useRemoteApplyPresence: () => useRemoteApplyPresenceMock(),
-  useActiveRemoteApplyJobs: () => new Map<string, string>(),
+  useRemoteApplyJobsByRequest: () => ({ byRequest: new Map(), isLoading: false }),
 }));
 
 // The remote-apply surface has its own test file; stub it out here so
