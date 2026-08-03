@@ -21,10 +21,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   isRemoteApplyTerminal,
+  type OverCapEntry,
   type RemoteApplyDesktopWithId,
   type RemoteApplyJob,
+  type RemoteApplyJobStatus,
 } from '@kindoo/shared';
 import { Button } from '../../../components/ui/Button';
+import { Dialog } from '../../../components/ui/Dialog';
 import {
   useQueueRemoteApplyJob,
   useRemoteApplyPickupTimeout,
@@ -132,6 +135,12 @@ export interface RemoteApplyRowProps {
    * mailbox is how a request ends up with two jobs.
    */
   jobsLoading?: boolean | undefined;
+  /**
+   * Scope → display label, for naming an over-cap pool in the result
+   * dialog. Optional: without it the pool falls back to its stored
+   * value (`'stake'` or a ward code), which is still readable.
+   */
+  labelForScope?: ((scope: string) => string) | undefined;
 }
 
 /**
@@ -147,6 +156,7 @@ export function RemoteApplyRow({
   requestSiteName,
   job,
   jobsLoading = false,
+  labelForScope,
 }: RemoteApplyRowProps) {
   // Local clock reading of the tap. `created_at` is an unresolved
   // `serverTimestamp()` in the first local snapshot, so the pickup
@@ -173,6 +183,25 @@ export function RemoteApplyRow({
   }, [job]);
 
   useRemoteApplyPickupTimeout(job?.job_id ?? null, job, queuedAtMs);
+
+  // The job whose outcome is still waiting to be acknowledged. Set only
+  // on a terminal TRANSITION this device watched happen — never on
+  // first sight of an already-terminal job, or every page load would
+  // pop a modal for last week's work. A manager who taps Apply and
+  // pockets the phone comes back to the dialog; one who reloads after
+  // it finished gets the inline row, which is the correct
+  // at-a-glance-only treatment for history.
+  const [ackJobId, setAckJobId] = useState<string | null>(null);
+  const lastSeenRef = useRef<{ jobId: string; status: RemoteApplyJobStatus } | null>(null);
+  useEffect(() => {
+    const prev = lastSeenRef.current;
+    lastSeenRef.current = job ? { jobId: job.job_id, status: job.status } : null;
+    if (!job || prev === null || prev.jobId !== job.job_id) return;
+    if (prev.status === job.status) return;
+    if (!isRemoteApplyTerminal(job.status)) return;
+    setAckJobId(job.job_id);
+  }, [job]);
+  const ackJob = job && ackJobId === job.job_id ? job : undefined;
 
   const status = job?.status;
   const hasJob = job !== undefined;
@@ -245,8 +274,153 @@ export function RemoteApplyRow({
           {isRetryable(status) ? 'Try again' : 'Apply via extension'}
         </Button>
       ) : null}
+      {ackJob ? (
+        <RemoteApplyResultDialog
+          job={ackJob}
+          requestId={requestId}
+          labelForScope={labelForScope}
+          onDismiss={() => setAckJobId(null)}
+        />
+      ) : null}
     </div>
   );
+}
+
+export interface RemoteApplyResultDialogProps {
+  job: RemoteApplyJob;
+  requestId: string;
+  labelForScope?: ((scope: string) => string) | undefined;
+  onDismiss: () => void;
+}
+
+/**
+ * The acknowledgement for a finished remote apply, mirroring the
+ * desktop's `ResultDialog`. The desktop ends every Provision & Complete
+ * in a modal the manager has to dismiss; the phone showed only the
+ * inline row, so a manager who pocketed their phone came back to a card
+ * that had quietly changed colour. The row stays — it is the
+ * at-a-glance state — and this is the acknowledgement.
+ *
+ * Not dismissable by Escape or a tap outside: the point is that it gets
+ * clicked. Same as the desktop's, which offers only its buttons.
+ *
+ * The detail comes from {@link statusView}, the same function the
+ * inline row renders from, so the two can't word an outcome
+ * differently. What the dialog adds is what the row has no room for:
+ * the desktop's provisioning note (what it actually did in Kindoo) and
+ * the over-cap warning.
+ *
+ * **No retry button on `partial`.** The desktop's version has one, and
+ * it is not an action this surface can reproduce. It replays the
+ * captured `MarkRequestCompleteInput` — an SBA-only write, no Kindoo
+ * call — and the job doc records only `provisioning_note` and
+ * `kindoo_uid`, not that input; the completion note would have to be
+ * guessed. The phone's own "Try again" is a different action again (a
+ * fresh job, i.e. a full re-provision), which is why `partial` is
+ * treated as settled and doesn't get it. The request is still
+ * `pending`, so the desktop's own card can finish it with the tested
+ * path — which is what the outcome message says to do.
+ */
+export function RemoteApplyResultDialog({
+  job,
+  requestId,
+  labelForScope,
+  onDismiss,
+}: RemoteApplyResultDialogProps) {
+  const view = statusView(job);
+  // `applied` writes the same string to both fields; fall back so an
+  // outcome from an extension that only set `message` still says what
+  // the desktop did.
+  const note =
+    job.outcome?.provisioning_note ?? (job.status === 'applied' ? job.outcome?.message : undefined);
+  // Only ever populated on `applied` (the `partial` path never landed
+  // the SBA write, so the server had nothing to report) — rendered on
+  // presence rather than on status so a missing field is simply a
+  // dialog without the warning, which is what an older extension
+  // writes.
+  const overCaps = job.outcome?.over_caps ?? [];
+
+  return (
+    <Dialog
+      open
+      dismissable={false}
+      onOpenChange={(next) => {
+        if (!next) onDismiss();
+      }}
+      title={resultDialogTitle(job.status, view)}
+    >
+      <div
+        className={`kd-remote-apply-result is-${view.tone}`}
+        data-testid={`remote-apply-result-${requestId}`}
+        data-status={job.status}
+      >
+        {note ? (
+          <p
+            className="kd-remote-apply-result-note"
+            data-testid={`remote-apply-result-note-${requestId}`}
+          >
+            {note}
+          </p>
+        ) : null}
+        {view.detail ? (
+          <p
+            className="kd-remote-apply-result-detail"
+            data-testid={`remote-apply-result-detail-${requestId}`}
+          >
+            {view.detail}
+          </p>
+        ) : null}
+        {overCaps.length > 0 ? (
+          <div
+            className="kd-remote-apply-result-overcap"
+            data-testid={`remote-apply-result-overcap-${requestId}`}
+          >
+            <strong>Now over cap:</strong>
+            <ul>
+              {overCaps.map((entry) => (
+                <li key={entry.pool}>{overCapLine(entry, labelForScope)}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+      <Dialog.Footer>
+        <Dialog.CancelButton data-testid={`remote-apply-result-dismiss-${requestId}`}>
+          Dismiss
+        </Dialog.CancelButton>
+      </Dialog.Footer>
+    </Dialog>
+  );
+}
+
+/**
+ * The dialog's heading. It is the inline row's headline for every
+ * status but `partial`, so the two surfaces can't say different things
+ * about the same outcome.
+ *
+ * `partial` is the exception because its detail line — authored on the
+ * desktop, deliberately, so both surfaces word failures identically —
+ * opens with "Applied in Kindoo, but …", exactly as the row's headline
+ * does. Stacked in one small modal the repetition reads as a stutter.
+ * The short form here mirrors the desktop dialog's own title
+ * ("Kindoo done — SBA still pending"), spelled without the acronym.
+ */
+export function resultDialogTitle(status: RemoteApplyJobStatus, view: StatusView): string {
+  return status === 'partial' ? 'Kindoo done — still open here' : view.headline;
+}
+
+/**
+ * One over-cap pool as a line. `pool` is `'stake'` or a ward_code; the
+ * page's scope labeller turns both into what the rest of the card says
+ * ("Stake", "Cottonwood"), so a manager doesn't have to translate a
+ * ward code on a phone.
+ */
+export function overCapLine(
+  entry: OverCapEntry,
+  labelForScope?: ((scope: string) => string) | undefined,
+): string {
+  const pool = labelForScope ? labelForScope(entry.pool) : entry.pool;
+  return `${pool}: ${entry.count} / ${entry.cap} (over by ${entry.over_by})`;
 }
 
 /**
@@ -290,7 +464,7 @@ function JobStatus({ job, requestId }: { job: RemoteApplyJob | undefined; reques
   );
 }
 
-interface StatusView {
+export interface StatusView {
   tone: 'progress' | 'success' | 'warn' | 'error';
   headline: string;
   detail?: string | undefined;

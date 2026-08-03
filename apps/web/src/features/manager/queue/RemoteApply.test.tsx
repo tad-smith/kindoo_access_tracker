@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
+  OverCapEntry,
   RemoteApplyDesktopWithId,
   RemoteApplyJobStatus,
   RemoteApplyOutcome,
@@ -33,7 +34,7 @@ vi.mock('./hooks', () => ({
   useRemoteApplyPickupTimeout: (...args: unknown[]) => pickupTimeoutMock(...args),
 }));
 
-import { RemoteApplyPresenceNote, RemoteApplyRow, presenceCopy } from './RemoteApply';
+import { RemoteApplyPresenceNote, RemoteApplyRow, overCapLine, presenceCopy } from './RemoteApply';
 import type { RemoteApplyJobWithId, RemoteApplyPresenceResult } from './hooks';
 
 function desktop(siteKey: string, siteName: string | null = null): RemoteApplyDesktopWithId {
@@ -463,5 +464,165 @@ describe('<RemoteApplyRow />', () => {
     render(<RemoteApplyRow {...covered()} />);
     expect(screen.getByText(/Sending to your desktop/i)).toBeInTheDocument();
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
+  });
+});
+
+// The acknowledgement half of the outcome. The desktop's own flow ends
+// in a modal you have to dismiss; the phone showed only the inline row,
+// so a manager who tapped Apply and pocketed the phone came back to a
+// card that had quietly changed colour and no confirmation that anything
+// had been read.
+describe('<RemoteApplyRow /> — result dialog', () => {
+  const applied = (over_caps?: OverCapEntry[]) =>
+    job('applied', {
+      code: 'applied',
+      message: 'Added Jane Doe to Maple Building.',
+      provisioning_note: 'Added Jane Doe to Maple Building.',
+      ...(over_caps ? { over_caps } : {}),
+    });
+
+  const label = (scope: string) => (scope === 'stake' ? 'Stake' : 'Cottonwood');
+
+  it('raises a dialog when the desktop finishes a job this device was watching', () => {
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('remote-apply-result-req-1')).toHaveAttribute(
+      'data-status',
+      'applied',
+    );
+    expect(screen.getByTestId('remote-apply-result-note-req-1')).toHaveTextContent(
+      'Added Jane Doe to Maple Building.',
+    );
+  });
+
+  it('keeps the inline row status alongside the dialog', () => {
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent('Applied ✓');
+  });
+
+  it('does not close on Escape — the point is that it gets acknowledged', () => {
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('closes once the manager taps Dismiss', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // …and stays closed while the same terminal job keeps arriving.
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not raise for a job that was already finished when the page loaded', () => {
+    // Otherwise every reload pops a modal for last week's work.
+    render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('names every pool the completion pushed over cap', () => {
+    // Dropped entirely on the remote path before the outcome carried
+    // them — a manager applying from their phone never learned a cap
+    // had been breached.
+    const { rerender } = render(
+      <RemoteApplyRow {...covered({ job: job('running'), labelForScope: label })} />,
+    );
+    rerender(
+      <RemoteApplyRow
+        {...covered({
+          job: applied([
+            { pool: 'stake', count: 12, cap: 10, over_by: 2 },
+            { pool: 'CO', count: 5, cap: 4, over_by: 1 },
+          ]),
+          labelForScope: label,
+        })}
+      />,
+    );
+    const overcap = screen.getByTestId('remote-apply-result-overcap-req-1');
+    expect(overcap).toHaveTextContent('Stake: 12 / 10 (over by 2)');
+    expect(overcap).toHaveTextContent('Cottonwood: 5 / 4 (over by 1)');
+  });
+
+  it('shows no over-cap block when the outcome carries none', () => {
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.queryByTestId('remote-apply-result-overcap-req-1')).toBeNull();
+  });
+
+  it('sends a partial outcome to the desktop instead of offering a retry that would misfire', () => {
+    // The desktop's dialog retries the SBA side only, replaying a
+    // captured input this surface does not hold. The phone's own retry
+    // is a different action (a whole fresh provision), so neither
+    // button belongs here — only the instruction.
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(
+      <RemoteApplyRow
+        {...covered({
+          job: job('partial', {
+            code: 'sba_incomplete',
+            message:
+              'Applied in Kindoo, but Stake Building Access could not be marked complete: ' +
+              'network error. Finish it on your desktop.',
+            provisioning_note: 'Added Jane Doe to Maple Building.',
+          }),
+        })}
+      />,
+    );
+    const body = screen.getByTestId('remote-apply-result-req-1');
+    expect(body).toHaveAttribute('data-status', 'partial');
+    // Short title here, not the row's headline: the desktop-authored
+    // detail below opens with the same clause, and stacked in one modal
+    // the repetition reads as a stutter.
+    expect(screen.getByRole('dialog')).toHaveTextContent('Kindoo done — still open here');
+    expect(screen.getByTestId('remote-apply-result-note-req-1')).toHaveTextContent(
+      'Added Jane Doe to Maple Building.',
+    );
+    expect(screen.getByTestId('remote-apply-result-detail-req-1')).toHaveTextContent(
+      /Finish it on your desktop/i,
+    );
+    expect(screen.queryByText(/Mark Complete/i)).toBeNull();
+    expect(screen.getByTestId('remote-apply-result-dismiss-req-1')).toBeInTheDocument();
+  });
+
+  it('raises the dialog on a failure too, wording it exactly as the row does', () => {
+    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    rerender(
+      <RemoteApplyRow
+        {...covered({
+          job: job('failed', {
+            code: 'site_mismatch',
+            message: 'Your desktop is on Site A; this request needs Site B.',
+          }),
+        })}
+      />,
+    );
+    expect(screen.getByRole('dialog')).toHaveTextContent(/didn't finish this/i);
+    expect(screen.getByTestId('remote-apply-result-detail-req-1')).toHaveTextContent(
+      'Your desktop is on Site A; this request needs Site B.',
+    );
+  });
+});
+
+describe('overCapLine', () => {
+  it('names the pool the way the rest of the card does', () => {
+    expect(
+      overCapLine({ pool: 'CO', count: 5, cap: 4, over_by: 1 }, (s) =>
+        s === 'CO' ? 'Cottonwood' : s,
+      ),
+    ).toBe('Cottonwood: 5 / 4 (over by 1)');
+  });
+
+  it('falls back to the stored pool value when no labeller is available', () => {
+    expect(overCapLine({ pool: 'stake', count: 12, cap: 10, over_by: 2 })).toBe(
+      'stake: 12 / 10 (over by 2)',
+    );
   });
 });
