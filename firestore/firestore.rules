@@ -534,7 +534,7 @@ service cloud.firestore {
         // `resolveWardBuilding` falls through to a name match when the
         // ward's `building_id` misses, so a bare find-by-slug resolves a
         // stale-slug ward to home and the job is then refused by the very
-        // tab it was routed to. See T-78.
+        // tab it was routed to. See T-79.
         allow create: if ownsMailbox(memberCanonical)
           && isManager(request.resource.data.stake_id)
           && request.resource.data.status == 'queued'
