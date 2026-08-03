@@ -29,7 +29,7 @@ import { PendingAddRequestsSection } from '../requests/components/PendingAddRequ
 import { NewRequestAffordance } from '../requests/components/NewRequestAffordance';
 import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
-import { canEditSeat, isScopeAllowed } from '../requests/scopeOptions';
+import { canEditSeat, canRemoveSeat, isScopeAllowed } from '../requests/scopeOptions';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
 
 export function StakeRosterPage() {
@@ -123,8 +123,8 @@ export function StakeRosterPage() {
 
   // The header "New Request" affordance shows only for principals with
   // stake-scope request authority — the same predicate that gates the
-  // 'stake' option in the New Request dropdown. Manager-only users (who
-  // can land here but can't ADD to the stake scope) don't see it.
+  // 'stake' option in the New Request dropdown: stake members and
+  // Kindoo Managers.
   const canRequest = activeStakeId !== null && isScopeAllowed(principal, activeStakeId, 'stake');
 
   return (
@@ -163,7 +163,7 @@ export function StakeRosterPage() {
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
-                  isScopeAllowed(principal, activeStakeId, grant.scope);
+                  canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
                 );

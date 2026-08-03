@@ -23,6 +23,14 @@ const isCI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './tests',
+  // The user-guide capture utility (`tests/screenshots.capture.ts`) is
+  // deliberately excluded from the regression suite by its filename —
+  // Playwright's default `testMatch` only collects `*.spec.ts` /
+  // `*.test.ts`. A positional path argument filters the collected set
+  // rather than widening it, so without this opt-in the documented
+  // capture command collects zero tests. `CAPTURE_SCREENSHOTS=1` swaps
+  // collection over to the capture file alone; unset, nothing changes.
+  ...(process.env['CAPTURE_SCREENSHOTS'] ? { testMatch: '**/screenshots.capture.ts' } : {}),
   // Tests within a file run sequentially; files run sequentially in CI
   // (workers: 1) to keep the auth-emulator clearAuth races out of CI
   // signal. Locally, defaults still apply for fast iteration.

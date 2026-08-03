@@ -17,6 +17,7 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { logger } from 'firebase-functions';
+import type { StakeClaims } from '@kindoo/shared';
 import { applyFullClaims, applyStakeClaims, applySuperadminClaim } from '../src/lib/applyClaims.js';
 import {
   clearEmulators,
@@ -132,6 +133,117 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
       const refreshed = await auth.getUser(user.uid);
       const claims = (refreshed.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       expect(claims.isPlatformSuperadmin).toBe(true);
+    },
+  );
+});
+
+// D25 limited access. `limited` rides inside the per-stake block, so the
+// merge must carry it through untouched and the change-detection compare
+// must notice it appearing or disappearing — that's what revokes the
+// token when a user's tier actually flips. Both are exercised through
+// the public applier (`mergeStake` / `claimsEqual` are module-private).
+describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () => {
+  beforeAll(async () => {
+    await clearEmulators();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await clearEmulators();
+  });
+  afterAll(async () => {
+    await clearEmulators();
+  });
+
+  /**
+   * Create a user and wait out `onAuthUserCreate`'s async baseline claim
+   * write when the Functions emulator is live, so the trigger can't
+   * clobber what the test writes next. Mirrors the wait in the suite
+   * above.
+   */
+  async function makeSettledUser(email: string): Promise<string> {
+    const { auth } = requireEmulators();
+    const user = await auth.createUser({ email });
+    if (functionsEmulatorReachable) {
+      const seeded = await waitFor(async () => {
+        const u = await auth.getUser(user.uid);
+        return ((u.customClaims ?? {}) as { canonical?: string }).canonical === email;
+      }, 20_000);
+      expect(seeded).toBe(true);
+    }
+    return user.uid;
+  }
+
+  const stakeBlock = (over: Partial<StakeClaims> = {}): StakeClaims => ({
+    manager: false,
+    stake: false,
+    wards: ['GE'],
+    ...over,
+  });
+
+  /** The stored claim block for `stakeId`, as it round-tripped through Auth. */
+  async function readBlock(uid: string, stakeId: string): Promise<Record<string, unknown>> {
+    const { auth } = requireEmulators();
+    const claims = ((await auth.getUser(uid)).customClaims ?? {}) as {
+      stakes?: Record<string, Record<string, unknown>>;
+    };
+    return claims.stakes?.[stakeId] ?? {};
+  }
+
+  it(
+    'carries limited: true through the merge without clobbering sibling stakes',
+    { timeout: 30_000 },
+    async () => {
+      const email = 'multi@gmail.com';
+      const uid = await makeSettledUser(email);
+
+      // Full-access block in stake A, then a limited block in stake B.
+      await applyStakeClaims(uid, email, 'alpha', stakeBlock({ stake: true, wards: [] }));
+      await applyStakeClaims(uid, email, 'beta', stakeBlock({ limited: true }));
+
+      expect(await readBlock(uid, 'beta')).toEqual({
+        manager: false,
+        stake: false,
+        wards: ['GE'],
+        limited: true,
+      });
+      // Sibling stake survives the merge and stays full-access.
+      const alpha = await readBlock(uid, 'alpha');
+      expect(alpha).toEqual({ manager: false, stake: true, wards: [] });
+      expect('limited' in alpha).toBe(false);
+    },
+  );
+
+  it(
+    'revokes tokens when limited is added and again when it is removed',
+    { timeout: 30_000 },
+    async () => {
+      const { auth } = requireEmulators();
+      const email = 'flip@gmail.com';
+      const uid = await makeSettledUser(email);
+
+      await applyStakeClaims(uid, email, 'csnorth', stakeBlock());
+
+      const revoke = vi.spyOn(auth, 'revokeRefreshTokens');
+
+      // Same block again: no change, no revoke.
+      await applyStakeClaims(uid, email, 'csnorth', stakeBlock());
+      expect(revoke).not.toHaveBeenCalled();
+
+      // Tier flips to limited: a real change.
+      await applyStakeClaims(uid, email, 'csnorth', stakeBlock({ limited: true }));
+      expect(revoke).toHaveBeenCalledTimes(1);
+      expect((await readBlock(uid, 'csnorth'))['limited']).toBe(true);
+
+      // Idempotent re-apply of the limited block: still no change.
+      await applyStakeClaims(uid, email, 'csnorth', stakeBlock({ limited: true }));
+      expect(revoke).toHaveBeenCalledTimes(1);
+
+      // And back to full: dropping the key is a change too.
+      await applyStakeClaims(uid, email, 'csnorth', stakeBlock());
+      expect(revoke).toHaveBeenCalledTimes(2);
+      const back = await readBlock(uid, 'csnorth');
+      expect(back).toEqual({ manager: false, stake: false, wards: ['GE'] });
+      expect('limited' in back).toBe(false);
     },
   );
 });

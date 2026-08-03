@@ -121,16 +121,19 @@ function mockPendingRemoveFor(canonical: string) {
 
 import { StakeRosterPage } from './RosterPage';
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(
+  opts: { stake?: boolean; wards?: string[]; manager?: boolean; limited?: boolean } = {},
+): unknown {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
     email: 'user@example.com',
     canonical: 'user@example.com',
     isPlatformSuperadmin: false,
-    managerStakes: [],
+    managerStakes: opts.manager ? ['csnorth'] : [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    limitedStakes: opts.limited ? ['csnorth'] : [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };
@@ -276,13 +279,23 @@ describe('<StakeRosterPage />', () => {
       expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
     });
 
-    it('hides the New Request button for a non-stake (manager-only) principal', () => {
-      // Manager status alone does not grant stake-scope request rights
-      // (B-3) — same predicate that gates the 'stake' New Request option.
+    it('renders the "New Request" button for a manager-only principal (no stake / no ward claim)', () => {
+      // A Kindoo Manager may request in any scope without an `access`
+      // row — same predicate that grants the 'stake' New Request option.
       usePrincipalMock.mockReturnValue({
         ...(principal() as object),
         managerStakes: ['csnorth'],
       });
+      mockSeats([]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      const btn = screen.getByTestId('stake-roster-new-request');
+      expect(btn).toHaveTextContent('New Request');
+      expect(btn).toHaveAttribute('data-scope', 'stake');
+    });
+
+    it('hides the New Request button for a principal with no manager / stake claim', () => {
+      usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
       mockSeats([]);
       mockStakeDoc({ stake_seat_cap: 200 });
       render(<StakeRosterPage />);
@@ -638,6 +651,46 @@ describe('<StakeRosterPage />', () => {
     });
   });
 
+  // A Kindoo Manager holds stake-scope authority without an `access`
+  // row of their own.
+  describe('manager-only viewer (no stake / no ward claim)', () => {
+    it('renders Remove and Edit on stake-scope manual rows', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    });
+
+    it('still hides Edit on stake-scope auto rows (Policy 1 outranks the manager branch)', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockSeats([
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+          callings: ['Stake President'],
+        }),
+      ]);
+      mockStakeDoc({ stake_seat_cap: 200 });
+      render(<StakeRosterPage />);
+      expect(screen.queryByTestId('edit-btn-auto@x.com')).toBeNull();
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+    });
+  });
+
   // T-43 Phase B AC #4 — broadened inclusion on Stake Roster.
   describe('Phase B broadened inclusion (T-43 AC #4)', () => {
     it('AC #4: a seat with primary scope="CO" and a stake-scope duplicate appears on the Stake Roster (single row)', () => {
@@ -873,5 +926,55 @@ describe('<StakeRosterPage />', () => {
       expect(screen.queryByText(/Stake Total/)).toBeNull();
       expect(screen.getByText(/1 \/ 200 seats used/)).toBeInTheDocument();
     });
+  });
+});
+
+describe('<StakeRosterPage /> — limited app access (D25)', () => {
+  function stakeSeats() {
+    return [
+      makeSeat({
+        scope: 'stake',
+        member_canonical: 'manual@x.com',
+        member_email: 'manual@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+      }),
+      makeSeat({
+        scope: 'stake',
+        member_canonical: 'temp@x.com',
+        member_email: 'temp@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        start_date: '2026-05-01',
+        end_date: '2026-06-01',
+      }),
+    ];
+  }
+
+  it('shows neither Edit nor Remove on a stake manual row, but both on the temp row', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true, limited: true }));
+    mockSeats(stakeSeats());
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited stake user keeps Edit and Remove on both rows', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats(stakeSeats());
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
   });
 });

@@ -35,6 +35,7 @@ vi.mock('../lib/api', () => ({
 const loadStakeConfigMock = vi.fn();
 const writeKindooConfigMock = vi.fn();
 const loadSeatByEmailMock = vi.fn();
+const loadKindooManagerByEmailMock = vi.fn();
 const loadSyncDataMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
 const resolveEidStakesMock = vi.fn();
@@ -42,6 +43,7 @@ vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
   loadSeatByEmail: (...args: unknown[]) => loadSeatByEmailMock(...args),
+  loadKindooManagerByEmail: (...args: unknown[]) => loadKindooManagerByEmailMock(...args),
   loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
   writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
   resolveEidStakes: (...args: unknown[]) => resolveEidStakesMock(...args),
@@ -62,6 +64,7 @@ describe('handleRequest', () => {
     loadStakeConfigMock.mockReset();
     writeKindooConfigMock.mockReset();
     loadSeatByEmailMock.mockReset();
+    loadKindooManagerByEmailMock.mockReset();
     loadSyncDataMock.mockReset();
     writeKindooSiteEidMock.mockReset();
     resolveEidStakesMock.mockReset();
@@ -342,6 +345,51 @@ describe('handleRequest', () => {
     const { handleRequest } = await import('./messages');
     const result = await handleRequest({
       type: 'data.getSeatByEmail',
+      stakeId: 'csnorth',
+      canonical: 'x@example.com',
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'rules blocked the read' },
+    });
+  });
+
+  it('data.getKindooManagerByEmail forwards the canonical and returns the manager doc', async () => {
+    const manager = {
+      member_canonical: 'mgr@example.com',
+      member_email: 'mgr@example.com',
+      name: 'Manager Mary',
+      active: true,
+    };
+    loadKindooManagerByEmailMock.mockResolvedValue(manager);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getKindooManagerByEmail',
+      stakeId: 'csnorth',
+      canonical: 'mgr@example.com',
+    });
+    expect(loadKindooManagerByEmailMock).toHaveBeenCalledWith('csnorth', 'mgr@example.com');
+    expect(result).toEqual({ ok: true, data: manager });
+  });
+
+  it('data.getKindooManagerByEmail returns null data when the requester is not a manager', async () => {
+    loadKindooManagerByEmailMock.mockResolvedValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getKindooManagerByEmail',
+      stakeId: 'csnorth',
+      canonical: 'member@example.com',
+    });
+    expect(result).toEqual({ ok: true, data: null });
+  });
+
+  it('data.getKindooManagerByEmail surfaces loader rejections as wire errors', async () => {
+    loadKindooManagerByEmailMock.mockRejectedValue(
+      Object.assign(new Error('rules blocked the read'), { code: 'permission-denied' }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.getKindooManagerByEmail',
       stakeId: 'csnorth',
       canonical: 'x@example.com',
     });

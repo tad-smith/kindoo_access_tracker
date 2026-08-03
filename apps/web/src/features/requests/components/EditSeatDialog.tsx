@@ -29,6 +29,26 @@
 // `useSubmitRequest` mutation. The backend's `markRequestComplete`
 // callable resolves the seat slot and applies the field replacement;
 // no client-side seat write here. Closes on success + toasts.
+//
+// Limited app access (D25). `canEditSeat` already hides the Edit
+// affordance on auto and manual seats for a principal carrying
+// `stakes[sid].limited`, so `edit_temp` is the only sub-mode a limited
+// user can reach here — there is no auto / manual handling to add. What
+// this dialog adds for that user, mirroring `NewRequestForm`:
+//   - the ≤90-day temp-window cap, stated as helper text and enforced
+//     by `makeEditSeatSchema({ limited })` on `end_date`.
+//     `useLiveTempWindowCheck` revalidates `end_date` whenever either
+//     date changes, so an over-long window reports itself before Submit
+//     (and on open, since an existing seat arrives with both dates
+//     already filled). Every other field keeps submit-time validation —
+//     the form's global mode is untouched;
+//   - at ward scope, the buildings checklist collapses to a read-only
+//     row naming the ward's own building, with `building_names` forced
+//     to exactly that name (the rules' `limitedWardBuildingOk` equality
+//     check). A ward with no building renders a blocked message and
+//     leaves Submit disabled.
+// Stake scope keeps the normal checklist, and a full user's dialog is
+// unchanged.
 
 import { useMemo } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -44,8 +64,17 @@ import {
   sortOrganizations,
   NO_ORGANIZATION_LABEL,
 } from '../../organizations/hooks';
-import { editSeatSchema, type EditSeatForm } from '../schemas';
+import {
+  LIMITED_TEMP_WINDOW_MESSAGE,
+  defaultBuildingsForScope,
+  makeEditSeatSchema,
+  type EditSeatForm,
+} from '../schemas';
+import { isLimitedInStake } from '../scopeOptions';
+import { useLiveTempWindowCheck } from '../liveTempWindow';
 import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
+import { usePrincipal } from '../../../lib/principal';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { toast } from '../../../lib/store/toast';
 
 function errorMessage(err: unknown): string {
@@ -124,10 +153,26 @@ export interface EditSeatDialogProps {
 
 export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
   const submit = useSubmitRequest();
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
   const wardsResult = useStakeWards();
   const buildingsResult = useStakeBuildings();
   const wards = wardsResult.data ?? [];
   const buildings = buildingsResult.data ?? [];
+
+  // Limited app access (D25). Only `edit_temp` is reachable — the
+  // affordance gate upstream guarantees it — so the flag drives the
+  // window cap and the ward-scope building lock, nothing else.
+  const limited = activeStakeId !== null && isLimitedInStake(principal, activeStakeId);
+  const wardLock = limited && seat !== null && seat.scope !== 'stake' && seat.scope !== '';
+  // The one building a locked ward-scope edit may carry. `null` when the
+  // ward has no building configured; the dialog then blocks with a
+  // message and Submit stays disabled on the empty selection.
+  const lockedWardBuilding = useMemo(
+    () =>
+      wardLock && seat ? (defaultBuildingsForScope(seat.scope, wards, buildings)[0] ?? null) : null,
+    [wardLock, seat, wards, buildings],
+  );
 
   // Organizations catalogue — the optional org selector that appears
   // only at stake scope on edit_manual / edit_temp. Empty until
@@ -204,7 +249,14 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
       type,
       reason: seat.reason ?? '',
       comment: '',
-      building_names: seat.building_names.filter((n) => visibleNames.has(n)),
+      // Limited + ward scope: force exactly the ward's building rather
+      // than the seat's current set, matching the rules' equality check.
+      // No checkboxes render in that mode, so this is the only writer.
+      building_names: wardLock
+        ? lockedWardBuilding
+          ? [lockedWardBuilding]
+          : []
+        : seat.building_names.filter((n) => visibleNames.has(n)),
       start_date: seat.start_date ?? '',
       end_date: seat.end_date ?? '',
       // Pre-fill the org selector from the seat (stake scope only; the
@@ -212,16 +264,30 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
       // so an auto seat never reaches the selector.
       organization_id: seat.organization_id ?? null,
     };
-  }, [seat, visibleBuildings]);
+  }, [seat, visibleBuildings, wardLock, lockedWardBuilding]);
+
+  const schema = useMemo(() => makeEditSeatSchema({ limited }), [limited]);
 
   const form = useForm<EditSeatForm>({
-    resolver: zodResolver(editSeatSchema),
+    resolver: zodResolver(schema),
     defaultValues: initial,
     values: initial,
   });
-  const { register, handleSubmit, watch, setValue, formState, control, reset } = form;
+  const { register, handleSubmit, watch, setValue, formState, control, reset, trigger } = form;
   const watchedBuildings = watch('building_names') ?? [];
   const watchedOrganizationId = watch('organization_id') ?? null;
+  const watchedStartDate = watch('start_date');
+  const watchedEndDate = watch('end_date');
+
+  // Limited + edit_temp only: report the ≤90-day cap as soon as both
+  // dates hold a date rather than waiting for Submit (D25). `initial.type`
+  // is `edit_manual` while `seat` is null, so this stays inert then.
+  useLiveTempWindowCheck({
+    enabled: limited && initial.type === 'edit_temp',
+    startDate: watchedStartDate,
+    endDate: watchedEndDate,
+    triggerEndDate: trigger,
+  });
 
   if (!seat) return null;
   const editType = initial.type;
@@ -343,6 +409,11 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
 
         {editType === 'edit_temp' ? (
           <div className="kd-temp-fields">
+            {limited ? (
+              <p className="kd-form-hint" data-testid="edit-seat-temp-cap-hint">
+                {LIMITED_TEMP_WINDOW_MESSAGE}
+              </p>
+            ) : null}
             <label>
               Start date
               <Input type="date" {...register('start_date')} data-testid="edit-seat-start-date" />
@@ -368,7 +439,29 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
           <legend>
             Buildings <small>(at least one required)</small>
           </legend>
-          {buildings.length === 0 ? (
+          {wardLock ? (
+            // Limited + ward scope (D25): the grant is locked to the
+            // ward's own building, so there is nothing to tick.
+            lockedWardBuilding ? (
+              <div className="kd-buildings-locked-row" data-testid="edit-seat-locked-building">
+                <span className="kd-buildings-header-row">
+                  <span className="kd-buildings-header-values">{lockedWardBuilding}</span>
+                </span>
+                <small className="kd-form-hint">
+                  Temporary access is limited to your ward&apos;s building.
+                </small>
+              </div>
+            ) : (
+              <p
+                className="kd-form-error"
+                role="alert"
+                data-testid="edit-seat-locked-building-missing"
+              >
+                This ward has no building configured, so an edit can&apos;t be submitted yet. Ask
+                your Kindoo Manager to set the ward&apos;s building under Configuration.
+              </p>
+            )
+          ) : buildings.length === 0 ? (
             <p className="kd-empty-state">No buildings configured.</p>
           ) : visibleBuildings.length === 0 ? (
             // Site-filter narrowed the catalogue to zero (foreign-site

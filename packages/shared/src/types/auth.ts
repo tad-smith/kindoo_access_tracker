@@ -19,6 +19,13 @@ export type StakeClaims = {
   stake: boolean;
   /** Ward codes for which the user has any non-empty grant in scopes != 'stake'. Stable order. */
   wards: string[];
+  /**
+   * Present-and-true iff the user holds >=1 grant in this stake, every
+   * grant is limited, and the user is not an active Kindoo Manager.
+   * ABSENT => FULL. Never written `false`, so pre-existing tokens stay
+   * byte-identical and claim sync sees no change (no token churn).
+   */
+  limited?: boolean;
 };
 
 /**
@@ -65,4 +72,6 @@ export type Principal = {
   stakeMemberStakes: string[];
   /** Stake ID → ward codes the user has bishopric access to in that stake. Empty entries omitted. */
   bishopricWards: Record<string, string[]>;
+  /** Stake IDs whose claim block carries `limited: true`. A stake absent here is full-access. */
+  limitedStakes: string[];
 };

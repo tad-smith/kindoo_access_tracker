@@ -198,6 +198,45 @@ describe('extensionApi', () => {
     expect(result).toBeNull();
   });
 
+  it('getKindooManagerByEmail posts data.getKindooManagerByEmail and unwraps the manager doc', async () => {
+    const manager = { member_canonical: 'mgr@example.com', name: 'Manager Mary', active: true };
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: manager });
+      },
+    );
+    const { getKindooManagerByEmail } = await import('./extensionApi');
+    const result = await getKindooManagerByEmail('csnorth', 'mgr@example.com');
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'data.getKindooManagerByEmail', stakeId: 'csnorth', canonical: 'mgr@example.com' },
+      expect.any(Function),
+    );
+    expect(result).toEqual(manager);
+  });
+
+  it('getKindooManagerByEmail returns null when the requester is not a manager', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: true, data: null });
+      },
+    );
+    const { getKindooManagerByEmail } = await import('./extensionApi');
+    const result = await getKindooManagerByEmail('csnorth', 'member@example.com');
+    expect(result).toBeNull();
+  });
+
+  it('getKindooManagerByEmail rethrows a wire error as ExtensionApiError', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({ ok: false, error: { code: 'permission-denied', message: 'no' } });
+      },
+    );
+    const { getKindooManagerByEmail } = await import('./extensionApi');
+    await expect(getKindooManagerByEmail('csnorth', 'mgr@example.com')).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+  });
+
   it('resolveEidStakes posts data.resolveEidStakes with the eid and unwraps the full payload', async () => {
     chromeStub().runtime.sendMessage.mockImplementation(
       (_req: unknown, cb: SendMessageCallback) => {

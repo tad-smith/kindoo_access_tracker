@@ -6,7 +6,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-74] Wire the deploy-lock drift check into CI and cover it with tests
+## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
 Owner: @infra-engineer
 Phase: cross-cutting
@@ -19,6 +19,24 @@ The drift check that keeps `functions/deploy-lock/package-lock.json` honest is e
 2. **No committed tests for load-bearing logic.** `parsePnpmFunctionsDeps` (a hand-rolled pnpm lockfileVersion-9 parser) and `findDeployLockDrift` in `functions/scripts/deploy-deps.mjs` carry the guarantee. Both throw rather than return partial results when they meet something structurally unfamiliar, so a future pnpm layout change fails loudly rather than making the check vacuous — but that defence is itself untested in the repo. The nine cases exercised during PR #245 (dep added / removed, pnpm-lock floated, range bumped without `pnpm install`, `lockfileVersion` too old, upstream-published-nothing-changed staying green, and two parser-rejects-unknown-format cases) were run ad-hoc and should be a vitest fixture suite.
 
 Also outstanding from T-73, and not a CI concern: confirm on the next staging deploy that Cloud Build's buildpack actually installs via `npm ci` from the copied lockfile. `infra/runbooks/deploy.md` → "Manual verification of the deploy dependency pinning" step 6 has the exact check.
+
+## [T-75] Limited-app-access code comments cite D24; the decision is D25
+Status: done (2026-08-02 — swept on the D25 feature branch before #244 merged)
+Owner: @backend-engineer / @web-engineer
+Phase: cross-cutting
+
+The limited-app-access feature branch was cut before PR #240 merged, so its authors picked **D24** as the next free architecture number. PR #240 landed first and took D24 ("Kindoo Managers hold blanket request-creation authority"). Limited app access is therefore **D25** in `architecture.md`, and every in-code citation is off by one.
+
+Sweep `D24` → `D25` in the limited-app-access comments only — do not touch comments that legitimately cite the manager-authority decision. Known sites: `firestore/firestore.rules` (`isLimited`, the limited helper block, the create-predicate clause), `functions/src/lib/seedClaims.ts`, `packages/shared/src/types/auth.ts`, `packages/shared/src/types/access.ts`, `packages/shared/src/tempWindow.ts`, `apps/web/src/features/requests/scopeOptions.ts`, `apps/web/src/features/requests/schemas.ts`, `apps/web/src/features/requests/components/NewRequestForm.tsx`, `apps/web/src/features/requests/components/EditSeatDialog.tsx`, `apps/web/src/features/requests/hooks.ts`, `apps/web/src/styles/pages.css`, and the commit subjects on the sub-branches (already written; leave those). `grep -rn 'D24' --include='*.ts' --include='*.tsx' --include='*.rules' --include='*.css'` finds them all. Docs are already correct.
+
+## [T-74] `buildingRenameBlocker` does not count ward references
+Status: open
+Owner: @web-engineer
+Phase: cross-cutting
+
+`buildingRenameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts`) blocks a building rename while an active **seat** or a **pending request** references the building's current display name, because `seat.building_names` / `request.building_names` are display-name snapshots (§3.2). It does **not** count **wards**, even though `ward.building_name` is the same kind of snapshot — so a ward with no seats can have its building renamed out from under it and keep a stale `building_name` indefinitely.
+
+Discovered while building D25. **Not a blocker:** both the client (`resolveWardBuilding` via `defaultBuildingsForScope`) and the rules (`limitedWardBuildingName`) resolve the ward's building **id-first** and fall back to the name only when `building_id` is absent or dangling, so the limited ward-building lock agrees on both sides regardless of a stale snapshot. It is a latent data-integrity gap worth closing: the fix is to pass the live wards snapshot into the blocker and count wards whose `building_name` matches (the Buildings tab already subscribes to wards for other guards), or to have the rename write through to the referencing wards' snapshots.
 
 ## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
 Status: done (2026-08-02 — PR #245)
