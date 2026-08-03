@@ -289,7 +289,8 @@ describe('EmailService — pure builders', () => {
         end_date: '2026-05-15',
       },
     });
-    expect(buildNewRequestTextBody(o)).toContain('requested temp access for');
+    expect(buildNewRequestTextBody(o)).toContain('requested temporary access for Subject Person.');
+    expect(buildNewRequestHtmlBody(o)).toContain('requested temporary access for Subject Person.');
     expect(buildNewRequestTextBody(o)).toContain('Dates:     2026-05-01 to 2026-05-15');
     expect(buildNewRequestHtmlBody(o)).toContain('>Dates</th>');
     expect(buildNewRequestHtmlBody(o)).toContain('>2026-05-01 to 2026-05-15</td>');

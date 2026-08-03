@@ -57,7 +57,7 @@ const SCOPE_LABEL_STAKE = 'Stake';
 // Every verb ends in `for` — the lead appends the subject person.
 const TYPE_LEAD_VERB: Record<RequestType, string> = {
   add_manual: 'submitted a new manual-add request for',
-  add_temp: 'requested temp access for',
+  add_temp: 'requested temporary access for',
   remove: 'requested removal of',
   edit_auto: 'requested an edit to the auto seat for',
   edit_manual: 'requested an edit to the manual seat for',
