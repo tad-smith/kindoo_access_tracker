@@ -52,7 +52,7 @@ jobs:
 
             Tone: terse, no praise, no preamble, no hedging. If the PR is genuinely fine, one line saying so is the right answer. Don't mention a risk or concern just because you want to make it look like you are doing a good review.  Everything you mention has to be addressed and that slows down development, which is a cost.  The comment needs to be worth the cost.  One well-reasoned objection beats five nitpicks. Do NOT comment on style if a linter would catch it.
           claude_args: |
-            --model claude-opus-4-7
+            --model claude-opus-5
             --effort max
             --max-turns 120
             --allowedTools "Bash,Read,Grep,Glob"
