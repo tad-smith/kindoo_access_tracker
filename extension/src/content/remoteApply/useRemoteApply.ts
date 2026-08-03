@@ -65,6 +65,15 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
    * No error, no log; the manager's phone just never sees a desktop.
    * Reading through a ref also means a reconfigure reaches the next tick
    * without a teardown.
+   *
+   * Deliberate belt-and-braces — do NOT collapse this back into the dep
+   * array on the grounds that `bundle` happens to be stable today. It is
+   * (App holds it in state and TabbedShell passes it straight through),
+   * and that is exactly what makes the revert look safe. The starvation
+   * is silent, so nothing would fail loudly if the invariant were ever
+   * broken upstream; the same host also re-renders on every queue fetch
+   * AND on every `setFinishedCount`, so its render cadence is set by
+   * traffic rather than by anything visible here.
    */
   const bundleRef = useRef(bundle);
   bundleRef.current = bundle;
