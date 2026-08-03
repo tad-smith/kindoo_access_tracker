@@ -6,6 +6,29 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-18] `CallingCombobox` blur timer outlives the component; flakes CI with "ReferenceError: window is not defined"
+Status: closed (fixed in PR #247)
+Owner: @web-engineer
+Severity: low (CI-only red on green runs; in-browser it is a no-op setState on an unmounted component)
+Branch / PR: `fix/calling-combobox-blur-timer` (PR #247)
+
+`CallingCombobox`'s `onBlur` armed a 150ms popover-close timer that nothing ever cancelled on unmount. The pending callback still ran `setOpen(false)` after the component was gone, which under vitest's jsdom teardown threw an unhandled `ReferenceError` and reddened CI runs whose tests had all passed.
+
+**Symptom (CI):** the `test` job reports every test green — `1521 tests passed` on the observed run — then vitest reports one unhandled error and exits non-zero:
+
+```
+ReferenceError: window is not defined
+  at apps/web/src/features/requests/components/CallingCombobox.tsx:118
+```
+
+Surfaced on an infra PR whose diff contained no TypeScript at all; a re-run was clean. Note the repo's CI uses `continue-on-error` on some steps, so the failing step still reported `conclusion: success` and only the aggregator job went red — the real signal is the `outcome` list in the "Verify all checks passed" step.
+
+**Repro:** not reliable naturally — the leaked timer must fire inside the narrow gap between vitest tearing down one test file's jsdom and installing the next file's; outside that gap a `window` exists and the callback is harmless. Deterministic reproduction: render `CallingCombobox`, focus and blur the input, capture the pending 150ms callback, `unmount()`, `delete globalThis.window`, then invoke the callback — throws the exact error above. `NewRequestDialog.test.tsx` reliably arms the leak (types into the combobox, then clicks submit, blurring it; the file ends ~120ms before the timer is due), but `NewRequestForm.test.tsx` and `EditSeatDialog.test.tsx` drive the same field repeatedly and can be the origin on any given run.
+
+**Root cause:** `cancelBlurTimer` existed but was wired only to `onFocus` and the popover's `onMouseDown` — there was no unmount cleanup, so a blur followed immediately by an unmount left the callback pending with nothing to cancel it. The `ReferenceError` does not come from `setOpen` itself: React 19's `dispatchSetState` calls `requestUpdateLane` → `resolveUpdatePriority`, which reads a bare `window.event` *before* any is-fiber-still-mounted check, so even an unmounted component's `setState` dereferences `window`. Stack confirmed as `resolveUpdatePriority` → `requestUpdateLane` → `dispatchSetState` → `CallingCombobox.tsx:118`. Same failure family as B-13 (post-teardown React work) but a different cause — B-13 was an un-unmounted React root, this is an uncancelled timer.
+
+**Fix (PR #247):** `cancelBlurTimer` is wrapped in `useCallback` and released from a `useEffect` cleanup (`useEffect(() => cancelBlurTimer, [cancelBlurTimer])`), matching the idiom already used by `useLongPress` and `QueuePage` rather than suppressing the unhandled error or stubbing `window`. The leak was real independent of tests — in the browser the same timer fired `setOpen` on an unmounted component whenever the field was blurred and the dialog closed within 150ms, which is what submitting the New Request dialog does. Ships with `apps/web/src/features/requests/components/CallingCombobox.test.tsx` (the component previously had no test file); the unmount test fails before the change and passes after. A sweep of every timer site in `apps/web/src` found no sibling sharing the root cause — `QueuePage` and `useLongPress` already clean up, `toast.ts` is a module-scoped store with tracked handles, `signIn.ts` is an awaited sleep, and `TimezoneCombobox` uses no blur timer.
+
 ## [B-17] Claim-sync triggers retry forever (Eventarc storm) when the auth user was deleted before the trigger fired; flakes `syncSuperadminClaims.e2e.test.ts`
 Status: closed (fixed in PR #218)
 Owner: @backend-engineer
