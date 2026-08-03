@@ -24,7 +24,11 @@ import {
   partitionPendingRequests,
 } from '@kindoo/shared';
 import { usePendingRequests } from './hooks';
-import { useAccessForMember, useSeatForMember } from '../../requests/hooks';
+import {
+  useAccessForMember,
+  useKindooManagerForMember,
+  useSeatForMember,
+} from '../../requests/hooks';
 import { useScopeLabel } from '../../../lib/scopeLabel';
 import { Badge } from '../../../components/ui/Badge';
 import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
@@ -239,12 +243,17 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
 
   // Live-derive the requester's name + calling from their access doc for
   // this request's scope (Option A — nothing is captured on the request).
-  // While the access doc is still loading or absent, `access.data` is
-  // undefined; `deriveRequesterDisplay(undefined, …)` yields all nulls, so
+  // While a doc is still loading or absent, its `data` is undefined;
+  // `deriveRequesterDisplay(undefined, …, undefined)` yields all nulls, so
   // `formatRequesterLabel` falls back to the email (no empty flash).
+  //
+  // Kindoo Managers may submit in any scope without an access row, so
+  // their `kindooManagers` doc backstops both fields — `{Name} (Kindoo
+  // Manager)`. The access doc wins on each field independently.
   const requesterAccess = useAccessForMember(request.requester_canonical);
+  const requesterManager = useKindooManagerForMember(request.requester_canonical);
   const requesterLabel = formatRequesterLabel(
-    deriveRequesterDisplay(requesterAccess.data, request.scope),
+    deriveRequesterDisplay(requesterAccess.data, request.scope, requesterManager.data),
     request.requester_email,
   );
 

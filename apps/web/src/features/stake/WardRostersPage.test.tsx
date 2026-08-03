@@ -78,16 +78,19 @@ vi.mock('../requests/components/NewRequestAffordance', async () => {
   };
 });
 
-function principal(opts: { stake?: boolean; wards?: string[] } = {}): unknown {
+function principal(
+  opts: { stake?: boolean; wards?: string[]; manager?: boolean; limited?: boolean } = {},
+): unknown {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
     email: 'user@example.com',
     canonical: 'user@example.com',
     isPlatformSuperadmin: false,
-    managerStakes: [],
+    managerStakes: opts.manager ? ['csnorth'] : [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    limitedStakes: opts.limited ? ['csnorth'] : [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };
@@ -264,6 +267,60 @@ describe('<WardRostersPage />', () => {
       mockSeats([makeSeat({ scope: 'CO' })]);
       render(<WardRostersPage initialWard="CO" />);
       expect(screen.queryByTestId('ward-rosters-new-request')).toBeNull();
+    });
+  });
+
+  // A Kindoo Manager holds request authority in every scope without an
+  // `access` row of their own. Ward Rosters is their reach into wards
+  // they hold no bishopric claim for.
+  describe('manager-only viewer (no stake / no ward claim)', () => {
+    it('shows the New Request button for a ward the manager holds no bishopric claim for', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'GE' })]);
+      render(<WardRostersPage initialWard="GE" />);
+      const btn = screen.getByTestId('ward-rosters-new-request');
+      expect(btn).toHaveTextContent('New Request');
+      expect(btn).toHaveAttribute('data-scope', 'GE');
+    });
+
+    it('opens the New Request modal from a ward the manager holds no bishopric claim for', async () => {
+      const user = userEvent.setup();
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([makeSeat({ scope: 'GE' })]);
+      render(<WardRostersPage initialWard="GE" />);
+      await user.click(screen.getByTestId('ward-rosters-new-request'));
+      expect(screen.getByTestId('new-request-dialog-open')).toBeInTheDocument();
+    });
+
+    it('renders Remove and Edit on rows of a ward the manager holds no bishopric claim for', () => {
+      usePrincipalMock.mockReturnValue(principal({ manager: true }));
+      mockWards([makeWard({ ward_code: 'GE', ward_name: 'Cedar', seat_cap: 20 })]);
+      mockSeats([
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'manual@x.com',
+          member_email: 'manual@x.com',
+          member_name: 'Manual Person',
+          type: 'manual',
+          callings: [],
+        }),
+        makeSeat({
+          scope: 'GE',
+          member_canonical: 'auto@x.com',
+          member_email: 'auto@x.com',
+          member_name: 'Auto Person',
+          type: 'auto',
+        }),
+      ]);
+      render(<WardRostersPage initialWard="GE" />);
+      expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+      expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+      // Ward-scope auto seats stay editable (constrained edit_auto) but
+      // never removable.
+      expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+      expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
     });
   });
 
@@ -686,5 +743,67 @@ describe('<WardRostersPage /> — Kindoo Sites label (spec §15)', () => {
     mockKindooSites([{ id: 'foreign-1', display_name: 'East Stake (Pine)' }]);
     render(<WardRostersPage initialWard="CO" />);
     expect(screen.queryByTestId('kindoo-site-badge-a@x.com')).toBeNull();
+  });
+});
+
+describe('<WardRostersPage /> — limited app access (D25)', () => {
+  function wardSeats() {
+    return [
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'auto@x.com',
+        member_email: 'auto@x.com',
+        member_name: 'Auto Person',
+        type: 'auto',
+        callings: ['Bishop'],
+      }),
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'manual@x.com',
+        member_email: 'manual@x.com',
+        member_name: 'Manual Person',
+        type: 'manual',
+        callings: [],
+      }),
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'temp@x.com',
+        member_email: 'temp@x.com',
+        member_name: 'Temp Person',
+        type: 'temp',
+        callings: [],
+        start_date: '2026-05-01',
+        end_date: '2026-06-01',
+      }),
+    ];
+  }
+
+  it('shows neither Edit nor Remove on auto and manual rows, but both on the temp row', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'], limited: true }));
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+    mockSeats(wardSeats());
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.queryByTestId('edit-btn-auto@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
+
+    expect(screen.queryByTestId('edit-btn-manual@x.com')).toBeNull();
+    expect(screen.queryByTestId('remove-btn-manual@x.com')).toBeNull();
+
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+
+  it('regression — a NON-limited bishopric keeps Edit on all three rows', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+    mockSeats(wardSeats());
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByTestId('edit-btn-auto@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
   });
 });

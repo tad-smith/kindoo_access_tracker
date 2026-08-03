@@ -101,6 +101,25 @@ service cloud.firestore {
         && request.auth.token.stakes[stakeId].stake == true;
     }
 
+    // Limited app access (D25). An opt-in per-stake flag minted onto
+    // the stake claim block alongside `manager` / `stake` / `wards`.
+    // Absent (the overwhelmingly common case) means FULL access and
+    // nothing about the user's write surface changes. When true, the
+    // `requests` create predicate narrows to the temp / remove subset
+    // — see the D25 clause at the end of that rule.
+    //
+    // The `'limited' in ...` presence guard matters: the claim minter
+    // omits the key entirely for full users rather than writing
+    // `limited: false`, so a bare field read would error on every
+    // full user's write.
+    function isLimited(stakeId) {
+      return isAuthed()
+        && 'stakes' in request.auth.token
+        && stakeId in request.auth.token.stakes
+        && 'limited' in request.auth.token.stakes[stakeId]
+        && request.auth.token.stakes[stakeId].limited == true;
+    }
+
     // Returns the ward_code list for which the user has bishopric
     // visibility under `stakeId`. Empty list if not a member of that
     // stake.
@@ -568,6 +587,130 @@ service cloud.firestore {
           );
       }
 
+      // ----- Limited-app-access helpers (D25) -----
+      // Only ever reached from the `requests` create predicate, and
+      // only when `isLimited(stakeId)` is true — so full users pay
+      // none of the cost below (no extra document reads).
+
+      // Temp windows for a limited user are capped at 90 days
+      // inclusive of both endpoints' dates. Safe to split / int() the
+      // segments unguarded: this runs AFTER the create predicate's
+      // ISO `^\d{4}-\d{2}-\d{2}$` shape check and its
+      // `start_date <= end_date` check, both of which short-circuit
+      // the whole `&&` chain before we get here. `int()` parses
+      // leading-zero segments ('03', '05') correctly — verified
+      // against the emulator and pinned by a regression test.
+      function tempWindowWithin90Days(data) {
+        let s = data.start_date.split('-');
+        let e = data.end_date.split('-');
+        return timestamp.date(int(e[0]), int(e[1]), int(e[2]))
+             - timestamp.date(int(s[0]), int(s[1]), int(s[2]))
+            <= duration.value(90, 'd');
+      }
+
+      // Resolve a ward's building name the same way the client does —
+      // ID-FIRST with a raw-name fallback — mirroring
+      // `resolveWardBuilding` in `packages/shared/src/resolveWardSite.ts`.
+      //
+      // `building_id` is the preferred FK (an immutable slug that IS the
+      // building's doc ID). `building_name` is a legacy display-name
+      // snapshot that is still required but CAN go stale:
+      // `buildingRenameBlocker` only blocks a building rename while a
+      // seat or pending request references the old name — it does not
+      // check `wards`. So a ward with no seats can have its building
+      // renamed out from under its `building_name`. Reading the ward's
+      // `building_name` directly (the original form of this helper) then
+      // demanded the STALE name while the client sent the CURRENT one,
+      // locking limited users out of submitting at all.
+      //
+      // The ternary SHORT-CIRCUITS — verified against the emulator, and
+      // pinned by the dangling-`building_id` test in
+      // `tests/requests.test.ts`. The building `get()` is therefore not
+      // evaluated when `exists()` is false, so a dangling slug falls
+      // through to the name path instead of erroring the whole
+      // predicate. `Map.get(key, default)` is used over a bare field
+      // read for the same reason: an absent key yields '' (which the
+      // caller's size check rejects) rather than an error.
+      //
+      // Document access cost: 1 ward `get()`, 1 building `exists()`, and
+      // at most 1 building `get()` — 3 of the 10 allowed per
+      // single-document request.
+      function limitedWardBuildingName(sid, scope) {
+        let ward = get(/databases/$(database)/documents/stakes/$(sid)/wards/$(scope)).data;
+        let bid = ward.get('building_id', '');
+        return bid is string
+            && bid.size() > 0
+            && exists(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid))
+          ? get(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid)).data.get('building_name', '')
+          : ward.get('building_name', '');
+      }
+
+      // A limited user's ward-scope temp request is locked to exactly
+      // the ward's own building — no cross-building grants, no
+      // multi-building supersets.
+      //
+      // Fails closed on every degenerate input: a missing ward doc makes
+      // the `get()` in `limitedWardBuildingName` return null and the
+      // field read errors out (rules errors deny); a ward with neither a
+      // resolvable `building_id` nor a non-empty `building_name`
+      // resolves to '' and fails the size guard.
+      function limitedWardBuildingOk(sid, data) {
+        let name = limitedWardBuildingName(sid, data.scope);
+        return name is string && name.size() > 0 && data.building_names == [name];
+      }
+
+      // A limited user may only remove TEMP seats — auto and manual
+      // seats are outside their authority. `get()` rather than
+      // `exists()` for the same reason as above: we need the seat's
+      // `type` VALUE.
+      //
+      // The `seat_member_canonical` guards come first so a request
+      // omitting the field (or carrying an empty string, which would
+      // build a malformed document path) denies on a legible
+      // predicate instead of an opaque path-construction error. A
+      // seat doc that simply doesn't exist still denies — `get()`
+      // returns null and the field read errors.
+      function limitedRemoveTargetIsTemp(sid, data) {
+        return 'seat_member_canonical' in data
+          && data.seat_member_canonical is string
+          && data.seat_member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.seat_member_canonical)).data.type == 'temp';
+      }
+
+      // The edit-side mirror: a limited user may only edit TEMP seats.
+      // Only `edit_temp` ever reaches here — `edit_auto` / `edit_manual`
+      // are already off the limited type list — but without this the
+      // create predicate accepted an off-UI `edit_temp` aimed at a
+      // manual / auto seat, which `markRequestComplete` then rejected
+      // at completion, leaving a dead row in the manager queue.
+      //
+      // Reads a DIFFERENT field than the remove gate: `edit_*` resolves
+      // its seat as `seats/{member_canonical}` (see
+      // `functions/src/callable/markRequestComplete.ts`), while `remove`
+      // uses `seat_member_canonical`. Same defensive guards for the same
+      // reason — an absent or empty field would build a collection path
+      // and error opaquely rather than deny legibly. A seat doc that
+      // simply doesn't exist still denies: `get()` returns null and the
+      // field read errors.
+      //
+      // Same accepted edge as the remove gate: this checks the seat's
+      // PRIMARY `type`, so a temp duplicate grant sitting under a
+      // non-temp primary is denied for limited users. `canEditSeat` in
+      // the client applies the identical primary-type test, so the UI
+      // never offers a submit these rules reject.
+      //
+      // Document access cost: 1 seat `get()`. Worst case for the whole
+      // limited path is a ward-scope `edit_temp` — this read on top of
+      // `limitedWardBuildingName`'s 3 — so 4 of the 10 allowed per
+      // single-document request. `add_temp` and `remove` short-circuit
+      // this conjunct and pay nothing for it.
+      function limitedEditTargetIsTemp(sid, data) {
+        return 'member_canonical' in data
+          && data.member_canonical is string
+          && data.member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.member_canonical)).data.type == 'temp';
+      }
+
       // ----- Requests -----
       // Reads: managers see all; the original requester sees their
       // own; stake-scope members see every request in the stake
@@ -582,16 +725,12 @@ service cloud.firestore {
       // `remove` may have an empty name); stake-scope add/edit-types
       // require at least one building selection. Scope must match
       // the requester's role:
+      //   - Kindoo Manager: every scope, every type — no `access` row
+      //     required
       //   - stake-scope: stake membership
       //   - ward-scope: that ward in the bishopric list
-      // Manager status alone does NOT grant creation rights (B-3 /
-      // T-36) — a pure-manager user with no stake / no ward claim
-      // has no submit surface. A manager who also holds `stake: true`
-      // or a bishopric ward inherits creation rights through those
-      // branches, like any other user. The self-approval invariant
-      // (spec §6, F12 invariant 7) still works: a manager who holds
-      // the role for the scope can submit then complete their own
-      // request.
+      // The self-approval invariant (spec §6, F12 invariant 7) still
+      // works: a manager can submit then complete their own request.
       //
       // Edit types — `edit_auto`, `edit_manual`, `edit_temp` — flow
       // through the same submit / Mark Complete path as add / remove.
@@ -681,32 +820,67 @@ service cloud.firestore {
             )
           )
           // Role-for-scope gate (defense-in-depth complement to the
-          // SPA's `allowedScopesFor` filter, B-3 / T-36). The submitter
-          // must hold the role matching the scope they are writing:
-          //   - `scope == 'stake'`  → caller holds `stake: true`
-          //   - `scope == <ward>`   → caller's `wards` includes that code
-          // Manager status alone does NOT grant creation rights — a
-          // pure-manager user with no stake / no ward claim has no
-          // submit surface. A manager who also holds `stake: true` or a
-          // bishopric ward inherits creation rights through those
-          // branches, same as any other user. This matches `scopeOptions.ts`
-          // on the SPA so a hand-crafted POST cannot bypass the dropdown
-          // filter.
+          // SPA's `allowedScopesFor` filter). Any one branch authorises:
+          //   - Kindoo Manager → every scope (stake + any ward) and
+          //     every type. Managers hold full request-creation
+          //     authority and need no `access` row of their own.
+          //   - `scope == 'stake'` → caller holds `stake: true`
+          //   - `scope == <ward>`  → caller's `wards` includes that code
+          // Stake members and bishopric members keep their own branches
+          // unchanged. The manager branch widens WHO may create, never
+          // WHAT the payload must carry — every other conjunct above
+          // still applies, including Policy 1 (`edit_auto` forbidden at
+          // `scope == 'stake'`), which binds managers too.
           //
-          // Narrow exception ("Give Access To Stake Buildings"): a Kindoo
-          // Manager may create a stake-scope request WITHOUT a stake
-          // claim, but ONLY for `add_manual` — the flow that grants a
-          // foreign-site-only ward member access to home-site stake
-          // buildings. B-3 / T-36 stays intact for every other stake-scope
-          // type (add_temp / edit_* / remove); those still require the
-          // stake claim through the branch above.
+          // `scope` is deliberately not checked against the ward list: a
+          // manager could write an unknown ward code. That is a
+          // data-quality gap for a trusted role, not an escalation.
           && (
-               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               isManager(stakeId)
+            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
+          )
+          // Limited app access (D25). A user carrying
+          // `stakes[stakeId].limited == true` gets a narrowed submit
+          // surface; everyone else is untouched — a full user short-
+          // circuits on `!isLimited(stakeId)` and never evaluates a
+          // single clause below (nor pays for the `get()` reads the
+          // ward / seat checks need). Managers are never limited —
+          // the claim minter refuses to mint `limited` for an active
+          // `kindooManagers` row — so the manager branch above keeps
+          // its full reach.
+          //
+          // The narrowed surface, per D25:
+          //   - type restricted to `add_temp` / `edit_temp` / `remove`
+          //     (no manual grants, no auto edits);
+          //   - temp windows capped at 90 days end-to-start;
+          //   - ward-scope temp requests locked to exactly that ward's
+          //     own building (stake scope keeps the free building
+          //     choice — there is no single ward to lock to);
+          //   - `remove` allowed only against a seat whose
+          //     `type == 'temp'`, and `edit_temp` likewise — the same
+          //     temp-only authority read through each type's own seat
+          //     key (`seat_member_canonical` vs `member_canonical`).
+          //
+          // This is the LAST clause in the predicate on purpose: the
+          // date-shape and role-for-scope gates above must have
+          // already passed, so `start_date` / `end_date` are known to
+          // be well-formed ISO strings by the time
+          // `tempWindowWithin90Days` splits them.
+          && (
+            !isLimited(stakeId)
             || (
-                 request.resource.data.scope == 'stake'
-              && request.resource.data.type == 'add_manual'
-              && isManager(stakeId)
+                 request.resource.data.type in ['add_temp', 'edit_temp', 'remove']
+              && (request.resource.data.type != 'remove'
+                  || limitedRemoveTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type != 'edit_temp'
+                  || limitedEditTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type == 'remove'
+                  || (
+                       tempWindowWithin90Days(request.resource.data)
+                    && (request.resource.data.scope == 'stake'
+                        || limitedWardBuildingOk(stakeId, request.resource.data))
+                  ))
             )
           );
 

@@ -31,6 +31,16 @@ export const STAKE_APP_ACCESS_CALLINGS = [
  * counselors and secretary never grant access. */
 export const EQ_PRESIDENT_CALLING = 'Elders Quorum President';
 
+/**
+ * Importer callings that confer LIMITED app access rather than full.
+ * Empty today: every calling the importer grants is full-tier. The next
+ * step (Elders Quorum Presidents get limited access) adds
+ * `EQ_PRESIDENT_CALLING` here — which also requires re-minting claims for
+ * existing EQ-President access docs, since `syncAccessClaims` only fires
+ * on access-doc writes.
+ */
+export const LIMITED_ACCESS_CALLINGS: ReadonlySet<string> = new Set<string>();
+
 export interface AppAccessOptions {
   /** Pass `stake.eq_president_app_access === true`. Adds Elders Quorum
    * President to the WARD set only; the stake set is unaffected. */
@@ -74,4 +84,24 @@ export function filterAppAccessCallings(
 ): string[] {
   const allowed = appAccessCallingsForScope(scope, opts);
   return callings.filter((c) => allowed.has(normalize(c)));
+}
+
+/**
+ * True when `calling` sits in the limited-access set — i.e. holding it
+ * confers limited rather than full app access. Both sides are matched on
+ * the trim+lowercase key the access sets use, so `limitedCallings` may
+ * hold titles in display casing. `limitedCallings` is injectable so a
+ * caller (and the tests) can exercise the non-empty path while the
+ * shipped set is still empty.
+ */
+export function isLimitedAccessCalling(
+  calling: string,
+  limitedCallings: ReadonlySet<string> = LIMITED_ACCESS_CALLINGS,
+): boolean {
+  if (limitedCallings.size === 0) return false;
+  const key = normalize(calling);
+  for (const limited of limitedCallings) {
+    if (normalize(limited) === key) return true;
+  }
+  return false;
 }

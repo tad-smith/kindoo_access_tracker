@@ -19,6 +19,11 @@ export type ManualGrant = {
   grant_id: string;
   /** Free-text justification (e.g., "Bishop", "ward clerk training"). */
   reason: string;
+  /**
+   * `'limited'` => this grant confers limited app access (spec §6.1).
+   * ABSENT => full; never written as `'full'`.
+   */
+  level?: 'limited';
   granted_by: ActorRef;
   granted_at: TimestampLike;
 };

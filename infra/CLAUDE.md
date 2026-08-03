@@ -53,7 +53,8 @@ Cloud Build's `npm install` does not understand pnpm's `workspace:*` protocol, s
 **Shape on disk.** `functions/scripts/build.mjs` is the single producer of the deploy tree:
 
 - esbuild bundles `functions/src/index.ts` to `functions/lib/index.js` (ESM, `node22`), inlining `@kindoo/shared`. Runtime deps (`firebase-admin`, `firebase-functions`, `resend`) stay external — Cloud Build installs them via the generated manifest.
-- The script writes `functions/lib/package.json` containing only `name`, `version`, `private`, `type: "module"`, `main: "index.js"`, `engines`, and the runtime deps copied verbatim from `functions/package.json`. No `@kindoo/shared` entry. No devDeps.
+- The script writes `functions/lib/package.json` containing only `name`, `version`, `private`, `type: "module"`, `main: "index.js"`, `engines`, and the runtime deps. No `@kindoo/shared` entry. No devDeps. The dep **versions** are read out of the deploy lockfile's root entry (see below), not from `functions/package.json`'s ranges, so the manifest is exact-pinned.
+- The script copies `functions/deploy-lock/package-lock.json` to `functions/lib/package-lock.json`. See "Deploy dependency pinning" below.
 - The script symlinks `functions/lib/node_modules` to `../node_modules` so the local Functions emulator can resolve `firebase-admin` / `firebase-functions` against the workspace install. `firebase.json`'s `ignore: ["node_modules", ...]` excludes the symlink from the upload tarball, so Cloud Build sees an empty tree and runs `npm install` cleanly against `lib/package.json`.
 - The script also copies any `functions/.env.*` files to `functions/lib/.env.*` unconditionally. Firebase CLI's `defineString` parameter resolution reads from the `source` directory (which is `functions/lib`), so source-of-truth env values must be propagated each build — overwrite is intentional, to avoid stale empty placeholders the CLI's interactive prompt may have written into `lib/`.
 
@@ -67,6 +68,23 @@ Cloud Build's `npm install` does not understand pnpm's `workspace:*` protocol, s
 - Do **not** drop the `lib/node_modules` symlink. The local emulator needs it to resolve runtime deps.
 
 **Pointers.** `functions/scripts/build.mjs` for the implementation. `docs/architecture.md` D12 for the decision record. `docs/changelog/phase-2-auth-and-claims.md` "Deviations" section for the discovery trail (this approach was discovered when the first staging deploy in Phase 2 failed against `workspace:*`).
+
+## Deploy dependency pinning
+
+Because `lib/` is the package root Cloud Build installs from, a lockfile has to end up **inside `lib/`** to have any effect — `functions/package-lock.json` would never be read. `functions/deploy-lock/package-lock.json` is the committed one; `build.mjs` copies it into `lib/` every build, and `firebase.json`'s functions `ignore` list does not exclude it, so it uploads. The GCP Node.js buildpack runs `npm ci` when it finds a lockfile beside the manifest.
+
+- **Direct versions come from `pnpm-lock.yaml`,** exact-pinned, so the deployed direct deps are the ones CI exercises. Transitives are npm's own resolution; exact parity with pnpm is not achievable and not attempted.
+- **`lib/package.json`'s deps are read out of the lockfile root,** so the two cannot disagree. Note `npm ci`'s own check is one-directional: it rejects a lockfile that does not cover the manifest, but silently **omits** a dep the manifest dropped. That second case is the outage's exact shape, so `npm ci` succeeding is not by itself evidence the artifact is correct — the drift check is.
+- **`pnpm deps:relock`** regenerates (network; self-verifies with a real `npm ci` plus the three container-start `require`s). **`pnpm deps:check`** is the offline drift check, and `build.mjs` runs it and fails the build — which gates both `firebase deploy`'s predeploy hook and CI's "Build functions for emulator" step.
+- The check never re-resolves. "Regenerate and diff" would go red whenever any upstream publishes; it compares three committed files instead.
+
+**What not to do.**
+
+- Do **not** hand-edit `functions/deploy-lock/package-lock.json`. Regenerate it.
+- Do **not** put a lockfile at `functions/package-lock.json` — never installed from.
+- Do **not** assume pinning direct deps is enough. The outage this prevents was transitive: `@firebase/database-compat` declares `@firebase/app` as an optional peer, and pinning `firebase-admin` exactly still resolves that same skipped peer.
+
+**Pointers.** `functions/scripts/deploy-deps.mjs` (shared logic + the reasoning), `functions/deploy-lock/README.md`, `infra/runbooks/deploy.md` "Deploy dependency pinning", `docs/TASKS.md` T-73.
 
 ## Don't
 

@@ -19,6 +19,7 @@ function principal(overrides: Partial<Principal> = {}): Principal {
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: {},
+    limitedStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
     ...overrides,

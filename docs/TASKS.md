@@ -6,16 +6,58 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
+## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
 Owner: @infra-engineer
 Phase: cross-cutting
 
-`firebase deploy` uploads only `functions/lib`, and Cloud Build runs `npm install` against the **generated** `functions/lib/package.json` (written by `functions/scripts/build.mjs`, which copies `dependencies` verbatim from `functions/package.json`). No lockfile reaches that install and `pnpm-lock.yaml` is not consulted, so every range resolves fresh at deploy time — the deployed tree is one neither local dev nor CI has exercised. A 2026-08-02 staging deploy resolved `firebase-admin` 13.8.0 → 13.10.0 and `firebase-functions` 7.2.5 → 7.3.2 relative to the pinned lockfile versions.
+Follow-up to T-73, split out so its deferrals have a tracking home rather than sitting inside a `done` entry.
 
-That gap has already caused one full outage of the deploy: `@firebase/database-compat` 2.1.5 declares `@firebase/app` as an **optional** peer, so npm skipped it, and all 24 functions died at container start on `Cannot find module '@firebase/app'` — `firebase-functions/v1` (pulled in by the 1st-gen `onAuthUserCreate`) loads `firebase-admin/database` eagerly, and Cloud Functions loads the whole `index.js` in every container. PR #241 unblocked deploys by declaring `@firebase/app` explicitly, but that is a point fix; the same class of break recurs whenever an upstream package changes its dependency shape.
+The drift check that keeps `functions/deploy-lock/package-lock.json` honest is enforced today only as a side effect of `functions/scripts/build.mjs` running it — which happens to be gated by CI's "Build functions for emulator" step and by `firebase deploy`'s predeploy hook. Two gaps:
 
-Fix: have `build.mjs` emit a lockfile into `lib/` beside the generated `package.json` so Cloud Build installs a fully pinned tree. Note the lockfile must be generated for the **generated** manifest, not committed at `functions/package-lock.json` — that path is never installed from. The pinned versions should be the ones CI actually exercises, and npm's resolution differs from pnpm's, so the two need reconciling rather than assuming they agree.
+1. **No explicit CI step.** `pnpm deps:check` should run next to Lint / Typecheck in `infra/ci/workflows/test.yml` with `continue-on-error: true`, and its outcome added to the "Verify all checks passed" list. A dedicated step names the failure instead of burying it in a build step. Deferred from PR #245 because CI workflow changes tag every engineering agent.
+2. **No committed tests for load-bearing logic.** `parsePnpmFunctionsDeps` (a hand-rolled pnpm lockfileVersion-9 parser) and `findDeployLockDrift` in `functions/scripts/deploy-deps.mjs` carry the guarantee. Both throw rather than return partial results when they meet something structurally unfamiliar, so a future pnpm layout change fails loudly rather than making the check vacuous — but that defence is itself untested in the repo. The nine cases exercised during PR #245 (dep added / removed, pnpm-lock floated, range bumped without `pnpm install`, `lockfileVersion` too old, upstream-published-nothing-changed staying green, and two parser-rejects-unknown-format cases) were run ad-hoc and should be a vitest fixture suite.
+
+Also outstanding from T-73, and not a CI concern: confirm on the next staging deploy that Cloud Build's buildpack actually installs via `npm ci` from the copied lockfile. `infra/runbooks/deploy.md` → "Manual verification of the deploy dependency pinning" step 6 has the exact check.
+
+## [T-75] Limited-app-access code comments cite D24; the decision is D25
+Status: done (2026-08-02 — swept on the D25 feature branch before #244 merged)
+Owner: @backend-engineer / @web-engineer
+Phase: cross-cutting
+
+The limited-app-access feature branch was cut before PR #240 merged, so its authors picked **D24** as the next free architecture number. PR #240 landed first and took D24 ("Kindoo Managers hold blanket request-creation authority"). Limited app access is therefore **D25** in `architecture.md`, and every in-code citation is off by one.
+
+Sweep `D24` → `D25` in the limited-app-access comments only — do not touch comments that legitimately cite the manager-authority decision. Known sites: `firestore/firestore.rules` (`isLimited`, the limited helper block, the create-predicate clause), `functions/src/lib/seedClaims.ts`, `packages/shared/src/types/auth.ts`, `packages/shared/src/types/access.ts`, `packages/shared/src/tempWindow.ts`, `apps/web/src/features/requests/scopeOptions.ts`, `apps/web/src/features/requests/schemas.ts`, `apps/web/src/features/requests/components/NewRequestForm.tsx`, `apps/web/src/features/requests/components/EditSeatDialog.tsx`, `apps/web/src/features/requests/hooks.ts`, `apps/web/src/styles/pages.css`, and the commit subjects on the sub-branches (already written; leave those). `grep -rn 'D24' --include='*.ts' --include='*.tsx' --include='*.rules' --include='*.css'` finds them all. Docs are already correct.
+
+## [T-74] `buildingRenameBlocker` does not count ward references
+Status: open
+Owner: @web-engineer
+Phase: cross-cutting
+
+`buildingRenameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts`) blocks a building rename while an active **seat** or a **pending request** references the building's current display name, because `seat.building_names` / `request.building_names` are display-name snapshots (§3.2). It does **not** count **wards**, even though `ward.building_name` is the same kind of snapshot — so a ward with no seats can have its building renamed out from under it and keep a stale `building_name` indefinitely.
+
+Discovered while building D25. **Not a blocker:** both the client (`resolveWardBuilding` via `defaultBuildingsForScope`) and the rules (`limitedWardBuildingName`) resolve the ward's building **id-first** and fall back to the name only when `building_id` is absent or dangling, so the limited ward-building lock agrees on both sides regardless of a stale snapshot. It is a latent data-integrity gap worth closing: the fix is to pass the live wards snapshot into the blocker and count wards whose `building_name` matches (the Buildings tab already subscribes to wards for other guards), or to have the rename write through to the referencing wards' snapshots.
+
+## [T-73] Pin the dependency tree Cloud Build installs for Cloud Functions
+Status: done (2026-08-02 — PR #245)
+Owner: @infra-engineer
+Phase: cross-cutting
+
+**Was:** `firebase deploy` uploads only `functions/lib`, and Cloud Build ran `npm install` against the **generated** `functions/lib/package.json` (written by `functions/scripts/build.mjs`, which copied `dependencies` verbatim from `functions/package.json`). No lockfile reached that install and `pnpm-lock.yaml` was never consulted, so every range resolved fresh at deploy time — the deployed tree was one neither local dev nor CI had exercised. A 2026-08-02 staging deploy resolved `firebase-admin` 13.8.0 → 13.10.0 and `firebase-functions` 7.2.5 → 7.3.2 relative to the pinned lockfile versions, and one earlier deploy took prod down entirely: `@firebase/database-compat` 2.1.5 declares `@firebase/app` as an **optional** peer, npm skipped it, and all 24 functions died at container start on `Cannot find module '@firebase/app'`. PR #241's explicit `@firebase/app` declaration closed that instance; this closes the class.
+
+**Now:** the deploy artifact carries a committed npm lockfile.
+
+- `functions/deploy-lock/package-lock.json` — the tree Cloud Build installs. Not `functions/package-lock.json`, which is never read (`firebase.json` sets `functions.source: "functions/lib"`, so `lib/` is the package root). `build.mjs` copies it to `functions/lib/package-lock.json` on every build; `firebase.json`'s functions `ignore` list excludes only `node_modules`, `.git`, `firebase-debug*.log` and `*.local`, so it uploads. The GCP Node.js buildpack runs `npm ci` when it finds a lockfile beside the manifest.
+- **Direct versions come from `pnpm-lock.yaml`**, exact-pinned, so the deployed direct deps are the ones CI exercises. `lib/package.json` now declares `firebase-admin: "13.8.0"` rather than `"^13.8.0"`. Transitives are npm's own resolution — npm and pnpm resolve differently and exact parity is not achievable (today `@firebase/database-compat` is 2.1.5 under npm, 2.1.3 under pnpm), but the divergence is committed and reviewable instead of invented at deploy time.
+- `build.mjs` reads `lib/package.json`'s `dependencies` **out of the lockfile's root entry**, so manifest and lockfile cannot disagree. Measured on npm 10.9.7, `npm ci`'s own sync check is one-directional: it errors when the manifest declares something the lockfile lacks or the pin does not satisfy the range, but it **silently omits** a dep the manifest dropped — which is the outage's exact shape. So `npm ci` succeeding is not by itself evidence the artifact is right; the drift check is.
+- **Regenerate:** `pnpm deps:relock` (after `pnpm install`), any time `functions/package.json` `dependencies` change. It pins from pnpm-lock, resolves transitives with `npm install --package-lock-only` (platform-independent — a real install on macOS can prune optional packages linux/x64 needs), then self-verifies with a real `npm ci` plus `require('firebase-functions')`, `require('firebase-functions/v1')`, `require('firebase-admin/database')`.
+- **Drift check:** `pnpm deps:check`. Offline; asserts the lockfile's root dependency set matches `functions/package.json`'s `dependencies` at the versions `pnpm-lock.yaml` resolves. It never re-resolves, so an upstream release cannot turn it red. `build.mjs` runs the same check and fails the build — and therefore `firebase deploy`'s predeploy hook and CI's "Build functions for emulator" step, which is where it is gated today.
+
+Not yet validated by a real deploy: whether Cloud Build's buildpack picks `npm ci` over `npm install` for this artifact. Either path installs the pinned tree (a present lockfile constrains `npm install` too), but `npm ci`'s manifest/lockfile sync check only proves out on the first deploy. Read the Cloud Build log's install line on the next staging deploy.
+
+Deferred to **T-74**: an explicit `pnpm deps:check` CI step, vitest coverage for the drift logic, and confirming the buildpack's install command on the next staging deploy.
+
+See `infra/runbooks/deploy.md` "Deploy dependency pinning", `functions/deploy-lock/README.md`.
 
 ## [T-72] Consumer updates for stake-gated Elders Quorum President app access
 Status: done (2026-08-02 — PR #241; architecture decision D23)

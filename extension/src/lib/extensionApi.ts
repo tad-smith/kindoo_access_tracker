@@ -26,6 +26,8 @@ import type {
   AuthStateChangedPush,
   DataGetAccessByEmailRequest,
   DataGetAccessByEmailResponse,
+  DataGetKindooManagerByEmailRequest,
+  DataGetKindooManagerByEmailResponse,
   DataGetSeatByEmailRequest,
   DataGetSeatByEmailResponse,
   DataGetStakeConfigPayload,
@@ -64,6 +66,7 @@ import type {
   Access,
   GetMyPendingRequestsInput,
   GetMyPendingRequestsOutput,
+  KindooManager,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
   Seat,
@@ -247,6 +250,28 @@ export async function getSeatByEmail(stakeId: string, canonical: string): Promis
 export async function getAccessByEmail(stakeId: string, canonical: string): Promise<Access | null> {
   const req: DataGetAccessByEmailRequest = { type: 'data.getAccessByEmail', stakeId, canonical };
   const res: DataGetAccessByEmailResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Fetch the `kindooManagers` doc for a request's requester by canonical
+ * email. Returns `null` when the requester isn't on the manager
+ * allow-list. Kindoo Managers may submit a request in ANY scope without
+ * holding an `access` row, so the RequestCard passes this doc to
+ * `deriveRequesterDisplay` alongside the access doc — it supplies the
+ * name when `access` has none and the literal "Kindoo Manager" calling
+ * when no scope calling resolves.
+ */
+export async function getKindooManagerByEmail(
+  stakeId: string,
+  canonical: string,
+): Promise<KindooManager | null> {
+  const req: DataGetKindooManagerByEmailRequest = {
+    type: 'data.getKindooManagerByEmail',
+    stakeId,
+    canonical,
+  };
+  const res: DataGetKindooManagerByEmailResponse = await sendMessage(req);
   return unwrap(res);
 }
 

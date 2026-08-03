@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "deps:check": "node scripts/check-deploy-deps.mjs",
+    "deps:relock": "node scripts/relock-deploy-deps.mjs",
     "serve": "firebase emulators:start --only functions,firestore,auth",
     "shell": "firebase functions:shell",
     "test": "vitest run",

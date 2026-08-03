@@ -33,6 +33,7 @@ import type {
   Access,
   AccessRequest,
   AuditLog,
+  KindooManager,
   OverCapEntry,
   RequestType,
   Stake,
@@ -682,15 +683,28 @@ function displayPerson(req: AccessRequest): string {
 /**
  * Resolve the requester's `{Name} ({Calling})` label live from their
  * `access` doc for the request's scope, matching the manager Queue card.
- * Falls back to the raw `requester_email` when no access doc / name
- * exists (per `formatRequesterLabel`). One read per manager email send.
+ * A Kindoo Manager may submit in any scope without an `access` row, so
+ * their `kindooManagers` doc is read alongside and backstops the name +
+ * calling (`{Name} (Kindoo Manager)`). Falls back to the raw
+ * `requester_email` when neither yields a name (per
+ * `formatRequesterLabel`).
+ *
+ * The two reads are issued concurrently — this sits on the manager-
+ * notification send path.
  */
 async function resolveRequesterLabel(
   db: Firestore,
   stakeId: string,
   req: AccessRequest,
 ): Promise<string> {
-  const snap = await db.doc(`stakes/${stakeId}/access/${req.requester_canonical}`).get();
-  const access = snap.exists ? (snap.data() as Access) : null;
-  return formatRequesterLabel(deriveRequesterDisplay(access, req.scope), req.requester_email);
+  const [accessSnap, managerSnap] = await Promise.all([
+    db.doc(`stakes/${stakeId}/access/${req.requester_canonical}`).get(),
+    db.doc(`stakes/${stakeId}/kindooManagers/${req.requester_canonical}`).get(),
+  ]);
+  const access = accessSnap.exists ? (accessSnap.data() as Access) : null;
+  const manager = managerSnap.exists ? (managerSnap.data() as KindooManager) : null;
+  return formatRequesterLabel(
+    deriveRequesterDisplay(access, req.scope, manager),
+    req.requester_email,
+  );
 }

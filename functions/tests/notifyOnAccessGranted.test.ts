@@ -191,6 +191,78 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
     );
   });
 
+  // D25: the fire condition reads only `hasStake` / `wards`, so a limited
+  // grant is a grant like any other. Pins the CURRENT behaviour — a limited
+  // user is welcomed with the same copy a full user gets, which overstates
+  // what they can do (temp requests only, <=90 days, own ward's building).
+  // The copy decision is the operator's; this test is what changes with it.
+  it('a first LIMITED manual grant fires with the standard welcome copy', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    const { sender, calls } = mockSender();
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnAccessGranted.run(
+      makeEvent({
+        before: null,
+        after: accessDoc({
+          manual_grants: {
+            GE: [
+              {
+                grant_id: 'g1',
+                reason: 'Temp helper',
+                level: 'limited',
+                granted_by: ACTOR,
+                granted_at: Timestamp.now(),
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] You can now request building access for Greenwood Ward',
+    );
+    // No tier-aware wording today.
+    expect(calls[0]!.text).toContain('request building access for Greenwood Ward');
+    expect(calls[0]!.text).not.toContain('temporary');
+    expect(calls[0]!.text).toContain('/help/requesting-access.html');
+  });
+
+  it('a mixed full + limited first grant fires once for both scopes', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    const { sender, calls } = mockSender();
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnAccessGranted.run(
+      makeEvent({
+        before: null,
+        after: accessDoc({
+          importer_callings: { stake: ['Stake Clerk'] },
+          manual_grants: {
+            GE: [
+              {
+                grant_id: 'g1',
+                reason: 'Temp helper',
+                level: 'limited',
+                granted_by: ACTOR,
+                granted_at: Timestamp.now(),
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] You can now request building access for the Stake and Greenwood Ward',
+    );
+  });
+
   it('adding a scope to an existing holder sends nothing', async () => {
     await seedStake();
     await seedWard('GE', 'Greenwood Ward');

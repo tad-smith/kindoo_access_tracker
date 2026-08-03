@@ -32,10 +32,14 @@ Set by Cloud Function triggers on `userIndex`, `access`, and `kindooManagers` wr
       manager: boolean;       // in stakes/{stakeId}/kindooManagers/{canonical} with active=true
       stake: boolean;         // has any non-empty grant in stakes/{stakeId}/access/{canonical} with scope='stake'
       wards: string[];        // ward_codes for which the user has any non-empty grant in scopes != 'stake'
+      limited?: boolean;      // present-and-true => LIMITED app access in this stake. ABSENT => FULL.
+                              // Never written `false`. See below.
     };
   };
 }
 ```
+
+`limited` (D25) is written by `computeStakeClaims` (`functions/src/lib/seedClaims.ts`) only when all three hold: the user has ≥1 non-empty grant in `access/{canonical}`, **every** grant in that doc is limited-tier, and the user has **no** active `kindooManagers` row. It is emitted present-and-true or omitted entirely — never `false` — because `applyClaims`'s `claimsEqual` is a canonical-JSON compare, so writing `limited: false` for every full user would read as a claim change on the next sync and revoke their refresh token for nothing. A grant is limited only on positive evidence: `manual_grants[scope][].level === 'limited'` (§4.5) or an importer calling matched by `isLimitedAccessCalling`. Anything else — absent `level`, `'full'`, a non-object array entry — is full. `limited` is not part of the block's emptiness test: it can only be true when some non-empty grant array exists, which already sets `stake` or a ward. Rules read it through an `isLimited(stakeId)` helper whose `'limited' in …` presence guard is load-bearing — a bare field read errors on every full user's write.
 
 Claims are refreshed when underlying data changes (sync triggers call `setCustomUserClaims` + `revokeRefreshTokens`); the client picks them up on its next request via the SDK's automatic 401-and-refresh path. Worst-case staleness for revocation: ~1 hour for an idle session, <2 seconds for an active one.
 
@@ -279,7 +283,7 @@ Manager allow-list. Doc existence + `active=true` defines the manager set.
 ```
 
 **Written by:** Bootstrap wizard (auto-adds bootstrap admin); manager via Configuration page.
-**Read by:** `syncManagersClaims` trigger; manager list reads.
+**Read by:** `syncManagersClaims` trigger; manager list reads; the requester-label derivation on the manager Queue, the extension card, and `EmailService.resolveRequesterLabel` (§4.7 — a manager-submitted request has no `access` row to name its requester).
 
 ### 4.5 `stakes/{stakeId}/access/{canonicalEmail}`
 
@@ -311,6 +315,7 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
     [scope: string]: Array<{
       grant_id: string;        // uuid; lets a manager unambiguously delete one entry
       reason: string;          // free-text; the "calling" column on today's manual rows
+      level?: 'limited';       // access tier (D25). ABSENT => full. Never written 'full'.
       granted_by: { email: string; canonical: string };
       granted_at: Timestamp;
     }>;
@@ -332,12 +337,19 @@ Per-user role-grant doc. Doc exists iff the user has *any* Sync-managed or manua
 
 The `backfillEqPresidentAccess` callable (§7, D23) is the second Admin-SDK writer. It reconciles existing docs after a stake flips `eq_president_app_access`, adding or removing **only** the Elders Quorum President entry inside `importer_callings[scope]` for auto ward-scope seats holding that calling — a merge, never `writeAccessForAutoScope`'s wholesale replace, so unrelated entries in the same scope survive. `manual_grants` is never read-modified, and revoke deletes the doc only when `importer_callings` empties **and** no manual grants remain (a manual-grants-only doc is never deleted). `sort_order` is handled asymmetrically, deliberately: grant keeps the lower of the doc's prior value and the Elders Quorum President order (`pickMin`), following `writeAccessForAutoScope`'s precedent, while revoke re-derives from `seatCallingOrder()` over everything left in `importer_callings` — a removal can strand the stored value on a calling the member no longer holds. That is stricter than `clearImporterCallingsForScope`, which leaves the prior value in place.
 
-**Read by:** `syncAccessClaims` trigger; `notifyOnAccessGranted` trigger; manager Access page.
+**Access tier — `manual_grants[].level` (D25).** The tier marker is **manager-written and manual-grants-only**. The App Access page's "Add manual access" modal offers a Full / Limited `<select>`; Limited writes `level: 'limited'`, Full writes **no key at all**. Never `'full'` — grant deletion is an `arrayRemove` on the stored object, which matches by deep equality, so a grant carrying a stray `level: 'full'` would not match what the UI hands back and would be undeletable. There is no edit-level affordance: re-tiering a person means deleting the grant and re-adding it. The page **displays** the tier on every row regardless — Full as a subtle `info` badge, Limited as a loud red uppercase one — in the Scope column of the table and beside each grant in the card view, so an absent marker can never be confused with a failure to render (`spec.md` §5.3).
 
-**Triggers on this path.** Three Cloud Functions watch `stakes/{stakeId}/access/{memberCanonical}` (§7): `syncAccessClaims` re-mints the member's custom claims, `auditAccessWrites` (the parameterized `auditTrigger`'s access binding) fans the audit row, and `notifyOnAccessGranted` sends the app-access welcome email (`spec.md` §9) on the **no-scopes → at-least-one-scope** transition, computed by `scopesFromAccessDoc` over `importer_callings` and `manual_grants` together. The welcome email hangs off the document rather than off `syncApplyFix` / `backfillEqPresidentAccess` because the document is the only hook that sees every grant path — including the manager Access page's raw client write to `manual_grants`, which goes through no callable.
+Importer callings carry **no** stored tier. A calling's tier is derived at claim-computation time from `LIMITED_ACCESS_CALLINGS` / `isLimitedAccessCalling` (`packages/shared/src/appAccessCallings.ts`), and **that set ships empty** — every calling the importer grants is full-tier today. The set is the seam the planned Elders-Quorum-President-gets-limited-access follow-up flips: adding `EQ_PRESIDENT_CALLING` there is a one-line change, but it also requires re-minting claims for existing EQ-President access docs, because `syncAccessClaims` only fires on access-doc writes and nothing about the doc changes when the constant does. That same staleness is why the App Access page renders importer rows as **Full** rather than classifying them by calling name (`spec.md` §5.3): between the constant flipping and the re-mint, a read-time classifier would label people LIMITED who still hold full access. Displaying a calling-derived tier requires storing it on the record first, so the page and the claim minter read one fact.
+
+**No access-rules change was needed.** `manual_grants` already sits in the access-update `affectedKeys()` allowlist, so writing a grant with an extra `level` key rides the existing predicate. See §6 and D25.
+
+**Read by:** `syncAccessClaims` trigger and `notifyOnAccessGranted` trigger (both via `scopesFromAccessDoc`, which folds both maps into `{hasStake, wards, limited}`); manager Access page.
+
+**Triggers on this path.** Three Cloud Functions watch `stakes/{stakeId}/access/{memberCanonical}` (§7): `syncAccessClaims` re-mints the member's custom claims, `auditAccessWrites` (the parameterized `auditTrigger`'s access binding) fans the audit row, and `notifyOnAccessGranted` sends the app-access welcome email (`spec.md` §9) on the **no-scopes → at-least-one-scope** transition, computed by `scopesFromAccessDoc` over `importer_callings` and `manual_grants` together. The welcome email hangs off the document rather than off `syncApplyFix` / `backfillEqPresidentAccess` because the document is the only hook that sees every grant path — including the manager Access page's raw client write to `manual_grants`, which goes through no callable. The email's fire condition reads only `hasStake` / `wards`, so a **limited** grant (D25) is a grant like any other: a first limited grant welcomes the member exactly as a full one does.
 
 **Invariants:**
 - Sync's `syncApplyFix` never mutates `manual_grants` (rules enforce on client side; the callable enforces on Admin SDK side).
+- `manual_grants[].level` is either absent or the literal `'limited'`. Every other value — including `'full'` — reads as full access, by design: malformed data must fail toward more access, not less.
 - Manager never mutates `importer_callings` (rules enforce).
 - Doc deletion only when both maps are empty.
 - Composite-key uniqueness on (canonical_email, scope, calling) is *structurally absent* — the Sync-managed side's scope is `importer_callings[scope]: string[]`; the manual side's scope is `manual_grants[scope]: Array`. No path for them to collide.
@@ -478,8 +490,8 @@ Request lifecycle docs. Still UUID-keyed because a member can have many requests
 - For `remove`, server-side guards (rules + client tx): no pending-pending duplicate for same (scope, member); no remove against a non-existent manual/temp seat (the latter caught by client tx, not rules).
 - `urgent` is set at create time (rules validate `urgent is bool`) and immutable thereafter — the cancel/complete/reject `affectedKeys()` allowlists exclude it.
 - Edit types (`edit_auto`, `edit_manual`, `edit_temp`) — see [`spec.md`](spec.md) §6.1. `edit_auto` is forbidden at `scope == 'stake'` (Policy 1) at three layers: web UI, rules, and the `markRequestComplete` callable. `edit_temp` carries `start_date` + `end_date` with the same ISO YYYY-MM-DD + start <= end shape as `add_temp`. All three edit types require a non-empty `comment` at creation time, enforced by the shared zod schema, the Firestore rule, and the web form.
-- A Kindoo Manager may create an `add_manual` / `scope: 'stake'` request without a stake claim — the "Give Access To Stake Buildings" carve-out (§6 create rule, [`spec.md`](spec.md) §6.1 / §15, PR #223). This is the only request type for which manager status alone authorises a stake-scope create; every other stake-scope type requires the stake claim.
-- The manager queue and extension card display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`; the request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §15.
+- A Kindoo Manager may create a request in **any** scope — the stake and every ward — for every type, with no `access` row of their own (§6 create rule, [`spec.md`](spec.md) §6.1, `architecture.md` D24, PR #240). Manager authority is blanket, not an intersection with claim-derived scopes: a manager who also holds a Bishopric claim may submit for wards outside that claim. Platform superadmin status alone grants nothing. Policy 1 (`edit_auto` forbidden at `scope == 'stake'`) is an independent conjunct and binds managers too.
+- The manager queue, extension card, and manager notification emails display the requester as `{Name} ({Calling})`, **live-derived** from the requester's `access/{requester_canonical}` doc (§4.5) for the request's `scope`, with the requester's `kindooManagers/{requester_canonical}` doc (§4.4) as backstop for both fields — name when `access` has none, and the literal calling `"Kindoo Manager"` when no calling resolves for the scope. Only an `active === true` manager doc contributes; `access` wins on each field independently. The request stores only `requester_email` / `requester_canonical` — no requester name or calling is captured on this doc. See [`spec.md`](spec.md) §5.3 / §9 / §15.
 
 ### 4.8 `wardCallingTemplates` / `stakeCallingTemplates` — REMOVED
 
@@ -689,6 +701,18 @@ service cloud.firestore {
       return isManager(stakeId) || isStakeMember(stakeId) || bishopricWardOf(stakeId).size() > 0;
     }
 
+    // Limited app access (D25). The `'limited' in ...` presence guard is
+    // load-bearing: the claim minter omits the key for full users rather
+    // than writing `false`, so a bare field read would error on every
+    // full user's write. Absent => full.
+    function isLimited(stakeId) {
+      return isAuthed()
+        && 'stakes' in request.auth.token
+        && stakeId in request.auth.token.stakes
+        && 'limited' in request.auth.token.stakes[stakeId]
+        && request.auth.token.stakes[stakeId].limited == true;
+    }
+
     function isPlatformSuperadmin() {
       return isAuthed() && request.auth.token.isPlatformSuperadmin == true;
     }
@@ -887,6 +911,69 @@ service cloud.firestore {
           );
       }
 
+      // ----- Limited-app-access helpers (D25) -----
+      // Reached only from the `requests` create predicate, and only when
+      // `isLimited(stakeId)` is true — full users pay no extra reads.
+
+      // Inclusive of both endpoints: exactly 90 days passes, 91 does not.
+      // Safe to split / int() unguarded — the ISO-shape and
+      // `start_date <= end_date` conjuncts short-circuit ahead of this.
+      function tempWindowWithin90Days(data) {
+        let s = data.start_date.split('-');
+        let e = data.end_date.split('-');
+        return timestamp.date(int(e[0]), int(e[1]), int(e[2]))
+             - timestamp.date(int(s[0]), int(s[1]), int(s[2]))
+            <= duration.value(90, 'd');
+      }
+
+      // "The ward's building", resolved id-first with a raw-name
+      // fallback — the rules-side mirror of `resolveWardBuilding`.
+      // Reading `ward.building_name` directly would demand a STALE name
+      // whenever a building was renamed while no seat / pending request
+      // pinned it (`buildingRenameBlocker` never checks `wards` — T-74).
+      // The ternary short-circuits, so a dangling `building_id` falls
+      // through to the name path rather than erroring the predicate;
+      // `Map.get(key, default)` avoids an error on an absent key.
+      function limitedWardBuildingName(sid, scope) {
+        let ward = get(/databases/$(database)/documents/stakes/$(sid)/wards/$(scope)).data;
+        let bid = ward.get('building_id', '');
+        return bid is string
+            && bid.size() > 0
+            && exists(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid))
+          ? get(/databases/$(database)/documents/stakes/$(sid)/buildings/$(bid)).data.get('building_name', '')
+          : ward.get('building_name', '');
+      }
+
+      // Exact one-element equality — no cross-building grants, no
+      // supersets. Fails closed: a missing ward doc denies; an
+      // unresolvable building yields '' and fails the size guard.
+      function limitedWardBuildingOk(sid, data) {
+        let name = limitedWardBuildingName(sid, data.scope);
+        return name is string && name.size() > 0 && data.building_names == [name];
+      }
+
+      // A limited user may only remove TEMP seats. `get()` rather than
+      // `exists()` because we need the seat's `type` VALUE. The
+      // `seat_member_canonical` guards come first so a request omitting
+      // the field denies on a legible predicate instead of an opaque
+      // path-construction error.
+      function limitedRemoveTargetIsTemp(sid, data) {
+        return 'seat_member_canonical' in data
+          && data.seat_member_canonical is string
+          && data.seat_member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.seat_member_canonical)).data.type == 'temp';
+      }
+
+      // Same gate for `edit_temp`, but keyed on `member_canonical` —
+      // edit requests target that seat, removals target
+      // `seat_member_canonical`.
+      function limitedEditTargetIsTemp(sid, data) {
+        return 'member_canonical' in data
+          && data.member_canonical is string
+          && data.member_canonical.size() > 0
+          && get(/databases/$(database)/documents/stakes/$(sid)/seats/$(data.member_canonical)).data.type == 'temp';
+      }
+
       // ----- Requests -----
       match /requests/{requestId} {
         allow read: if isAuthed() && (
@@ -907,17 +994,38 @@ service cloud.firestore {
           && (request.resource.data.type == 'remove'
               || request.resource.data.scope != 'stake'
               || request.resource.data.building_names.size() > 0)
+          // Role-for-scope gate. Any one branch authorises:
+          //   - Kindoo Manager → every scope, every type, no `access`
+          //     row required
+          //   - scope == 'stake' → caller holds `stake: true`
+          //   - scope == <ward>  → caller's `wards` includes that code
+          // `scope` is deliberately not checked against the wards
+          // collection — see D24.
           && (
-               (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
+               isManager(stakeId)
+            || (request.resource.data.scope == 'stake' && isStakeMember(stakeId))
             || (request.resource.data.scope in bishopricWardOf(stakeId))
-            // Narrow "Give Access To Stake Buildings" carve-out: a manager
-            // may create a stake-scope request WITHOUT a stake claim, but
-            // ONLY for add_manual (every other stake-scope type still
-            // requires the stake claim through the branch above).
+          )
+          // Limited app access (D25). Narrows the surface for a caller
+          // carrying `stakes[stakeId].limited`; short-circuits for
+          // everyone else, so a full user pays for none of the reads.
+          // LAST conjunct on purpose — the ISO-shape and
+          // `start_date <= end_date` gates above have already run, so
+          // `tempWindowWithin90Days` splits well-formed dates.
+          && (
+            !isLimited(stakeId)
             || (
-                 request.resource.data.scope == 'stake'
-              && request.resource.data.type == 'add_manual'
-              && isManager(stakeId)
+                 request.resource.data.type in ['add_temp', 'edit_temp', 'remove']
+              && (request.resource.data.type != 'remove'
+                  || limitedRemoveTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type != 'edit_temp'
+                  || limitedEditTargetIsTemp(stakeId, request.resource.data))
+              && (request.resource.data.type == 'remove'
+                  || (
+                       tempWindowWithin90Days(request.resource.data)
+                    && (request.resource.data.scope == 'stake'
+                        || limitedWardBuildingOk(stakeId, request.resource.data))
+                  ))
             )
           );
 
@@ -962,8 +1070,10 @@ service cloud.firestore {
 - **No client writes to importer_callings** — same pattern. `access.update` rules verify it's unchanged on every client write.
 - **Cross-stake denial is automatic** — `isAnyMember(stakeId)` returns false when the user has no claims for that stakeId, so reads are denied at the stake-doc level and inherit through.
 - **Admin SDK writes bypass everything** — the Cloud Functions (audit triggers, claim sync, request-completion callables) operate via the Admin SDK; rules don't fire. The discipline lives in those functions' code.
-- **Requests-create role-for-scope gate (B-3 / T-36)** — the submit predicate requires the caller hold the role matching the scope being written: `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. Manager status alone does NOT grant creation rights — a pure-manager user with no stake / no ward claim has no submit surface. A manager who also holds `stake: true` or a bishopric ward inherits creation rights through those branches. The SPA's `allowedScopesFor` filter (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer.
-- **Manager `add_manual` stake carve-out ("Give Access To Stake Buildings")** — one narrow exception to the role-for-scope gate above: a Kindoo Manager (no stake claim required) may create a request when `request.resource.data.scope == 'stake' && request.resource.data.type == 'add_manual'`. This is the third branch of the create predicate's role-for-scope `&& (...)` clause. It backs the manager-only All Seats affordance that grants a foreign-site-only member home-site stake access (`spec.md` §6.1 / §15). Manager creation stays BLOCKED for every other stake-scope type — `add_temp`, `edit_auto`, `edit_manual`, `edit_temp`, and `remove` still require the stake claim through the first branch. The web mirror is `GrantStakeAccessDialog` (which submits exactly `add_manual` / `scope: 'stake'`); this rule is the defense-in-depth layer that keeps a hand-crafted POST inside the same carve-out. PR #223.
+- **Requests-create role-for-scope gate** — the submit predicate admits any of three branches: `isManager(stakeId)` (every scope, every type, no `access` row required), `stake: true` for `scope == 'stake'`, or the ward code in the caller's `wards` for ward scopes. The SPA's `isScopeAllowed` / `allowedScopesFor` (`apps/web/src/features/requests/scopeOptions.ts`) is the user-visible mirror; this rule is the defense-in-depth layer. Two properties are load-bearing. **(a) Manager authority is blanket.** It is not intersected with the caller's claim-derived scopes, so a manager who also holds a Bishopric claim may submit for wards outside it. **(b) Platform superadmin status alone grants nothing** — only the per-stake manager claim does, which is a deliberate divergence from the nav model's superadmin-as-manager treatment. The manager branch widens WHO may create, never WHAT the payload must carry: every other create conjunct — non-empty `member_name` for add types, non-empty `building_names` for stake-scope add/edit types, the required `comment` on edit types, and Policy 1's `edit_auto`-not-at-stake — still binds a manager submit. This reverses the B-3 / T-36 hardening (PR #52) and subsumes the `add_manual` stake carve-out it had been punctured with (PR #223). See `architecture.md` D24 and PR #240.
+- **The create rule does not verify the ward code exists** — a manager can write a `scope` naming a ward absent from the `wards` collection. Admitting it avoids an `exists()` read on every submit; it is an accepted data-quality gap for a trusted role, not an escalation (D24).
+- **Requests-create limited-access clause** — the last conjunct of the create predicate narrows the submit surface for a caller carrying `stakes[stakeId].limited` (§2, D25): `type in ['add_temp','edit_temp','remove']`; `remove` and `edit_temp` each only against a seat whose `type == 'temp'` (keyed on `seat_member_canonical` and `member_canonical` respectively — the two request families identify their target seat differently); temp windows ≤ 90 days end-to-start; and ward-scope temp requests locked to exactly that ward's own building. Stake scope keeps the free building choice — there is no single ward to lock to. Three properties are load-bearing. **(a) It is a narrowing, not a branch.** The clause is `&&`-ed onto the predicate, so a limited caller must still satisfy the role-for-scope gate above; the flag authorises nothing by itself. **(b) Full users pay nothing.** `!isLimited(stakeId)` short-circuits the whole clause, so neither the ward/building reads nor the seat read execute for them. **(c) Position matters.** It is last so the ISO-shape and `start_date <= end_date` gates have already run, which is what makes the unguarded `split()` / `int()` inside `tempWindowWithin90Days` safe. Enforcement is **creation-time only** — deliberately no `markRequestComplete` third layer, unlike Policy 1 (`spec.md` §6.1). The ward lock resolves the building id-first with a raw-name fallback; the whole clause costs at most 4 of the 10 document accesses a single-document request allows (ward `get`, building `exists`, building `get`, plus the seat `get` on a ward-scope `edit_temp`). The SPA mirrors every clause (`scopeOptions.ts`, `schemas.ts`, `NewRequestForm`, `EditSeatDialog`) and is stricter in one place — `canRemoveSeat` also requires the specific grant row to be temp, which a rules `get()` cannot cheaply prove. See `architecture.md` D25 and `spec.md` §4 / §6.1.
+- **No `access` rules change was needed for the tier marker** — `manual_grants` is already in the access `update` `affectedKeys()` allowlist and the `create` predicate only counts entries, so a grant object carrying an extra `level` key rides the existing rule (§4.5).
 
 #### Bootstrap-admin gate
 
