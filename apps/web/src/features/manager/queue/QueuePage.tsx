@@ -1,11 +1,14 @@
-// Manager Requests Queue page (live, read-only). Pending-only; rendered
-// as three ordered sections (Emergency / Outstanding / Future) using the
+// Manager Requests Queue page (live). Pending-only; rendered as three
+// ordered sections (Emergency / Outstanding / Future) using the
 // `comparison_date` rule in `@kindoo/shared`'s `partitionPendingRequests`.
 //
-// The queue is a visibility-only surface: completion and rejection
-// happen in the Chrome extension, not here. A muted top-of-queue note
-// links to the extension. The cards are display-only — no action
-// affordances.
+// The hands-on workflow lives in the Chrome extension: completing a
+// request needs a signed-in Kindoo tab, and rejection is desktop-only.
+// The one thing this page can do is ask the manager's OWN desktop
+// extension to run an apply on their behalf — remote apply (D27), the
+// `RemoteApply*` components below. When that desktop isn't online the
+// page is exactly what it was before: read-only cards plus a note
+// pointing at the extension.
 //
 // `focus` prop carries a request_id from a tapped push notification's
 // deep-link (typed search param at the route level). On first render
@@ -23,7 +26,13 @@ import {
   formatRequesterLabel,
   partitionPendingRequests,
 } from '@kindoo/shared';
-import { usePendingRequests } from './hooks';
+import {
+  useActiveRemoteApplyJobs,
+  usePendingRequests,
+  useRemoteApplyPresence,
+  type RemoteApplyPresenceResult,
+} from './hooks';
+import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
 import {
   useAccessForMember,
   useKindooManagerForMember,
@@ -52,6 +61,11 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
   const navigate = useNavigate();
   const labelForScope = useScopeLabel();
+  // Remote apply: presence + the jobs the desktop hasn't finished.
+  // Resolved once here and passed down rather than called per card —
+  // one listener each, not one per pending request.
+  const remoteApply = useRemoteApplyPresence();
+  const activeJobs = useActiveRemoteApplyJobs();
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -125,7 +139,8 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   return (
     <section className="kd-page-medium">
       <h1>Request Queue</h1>
-      <ReadOnlyNote />
+      <ExtensionNote />
+      <RemoteApplyPresenceNote presence={remoteApply} />
 
       {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
@@ -137,6 +152,8 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.urgent}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            activeJobs={activeJobs}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -144,6 +161,8 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.outstanding}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            activeJobs={activeJobs}
           />
           <QueueSection
             title="Future Requests"
@@ -151,6 +170,8 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.future}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            activeJobs={activeJobs}
           />
         </div>
       )}
@@ -158,17 +179,20 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   );
 }
 
-// Muted note pointing managers to the Chrome extension for the
-// actionable (complete / reject) workflow, which no longer lives here.
-function ReadOnlyNote() {
+// Muted note pointing managers at the Chrome extension. Completing by
+// hand and rejecting still live there; remote apply (below the note)
+// is the one thing that can be started from this page, and only while
+// the manager's own desktop is online.
+function ExtensionNote() {
   return (
-    <p className="kd-queue-readonly-note font-bold" data-testid="queue-readonly-note" role="note">
-      Requests can only be completed or rejected from the Chrome extension.{' '}
+    <p className="kd-queue-readonly-note font-bold" data-testid="queue-extension-note" role="note">
+      Requests are completed and rejected in the Chrome extension on your computer. When your
+      desktop is online you can start one from here.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
         target="_blank"
         rel="noopener noreferrer"
-        data-testid="queue-readonly-note-link"
+        data-testid="queue-extension-note-link"
       >
         Install the extension
       </a>
@@ -182,9 +206,19 @@ interface QueueSectionProps {
   requests: readonly AccessRequest[];
   focusedId: string | undefined;
   labelForScope: (scope: string) => string;
+  remoteApply: RemoteApplyPresenceResult;
+  activeJobs: Map<string, string>;
 }
 
-function QueueSection({ title, testid, requests, focusedId, labelForScope }: QueueSectionProps) {
+function QueueSection({
+  title,
+  testid,
+  requests,
+  focusedId,
+  labelForScope,
+  remoteApply,
+  activeJobs,
+}: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
   if (requests.length === 0) return null;
@@ -200,6 +234,8 @@ function QueueSection({ title, testid, requests, focusedId, labelForScope }: Que
             request={request}
             isFocused={focusedId === request.request_id}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            activeJobId={activeJobs.get(request.request_id)}
           />
         ))}
       </div>
@@ -211,9 +247,17 @@ interface QueueCardProps {
   request: AccessRequest;
   isFocused: boolean;
   labelForScope: (scope: string) => string;
+  remoteApply: RemoteApplyPresenceResult;
+  activeJobId: string | undefined;
 }
 
-function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
+function QueueCard({
+  request,
+  isFocused,
+  labelForScope,
+  remoteApply,
+  activeJobId,
+}: QueueCardProps) {
   // Live duplicate check: surface inside the queue card so the manager
   // sees, at a glance, that an add request collides with an existing
   // seat. The completion path now lives in the extension; the chip is
@@ -358,6 +402,16 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
           <Badge variant="danger">Error</Badge> This request edits a seat that no longer exists.
         </div>
       ) : null}
+      {/* Remote apply. Suppressed on the two cards that already say
+          "this can't be completed" — offering to run a provision that
+          is known to fail would be worse than offering nothing. */}
+      {blockedByDuplicate || editTargetMissing ? null : (
+        <RemoteApplyRow
+          requestId={request.request_id}
+          online={remoteApply.online}
+          activeJobId={activeJobId}
+        />
+      )}
     </div>
   );
 }

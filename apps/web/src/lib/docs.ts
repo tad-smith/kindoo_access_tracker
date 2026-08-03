@@ -41,6 +41,8 @@ import type {
   Organization,
   PlatformAuditLog,
   PlatformSuperadmin,
+  RemoteApplyJob,
+  RemoteApplyPresence,
   Seat,
   Stake,
   UserIndexEntry,
@@ -105,6 +107,42 @@ export function platformAuditLogRef(
 
 export function platformAuditLogCol(db: Firestore): CollectionReference<PlatformAuditLog> {
   return collection(db, 'platformAuditLog').withConverter(passthroughConverter<PlatformAuditLog>());
+}
+
+/**
+ * `remoteApply/{canonicalEmail}` — the manager's own remote-apply
+ * mailbox: presence + opt-in published by their desktop extension.
+ * Top-level (not per-stake) because the extension publishes one
+ * presence doc per person, carrying the stake it resolved; the phone
+ * compares that against its active stake.
+ */
+export function remoteApplyRef(
+  db: Firestore,
+  canonicalEmail: string,
+): DocumentReference<RemoteApplyPresence> {
+  return doc(db, 'remoteApply', canonicalEmail).withConverter(
+    passthroughConverter<RemoteApplyPresence>(),
+  );
+}
+
+/** `remoteApply/{canonicalEmail}/jobs` — one doc per phone-initiated apply. */
+export function remoteApplyJobsCol(
+  db: Firestore,
+  canonicalEmail: string,
+): CollectionReference<RemoteApplyJob> {
+  return collection(db, 'remoteApply', canonicalEmail, 'jobs').withConverter(
+    passthroughConverter<RemoteApplyJob>(),
+  );
+}
+
+export function remoteApplyJobRef(
+  db: Firestore,
+  canonicalEmail: string,
+  jobId: string,
+): DocumentReference<RemoteApplyJob> {
+  return doc(db, 'remoteApply', canonicalEmail, 'jobs', jobId).withConverter(
+    passthroughConverter<RemoteApplyJob>(),
+  );
 }
 
 // ---- Per-stake collections ------------------------------------------

@@ -1,21 +1,58 @@
 // Manager Queue data hooks.
 //
-// Read side only — the queue is a read-only visibility surface. The
-// actionable request workflow (complete / reject) lives entirely in the
-// Chrome extension; the app no longer carries those write paths.
-//
 //   - `usePendingRequests()` — live list of requests with status='pending',
 //     ordered FIFO (oldest first). Indexed via the
 //     `(status ASC, requested_at ASC)` composite from
 //     `firestore.indexes.json`.
+//
+// Remote apply (D27) adds the queue's only write path. The manager's
+// desktop extension publishes presence to `remoteApply/{canonical}`;
+// the phone writes a job doc into its `jobs` subcollection and watches
+// the extension drive it to a terminal status. The phone may only
+// create a job at `queued` and may only move `queued → cancelled`
+// (the no-pickup timeout) — every other transition belongs to the
+// extension and is rules-enforced.
+//
+//   - `useRemoteApplyPresence()` — is the desktop usable right now?
+//   - `useActiveRemoteApplyJobs()` — jobs the desktop hasn't finished,
+//     so a reload doesn't lose track of an in-flight apply.
+//   - `useRemoteApplyJob()` — live status of one job.
+//   - `useQueueRemoteApplyJob()` / `useCancelRemoteApplyJob()` — the two
+//     writes.
+//   - `useRemoteApplyPickupTimeout()` — cancels a job the desktop never
+//     claimed.
 
-import { orderBy, query, where } from 'firebase/firestore';
-import { useMemo } from 'react';
-import type { AccessRequest } from '@kindoo/shared';
-import { useFirestoreCollection } from '../../../lib/data';
+import { useMutation } from '@tanstack/react-query';
+import {
+  addDoc,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  type Query,
+} from 'firebase/firestore';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  REMOTE_APPLY_PICKUP_TIMEOUT_MS,
+  canonicalEmail,
+  isRemoteApplyOnline,
+  type AccessRequest,
+  type RemoteApplyJob,
+  type RemoteApplyPresence,
+  type TimestampLike,
+} from '@kindoo/shared';
+import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
 import { db } from '../../../lib/firebase';
-import { requestsCol } from '../../../lib/docs';
+import {
+  remoteApplyJobRef,
+  remoteApplyJobsCol,
+  remoteApplyRef,
+  requestsCol,
+} from '../../../lib/docs';
+import { usePrincipal, type Principal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
+import { getDeviceId } from '../../notifications/lib';
 
 /** Live FIFO pending-requests list. */
 export function usePendingRequests() {
@@ -32,4 +69,250 @@ export function usePendingRequests() {
     [activeStakeId],
   );
   return useFirestoreCollection<AccessRequest>(q);
+}
+
+/**
+ * How often the presence badge re-evaluates freshness. Presence goes
+ * stale by the clock, not by a write: a desktop that closes its Kindoo
+ * tab simply stops heartbeating, which produces no new snapshot. Without
+ * a tick the badge would sit on "online" indefinitely. This is a UI
+ * refresh cadence, not part of the extension contract — the contract
+ * timings live in `@kindoo/shared`.
+ */
+const PRESENCE_RECHECK_MS = 30_000;
+
+/**
+ * Why the desktop can (or can't) act right now.
+ *   `loading`     — presence subscription hasn't resolved yet; render nothing.
+ *   `online`      — opted in, fresh heartbeat, same stake. Show the button.
+ *   `stale`       — opted in but the heartbeat aged out (Kindoo tab closed,
+ *                   computer asleep, signed out of Kindoo).
+ *   `other-stake` — fresh, but the desktop is in a different stake's Kindoo
+ *                   site, so it can't apply what's on this screen.
+ *   `off`         — no presence doc, or the extension toggle is off. Also the
+ *                   fallback when the read errors, since the advice ("turn it
+ *                   on over there") is the same.
+ */
+export type RemoteApplyPresenceState = 'loading' | 'online' | 'stale' | 'other-stake' | 'off';
+
+export interface RemoteApplyPresenceResult {
+  state: RemoteApplyPresenceState;
+  /** Convenience: `state === 'online'`. Gates the Apply button. */
+  online: boolean;
+  /** Kindoo site the desktop is sitting in, when it published one. */
+  siteName: string | null;
+  presence: RemoteApplyPresence | undefined;
+}
+
+/**
+ * Live presence for the signed-in manager's own desktop extension.
+ *
+ * Freshness is derived from `isRemoteApplyOnline` (shared with the
+ * extension) against a clock that ticks every {@link PRESENCE_RECHECK_MS},
+ * so an abandoned heartbeat ages out on its own.
+ */
+export function useRemoteApplyPresence(): RemoteApplyPresenceResult {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(
+    () => (principal.canonical ? remoteApplyRef(db, principal.canonical) : null),
+    [principal.canonical],
+  );
+  const presenceDoc = useFirestoreDoc<RemoteApplyPresence>(ref);
+  const now = useNowTick(PRESENCE_RECHECK_MS);
+
+  const presence = presenceDoc.data;
+  const state: RemoteApplyPresenceState = (() => {
+    if (!ref) return 'off';
+    if (presenceDoc.isLoading) return 'loading';
+    if (!presence || presence.remote_apply_enabled !== true) return 'off';
+    if (!activeStakeId) return 'off';
+    if (isRemoteApplyOnline(presence, activeStakeId, now)) return 'online';
+    // Opted in but unusable. Distinguish "wrong stake" from "not there"
+    // — telling a manager whose desktop is heartbeating fine to go open
+    // Kindoo sends them chasing the wrong problem. Freshness alone is
+    // `isRemoteApplyOnline` evaluated against the presence's own stake,
+    // so the staleness window stays defined in exactly one place.
+    const heartbeatFresh = isRemoteApplyOnline(presence, presence.stake_id, now);
+    return heartbeatFresh ? 'other-stake' : 'stale';
+  })();
+
+  return {
+    state,
+    online: state === 'online',
+    siteName: presence?.kindoo_site_name ?? null,
+    presence,
+  };
+}
+
+/** A `RemoteApplyJob` body plus its Firestore doc id (read-layer only). */
+export type RemoteApplyJobWithId = RemoteApplyJob & { job_id: string };
+
+/**
+ * Jobs the desktop hasn't finished, keyed by `request_id`. Reload-safe:
+ * a manager who taps Apply and then reloads still sees the running job
+ * — and still can't queue a second one for the same request.
+ *
+ * `status in ['queued','running']` uses the automatic single-field
+ * index; no composite index is involved. Terminal jobs drop out of this
+ * query, which is why the card subscribes to its own job doc for the
+ * final status.
+ */
+export function useActiveRemoteApplyJobs(): Map<string, string> {
+  const principal = usePrincipal();
+  const q = useMemo(() => {
+    if (!principal.canonical) return null;
+    return query(
+      remoteApplyJobsCol(db, principal.canonical),
+      where('status', 'in', ['queued', 'running']),
+    ) as unknown as Query<RemoteApplyJobWithId>;
+  }, [principal.canonical]);
+  const jobs = useFirestoreCollection<RemoteApplyJobWithId>(q, { idField: 'job_id' });
+  return useMemo(() => {
+    const byRequest = new Map<string, string>();
+    for (const job of jobs.data ?? []) {
+      byRequest.set(job.request_id, job.job_id);
+    }
+    return byRequest;
+  }, [jobs.data]);
+}
+
+/** Live status of one job. `null` id → no subscription. */
+export function useRemoteApplyJob(jobId: string | null) {
+  const principal = usePrincipal();
+  const ref = useMemo(
+    () => (principal.canonical && jobId ? remoteApplyJobRef(db, principal.canonical, jobId) : null),
+    [principal.canonical, jobId],
+  );
+  return useFirestoreDoc<RemoteApplyJob>(ref);
+}
+
+/**
+ * Queue one apply for the desktop. Resolves to the new job id, which
+ * the card holds so it keeps rendering the outcome after the job goes
+ * terminal and leaves {@link useActiveRemoteApplyJobs}.
+ *
+ * Creates at `queued` and nothing else — rules reject any other status
+ * on create, and every later transition except `cancelled` belongs to
+ * the extension.
+ */
+export function useQueueRemoteApplyJob() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  // No cache invalidation on success: the job lands in the live jobs
+  // subscription from the local cache on the next tick, and the card
+  // subscribes to the new doc directly.
+  return useMutation({
+    mutationFn: async (requestId: string): Promise<string> => {
+      if (!principal.canonical) throw new Error('Not signed in.');
+      if (!activeStakeId) throw new Error('No active stake.');
+      const created = await addDoc(remoteApplyJobsCol(db, principal.canonical), {
+        request_id: requestId,
+        stake_id: activeStakeId,
+        status: 'queued',
+        created_at: serverTimestamp(),
+        created_by_device: getDeviceId(),
+        lastActor: actorOf(principal),
+      } as unknown as RemoteApplyJob);
+      return created.id;
+    },
+  });
+}
+
+/**
+ * Give up on a job the desktop never claimed. `queued → cancelled` is
+ * the only transition rules permit from the phone.
+ *
+ * This write races the extension's claim, and rules settle it: if the
+ * desktop moved the job to `running` a moment before the timer fired,
+ * the write comes back `permission-denied` (the before-status no longer
+ * matches). That denial means "the desktop picked it up after all" — the
+ * live snapshot is already showing `running` — so it's swallowed rather
+ * than surfaced.
+ */
+export function useCancelRemoteApplyJob() {
+  const principal = usePrincipal();
+  return useMutation({
+    mutationFn: async (jobId: string): Promise<void> => {
+      if (!principal.canonical) throw new Error('Not signed in.');
+      try {
+        await updateDoc(remoteApplyJobRef(db, principal.canonical, jobId), {
+          status: 'cancelled',
+          finished_at: serverTimestamp(),
+          lastActor: actorOf(principal),
+        });
+      } catch (err) {
+        if ((err as { code?: string } | null)?.code === 'permission-denied') return;
+        throw err;
+      }
+    },
+  });
+}
+
+/**
+ * Cancel a job that sat in `queued` past
+ * `REMOTE_APPLY_PICKUP_TIMEOUT_MS`. The desktop polls; if it hasn't
+ * claimed by now it isn't going to (asleep, Kindoo tab closed between
+ * the heartbeat and the tap), and leaving the row spinning forever is
+ * worse than saying so.
+ *
+ * `queuedAtFallbackMs` covers the window where `created_at` is still an
+ * unresolved `serverTimestamp()` in the local snapshot.
+ */
+export function useRemoteApplyPickupTimeout(
+  jobId: string | null,
+  job: RemoteApplyJob | undefined,
+  queuedAtFallbackMs: number | null,
+): void {
+  const cancel = useCancelRemoteApplyJob();
+  // The mutation object is fresh each render; read it through a ref so
+  // the timer effect doesn't reset on every parent render.
+  const cancelRef = useRef(cancel);
+  cancelRef.current = cancel;
+
+  const status = job?.status;
+  const createdAtMs = toMillis(job?.created_at) ?? queuedAtFallbackMs;
+
+  useEffect(() => {
+    if (!jobId || status !== 'queued' || createdAtMs === null) return;
+    const delay = Math.max(0, createdAtMs + REMOTE_APPLY_PICKUP_TIMEOUT_MS - Date.now());
+    const timer = window.setTimeout(() => {
+      cancelRef.current.mutate(jobId);
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [jobId, status, createdAtMs]);
+}
+
+/** Millisecond reading of a Firestore timestamp that may not have resolved yet. */
+export function toMillis(ts: TimestampLike | undefined | null): number | null {
+  if (!ts || typeof ts.toMillis !== 'function') return null;
+  try {
+    return ts.toMillis();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `Date.now()` that re-renders every `periodMs`. Used where a value
+ * goes stale with the clock rather than with a snapshot.
+ */
+function useNowTick(periodMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), periodMs);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [periodMs]);
+  return now;
+}
+
+function actorOf(principal: Principal): { email: string; canonical: string } {
+  return {
+    email: principal.email ?? '',
+    canonical: principal.canonical ?? canonicalEmail(principal.email ?? ''),
+  };
 }

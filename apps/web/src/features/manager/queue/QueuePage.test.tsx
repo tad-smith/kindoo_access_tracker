@@ -1,8 +1,10 @@
 // Component tests for the Manager Queue page. Mocks every hook so the
-// test exercises just the rendering shape. The queue is read-only — no
-// action affordances — so the tests assert the sections, metadata, the
-// read-only note, the duplicate chip, the focus deep-link, and the
-// absence of any complete / reject buttons.
+// test exercises just the rendering shape. The only action the page
+// carries is remote apply (covered in `RemoteApply.test.tsx`); with the
+// desktop offline — the default here — the page is display-only, so
+// these tests assert the sections, metadata, the extension note, the
+// duplicate chip, the focus deep-link, and the absence of any complete
+// / reject buttons.
 
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
@@ -14,9 +16,19 @@ const useSeatForMemberMock = vi.fn();
 const useAccessForMemberMock = vi.fn();
 const useKindooManagerForMemberMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
+const useRemoteApplyPresenceMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
+  useRemoteApplyPresence: () => useRemoteApplyPresenceMock(),
+  useActiveRemoteApplyJobs: () => new Map<string, string>(),
+}));
+
+// The remote-apply surface has its own test file; stub it out here so
+// the queue-rendering tests don't need its hooks wired.
+vi.mock('./RemoteApply', () => ({
+  RemoteApplyPresenceNote: () => null,
+  RemoteApplyRow: () => null,
 }));
 
 vi.mock('../../requests/hooks', () => ({
@@ -104,6 +116,14 @@ function loadingDocResult() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Desktop extension offline by default — the page renders exactly as
+  // it did before remote apply existed.
+  useRemoteApplyPresenceMock.mockReturnValue({
+    state: 'off',
+    online: false,
+    siteName: null,
+    presence: undefined,
+  });
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
   // Default: no access doc and no manager doc resolved for the requester,
   // so the card falls back to the requester email. Individual tests
@@ -795,14 +815,22 @@ describe('<ManagerQueuePage />', () => {
   });
 });
 
-describe('<ManagerQueuePage /> — read-only note', () => {
-  it('always renders the read-only note pointing managers to the Chrome extension', () => {
+describe('<ManagerQueuePage /> — extension note', () => {
+  it('says requests are completed and rejected in the Chrome extension', () => {
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
-    const note = screen.getByTestId('queue-readonly-note');
+    const note = screen.getByTestId('queue-extension-note');
     expect(note).toBeInTheDocument();
     expect(note.textContent).toMatch(
-      /can only be completed or rejected from the Chrome extension/i,
+      /completed and rejected in the Chrome extension on your computer/i,
+    );
+  });
+
+  it('tells the manager an apply can be started here when their desktop is online', () => {
+    usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-extension-note').textContent).toMatch(
+      /when your desktop is online you can start one from here/i,
     );
   });
 
@@ -811,13 +839,13 @@ describe('<ManagerQueuePage /> — read-only note', () => {
       liveResult([makeRequest({ request_id: 'r1', type: 'add_manual' })]),
     );
     render(<ManagerQueuePage />);
-    expect(screen.getByTestId('queue-readonly-note')).toBeInTheDocument();
+    expect(screen.getByTestId('queue-extension-note')).toBeInTheDocument();
   });
 
   it('links the note to the Chrome Web Store listing, opening in a new tab safely', () => {
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
-    const link = screen.getByTestId('queue-readonly-note-link');
+    const link = screen.getByTestId('queue-extension-note-link');
     expect(link).toHaveAttribute('href', WEB_STORE_URL);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
