@@ -227,6 +227,34 @@ describe('EmailService — pure builders', () => {
     }
   });
 
+  // The new-request lead is the one place the wording is per-type prose
+  // rather than derived from TYPE_LABEL, so pin all six.
+  it('opens the new-request lead with the right verb for every type', () => {
+    const leads: Record<RequestType, string> = {
+      add_manual: 'submitted a new manual-add request for Subject Person.',
+      add_temp: 'requested temporary access for Subject Person.',
+      remove: 'requested removal of access for Subject Person.',
+      edit_auto: 'requested an edit to the auto seat for Subject Person.',
+      edit_manual: 'requested an edit to the manual seat for Subject Person.',
+      edit_temp: 'requested an edit to the temporary seat for Subject Person.',
+    };
+    for (const [type, lead] of Object.entries(leads) as [RequestType, string][]) {
+      const o = managerOpts({ req: { ...baseRequest, type } });
+      expect(buildNewRequestTextBody(o)).toContain(`John Smith (Bishop) ${lead}`);
+      expect(buildNewRequestHtmlBody(o)).toContain(`John Smith (Bishop) ${lead}`);
+    }
+  });
+
+  // No user-facing string abbreviates "temporary".
+  it('never abbreviates temporary in a lead or a row', () => {
+    for (const type of ['add_temp', 'edit_temp'] as RequestType[]) {
+      const o = managerOpts({ req: { ...baseRequest, type } });
+      for (const body of [buildNewRequestTextBody(o), buildNewRequestHtmlBody(o)]) {
+        expect(body).not.toMatch(/\btemp\b/);
+      }
+    }
+  });
+
   // ---- new-request ---------------------------------------------------------
 
   it('new-request subject names the requester (name + calling) and the ward', () => {
@@ -296,10 +324,11 @@ describe('EmailService — pure builders', () => {
     expect(buildNewRequestHtmlBody(o)).toContain('>2026-05-01 to 2026-05-15</td>');
   });
 
+  // The seat comes off, not the person — "removal of access for X".
   it('new-request body uses the remove lead verb', () => {
     const o = managerOpts({ req: { ...baseRequest, type: 'remove' } });
-    expect(buildNewRequestTextBody(o)).toContain('requested removal of');
-    expect(buildNewRequestHtmlBody(o)).toContain('requested removal of');
+    expect(buildNewRequestTextBody(o)).toContain('requested removal of access for Subject Person.');
+    expect(buildNewRequestHtmlBody(o)).toContain('requested removal of access for Subject Person.');
   });
 
   it('new-request body surfaces the urgent flag as a Yes chip', () => {

@@ -58,10 +58,10 @@ const SCOPE_LABEL_STAKE = 'Stake';
 const TYPE_LEAD_VERB: Record<RequestType, string> = {
   add_manual: 'submitted a new manual-add request for',
   add_temp: 'requested temporary access for',
-  remove: 'requested removal of',
+  remove: 'requested removal of access for',
   edit_auto: 'requested an edit to the auto seat for',
   edit_manual: 'requested an edit to the manual seat for',
-  edit_temp: 'requested an edit to the temp seat for',
+  edit_temp: 'requested an edit to the temporary seat for',
 };
 
 /** Detail-row rendering of `request.type`. Never show the raw enum. */
