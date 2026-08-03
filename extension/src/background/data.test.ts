@@ -6,6 +6,7 @@
 // only thing the writer code actually does on top of the SDK.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { REMOTE_APPLY_HOME_SITE_KEY } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 
 const updateMock = vi.fn();
@@ -16,6 +17,7 @@ const getDocMock = vi.fn();
 const getDocsMock = vi.fn();
 const updateDocMock = vi.fn();
 const setDocMock = vi.fn();
+const deleteDocMock = vi.fn();
 const docMock = vi.fn((..._args: unknown[]) => ({ __doc: _args }));
 const collectionMock = vi.fn((..._args: unknown[]) => ({ __coll: _args }));
 const serverTimestampMock = vi.fn(() => '__ts__');
@@ -25,6 +27,7 @@ const limitMock = vi.fn((..._args: unknown[]) => ({ __limit: _args }));
 
 vi.mock('firebase/firestore', () => ({
   collection: (...args: unknown[]) => collectionMock(...args),
+  deleteDoc: (...args: unknown[]) => deleteDocMock(...args),
   doc: (...args: unknown[]) => docMock(...args),
   getDoc: (...args: unknown[]) => getDocMock(...args),
   getDocs: (...args: unknown[]) => getDocsMock(...args),
@@ -1104,6 +1107,8 @@ describe('remote apply — SW-side mailbox operations', () => {
     setDocMock.mockResolvedValue(undefined);
     updateDocMock.mockReset();
     updateDocMock.mockResolvedValue(undefined);
+    deleteDocMock.mockReset();
+    deleteDocMock.mockResolvedValue(undefined);
     getDocsMock.mockReset();
     docMock.mockClear();
     collectionMock.mockClear();
@@ -1117,65 +1122,165 @@ describe('remote apply — SW-side mailbox operations', () => {
     vi.restoreAllMocks();
   });
 
-  it('writes presence under the token canonical, merging so the first heartbeat creates the doc', async () => {
+  it('splits the heartbeat across the profile flag and a per-site desktop doc', async () => {
+    // The parent doc must carry ONLY the profile-wide opt-in: it is
+    // shared by every Kindoo tab in the profile, so a site-specific
+    // field there is what made two tabs overwrite each other.
     const { writeRemotePresence } = await import('./data');
     await writeRemotePresence(
       {
+        enabled: true,
+        siteKey: 'east-stake',
+        kindooSiteId: 'east-stake',
         stakeId: 'csnorth',
         kindooEid: 27994,
-        kindooSiteName: 'CS North',
+        kindooSiteName: 'East Stake',
         extVersion: '1.2.3',
-        enabled: true,
       },
       mailboxActor(),
     );
 
     expect(docMock).toHaveBeenCalledWith({ __firestore: true }, 'remoteApply', CANONICAL);
-    const [, payload, options] = setDocMock.mock.calls[0] as [
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'remoteApply',
+      CANONICAL,
+      'desktops',
+      'east-stake',
+    );
+    const [, parent, parentOptions] = setDocMock.mock.calls[0] as [
       unknown,
       Record<string, unknown>,
       unknown,
     ];
-    expect(payload).toEqual({
+    expect(parent).toEqual({
       remote_apply_enabled: true,
-      last_seen_at: '__ts__',
-      stake_id: 'csnorth',
-      kindoo_eid: 27994,
-      kindoo_site_name: 'CS North',
       ext_version: '1.2.3',
       lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
     });
-    expect(options).toEqual({ merge: true });
+    // Whole-document write, NOT a merge. Rules enforce an exact key set
+    // and judge the merged result, so merging onto a doc a previous
+    // version left carrying `stake_id` / `last_seen_at` / `kindoo_eid` /
+    // `kindoo_site_name` would be denied. Overwriting migrates it.
+    expect(parentOptions).toBeUndefined();
+
+    const [, desktop] = setDocMock.mock.calls[1] as [unknown, Record<string, unknown>, unknown];
+    expect(desktop).toEqual({
+      stake_id: 'csnorth',
+      kindoo_site_id: 'east-stake',
+      last_seen_at: '__ts__',
+      kindoo_eid: 27994,
+      kindoo_site_name: 'East Stake',
+      ext_version: '1.2.3',
+      lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
+    });
   });
 
-  it('clears the opt-in on the disable write even with no Kindoo site resolved', async () => {
+  it('keys a home-site tab under the reserved home key with a null kindoo_site_id', async () => {
     const { writeRemotePresence } = await import('./data');
     await writeRemotePresence(
       {
+        enabled: true,
+        siteKey: REMOTE_APPLY_HOME_SITE_KEY,
+        kindooSiteId: null,
         stakeId: 'csnorth',
-        kindooEid: null,
-        kindooSiteName: null,
+        kindooEid: 27994,
+        kindooSiteName: 'CS North',
         extVersion: '1.2.3',
-        enabled: false,
       },
       mailboxActor(),
     );
-    const payload = setDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(payload.remote_apply_enabled).toBe(false);
-    expect(payload.kindoo_eid).toBeNull();
+
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'remoteApply',
+      CANONICAL,
+      'desktops',
+      'home',
+    );
+    const [, desktop] = setDocMock.mock.calls[1] as [unknown, Record<string, unknown>, unknown];
+    expect(desktop.kindoo_site_id).toBeNull();
   });
 
-  it('queries only queued jobs, one at a time', async () => {
+  it('deletes this tab’s desktop doc on the disable write, not just the flag', async () => {
+    // Flipping the profile flag alone leaves the phone naming a Kindoo
+    // site as covered for a full staleness window — a dead button with a
+    // confident label under it.
+    const { writeRemotePresence } = await import('./data');
+    await writeRemotePresence(
+      { enabled: false, siteKey: 'east-stake', extVersion: '1.2.3' },
+      mailboxActor(),
+    );
+
+    const parent = setDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(parent.remote_apply_enabled).toBe(false);
+    expect(setDocMock).toHaveBeenCalledTimes(1);
+    expect(deleteDocMock).toHaveBeenCalledTimes(1);
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'remoteApply',
+      CANONICAL,
+      'desktops',
+      'east-stake',
+    );
+  });
+
+  it('still clears the opt-in when the tab never resolved a site to clear', async () => {
+    const { writeRemotePresence } = await import('./data');
+    await writeRemotePresence(
+      { enabled: false, siteKey: null, extVersion: '1.2.3' },
+      mailboxActor(),
+    );
+
+    const parent = setDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(parent.remote_apply_enabled).toBe(false);
+    expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves the opt-in cleared even when deleting the desktop doc fails', async () => {
+    // The flag is what actually gates the phone's button; a failed
+    // delete costs a lingering site label, not a live button.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    deleteDocMock.mockRejectedValue(new Error('offline'));
+    const { writeRemotePresence } = await import('./data');
+    await expect(
+      writeRemotePresence(
+        { enabled: false, siteKey: 'east-stake', extVersion: '1.2.3' },
+        mailboxActor(),
+      ),
+    ).resolves.toBeUndefined();
+    const parent = setDocMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(parent.remote_apply_enabled).toBe(false);
+  });
+
+  it('returns a page of queued jobs with their target site', async () => {
+    // A page, not one job: the single oldest queued job routinely
+    // belongs to the sibling tab's site, and the poller has to be able
+    // to look past it.
     getDocsMock.mockResolvedValue({
       docs: [
         {
           id: 'job-1',
-          data: () => ({ request_id: 'r1', stake_id: 'csnorth', status: 'queued' }),
+          data: () => ({
+            request_id: 'r1',
+            stake_id: 'csnorth',
+            target_site_key: 'east-stake',
+            status: 'queued',
+          }),
+        },
+        {
+          id: 'job-2',
+          data: () => ({
+            request_id: 'r2',
+            stake_id: 'csnorth',
+            target_site_key: 'home',
+            status: 'queued',
+          }),
         },
       ],
     });
-    const { findQueuedRemoteApplyJob } = await import('./data');
-    const job = await findQueuedRemoteApplyJob(mailboxActor());
+    const { findQueuedRemoteApplyJobs } = await import('./data');
+    const jobs = await findQueuedRemoteApplyJobs(mailboxActor());
 
     expect(collectionMock).toHaveBeenCalledWith(
       { __firestore: true },
@@ -1184,17 +1289,29 @@ describe('remote apply — SW-side mailbox operations', () => {
       'jobs',
     );
     expect(whereMock).toHaveBeenCalledWith('status', '==', 'queued');
-    expect(limitMock).toHaveBeenCalledWith(1);
-    expect(job).toEqual({ jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth' });
+    expect(limitMock).toHaveBeenCalledWith(20);
+    expect(jobs).toEqual([
+      { jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth', targetSiteKey: 'east-stake' },
+      { jobId: 'job-2', requestId: 'r2', stakeId: 'csnorth', targetSiteKey: 'home' },
+    ]);
   });
 
-  it('returns null when the mailbox is empty', async () => {
+  it('reads a job with no target site as home-only, never as claimable by anyone', async () => {
+    getDocsMock.mockResolvedValue({
+      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+    });
+    const { findQueuedRemoteApplyJobs } = await import('./data');
+    const jobs = await findQueuedRemoteApplyJobs(mailboxActor());
+    expect(jobs[0]?.targetSiteKey).toBe(REMOTE_APPLY_HOME_SITE_KEY);
+  });
+
+  it('returns an empty page when the mailbox is empty', async () => {
     getDocsMock.mockResolvedValue({ docs: [] });
-    const { findQueuedRemoteApplyJob } = await import('./data');
-    await expect(findQueuedRemoteApplyJob(mailboxActor())).resolves.toBeNull();
+    const { findQueuedRemoteApplyJobs } = await import('./data');
+    await expect(findQueuedRemoteApplyJobs(mailboxActor())).resolves.toEqual([]);
   });
 
-  it('lists running jobs with their claim age for the stranded sweep', async () => {
+  it('lists running jobs with their claim age and target site for the stranded sweep', async () => {
     getDocsMock.mockResolvedValue({
       docs: [
         {
@@ -1202,6 +1319,7 @@ describe('remote apply — SW-side mailbox operations', () => {
           data: () => ({
             request_id: 'r1',
             stake_id: 'csnorth',
+            target_site_key: 'east-stake',
             status: 'running',
             created_at: { toMillis: () => 1_000 },
             claimed_at: { toMillis: () => 2_000 },
@@ -1214,7 +1332,13 @@ describe('remote apply — SW-side mailbox operations', () => {
 
     expect(whereMock).toHaveBeenCalledWith('status', '==', 'running');
     expect(jobs).toEqual([
-      { jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth', claimedAtMs: 2_000 },
+      {
+        jobId: 'job-1',
+        requestId: 'r1',
+        stakeId: 'csnorth',
+        targetSiteKey: 'east-stake',
+        claimedAtMs: 2_000,
+      },
     ]);
   });
 

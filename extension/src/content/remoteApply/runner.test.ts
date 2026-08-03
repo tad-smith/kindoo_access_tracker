@@ -6,6 +6,7 @@
 // invisible on the desktop and misleading on the phone.
 
 import { describe, expect, it, vi } from 'vitest';
+import { REMOTE_APPLY_HOME_SITE_KEY } from '@kindoo/shared';
 import type { AccessRequest } from '@kindoo/shared';
 import type { RemoteApplyJobRef, StakeConfigBundle } from '../../lib/extensionApi';
 import type { ApplyRequestResult } from '../kindoo/applyRequest';
@@ -23,7 +24,13 @@ function bundle(): StakeConfigBundle {
 }
 
 function job(overrides: Partial<RemoteApplyJobRef> = {}): RemoteApplyJobRef {
-  return { jobId: 'j1', requestId: 'r1', stakeId: STAKE_ID, ...overrides };
+  return {
+    jobId: 'j1',
+    requestId: 'r1',
+    stakeId: STAKE_ID,
+    targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+    ...overrides,
+  };
 }
 
 function request(): AccessRequest {
