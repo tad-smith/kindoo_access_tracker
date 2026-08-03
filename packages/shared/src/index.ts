@@ -22,6 +22,16 @@ export { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js
 export { REQUESTER_GUIDE_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
 export {
+  REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_PICKUP_TIMEOUT_MS,
+  REMOTE_APPLY_POLL_HIDDEN_MS,
+  REMOTE_APPLY_POLL_VISIBLE_MS,
+  REMOTE_APPLY_STALE_MS,
+  REMOTE_APPLY_TERMINAL_STATUSES,
+  isRemoteApplyOnline,
+  isRemoteApplyTerminal,
+} from './remoteApply.js';
+export {
   deriveRequesterDisplay,
   formatRequesterLabel,
   type RequesterDisplay,
@@ -86,6 +96,11 @@ export type {
   PlatformAuditLog,
   PlatformSuperadmin,
   Principal,
+  RemoteApplyJob,
+  RemoteApplyJobStatus,
+  RemoteApplyOutcome,
+  RemoteApplyOutcomeCode,
+  RemoteApplyPresence,
   RequestStatus,
   RequestType,
   SbaOnlyRemovePayload,
