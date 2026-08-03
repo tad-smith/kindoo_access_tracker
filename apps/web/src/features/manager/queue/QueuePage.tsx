@@ -26,7 +26,9 @@ import {
   type KindooSite,
   type RemoteApplyDesktopWithId,
   type Ward,
+  addBlockedByExistingSeat,
   deriveRequesterDisplay,
+  existingSeatFacts,
   formatRequesterLabel,
   partitionPendingRequests,
   remoteApplyTargetSiteKey,
@@ -351,17 +353,18 @@ function QueueCard({
 }: QueueCardProps) {
   // Live duplicate check: surface inside the queue card so the manager
   // sees, at a glance, that an add request collides with an existing
-  // seat. The completion path now lives in the extension; the chip is
-  // kept exactly as-is as an informational signal (operator decision:
-  // "same message, same error display, no changes").
+  // seat, and withhold remote apply for it.
   //
-  // For an add request, completion creates a brand-new one-per-member
-  // seat doc keyed by canonical email, so ANY existing seat (regardless
-  // of scope) guarantees the create throws. Edit / remove completions
-  // expect an existing seat, so the chip renders ONLY for add types.
+  // The predicate is `@kindoo/shared`'s, not a local copy, because the
+  // extension card gates its own Provision & Complete button on the
+  // same question — and a broader gate here does NOT fail safe. It
+  // hides Apply and prints "reject it" for a stake-scope `add_manual`
+  // onto a seat with no stake grant, which is precisely the shape the
+  // web's own "Give Access To Stake Buildings" button produces and
+  // which `planAddMerge` provisions cleanly. See the module for the
+  // full rule.
   const dup = useSeatForMember(request.member_canonical);
-  const blockedByDuplicate =
-    (request.type === 'add_manual' || request.type === 'add_temp') && !!dup.data;
+  const blockedByDuplicate = addBlockedByExistingSeat(request, existingSeatFacts(dup.data));
 
   // Informational edit-side analog of the duplicate-add chip: an
   // `edit_*` completion modifies the member's existing seat, so a
@@ -505,6 +508,7 @@ function QueueCard({
           requestSiteName={remoteApplySiteName}
           job={remoteApplyJob}
           jobsLoading={remoteApplyJobsLoading}
+          labelForScope={labelForScope}
         />
       )}
     </div>
