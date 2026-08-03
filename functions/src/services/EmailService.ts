@@ -4,8 +4,8 @@
 //   1. Short-circuits if `stake.notifications_enabled === false` (the
 //      operator kill-switch). This kill-switch is email-only; push has
 //      its own per-user prefs.
-//   2. Builds a typed payload (subject + plain-text body + from-address
-//      + optional reply-to).
+//   2. Builds a typed payload (subject + HTML body + plain-text
+//      fallback + from-address + optional reply-to).
 //   3. Hands it to the Resend wrapper (`lib/resend.ts`).
 //   4. On Resend error or thrown exception, writes one
 //      `email_send_failed` audit row directly via Admin SDK and logs;
@@ -13,7 +13,12 @@
 //
 // Body templates are pure functions exported for unit-testing without
 // any Firestore dependency. Trigger code feeds them stake + request +
-// link data; service-level functions wire the I/O.
+// link data; service-level functions wire the I/O — including the one
+// wards read that turns every `scope` into a ward name.
+//
+// Every email ships both parts. The two must always say the same thing:
+// the plain-text fallback is what a text-only client renders, so the
+// only permitted difference is markup.
 
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
@@ -24,10 +29,9 @@ import {
   deriveRequesterDisplay,
   formatRequesterLabel,
   isGmailAddress,
-  // Resolves a ward_code to its display `ward_name`. Aliased so it can't
-  // be confused with the local `scopeLabel` below, which uppercases the
-  // raw code for the five request-lifecycle emails.
-  scopeLabel as wardScopeLabel,
+  // Resolves a ward_code to its display `ward_name`. Every email renders
+  // the name, never the raw code.
+  scopeLabel,
 } from '@kindoo/shared';
 import type {
   Access,
@@ -67,6 +71,33 @@ const TYPE_NOUN: Record<RequestType, string> = {
   edit_manual: 'manual-seat edit',
   edit_temp: 'temp-seat edit',
 };
+
+/** Detail-row rendering of `request.type`. Never show the raw enum. */
+const TYPE_LABEL: Record<RequestType, string> = {
+  add_manual: 'Manual access',
+  add_temp: 'Temporary access',
+  remove: 'Removal',
+  edit_auto: 'Auto-seat edit',
+  edit_manual: 'Manual-seat edit',
+  edit_temp: 'Temporary-seat edit',
+};
+
+/** Spelled-out counts for the over-cap lead; numerals past the list. */
+const COUNT_WORDS = [
+  'Zero',
+  'One',
+  'Two',
+  'Three',
+  'Four',
+  'Five',
+  'Six',
+  'Seven',
+  'Eight',
+  'Nine',
+  'Ten',
+  'Eleven',
+  'Twelve',
+];
 
 // ---------------------------------------------------------------------------
 // Helpers — pure, exported for tests.
@@ -121,123 +152,356 @@ function resolveBaseUrl(stake?: Pick<Stake, 'web_base_url_override'>): string {
   return WEB_BASE_URL.value();
 }
 
-/** Pretty scope label for subject lines. */
-export function scopeLabel(scope: string): string {
-  return scope === 'stake' ? SCOPE_LABEL_STAKE : scope.toUpperCase();
+// ---------------------------------------------------------------------------
+// Shared presentation primitives.
+//
+// Inline styles only — mail clients drop <style> blocks. Font names quote
+// with SINGLE quotes: these strings land inside double-quoted `style="…"`
+// attributes, and a `"` would terminate the attribute early and drop every
+// declaration after it.
+// ---------------------------------------------------------------------------
+
+const WRAPPER =
+  "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;" +
+  'font-size:16px;line-height:1.5;color:#1a202c;max-width:560px;margin:0 auto;padding:24px';
+const PARA = 'margin:0 0 16px';
+const BUTTON =
+  'display:inline-block;background-color:#2b6cb0;color:#ffffff;text-decoration:none;' +
+  'padding:12px 24px;border-radius:6px;font-weight:600';
+/** Trailing call-to-action; the table above it carries the gap. */
+const BUTTON_PARA = 'margin:0;text-align:center';
+const LINK = 'color:#2b6cb0';
+const TABLE = 'width:100%;border-collapse:collapse;margin:0 0 20px';
+const TH =
+  'text-align:left;padding:8px 0;border-bottom:1px solid #e2e8f0;color:#5c6b7a;font-size:13px;' +
+  'font-weight:600;white-space:nowrap;vertical-align:top;width:34%';
+const TD = 'text-align:left;padding:8px 0;border-bottom:1px solid #e2e8f0;vertical-align:top';
+/** Figure columns: right-aligned, tabular so digits line up. */
+const TH_NUM =
+  'text-align:right;padding:8px 0;border-bottom:1px solid #e2e8f0;color:#5c6b7a;font-size:13px;' +
+  'font-weight:600;white-space:nowrap;vertical-align:top';
+const TD_NUM =
+  'text-align:right;padding:8px 0;border-bottom:1px solid #e2e8f0;vertical-align:top;' +
+  'font-variant-numeric:tabular-nums';
+/** Chip for the one value per email that wants the reader's eye. */
+const FLAG =
+  'display:inline-block;background-color:#fbe9e7;color:#9b2c1c;border-radius:4px;' +
+  'padding:2px 8px;font-size:13px;font-weight:600';
+/** Same red as FLAG's text, for the one word the rejected lead emphasises. */
+const REJECTED_WORD = '<span style="color:#9b2c1c;font-weight:600">rejected</span>';
+
+/** Member names, stake names and ward names are user data. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Text-part label column. Values wrap under the label, not the margin. */
+const TEXT_LABEL_WIDTH = 10;
+
+function textRow(label: string, ...values: string[]): string {
+  const head = `${label}:`.padEnd(TEXT_LABEL_WIDTH);
+  const indent = ' '.repeat(head.length + 1);
+  return values.map((v, i) => (i === 0 ? `${head} ${v}` : `${indent}${v}`)).join('\n');
+}
+
+/** One label/value row. `value` is HTML — callers escape their own data. */
+function htmlRow(label: string, value: string): string {
+  return `<tr><th style="${TH}">${escapeHtml(label)}</th><td style="${TD}">${value}</td></tr>`;
+}
+
+/**
+ * The shape every notification email shares: a lead paragraph, a table of
+ * detail rows, and one centered button. `lead` and `rows` are HTML.
+ */
+function htmlDocument(opts: { lead: string; rows: string[]; link: string; cta: string }): string {
+  return [
+    `<div style="${WRAPPER}">`,
+    `<p style="${PARA}">${opts.lead}</p>`,
+    `<table role="presentation" style="${TABLE}">`,
+    ...opts.rows,
+    `</table>`,
+    `<p style="${BUTTON_PARA}"><a href="${escapeHtml(opts.link)}" style="${BUTTON}">${opts.cta}</a></p>`,
+    `</div>`,
+  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
-// Subject + body builders. Pure; unit-tested independently of I/O.
+// Subject + body builders. Pure; unit-tested independently of I/O. The
+// service layer resolves `scope` to a ward name before calling in.
 // ---------------------------------------------------------------------------
 
-export function buildNewRequestSubject(req: AccessRequest, requesterLabel: string): string {
-  return `[Stake Building Access] New request from ${requesterLabel} (${scopeLabel(req.scope)})`;
+/** Everything the four request-lifecycle emails render from. */
+export type RequestEmailOpts = {
+  req: AccessRequest;
+  /** `req.scope` resolved through the shared `scopeLabel`. */
+  scope: string;
+  link: string;
+};
+
+/** The two manager-bound emails also name who submitted. */
+export type RequesterNamedEmailOpts = RequestEmailOpts & {
+  /** `{Name} ({Calling})`, falling back to the raw email. */
+  requesterLabel: string;
+};
+
+/** An over-cap pool with its `pool` resolved to a ward name. */
+export type LabelledPool = OverCapEntry & { label: string };
+
+export type OverCapEmailOpts = { pools: LabelledPool[]; link: string };
+
+// ---- new request (managers) ------------------------------------------------
+
+export function buildNewRequestSubject(o: RequesterNamedEmailOpts): string {
+  return `[Stake Building Access] New request from ${o.requesterLabel} — ${o.scope}`;
 }
 
-export function buildNewRequestBody(
-  req: AccessRequest,
-  link: string,
-  requesterLabel: string,
-): string {
-  const lead = TYPE_LEAD_VERB[req.type];
-  const subject = displayPerson(req);
+export function buildNewRequestTextBody(o: RequesterNamedEmailOpts): string {
+  const { req } = o;
   const lines: string[] = [
-    `${requesterLabel} ${lead} ${subject}.`,
+    newRequestLead(o),
     '',
-    `Type:      ${req.type}`,
-    `Scope:     ${scopeLabel(req.scope)}`,
-    `Member:    ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''}`,
+    textRow('Request', TYPE_LABEL[req.type]),
+    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow('Member', ...memberLines(req)),
   ];
-  if (req.reason) lines.push(`Reason:    ${req.reason}`);
-  if (req.type === 'add_temp' && req.start_date && req.end_date) {
-    lines.push(`Dates:     ${req.start_date} to ${req.end_date}`);
-  }
-  if (req.comment) lines.push(`Comment:   ${req.comment}`);
-  if (req.urgent === true) lines.push(`Emergency: yes`);
-  lines.push('');
-  lines.push(`Review the queue: ${link}`);
+  if (req.reason) lines.push(textRow('Reason', req.reason));
+  if (hasDates(req)) lines.push(textRow('Dates', dateRange(req)));
+  if (req.comment) lines.push(textRow('Comment', req.comment));
+  if (req.urgent === true) lines.push(textRow('Emergency', 'Yes'));
+  lines.push('', `Review the queue: ${o.link}`);
   return lines.join('\n');
 }
 
-export function buildCompletedSubject(req: AccessRequest): string {
-  return `[Stake Building Access] Your request for ${req.member_email} has been completed`;
+export function buildNewRequestHtmlBody(o: RequesterNamedEmailOpts): string {
+  const { req } = o;
+  const rows: string[] = [
+    htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
+    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow('Member', memberCell(req)),
+  ];
+  if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
+  if (hasDates(req)) rows.push(htmlRow('Dates', escapeHtml(dateRange(req))));
+  if (req.comment) rows.push(htmlRow('Comment', escapeHtml(req.comment)));
+  if (req.urgent === true) rows.push(htmlRow('Emergency', `<span style="${FLAG}">Yes</span>`));
+  return htmlDocument({
+    lead: escapeHtml(newRequestLead(o)),
+    rows,
+    link: o.link,
+    cta: 'Review the queue',
+  });
 }
 
-export function buildCompletedBody(req: AccessRequest, link: string): string {
-  const noun = TYPE_NOUN[req.type];
+// ---- completed (requester) -------------------------------------------------
+
+export function buildCompletedSubject(o: RequestEmailOpts): string {
+  return `[Stake Building Access] Your request for ${personName(o.req)} has been completed`;
+}
+
+export function buildCompletedTextBody(o: RequestEmailOpts): string {
+  const { req } = o;
   const lines: string[] = [
-    `Your request for ${noun} for ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''} has been completed.`,
+    `${requestLeadStem(req)} has been completed.`,
     '',
-    `Scope:     ${scopeLabel(req.scope)}`,
-    `Type:      ${req.type}`,
+    textRow('Request', TYPE_LABEL[req.type]),
+    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow('Member', ...memberLines(req)),
+  ];
+  if (req.completion_note) lines.push(textRow('Note from the manager', req.completion_note));
+  lines.push('', `View your requests: ${o.link}`);
+  return lines.join('\n');
+}
+
+export function buildCompletedHtmlBody(o: RequestEmailOpts): string {
+  const { req } = o;
+  const rows: string[] = [
+    htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
+    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow('Member', memberCell(req)),
   ];
   if (req.completion_note) {
-    lines.push('');
-    lines.push(`Note: ${req.completion_note}`);
+    rows.push(htmlRow('Note from the manager', escapeHtml(req.completion_note)));
   }
-  lines.push('');
-  lines.push(`View your requests: ${link}`);
-  return lines.join('\n');
+  return htmlDocument({
+    lead: `${escapeHtml(requestLeadStem(req))} has been completed.`,
+    rows,
+    link: o.link,
+    cta: 'View your requests',
+  });
 }
 
-export function buildRejectedSubject(_req: AccessRequest): string {
-  return '[Stake Building Access] Your request was rejected';
+// ---- rejected (requester) --------------------------------------------------
+
+export function buildRejectedSubject(o: RequestEmailOpts): string {
+  return `[Stake Building Access] Your request for ${personName(o.req)} was rejected`;
 }
 
-export function buildRejectedBody(req: AccessRequest, link: string): string {
-  const noun = TYPE_NOUN[req.type];
-  const lines: string[] = [
-    `Your request for ${noun} for ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''} was rejected.`,
+export function buildRejectedTextBody(o: RequestEmailOpts): string {
+  const { req } = o;
+  return [
+    `${requestLeadStem(req)} was rejected.`,
     '',
-    `Scope:     ${scopeLabel(req.scope)}`,
-    `Reason:    ${req.rejection_reason ?? '(not provided)'}`,
+    textRow('Request', TYPE_LABEL[req.type]),
+    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow('Member', ...memberLines(req)),
+    textRow('Reason given', rejectionReason(req)),
     '',
-    `View your requests: ${link}`,
-  ];
-  return lines.join('\n');
+    `View your requests: ${o.link}`,
+  ].join('\n');
 }
 
-export function buildCancelledSubject(req: AccessRequest, requesterLabel: string): string {
-  return `[Stake Building Access] Request cancelled by ${requesterLabel}`;
+export function buildRejectedHtmlBody(o: RequestEmailOpts): string {
+  const { req } = o;
+  return htmlDocument({
+    lead: `${escapeHtml(requestLeadStem(req))} was ${REJECTED_WORD}.`,
+    rows: [
+      htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
+      htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+      htmlRow('Member', memberCell(req)),
+      htmlRow('Reason given', escapeHtml(rejectionReason(req))),
+    ],
+    link: o.link,
+    cta: 'View your requests',
+  });
 }
 
-export function buildCancelledBody(
-  req: AccessRequest,
-  link: string,
-  requesterLabel: string,
-): string {
-  const noun = TYPE_NOUN[req.type];
-  const lines: string[] = [
-    `${requesterLabel} cancelled their request for ${noun} for ${req.member_email}${req.member_name ? ` (${req.member_name})` : ''}.`,
+// ---- cancelled (managers) --------------------------------------------------
+
+export function buildCancelledSubject(o: RequesterNamedEmailOpts): string {
+  return `[Stake Building Access] Request cancelled by ${o.requesterLabel} — ${o.scope}`;
+}
+
+export function buildCancelledTextBody(o: RequesterNamedEmailOpts): string {
+  const { req } = o;
+  return [
+    cancelledLead(o),
     '',
-    `Scope:     ${scopeLabel(req.scope)}`,
-    `Type:      ${req.type}`,
+    textRow('Request', TYPE_LABEL[req.type]),
+    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow('Member', ...memberLines(req)),
     '',
-    `Open the queue: ${link}`,
-  ];
-  return lines.join('\n');
+    `Open the queue: ${o.link}`,
+  ].join('\n');
 }
 
-export function buildOverCapSubject(): string {
-  return `[Stake Building Access] Over-cap warning`;
+export function buildCancelledHtmlBody(o: RequesterNamedEmailOpts): string {
+  const { req } = o;
+  return htmlDocument({
+    lead: escapeHtml(cancelledLead(o)),
+    rows: [
+      htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
+      htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+      htmlRow('Member', memberCell(req)),
+    ],
+    link: o.link,
+    cta: 'Open the queue',
+  });
 }
 
-export function buildOverCapBody(pools: OverCapEntry[], link: string): string {
-  const lines: string[] = ['One or more seat pools are over their cap:', ''];
-  for (const p of pools) {
-    const label = p.pool === 'stake' ? SCOPE_LABEL_STAKE : p.pool.toUpperCase();
-    lines.push(`  ${label}: ${p.count} of ${p.cap} (over by ${p.over_by})`);
+// ---- over-cap (managers) ---------------------------------------------------
+
+export function buildOverCapSubject(pools: LabelledPool[]): string {
+  return `[Stake Building Access] ${overCapLead(pools.length)}`;
+}
+
+export function buildOverCapTextBody(o: OverCapEmailOpts): string {
+  const lines: string[] = [`${overCapLead(o.pools.length)}.`, ''];
+  for (const p of o.pools) {
+    lines.push(`  ${p.label}: ${p.count} of ${p.cap} (over by ${p.over_by})`);
   }
-  lines.push('');
-  lines.push(`View seats: ${link}`);
+  lines.push('', `View seats: ${o.link}`);
   return lines.join('\n');
+}
+
+export function buildOverCapHtmlBody(o: OverCapEmailOpts): string {
+  const rows = o.pools.map(
+    (p) =>
+      `<tr><td style="${TD}">${escapeHtml(p.label)}</td>` +
+      `<td style="${TD_NUM}">${p.count}</td>` +
+      `<td style="${TD_NUM}">${p.cap}</td>` +
+      `<td style="${TD_NUM}"><span style="${FLAG}">+${p.over_by}</span></td></tr>`,
+  );
+  return [
+    `<div style="${WRAPPER}">`,
+    `<p style="${PARA}">${overCapLead(o.pools.length)}.</p>`,
+    `<table role="presentation" style="${TABLE}">`,
+    `<tr><th style="${TH}">Pool</th><th style="${TH_NUM}">Seats</th>` +
+      `<th style="${TH_NUM}">Cap</th><th style="${TH_NUM}">Over by</th></tr>`,
+    ...rows,
+    `</table>`,
+    `<p style="${BUTTON_PARA}"><a href="${escapeHtml(o.link)}" style="${BUTTON}">View seats</a></p>`,
+    `</div>`,
+  ].join('\n');
+}
+
+// ---- copy fragments shared by both parts -----------------------------------
+
+function newRequestLead(o: RequesterNamedEmailOpts): string {
+  return `${o.requesterLabel} ${TYPE_LEAD_VERB[o.req.type]} ${displayPerson(o.req)}.`;
+}
+
+function cancelledLead(o: RequesterNamedEmailOpts): string {
+  const { req } = o;
+  const name = req.member_name?.trim();
+  return `${o.requesterLabel} cancelled their request for ${TYPE_NOUN[req.type]} for ${req.member_email}${name ? ` (${name})` : ''}.`;
+}
+
+/** Stem the completed and rejected leads share, minus the closing verb. */
+function requestLeadStem(req: AccessRequest): string {
+  const name = req.member_name?.trim();
+  return `Your request for ${TYPE_NOUN[req.type]} for ${req.member_email}${name ? ` (${name})` : ''}`;
+}
+
+/** Sentence-cased; subject drops the period, the lead paragraph keeps it. */
+function overCapLead(count: number): string {
+  if (count === 1) return 'One seat pool is over its cap';
+  return `${COUNT_WORDS[count] ?? String(count)} seat pools are over their cap`;
+}
+
+/** `Ward` for a ward-scoped request, `Scope` for the stake pool. */
+function scopeRowLabel(scope: string): string {
+  return scope === 'stake' ? 'Scope' : 'Ward';
+}
+
+/** Display name where there is one; the address is always the fallback. */
+function personName(req: AccessRequest): string {
+  return req.member_name?.trim() || req.member_email;
+}
+
+/** Member cell: name on its own line, address beneath it. */
+function memberLines(req: AccessRequest): string[] {
+  const name = req.member_name?.trim();
+  return name ? [name, req.member_email] : [req.member_email];
+}
+
+function memberCell(req: AccessRequest): string {
+  const name = req.member_name?.trim();
+  const address = escapeHtml(req.member_email);
+  const mailto = `<a href="mailto:${address}" style="${LINK}">${address}</a>`;
+  return name ? `${escapeHtml(name)}<br />${mailto}` : mailto;
+}
+
+/** A rejection with no reason still says so — silence reads as a bug. */
+function rejectionReason(req: AccessRequest): string {
+  return req.rejection_reason?.trim() || '(not provided)';
+}
+
+function hasDates(req: AccessRequest): boolean {
+  return req.type === 'add_temp' && !!req.start_date && !!req.end_date;
+}
+
+function dateRange(req: AccessRequest): string {
+  return `${req.start_date} to ${req.end_date}`;
 }
 
 // ---------------------------------------------------------------------------
-// Welcome email (first app-access grant). The only email that ships an
-// HTML part — it goes to a member who may never have seen the app, so
-// the call to action gets a real button. `text` remains the fallback
-// part; the other five emails stay plain-text.
+// Welcome email (first app-access grant). Prose rather than detail rows —
+// it goes to a member who may never have seen the app — so it builds its
+// own body instead of going through `htmlDocument`.
 // ---------------------------------------------------------------------------
 
 export type WelcomeEmailOpts = {
@@ -285,23 +549,13 @@ export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
 }
 
 export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
-  // Font names quote with SINGLE quotes: these strings land inside
-  // double-quoted `style="…"` attributes, and a `"` would terminate the
-  // attribute early and drop every declaration after it.
-  const wrapper =
-    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;" +
-    'font-size:16px;line-height:1.5;color:#1a202c;max-width:560px;margin:0 auto;padding:24px';
-  const para = 'margin:0 0 16px';
-  const button =
-    'display:inline-block;background-color:#2b6cb0;color:#ffffff;text-decoration:none;' +
-    'padding:12px 24px;border-radius:6px;font-weight:600';
   return [
-    `<div style="${wrapper}">`,
-    `<p style="${para}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
-    `<p style="${para}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
-    `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${button}">Open Stake Building Access</a></p>`,
-    `<p style="${para}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
-    `<p style="margin:0">For more details read the <a href="${escapeHtml(opts.guideLink)}" style="color:#2b6cb0">full documentation</a>.</p>`,
+    `<div style="${WRAPPER}">`,
+    `<p style="${PARA}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
+    `<p style="${PARA}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
+    `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${BUTTON}">Open Stake Building Access</a></p>`,
+    `<p style="${PARA}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
+    `<p style="margin:0">For more details read the <a href="${escapeHtml(opts.guideLink)}" style="${LINK}">full documentation</a>.</p>`,
     `</div>`,
   ].join('\n');
 }
@@ -321,16 +575,6 @@ function welcomeSignInSentence(memberEmail: string, isGmail: boolean): string {
   return isGmail
     ? `this is a Gmail address, so on the sign-in page just click "Continue with Google" and choose this account (${memberEmail}). No password needed.`
     : `on the sign-in page, enter this email address (${memberEmail}) and click "Send me a sign-in link". You'll receive an email with a link that signs you in — no password needed.`;
-}
-
-/** Member names, stake names and ward names are user data. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 // ---------------------------------------------------------------------------
@@ -358,13 +602,19 @@ export async function notifyManagersNewRequest(
   }
   const link = safeBuildLink(deps, '/manager/queue');
   if (link === undefined) return;
-  const requesterLabel = await resolveRequesterLabel(db, stakeId, req);
+  // Both reads sit on the send path; issue them together.
+  const [requesterLabel, labelScope] = await Promise.all([
+    resolveRequesterLabel(db, stakeId, req),
+    loadScopeLabeller(db, stakeId),
+  ]);
+  const opts: RequesterNamedEmailOpts = { req, scope: labelScope(req.scope), link, requesterLabel };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildNewRequestSubject(req, requesterLabel),
-      text: buildNewRequestBody(req, link, requesterLabel),
+      subject: buildNewRequestSubject(opts),
+      text: buildNewRequestTextBody(opts),
+      html: buildNewRequestHtmlBody(opts),
     }),
     context: { type: 'newRequest', requestId: req.request_id },
   });
@@ -374,16 +624,19 @@ export async function notifyManagersNewRequest(
 export async function notifyRequesterCompleted(
   deps: BaseDeps & { req: AccessRequest },
 ): Promise<void> {
-  const { stake, req } = deps;
+  const { db, stake, req } = deps;
   if (!emailsEnabled(stake, deps.stakeId, 'completed')) return;
   const link = safeBuildLink(deps, '/my-requests');
   if (link === undefined) return;
+  const labelScope = await loadScopeLabeller(db, deps.stakeId);
+  const opts: RequestEmailOpts = { req, scope: labelScope(req.scope), link };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: [req.requester_email],
-      subject: buildCompletedSubject(req),
-      text: buildCompletedBody(req, link),
+      subject: buildCompletedSubject(opts),
+      text: buildCompletedTextBody(opts),
+      html: buildCompletedHtmlBody(opts),
     }),
     context: { type: 'completed', requestId: req.request_id },
   });
@@ -393,16 +646,19 @@ export async function notifyRequesterCompleted(
 export async function notifyRequesterRejected(
   deps: BaseDeps & { req: AccessRequest },
 ): Promise<void> {
-  const { stake, req } = deps;
+  const { db, stake, req } = deps;
   if (!emailsEnabled(stake, deps.stakeId, 'rejected')) return;
   const link = safeBuildLink(deps, '/my-requests');
   if (link === undefined) return;
+  const labelScope = await loadScopeLabeller(db, deps.stakeId);
+  const opts: RequestEmailOpts = { req, scope: labelScope(req.scope), link };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: [req.requester_email],
-      subject: buildRejectedSubject(req),
-      text: buildRejectedBody(req, link),
+      subject: buildRejectedSubject(opts),
+      text: buildRejectedTextBody(opts),
+      html: buildRejectedHtmlBody(opts),
     }),
     context: { type: 'rejected', requestId: req.request_id },
   });
@@ -420,13 +676,18 @@ export async function notifyManagersCancelled(
   }
   const link = safeBuildLink(deps, '/manager/queue');
   if (link === undefined) return;
-  const requesterLabel = await resolveRequesterLabel(db, stakeId, req);
+  const [requesterLabel, labelScope] = await Promise.all([
+    resolveRequesterLabel(db, stakeId, req),
+    loadScopeLabeller(db, stakeId),
+  ]);
+  const opts: RequesterNamedEmailOpts = { req, scope: labelScope(req.scope), link, requesterLabel };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildCancelledSubject(req, requesterLabel),
-      text: buildCancelledBody(req, link, requesterLabel),
+      subject: buildCancelledSubject(opts),
+      text: buildCancelledTextBody(opts),
+      html: buildCancelledHtmlBody(opts),
     }),
     context: { type: 'cancelled', requestId: req.request_id },
   });
@@ -439,7 +700,7 @@ export async function notifyManagersOverCap(
     managerEmails: string[];
   },
 ): Promise<void> {
-  const { stake, pools, managerEmails } = deps;
+  const { db, stake, pools, managerEmails } = deps;
   if (!emailsEnabled(stake, deps.stakeId, 'overCap')) return;
   if (managerEmails.length === 0) {
     logger.info('email skipped — no active managers', { stakeId: deps.stakeId, type: 'overCap' });
@@ -447,12 +708,19 @@ export async function notifyManagersOverCap(
   }
   const link = safeBuildLink(deps, '/manager/seats');
   if (link === undefined) return;
+  // One wards read labels every pool.
+  const labelScope = await loadScopeLabeller(db, deps.stakeId);
+  const opts: OverCapEmailOpts = {
+    pools: pools.map((p) => ({ ...p, label: labelScope(p.pool) })),
+    link,
+  };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildOverCapSubject(),
-      text: buildOverCapBody(pools, link),
+      subject: buildOverCapSubject(opts.pools),
+      text: buildOverCapTextBody(opts),
+      html: buildOverCapHtmlBody(opts),
     }),
     context: { type: 'overCap' },
   });
@@ -473,7 +741,8 @@ export async function notifyMemberAccessGranted(
     deps;
   if (!emailsEnabled(stake, stakeId, 'accessGranted')) return;
 
-  const wardLabels = await resolveWardLabels(db, stakeId, grantedScopes.wards);
+  const labelScope = await loadScopeLabeller(db, stakeId);
+  const wardLabels = grantedScopes.wards.map(labelScope);
   const scopeList = formatScopeList([
     ...(grantedScopes.hasStake ? [SCOPE_LABEL_STAKE] : []),
     ...wardLabels,
@@ -515,16 +784,18 @@ export async function notifyMemberAccessGranted(
 // Internals.
 // ---------------------------------------------------------------------------
 
-/** One wards-collection read; unresolved codes fall back to the raw code. */
-async function resolveWardLabels(
+/**
+ * One wards-collection read per invocation, returned as a resolver so a
+ * caller can label any number of scopes from it (over-cap labels every
+ * flagged pool). Unresolved codes fall back to the raw code.
+ */
+async function loadScopeLabeller(
   db: Firestore,
   stakeId: string,
-  wards: string[],
-): Promise<string[]> {
-  if (wards.length === 0) return [];
+): Promise<(scope: string) => string> {
   const snap = await db.collection(`stakes/${stakeId}/wards`).get();
-  const wardDocs = snap.docs.map((d) => d.data() as Ward);
-  return wards.map((code) => wardScopeLabel(code, wardDocs));
+  const wards = snap.docs.map((d) => d.data() as Ward);
+  return (scope) => scopeLabel(scope, wards);
 }
 
 function emailsEnabled(stake: Stake, stakeId: string, type: string): boolean {

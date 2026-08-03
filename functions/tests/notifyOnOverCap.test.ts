@@ -9,7 +9,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import type { OverCapEntry, Stake } from '@kindoo/shared';
+import type { OverCapEntry, Stake, Ward } from '@kindoo/shared';
 import { notifyOnOverCap } from '../src/triggers/notifyOnOverCap.js';
 import {
   _setResendSender,
@@ -54,6 +54,20 @@ function buildStake(overrides: Partial<Stake> = {}): Stake {
     lastActor: { email: 'RemoveTrigger', canonical: 'RemoveTrigger' },
     ...overrides,
   };
+}
+
+async function seedWard(wardCode: string, wardName: string): Promise<void> {
+  const { db } = requireEmulators();
+  const ward: Ward = {
+    ward_code: wardCode,
+    ward_name: wardName,
+    building_name: 'Greenwood',
+    seat_cap: 20,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+  };
+  await db.doc(`stakes/${STAKE_ID}/wards/${wardCode}`).set(ward);
 }
 
 async function seedManager(canonical: string, active: boolean, email = canonical): Promise<void> {
@@ -114,9 +128,36 @@ describe.skipIf(!hasEmulators())('notifyOnOverCap', () => {
     expect(calls).toHaveLength(1);
     const c = calls[0]!;
     expect(c.to).toEqual(['alice@gmail.com']);
-    expect(c.subject).toBe('[Stake Building Access] Over-cap warning');
+    // No ward seeded — the pool label falls back to the raw code.
+    expect(c.subject).toBe('[Stake Building Access] One seat pool is over its cap');
     expect(c.text).toContain('GE: 25 of 20 (over by 5)');
     expect(c.text).toContain('https://stakebuildingaccess.org/manager/seats');
+    expect(c.html).toContain('>GE</td>');
+    expect(c.html).toContain('>+5</span>');
+    expect(c.html).toContain('>View seats</a>');
+  });
+
+  it('labels each pool with its ward name and counts them in the subject', async () => {
+    await seedWard('GE', 'Greenwood Ward');
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-names' }]);
+    restoreSender = _setResendSender(sender);
+
+    const before = buildStake({ last_over_caps_json: [] });
+    const after = buildStake({
+      last_over_caps_json: [{ pool: 'stake', count: 210, cap: 200, over_by: 10 }, overCapPool],
+    });
+    await notifyOnOverCap.run(makeEvent({ before, after }));
+
+    expect(calls).toHaveLength(1);
+    const c = calls[0]!;
+    expect(c.subject).toBe('[Stake Building Access] Two seat pools are over their cap');
+    expect(c.text).toContain('Two seat pools are over their cap.');
+    expect(c.text).toContain('  Stake: 210 of 200 (over by 10)');
+    expect(c.text).toContain('  Greenwood Ward: 25 of 20 (over by 5)');
+    expect(c.html).toContain('>Greenwood Ward</td>');
+    expect(c.html).toContain('>Stake</td>');
+    expect(c.html).toContain('>Over by</th>');
   });
 
   it('continuing-overcap (non-empty → non-empty) does NOT fire', async () => {

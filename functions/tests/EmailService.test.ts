@@ -3,25 +3,32 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import type { AccessRequest, OverCapEntry, Stake } from '@kindoo/shared';
+import type { AccessRequest, RequestType, Stake } from '@kindoo/shared';
 import {
-  buildCancelledBody,
+  buildCancelledHtmlBody,
   buildCancelledSubject,
-  buildCompletedBody,
+  buildCancelledTextBody,
+  buildCompletedHtmlBody,
   buildCompletedSubject,
+  buildCompletedTextBody,
   buildFromAddress,
   buildLink,
-  buildNewRequestBody,
+  buildNewRequestHtmlBody,
   buildNewRequestSubject,
-  buildOverCapBody,
+  buildNewRequestTextBody,
+  buildOverCapHtmlBody,
   buildOverCapSubject,
-  buildRejectedBody,
+  buildOverCapTextBody,
+  buildRejectedHtmlBody,
   buildRejectedSubject,
+  buildRejectedTextBody,
   buildWelcomeHtmlBody,
   buildWelcomeSubject,
   buildWelcomeTextBody,
   formatScopeList,
-  scopeLabel,
+  type LabelledPool,
+  type RequestEmailOpts,
+  type RequesterNamedEmailOpts,
   type WelcomeEmailOpts,
 } from '../src/services/EmailService.js';
 
@@ -47,6 +54,27 @@ const baseRequest: AccessRequest = {
   requested_at: Timestamp.now(),
   lastActor: { email: 'Bish@gmail.com', canonical: 'bish@gmail.com' },
 };
+
+// Resolved by the service layer from `stakes/{id}/wards` before the pure
+// builders see it — a builder never handles a raw ward code.
+const WARD = 'Greenwood Ward';
+const QUEUE_LINK = 'https://stakebuildingaccess.org/manager/queue';
+const MY_LINK = 'https://stakebuildingaccess.org/my-requests';
+const SEATS_LINK = 'https://stakebuildingaccess.org/manager/seats';
+
+function requestOpts(over: Partial<RequestEmailOpts> = {}): RequestEmailOpts {
+  return { req: baseRequest, scope: WARD, link: MY_LINK, ...over };
+}
+
+function managerOpts(over: Partial<RequesterNamedEmailOpts> = {}): RequesterNamedEmailOpts {
+  return {
+    req: baseRequest,
+    scope: WARD,
+    link: QUEUE_LINK,
+    requesterLabel: REQUESTER_LABEL,
+    ...over,
+  };
+}
 
 const WELCOME_GMAIL: WelcomeEmailOpts = {
   stakeName: 'CSNorth Stake',
@@ -163,164 +191,451 @@ describe('EmailService — pure builders', () => {
     );
   });
 
-  // ---- scopeLabel ----------------------------------------------------------
+  // ---- scope + type rendering ----------------------------------------------
 
-  it('scopeLabel renders Stake / WARD-CODE-UPPER', () => {
-    expect(scopeLabel('stake')).toBe('Stake');
-    expect(scopeLabel('ge')).toBe('GE');
-    expect(scopeLabel('GE')).toBe('GE');
+  // The builders never see a raw ward code — the service layer resolves it —
+  // but they do choose the row's label off `req.scope`.
+  it('labels the scope row Ward for a ward and Scope for the stake pool', () => {
+    expect(buildNewRequestTextBody(managerOpts())).toContain('Ward:      Greenwood Ward');
+    const stake = managerOpts({ req: { ...baseRequest, scope: 'stake' }, scope: 'Stake' });
+    expect(buildNewRequestTextBody(stake)).toContain('Scope:     Stake');
+    expect(buildNewRequestHtmlBody(stake)).toContain('<th style="text-align:left');
+    expect(buildNewRequestHtmlBody(stake)).toContain('>Scope</th>');
+    expect(buildNewRequestHtmlBody(stake)).toContain('>Stake</td>');
+  });
+
+  it('renders a human label for every request type, never the raw enum', () => {
+    const expected: Record<RequestType, string> = {
+      add_manual: 'Manual access',
+      add_temp: 'Temporary access',
+      remove: 'Removal',
+      edit_auto: 'Auto-seat edit',
+      edit_manual: 'Manual-seat edit',
+      edit_temp: 'Temporary-seat edit',
+    };
+    for (const [type, label] of Object.entries(expected) as [RequestType, string][]) {
+      const o = managerOpts({ req: { ...baseRequest, type } });
+      expect(buildNewRequestTextBody(o)).toContain(`Request:   ${label}`);
+      expect(buildNewRequestTextBody(o)).not.toContain(`Request:   ${type}`);
+      expect(buildNewRequestHtmlBody(o)).toContain(`>${label}</td>`);
+      expect(buildNewRequestHtmlBody(o)).not.toContain(`>${type}<`);
+    }
   });
 
   // ---- new-request ---------------------------------------------------------
 
-  it('new-request subject names the requester (name + calling) and the scope', () => {
-    const subject = buildNewRequestSubject(baseRequest, REQUESTER_LABEL);
-    expect(subject).toBe('[Stake Building Access] New request from John Smith (Bishop) (GE)');
+  it('new-request subject names the requester (name + calling) and the ward', () => {
+    expect(buildNewRequestSubject(managerOpts())).toBe(
+      '[Stake Building Access] New request from John Smith (Bishop) — Greenwood Ward',
+    );
   });
 
   it('new-request subject falls back to the raw email when no label is derived', () => {
-    const subject = buildNewRequestSubject(baseRequest, baseRequest.requester_email);
-    expect(subject).toBe('[Stake Building Access] New request from Bish@gmail.com (GE)');
+    expect(buildNewRequestSubject(managerOpts({ requesterLabel: 'Bish@gmail.com' }))).toBe(
+      '[Stake Building Access] New request from Bish@gmail.com — Greenwood Ward',
+    );
   });
 
-  it('new-request body uses the add_manual lead verb and the requester label', () => {
-    const link = buildLink('/manager/queue');
-    const body = buildNewRequestBody(baseRequest, link, REQUESTER_LABEL);
-    expect(body).toContain('John Smith (Bishop) submitted a new manual-add request');
-    expect(body).toContain('Subject Person');
-    expect(body).toContain('Subject@gmail.com');
-    expect(body).toContain('Reason:    Bishop');
-    expect(body).toContain('Review the queue: https://stakebuildingaccess.org/manager/queue');
+  it('new-request text body renders the lead verb and the detail rows', () => {
+    expect(buildNewRequestTextBody(managerOpts())).toBe(
+      [
+        // `add_manual` is the one lead verb with no trailing "for" — carried
+        // over from the plain-text templates unchanged.
+        'John Smith (Bishop) submitted a new manual-add request Subject Person (Subject@gmail.com).',
+        '',
+        'Request:   Manual access',
+        'Ward:      Greenwood Ward',
+        'Member:    Subject Person',
+        '           Subject@gmail.com',
+        'Reason:    Bishop',
+        '',
+        'Review the queue: https://stakebuildingaccess.org/manager/queue',
+      ].join('\n'),
+    );
+  });
+
+  it('new-request html body carries the same rows, the mailto and the button', () => {
+    const html = buildNewRequestHtmlBody(managerOpts());
+    expect(html).toContain(
+      'John Smith (Bishop) submitted a new manual-add request Subject Person (Subject@gmail.com).',
+    );
+    expect(html).toContain('>Request</th>');
+    expect(html).toContain('>Manual access</td>');
+    expect(html).toContain('>Greenwood Ward</td>');
+    expect(html).toContain('Subject Person<br /><a href="mailto:Subject@gmail.com"');
+    expect(html).toContain('>Bishop</td>');
+    expect(html).toContain(
+      `<a href="${QUEUE_LINK}" style="display:inline-block;background-color:#2b6cb0`,
+    );
+    expect(html).toContain('>Review the queue</a>');
+    expect(html).not.toContain('<h1');
   });
 
   it('new-request body falls back to the raw email when the label is the email', () => {
-    const body = buildNewRequestBody(
-      baseRequest,
-      buildLink('/manager/queue'),
-      baseRequest.requester_email,
-    );
-    expect(body).toContain('Bish@gmail.com submitted a new manual-add request');
+    const o = managerOpts({ requesterLabel: baseRequest.requester_email });
+    expect(buildNewRequestTextBody(o)).toContain('Bish@gmail.com submitted a new manual-add');
+    expect(buildNewRequestHtmlBody(o)).toContain('Bish@gmail.com submitted a new manual-add');
   });
 
   it('new-request body uses the add_temp lead verb and includes dates', () => {
-    const req: AccessRequest = {
-      ...baseRequest,
-      type: 'add_temp',
-      start_date: '2026-05-01',
-      end_date: '2026-05-15',
-    };
-    const body = buildNewRequestBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
-    expect(body).toContain('requested temp access for');
-    expect(body).toContain('Dates:     2026-05-01 to 2026-05-15');
+    const o = managerOpts({
+      req: {
+        ...baseRequest,
+        type: 'add_temp',
+        start_date: '2026-05-01',
+        end_date: '2026-05-15',
+      },
+    });
+    expect(buildNewRequestTextBody(o)).toContain('requested temp access for');
+    expect(buildNewRequestTextBody(o)).toContain('Dates:     2026-05-01 to 2026-05-15');
+    expect(buildNewRequestHtmlBody(o)).toContain('>Dates</th>');
+    expect(buildNewRequestHtmlBody(o)).toContain('>2026-05-01 to 2026-05-15</td>');
   });
 
   it('new-request body uses the remove lead verb', () => {
-    const req: AccessRequest = { ...baseRequest, type: 'remove' };
-    const body = buildNewRequestBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
-    expect(body).toContain('requested removal of');
+    const o = managerOpts({ req: { ...baseRequest, type: 'remove' } });
+    expect(buildNewRequestTextBody(o)).toContain('requested removal of');
+    expect(buildNewRequestHtmlBody(o)).toContain('requested removal of');
   });
 
-  it('new-request body surfaces the urgent flag when set', () => {
-    const urgent: AccessRequest = { ...baseRequest, urgent: true, comment: 'needed today' };
-    const body = buildNewRequestBody(urgent, buildLink('/manager/queue'), REQUESTER_LABEL);
-    expect(body).toContain('Emergency: yes');
+  it('new-request body surfaces the urgent flag as a Yes chip', () => {
+    const o = managerOpts({ req: { ...baseRequest, urgent: true, comment: 'needed today' } });
+    expect(buildNewRequestTextBody(o)).toContain('Emergency: Yes');
+    expect(buildNewRequestTextBody(o)).toContain('Comment:   needed today');
+    const html = buildNewRequestHtmlBody(o);
+    expect(html).toContain('>Emergency</th>');
+    expect(html).toContain('<span style="display:inline-block;background-color:#fbe9e7');
+    expect(html).toContain('>Yes</span>');
+    expect(html).not.toContain('>yes<');
   });
 
   it('new-request body omits the urgent flag when unset/false', () => {
-    expect(
-      buildNewRequestBody(baseRequest, buildLink('/manager/queue'), REQUESTER_LABEL),
-    ).not.toContain('Emergency:');
-    const explicit: AccessRequest = { ...baseRequest, urgent: false };
-    expect(
-      buildNewRequestBody(explicit, buildLink('/manager/queue'), REQUESTER_LABEL),
-    ).not.toContain('Emergency:');
+    for (const o of [managerOpts(), managerOpts({ req: { ...baseRequest, urgent: false } })]) {
+      expect(buildNewRequestTextBody(o)).not.toContain('Emergency');
+      expect(buildNewRequestHtmlBody(o)).not.toContain('Emergency');
+    }
+  });
+
+  // Conditional rows drop out of both parts together.
+  it('new-request body omits the reason, comment and dates rows when absent', () => {
+    const o = managerOpts({
+      req: { ...baseRequest, type: 'add_temp', reason: '', comment: '' },
+    });
+    for (const body of [buildNewRequestTextBody(o), buildNewRequestHtmlBody(o)]) {
+      expect(body).not.toContain('Reason');
+      expect(body).not.toContain('Comment');
+      expect(body).not.toContain('Dates');
+    }
+  });
+
+  it('new-request body renders the address alone when the member has no name', () => {
+    const o = managerOpts({ req: { ...baseRequest, member_name: '' } });
+    expect(buildNewRequestTextBody(o)).toContain('Member:    Subject@gmail.com');
+    expect(buildNewRequestHtmlBody(o)).toContain(
+      '<a href="mailto:Subject@gmail.com" style="color:#2b6cb0">Subject@gmail.com</a>',
+    );
+    expect(buildNewRequestHtmlBody(o)).not.toContain('<br />');
   });
 
   // ---- completed -----------------------------------------------------------
 
-  it('completed subject + body name the member and acknowledge the type', () => {
-    const req: AccessRequest = { ...baseRequest, status: 'complete' };
-    const subject = buildCompletedSubject(req);
-    expect(subject).toBe(
+  it('completed subject names the member, not their address', () => {
+    expect(buildCompletedSubject(requestOpts())).toBe(
+      '[Stake Building Access] Your request for Subject Person has been completed',
+    );
+  });
+
+  it('completed subject falls back to the address when the member has no name', () => {
+    expect(buildCompletedSubject(requestOpts({ req: { ...baseRequest, member_name: '' } }))).toBe(
       '[Stake Building Access] Your request for Subject@gmail.com has been completed',
     );
-    const body = buildCompletedBody(req, buildLink('/my-requests'));
-    expect(body).toContain('Your request for manual access for Subject@gmail.com');
-    expect(body).toContain('View your requests: https://stakebuildingaccess.org/my-requests');
+  });
+
+  it('completed text body renders the lead and the detail rows', () => {
+    expect(
+      buildCompletedTextBody(requestOpts({ req: { ...baseRequest, status: 'complete' } })),
+    ).toBe(
+      [
+        'Your request for manual access for Subject@gmail.com (Subject Person) has been completed.',
+        '',
+        'Request:   Manual access',
+        'Ward:      Greenwood Ward',
+        'Member:    Subject Person',
+        '           Subject@gmail.com',
+        '',
+        'View your requests: https://stakebuildingaccess.org/my-requests',
+      ].join('\n'),
+    );
+  });
+
+  it('completed html body carries the same rows and the button', () => {
+    const html = buildCompletedHtmlBody(requestOpts());
+    expect(html).toContain(
+      'Your request for manual access for Subject@gmail.com (Subject Person) has been completed.',
+    );
+    expect(html).toContain('>Manual access</td>');
+    expect(html).toContain('>Greenwood Ward</td>');
+    expect(html).toContain(`<a href="${MY_LINK}"`);
+    expect(html).toContain('>View your requests</a>');
   });
 
   it('completed body surfaces completion_note for the R-1 race', () => {
-    const req: AccessRequest = {
-      ...baseRequest,
-      type: 'remove',
-      status: 'complete',
-      completion_note: 'Seat already removed at completion time (no-op).',
-    };
-    const body = buildCompletedBody(req, buildLink('/my-requests'));
-    expect(body).toContain('Note: Seat already removed at completion time (no-op).');
+    const o = requestOpts({
+      req: {
+        ...baseRequest,
+        type: 'remove',
+        status: 'complete',
+        completion_note: 'Seat already removed at completion time (no-op).',
+      },
+    });
+    expect(buildCompletedTextBody(o)).toContain(
+      'Note from the manager: Seat already removed at completion time (no-op).',
+    );
+    expect(buildCompletedHtmlBody(o)).toContain('>Note from the manager</th>');
+    expect(buildCompletedHtmlBody(o)).toContain(
+      '>Seat already removed at completion time (no-op).</td>',
+    );
   });
 
-  it('completed body omits the Note line when no completion_note is set', () => {
-    const req: AccessRequest = { ...baseRequest, status: 'complete' };
-    const body = buildCompletedBody(req, buildLink('/my-requests'));
-    expect(body).not.toContain('Note:');
+  it('completed body omits the note row when no completion_note is set', () => {
+    const o = requestOpts({ req: { ...baseRequest, status: 'complete' } });
+    expect(buildCompletedTextBody(o)).not.toContain('Note from the manager');
+    expect(buildCompletedHtmlBody(o)).not.toContain('Note from the manager');
   });
 
   // ---- rejected ------------------------------------------------------------
 
-  it('rejected body surfaces rejection_reason', () => {
-    const req: AccessRequest = {
-      ...baseRequest,
-      status: 'rejected',
-      rejection_reason: 'Already has access through a stake calling.',
-    };
-    expect(buildRejectedSubject(req)).toBe('[Stake Building Access] Your request was rejected');
-    const body = buildRejectedBody(req, buildLink('/my-requests'));
-    expect(body).toContain('Reason:    Already has access through a stake calling.');
-    expect(body).toContain('View your requests:');
+  const rejected: AccessRequest = {
+    ...baseRequest,
+    status: 'rejected',
+    rejection_reason: 'Already has access through a stake calling.',
+  };
+
+  it('rejected subject names the member', () => {
+    expect(buildRejectedSubject(requestOpts({ req: rejected }))).toBe(
+      '[Stake Building Access] Your request for Subject Person was rejected',
+    );
   });
 
-  it('rejected body falls back gracefully if rejection_reason missing', () => {
-    const req: AccessRequest = { ...baseRequest, status: 'rejected' };
-    const body = buildRejectedBody(req, buildLink('/my-requests'));
-    expect(body).toContain('(not provided)');
+  it('rejected text body renders the lead and the reason row', () => {
+    expect(buildRejectedTextBody(requestOpts({ req: rejected }))).toBe(
+      [
+        'Your request for manual access for Subject@gmail.com (Subject Person) was rejected.',
+        '',
+        'Request:   Manual access',
+        'Ward:      Greenwood Ward',
+        'Member:    Subject Person',
+        '           Subject@gmail.com',
+        'Reason given: Already has access through a stake calling.',
+        '',
+        'View your requests: https://stakebuildingaccess.org/my-requests',
+      ].join('\n'),
+    );
+  });
+
+  it('rejected html body reddens the word "rejected" in the lead', () => {
+    const html = buildRejectedHtmlBody(requestOpts({ req: rejected }));
+    expect(html).toContain('was <span style="color:#9b2c1c;font-weight:600">rejected</span>.</p>');
+    expect(html).toContain('>Reason given</th>');
+    expect(html).toContain('>Already has access through a stake calling.</td>');
+  });
+
+  // The red span is the rejected email's alone.
+  it('no other html body carries the red rejected span', () => {
+    const red = '<span style="color:#9b2c1c;font-weight:600">rejected</span>';
+    expect(buildNewRequestHtmlBody(managerOpts())).not.toContain(red);
+    expect(buildCompletedHtmlBody(requestOpts())).not.toContain(red);
+    expect(buildCancelledHtmlBody(managerOpts())).not.toContain(red);
+    expect(buildOverCapHtmlBody({ pools: labelledPools, link: SEATS_LINK })).not.toContain(red);
+    expect(buildWelcomeHtmlBody(WELCOME_GMAIL)).not.toContain(red);
+  });
+
+  // The text part keeps the plain word — no markup leaks into it.
+  it('rejected text body says rejected without markup', () => {
+    const text = buildRejectedTextBody(requestOpts({ req: rejected }));
+    expect(text).toContain('was rejected.');
+    expect(text).not.toContain('<span');
+  });
+
+  it('rejected body says so explicitly when no reason was given', () => {
+    const o = requestOpts({ req: { ...baseRequest, status: 'rejected' } });
+    expect(buildRejectedTextBody(o)).toContain('Reason given: (not provided)');
+    expect(buildRejectedHtmlBody(o)).toContain('>(not provided)</td>');
   });
 
   // ---- cancelled -----------------------------------------------------------
 
-  it('cancelled subject + body name the canceller (name + calling)', () => {
-    const req: AccessRequest = { ...baseRequest, status: 'cancelled' };
-    const subject = buildCancelledSubject(req, REQUESTER_LABEL);
-    expect(subject).toBe('[Stake Building Access] Request cancelled by John Smith (Bishop)');
-    const body = buildCancelledBody(req, buildLink('/manager/queue'), REQUESTER_LABEL);
-    expect(body).toContain('John Smith (Bishop) cancelled their request');
-    expect(body).toContain('Open the queue:');
+  it('cancelled subject names the canceller (name + calling) and the ward', () => {
+    expect(
+      buildCancelledSubject(managerOpts({ req: { ...baseRequest, status: 'cancelled' } })),
+    ).toBe('[Stake Building Access] Request cancelled by John Smith (Bishop) — Greenwood Ward');
+  });
+
+  it('cancelled text body renders the lead and the detail rows', () => {
+    expect(
+      buildCancelledTextBody(managerOpts({ req: { ...baseRequest, status: 'cancelled' } })),
+    ).toBe(
+      [
+        'John Smith (Bishop) cancelled their request for manual access for Subject@gmail.com (Subject Person).',
+        '',
+        'Request:   Manual access',
+        'Ward:      Greenwood Ward',
+        'Member:    Subject Person',
+        '           Subject@gmail.com',
+        '',
+        'Open the queue: https://stakebuildingaccess.org/manager/queue',
+      ].join('\n'),
+    );
+  });
+
+  it('cancelled html body carries the same rows and the button', () => {
+    const html = buildCancelledHtmlBody(managerOpts());
+    expect(html).toContain('John Smith (Bishop) cancelled their request for manual access');
+    expect(html).toContain('>Greenwood Ward</td>');
+    expect(html).toContain('>Open the queue</a>');
   });
 
   it('cancelled subject + body fall back to the raw email when no label is derived', () => {
-    const req: AccessRequest = { ...baseRequest, status: 'cancelled' };
-    expect(buildCancelledSubject(req, req.requester_email)).toBe(
-      '[Stake Building Access] Request cancelled by Bish@gmail.com',
+    const o = managerOpts({ requesterLabel: baseRequest.requester_email });
+    expect(buildCancelledSubject(o)).toBe(
+      '[Stake Building Access] Request cancelled by Bish@gmail.com — Greenwood Ward',
     );
-    const body = buildCancelledBody(req, buildLink('/manager/queue'), req.requester_email);
-    expect(body).toContain('Bish@gmail.com cancelled their request');
+    expect(buildCancelledTextBody(o)).toContain('Bish@gmail.com cancelled their request');
+    expect(buildCancelledHtmlBody(o)).toContain('Bish@gmail.com cancelled their request');
   });
 
   // ---- over-cap ------------------------------------------------------------
 
-  it('over-cap subject is a plain top-line warning (no import-source suffix)', () => {
-    expect(buildOverCapSubject()).toBe('[Stake Building Access] Over-cap warning');
+  const labelledPools: LabelledPool[] = [
+    { pool: 'stake', label: 'Stake', count: 22, cap: 20, over_by: 2 },
+    { pool: 'GE', label: 'Greenwood Ward', count: 25, cap: 20, over_by: 5 },
+  ];
+
+  it('over-cap subject counts the pools in words', () => {
+    expect(buildOverCapSubject(labelledPools)).toBe(
+      '[Stake Building Access] Two seat pools are over their cap',
+    );
+    expect(buildOverCapSubject([labelledPools[0]!])).toBe(
+      '[Stake Building Access] One seat pool is over its cap',
+    );
   });
 
-  it('over-cap body lists every pool with count / cap / over-by', () => {
-    const pools: OverCapEntry[] = [
-      { pool: 'stake', count: 22, cap: 20, over_by: 2 },
-      { pool: 'GE', count: 25, cap: 20, over_by: 5 },
+  it('over-cap text body leads with the count and lists every pool by name', () => {
+    expect(buildOverCapTextBody({ pools: labelledPools, link: SEATS_LINK })).toBe(
+      [
+        'Two seat pools are over their cap.',
+        '',
+        '  Stake: 22 of 20 (over by 2)',
+        '  Greenwood Ward: 25 of 20 (over by 5)',
+        '',
+        'View seats: https://stakebuildingaccess.org/manager/seats',
+      ].join('\n'),
+    );
+  });
+
+  it('over-cap text body reads singular for one pool', () => {
+    const body = buildOverCapTextBody({ pools: [labelledPools[1]!], link: SEATS_LINK });
+    expect(body.startsWith('One seat pool is over its cap.\n')).toBe(true);
+  });
+
+  it('over-cap html body renders a figures table with a +N chip', () => {
+    const html = buildOverCapHtmlBody({ pools: labelledPools, link: SEATS_LINK });
+    expect(html).toContain('<p style="margin:0 0 16px">Two seat pools are over their cap.</p>');
+    expect(html).toContain('>Pool</th>');
+    expect(html).toContain('>Seats</th>');
+    expect(html).toContain('>Cap</th>');
+    expect(html).toContain('>Over by</th>');
+    expect(html).toContain('>Greenwood Ward</td>');
+    expect(html).toContain('font-variant-numeric:tabular-nums">25</td>');
+    expect(html).toContain('>+5</span>');
+    expect(html).toContain('>+2</span>');
+    expect(html).toContain('>View seats</a>');
+  });
+
+  it('over-cap html body reads singular for one pool', () => {
+    const html = buildOverCapHtmlBody({ pools: [labelledPools[1]!], link: SEATS_LINK });
+    expect(html).toContain('One seat pool is over its cap.');
+  });
+
+  // ---- quote safety across every html builder -------------------------------
+
+  // Regression: a raw `"` inside an inline style or an interpolated value
+  // terminates the `style="…"` / `href="…"` attribute early and every
+  // declaration after it is silently dropped by the mail client.
+  const nasty: AccessRequest = {
+    ...baseRequest,
+    type: 'add_temp',
+    member_name: 'Ann "Q" <b>Smith</b> & Co',
+    member_email: 'ann+"q"@example.com',
+    reason: 'Ward "Clerk" & <helper>',
+    comment: 'Needs it "today" & <urgent>',
+    rejection_reason: 'Already "covered" & <done>',
+    completion_note: 'Seat "already" gone & <noop>',
+    urgent: true,
+    start_date: '2026-05-01',
+    end_date: '2026-05-15',
+  };
+  const nastyManager: RequesterNamedEmailOpts = {
+    req: nasty,
+    scope: 'Green"wood" & <Ward>',
+    link: QUEUE_LINK,
+    requesterLabel: 'Bob "B" O\'Hara (Bishop & Clerk)',
+  };
+  const nastyRequest: RequestEmailOpts = { req: nasty, scope: nastyManager.scope, link: MY_LINK };
+
+  it('no html attribute value is truncated by a raw double quote', () => {
+    const bodies = [
+      buildNewRequestHtmlBody(nastyManager),
+      buildCompletedHtmlBody(nastyRequest),
+      buildRejectedHtmlBody(nastyRequest),
+      buildCancelledHtmlBody(nastyManager),
+      buildOverCapHtmlBody({
+        pools: [{ pool: 'GE', label: 'Green"wood" & <Ward>', count: 25, cap: 20, over_by: 5 }],
+        link: SEATS_LINK,
+      }),
+      buildWelcomeHtmlBody({ ...WELCOME_GMAIL, memberName: 'Jane "JD" Doe' }),
     ];
-    const body = buildOverCapBody(pools, buildLink('/manager/seats'));
-    expect(body).toContain('Stake: 22 of 20 (over by 2)');
-    expect(body).toContain('GE: 25 of 20 (over by 5)');
-    expect(body).toContain('View seats: https://stakebuildingaccess.org/manager/seats');
+    for (const html of bodies) {
+      // Every quoted attribute must close right before the tag end or the
+      // next attribute — never mid-value.
+      for (const m of html.matchAll(/(?:style|href)="[^"]*"(.?)/g)) {
+        expect(['>', ' ']).toContain(m[1]);
+      }
+      // And the escaping is real, not just parser-safe.
+      expect(html).not.toContain('<b>Smith</b>');
+      expect(html).not.toContain(' & ');
+    }
+  });
+
+  it('escapes user data in every rendered field', () => {
+    const html = buildNewRequestHtmlBody(nastyManager);
+    expect(html).toContain('Ann &quot;Q&quot; &lt;b&gt;Smith&lt;/b&gt; &amp; Co');
+    expect(html).toContain('Green&quot;wood&quot; &amp; &lt;Ward&gt;');
+    expect(html).toContain('Ward &quot;Clerk&quot; &amp; &lt;helper&gt;');
+    expect(html).toContain('Needs it &quot;today&quot; &amp; &lt;urgent&gt;');
+    expect(html).toContain('Bob &quot;B&quot; O&#39;Hara (Bishop &amp; Clerk)');
+    expect(html).toContain('mailto:ann+&quot;q&quot;@example.com');
+    expect(buildRejectedHtmlBody(nastyRequest)).toContain(
+      'Already &quot;covered&quot; &amp; &lt;done&gt;',
+    );
+    expect(buildCompletedHtmlBody(nastyRequest)).toContain(
+      'Seat &quot;already&quot; gone &amp; &lt;noop&gt;',
+    );
+  });
+
+  // The text part carries the same content, unescaped.
+  it('text parts carry the raw user data, no entities', () => {
+    for (const text of [
+      buildNewRequestTextBody(nastyManager),
+      buildCompletedTextBody(nastyRequest),
+      buildRejectedTextBody(nastyRequest),
+      buildCancelledTextBody(nastyManager),
+    ]) {
+      expect(text).toContain('Ann "Q" <b>Smith</b> & Co');
+      expect(text).toContain('Green"wood" & <Ward>');
+      expect(text).not.toContain('&quot;');
+      expect(text).not.toContain('&amp;');
+    }
   });
 
   // ---- welcome (first app-access grant) ------------------------------------
