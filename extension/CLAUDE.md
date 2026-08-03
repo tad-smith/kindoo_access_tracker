@@ -10,7 +10,8 @@ Chrome MV3 extension that bridges the Stake Building Access (SBA) pending-reques
 - **Service worker** owns `chrome.identity` + Firebase Auth + the callable invocations + the authenticated Firestore reads / writes. The content script cannot touch those surfaces from a page context; it round-trips through the SW via `chrome.runtime.sendMessage`.
 - **Auth flow:** `chrome.identity.getAuthToken` → Firebase `GoogleAuthProvider.credential(null, accessToken)` → `signInWithCredential`. The SW keeps Firebase Auth state across suspends via the SDK's IndexedDB persistence; access token + a slim principal snapshot are also persisted to `chrome.storage.local`.
 - **Firestore from the SW (not the content script).** The SW reads and writes Firestore directly as the signed-in manager via the client SDK (`background/data.ts` — `getDoc` / `getDocs` / `updateDoc` / `writeBatch`), with Firestore rules gating authorisation. Request-list reads still go through the `getMyPendingRequests` callable, and `markRequestComplete` remains a callable; but config reads/writes, seat lookups, the foreign-EID auto-populate, and the request **reject** transition are direct SW-side Firestore operations. The content script never imports the Firebase SDK — it round-trips every read/write through the SW. **No `runTransaction` / `onSnapshot` in the SW:** those ride the WebChannel transport, which needs `XMLHttpRequest` — undefined in an MV3 service worker, so they throw `ReferenceError: XMLHttpRequest is not defined` at runtime. Use discrete one-shot ops (`getDoc` / `getDocs` / `updateDoc` / `setDoc` / `writeBatch`), which use the fetch-based RestConnection. Server-enforced preconditions (e.g. the reject rule's `status == 'pending'` check) replace the atomicity a transaction would have given.
-- **Toolbar action** posts a `panel.togglePushedFromSw` message to the active tab; the content script flips the slide-over open / closed and persists the state in `chrome.storage.local`.
+- **Opening / closing the slide-over.** The primary affordance is the `.sba-handle` pill tab — a persistent, always-visible handle rendered in the container layer (`content/mount.tsx`, outside the React root). It lives *inside* `.sba-slideover`, overhanging the panel's left edge, so the panel's existing open / closed transform positions it in both states for free: closed it sits flush against the viewport's right edge, open it parks just outside the panel. One transform, one 180ms animation, no separate positioning logic. The chevron flips (`‹` → `›`) purely in CSS off the `data-sba-open` host attribute. The handle renders in **every** app state, including signed-out — hiding it would make sign-in undiscoverable. Its pending-count badge is driven by a `data-sba-count` host attribute, mirrored out of React via `App`'s `onPendingCountChange` callback; the badge hides when the attribute is absent (count unknown) or `0`. **Toolbar action** is the secondary affordance: it posts a `panel.togglePushedFromSw` message to the active tab and the content script flips the same state. Both paths persist to `chrome.storage.local`.
+- **The queue fetch is hosted by `TabbedShell`, not `QueuePanel`** (`panel/usePendingRequests.ts`). `TabbedShell` renders `QueuePanel` conditionally, so a fetch owned by the queue tab unmounts on every tab switch — which would blank the handle's badge and re-fetch on every return. `QueuePanel` keeps the seat-existence map, dialogs, and optimistic dismissal, and consumes the queue as a `pending` prop. Callbacks threaded into the hook (`onPermissionDenied`) must be referentially stable or the fetch re-runs on every re-render.
 
 ## Stack
 
@@ -43,7 +44,10 @@ extension/
 │   ├── content/
 │   │   ├── content-script.ts      # CS entry — calls mountPanel
 │   │   ├── mount.tsx              # Shadow-DOM + React mount + toggle wiring
-│   │   ├── container.css          # slide-over chrome (Shadow DOM)
+│   │   ├── container.css          # slide-over chrome + the open/close handle
+│   │   │                          # (Shadow DOM). `--sba-handle-top` on
+│   │   │                          # `.sba-slideover` is the single knob for the
+│   │   │                          # handle's vertical offset.
 │   │   └── kindoo/                # Kindoo API client (CS-side; v2.1+v2.2)
 │   │       ├── auth.ts            # read SessionTokenID + EID from localStorage
 │   │       ├── client.ts          # multipart-form POST helper
@@ -70,6 +74,8 @@ extension/
 │   │   ├── StakePicker.tsx        # full-takeover gate when an EID has >1 candidate stake (12.5)
 │   │   ├── ConfigurePanel.tsx     # v2.1 first-run + reconfigure wizard
 │   │   ├── QueuePanel.tsx
+│   │   ├── usePendingRequests.ts  # queue fetch, hosted by TabbedShell so it
+│   │   │                          # survives QueuePanel's per-tab unmount
 │   │   ├── RequestCard.tsx        # v2.2 Provision & Complete button
 │   │   ├── ResultDialog.tsx       # v2.2 post-provision result + retry
 │   │   ├── SyncPanel.tsx          # Sync — drift report + per-row Fix actions (Phase 2)

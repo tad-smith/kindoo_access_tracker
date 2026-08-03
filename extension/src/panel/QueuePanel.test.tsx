@@ -89,11 +89,18 @@ function req(overrides: Partial<AccessRequest> = {}): AccessRequest {
   } as AccessRequest;
 }
 
+// QueuePanel no longer owns the queue fetch — TabbedShell hosts it via
+// `usePendingRequests` so it survives tab switches. Mirror that wiring
+// here so the fetch-driven assertions below keep exercising the real
+// hook rather than a hand-rolled stub.
 async function renderPanel(onPermissionDenied = vi.fn()) {
   const { QueuePanel } = await import('./QueuePanel');
-  return render(
-    <QueuePanel stakeId="csnorth" bundle={bundle()} onPermissionDenied={onPermissionDenied} />,
-  );
+  const { usePendingRequests } = await import('./usePendingRequests');
+  function Harness() {
+    const pending = usePendingRequests('csnorth', onPermissionDenied);
+    return <QueuePanel stakeId="csnorth" bundle={bundle()} pending={pending} />;
+  }
+  return render(<Harness />);
 }
 
 describe('QueuePanel', () => {
@@ -173,9 +180,12 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-has-seat')).toBeInTheDocument());
+    // Cards render as soon as the queue resolves; the seat-existence
+    // overlay lands a tick later, so wait on the overlay itself.
+    await waitFor(() =>
+      expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-has-seat', 'true'),
+    );
     // Present → has-seat true, absent false.
-    expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-has-seat', 'true');
     expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-seat-absent', 'false');
     // Positively absent → has-seat false, absent true.
     expect(screen.getByTestId('card-no-seat')).toHaveAttribute('data-has-seat', 'false');
@@ -216,11 +226,11 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-primary-stake')).toBeInTheDocument());
-    // Primary-scope stake → has stake grant.
-    expect(screen.getByTestId('card-primary-stake')).toHaveAttribute(
-      'data-has-stake-grant',
-      'true',
+    await waitFor(() =>
+      expect(screen.getByTestId('card-primary-stake')).toHaveAttribute(
+        'data-has-stake-grant',
+        'true',
+      ),
     );
     // Ward primary + stake duplicate → has stake grant.
     expect(screen.getByTestId('card-dup-stake')).toHaveAttribute('data-has-stake-grant', 'true');
@@ -245,9 +255,10 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-edit-has')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-has-seat', 'true'),
+    );
     // Edit with a present seat → not absent (provision button stays).
-    expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-has-seat', 'true');
     expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-seat-absent', 'false');
     // Edit with no seat → seat-absent flag set (edit gate fires).
     expect(screen.getByTestId('card-edit-missing')).toHaveAttribute('data-seat-absent', 'true');
