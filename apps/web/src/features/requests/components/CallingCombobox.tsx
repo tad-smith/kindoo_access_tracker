@@ -16,7 +16,7 @@
 //     clear the typed value (operator decision: free-text survives a
 //     scope flip).
 
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   Command,
   CommandEmpty,
@@ -70,12 +70,16 @@ export function CallingCombobox({
   // path is `mousedown → onSelect → click`; closing on blur synchronously
   // hides the list before the click registers.
   const blurTimer = useRef<number | null>(null);
-  const cancelBlurTimer = () => {
+  const cancelBlurTimer = useCallback(() => {
     if (blurTimer.current != null) {
       window.clearTimeout(blurTimer.current);
       blurTimer.current = null;
     }
-  };
+  }, []);
+
+  // Always release a pending blur-close timer if the field unmounts —
+  // the callback would otherwise call setOpen on a dead component.
+  useEffect(() => cancelBlurTimer, [cancelBlurTimer]);
 
   const handleSelect = (next: string) => {
     onChange(next);
