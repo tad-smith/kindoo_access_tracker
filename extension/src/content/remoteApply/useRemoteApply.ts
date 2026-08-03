@@ -85,6 +85,11 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
         setFinishedCount((n) => n + 1);
       },
     });
+    // `stop()` cancels the scheduler but cannot abort a tick already
+    // awaiting the network, so this cleanup does NOT by itself order the
+    // loop's presence write before `publishDisabled()`. The loop re-reads
+    // the opt-in immediately before every presence write for exactly that
+    // reason — see `heartbeatIfDue`.
     return () => handle.stop();
   }, [enabled, loaded, stakeId, bundle, publishDisabled]);
 

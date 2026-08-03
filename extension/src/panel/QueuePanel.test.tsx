@@ -39,12 +39,14 @@ vi.mock('./RequestCard', () => ({
     memberHasSeat: boolean;
     memberSeatAbsent: boolean;
     memberHasStakeGrant: boolean;
+    remoteApplyRunning?: boolean;
   }) => (
     <div
       data-testid={`card-${props.request.request_id}`}
       data-has-seat={props.memberHasSeat ? 'true' : 'false'}
       data-seat-absent={props.memberSeatAbsent ? 'true' : 'false'}
       data-has-stake-grant={props.memberHasStakeGrant ? 'true' : 'false'}
+      data-remote-running={props.remoteApplyRunning ? 'true' : 'false'}
     />
   ),
 }));
@@ -348,6 +350,36 @@ describe('QueuePanel', () => {
       />,
     );
     expect(screen.getByTestId('sba-remote-apply-running')).toBeInTheDocument();
+  });
+
+  it('flags only the card whose request a phone-initiated job is applying', async () => {
+    // The banner alone is informational — the card's own provision
+    // button has to be gated too, or the manager can tap Apply on their
+    // phone and click the desktop button on the same request and get two
+    // concurrent `applyRequest` runs. Two `inviteUser` writes to Kindoo
+    // costs a licence, and no amount of SBA-side settling undoes it.
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [
+        req({ request_id: 'r1', requested_at: wireTs('2026-01-01T00:00:00Z') }),
+        req({ request_id: 'r2', requested_at: wireTs('2026-01-02T00:00:00Z') }),
+      ],
+    });
+    const { QueuePanel } = await import('./QueuePanel');
+    const stable = { stakeId: 'csnorth', bundle: bundle(), onPermissionDenied: vi.fn() };
+    const { rerender } = render(
+      <QueuePanel {...stable} remoteApply={{ running: null, finishedCount: 0 }} />,
+    );
+    await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'false');
+
+    rerender(
+      <QueuePanel
+        {...stable}
+        remoteApply={{ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 }}
+      />,
+    );
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'true');
+    expect(screen.getByTestId('card-r2')).toHaveAttribute('data-remote-running', 'false');
   });
 
   it('refetches the queue when a phone-initiated job finishes', async () => {

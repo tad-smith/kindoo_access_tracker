@@ -388,6 +388,28 @@ export interface RemoteApplyJobRef {
 }
 
 /**
+ * Fetch every `running` job in the operator's mailbox — the input to the
+ * stranded-job sweep. A job strands when the tab that claimed it dies (or
+ * its terminal write fails) between `queued → running` and the terminal
+ * write: the poller only ever queries `queued`, and the phone's cancel
+ * path is `queued → cancelled`, so nothing else would ever move it again.
+ */
+export interface DataRemoteApplyRunningJobsRequest {
+  type: 'data.remoteApplyRunningJobs';
+}
+
+/** A `running` job plus the age the sweep judges it by. */
+export interface RemoteApplyRunningJobRef extends RemoteApplyJobRef {
+  /**
+   * `claimed_at` in epoch ms, falling back to `created_at`. `null` when
+   * neither resolved to a real timestamp — an unaged job is never swept,
+   * since the sweep's only safety argument is that it is too old to still
+   * be in flight.
+   */
+  claimedAtMs: number | null;
+}
+
+/**
  * Claim a queued job (`queued → running`). The rules enforce the
  * compare-and-set, so a second Kindoo tab racing for the same job gets
  * `permission-denied` — which the SW reports as `claimed: false`, NOT
@@ -435,6 +457,7 @@ export type ExtensionRequest =
   | DataRejectRequestRequest
   | DataWriteRemotePresenceRequest
   | DataRemoteApplyNextJobRequest
+  | DataRemoteApplyRunningJobsRequest
   | DataRemoteApplyClaimJobRequest
   | DataRemoteApplyFinishJobRequest;
 
@@ -459,6 +482,7 @@ export type DataResolveEidStakesResponse = Result<ResolveEidStakesPayload>;
 export type DataRejectRequestResponse = Result<{ ok: true }>;
 export type DataWriteRemotePresenceResponse = Result<{ ok: true }>;
 export type DataRemoteApplyNextJobResponse = Result<RemoteApplyJobRef | null>;
+export type DataRemoteApplyRunningJobsResponse = Result<RemoteApplyRunningJobRef[]>;
 export type DataRemoteApplyClaimJobResponse = Result<{ claimed: boolean }>;
 export type DataRemoteApplyFinishJobResponse = Result<{ ok: true }>;
 
@@ -497,11 +521,13 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                                 ? DataWriteRemotePresenceResponse
                                 : R extends DataRemoteApplyNextJobRequest
                                   ? DataRemoteApplyNextJobResponse
-                                  : R extends DataRemoteApplyClaimJobRequest
-                                    ? DataRemoteApplyClaimJobResponse
-                                    : R extends DataRemoteApplyFinishJobRequest
-                                      ? DataRemoteApplyFinishJobResponse
-                                      : never;
+                                  : R extends DataRemoteApplyRunningJobsRequest
+                                    ? DataRemoteApplyRunningJobsResponse
+                                    : R extends DataRemoteApplyClaimJobRequest
+                                      ? DataRemoteApplyClaimJobResponse
+                                      : R extends DataRemoteApplyFinishJobRequest
+                                        ? DataRemoteApplyFinishJobResponse
+                                        : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 
