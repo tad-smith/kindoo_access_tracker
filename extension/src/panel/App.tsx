@@ -86,11 +86,25 @@ function decideConfigStatus(bundle: StakeConfigBundle): ConfigStatus {
   return { kind: 'configured', bundle };
 }
 
-export function App() {
+interface AppProps {
+  /** Reports the pending-request count out to the container-layer
+   * slide-over handle (`content/mount.tsx`), which renders it as a
+   * badge. `null` means unknown — signed out, not authorized,
+   * unconfigured, or the queue fetch failed — and hides the badge.
+   * Must be referentially stable. */
+  onPendingCountChange?: (count: number | null) => void;
+}
+
+export function App({ onPendingCountChange }: AppProps) {
   const authState = useAuthState();
   const [notAuthorized, setNotAuthorized] = useState(false);
   const [stake, setStake] = useState<StakeResolution>({ kind: 'loading' });
   const [configStatus, setConfigStatus] = useState<ConfigStatus>({ kind: 'loading' });
+
+  // Stable identity: this feeds `usePendingRequests`' fetch dependency
+  // list, so a fresh arrow per render would reset the lifted queue to
+  // `loading` on every unrelated App re-render.
+  const handlePermissionDenied = useCallback(() => setNotAuthorized(true), []);
 
   const resolveStake = useCallback(async () => {
     setStake({ kind: 'loading' });
@@ -425,8 +439,9 @@ export function App() {
         stakeId={stake.stakeId}
         email={authState.email}
         bundle={configStatus.bundle}
-        onPermissionDenied={() => setNotAuthorized(true)}
+        onPermissionDenied={handlePermissionDenied}
         onConfigComplete={() => void refreshConfig(stake.stakeId)}
+        onPendingCountChange={onPendingCountChange}
       />
     </>
   );

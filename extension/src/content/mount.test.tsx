@@ -44,6 +44,16 @@ function lastMessageListener(): (msg: unknown) => void {
   return last?.[0] as (msg: unknown) => void;
 }
 
+function shadowQuery<T extends Element>(host: HTMLElement, selector: string): T | null {
+  return host.shadowRoot?.querySelector<T>(selector) ?? null;
+}
+
+function handleButton(host: HTMLElement): HTMLButtonElement {
+  const btn = shadowQuery<HTMLButtonElement>(host, '.sba-handle');
+  if (!btn) throw new Error('handle button not found in shadow root');
+  return btn;
+}
+
 describe('mountPanel', () => {
   let active: PanelHandles | null = null;
 
@@ -123,6 +133,95 @@ describe('mountPanel', () => {
     const listener = lastMessageListener();
     listener({ type: 'auth.stateChanged', state: { status: 'signed-out' } });
     expect(active?.isOpen()).toBe(false);
+  });
+
+  describe('the open / close handle', () => {
+    it('toggles open → closed → open on click and persists each flip', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const host = active!.host;
+      const btn = handleButton(host);
+
+      btn.click();
+      expect(active?.isOpen()).toBe(true);
+      expect(chromeStub().storage.local.set).toHaveBeenLastCalledWith({ 'sba.panelOpen': true });
+
+      btn.click();
+      expect(active?.isOpen()).toBe(false);
+      expect(chromeStub().storage.local.set).toHaveBeenLastCalledWith({ 'sba.panelOpen': false });
+
+      btn.click();
+      expect(active?.isOpen()).toBe(true);
+      expect(chromeStub().storage.local.set).toHaveBeenLastCalledWith({ 'sba.panelOpen': true });
+    });
+
+    it('flips aria-expanded and the aria-label with the open state', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const btn = handleButton(active!.host);
+
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(btn.getAttribute('aria-label')).toBe('Open Stake Building Access panel');
+
+      active?.setOpen(true);
+      expect(btn.getAttribute('aria-expanded')).toBe('true');
+      expect(btn.getAttribute('aria-label')).toBe('Close Stake Building Access panel');
+
+      active?.setOpen(false);
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(btn.getAttribute('aria-label')).toBe('Open Stake Building Access panel');
+    });
+
+    it('is a real, keyboard-reachable button', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const btn = handleButton(active!.host);
+      expect(btn.tagName).toBe('BUTTON');
+      expect(btn.type).toBe('button');
+      // No negative tabindex — native buttons are focusable by default.
+      expect(btn.hasAttribute('tabindex')).toBe(false);
+    });
+
+    it('reflects the pending count on the host and the badge', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const host = active!.host;
+      const badge = shadowQuery(host, '.sba-handle-badge');
+
+      // Absent until reported — the count is unknown, not zero.
+      expect(host.hasAttribute('data-sba-count')).toBe(false);
+      expect(badge?.textContent).toBe('');
+
+      active?.setPendingCount(3);
+      expect(host.getAttribute('data-sba-count')).toBe('3');
+      expect(badge?.textContent).toBe('3');
+
+      // Zero keeps the attribute (a known zero) but renders nothing;
+      // the CSS hides the badge on both `0` and the absent case.
+      active?.setPendingCount(0);
+      expect(host.getAttribute('data-sba-count')).toBe('0');
+      expect(badge?.textContent).toBe('');
+
+      // Back to unknown — attribute removed.
+      active?.setPendingCount(null);
+      expect(host.hasAttribute('data-sba-count')).toBe(false);
+      expect(badge?.textContent).toBe('');
+    });
+
+    it('replaces the old × close button', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const host = active!.host;
+      expect(shadowQuery(host, '.sba-slideover-close')).toBeNull();
+      expect(host.shadowRoot?.textContent).not.toContain('×');
+    });
+
+    it('lives inside .sba-slideover so the panel transform carries it', async () => {
+      const { mountPanel } = await import('./mount');
+      active = mountPanel();
+      const btn = handleButton(active!.host);
+      expect(btn.parentElement?.className).toBe('sba-slideover');
+    });
   });
 
   it('unmount tears down the React root, the host, and the runtime listener', async () => {

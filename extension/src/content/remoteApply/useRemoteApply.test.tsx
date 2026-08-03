@@ -34,21 +34,23 @@ vi.mock('../../lib/remoteApplyPrefs', () => ({
 
 const STAKE_ID = 'csnorth';
 
-/** Stable identity: the hook's effect keys on `bundle`, so a fresh
- * object per render would restart the loop on every render. */
-const BUNDLE: StakeConfigBundle = {
-  stake: { stake_id: STAKE_ID } as unknown as StakeConfigBundle['stake'],
-  buildings: [],
-  wards: [],
-  kindooSites: [],
-};
+function makeBundle(): StakeConfigBundle {
+  return {
+    stake: { stake_id: STAKE_ID } as unknown as StakeConfigBundle['stake'],
+    buildings: [],
+    wards: [],
+    kindooSites: [],
+  };
+}
+
+const BUNDLE: StakeConfigBundle = makeBundle();
 
 /** Imported lazily so each test gets a module instance bound to its own
  * mocks (`vi.resetModules()` runs between tests). */
 async function probeComponent() {
   const { useRemoteApply } = await import('./useRemoteApply');
-  return function Probe() {
-    useRemoteApply({ stakeId: STAKE_ID, bundle: BUNDLE });
+  return function Probe({ bundle = BUNDLE }: { bundle?: StakeConfigBundle }) {
+    useRemoteApply({ stakeId: STAKE_ID, bundle });
     return null;
   };
 }
@@ -125,6 +127,45 @@ describe('useRemoteApply', () => {
     expect(writeRemotePresence).toHaveBeenCalledWith(
       expect.objectContaining({ siteKey: 'east-stake' }),
     );
+  });
+
+  // The silent-failure guard. `TabbedShell` hosts this hook alongside
+  // the lifted queue fetch, so it re-renders on every refetch. If the
+  // loop keyed on `bundle` identity, a host that rebuilt the object per
+  // render would restart the loop faster than its first (0ms) tick can
+  // land — `drive()` bails on `stopped`, `lastHeartbeatAt` resets to 0
+  // each construction, and the heartbeat never publishes. No error is
+  // logged; the phone simply never sees a desktop. Passing a fresh
+  // bundle here is the only shape that catches it.
+  it('keeps one loop running when the host re-renders with a fresh bundle object', async () => {
+    const Probe = await probeComponent();
+    enabled = true;
+    const view = render(<Probe bundle={makeBundle()} />);
+    await waitFor(() => expect(startRemoteApplyLoop).toHaveBeenCalledTimes(1));
+    const stop = startRemoteApplyLoop.mock.results[0]?.value as RemoteApplyLoopHandle;
+
+    view.rerender(<Probe bundle={makeBundle()} />);
+    view.rerender(<Probe bundle={makeBundle()} />);
+
+    expect(startRemoteApplyLoop).toHaveBeenCalledTimes(1);
+    expect(stop.stop).not.toHaveBeenCalled();
+  });
+
+  it('serves the latest bundle to a tick that runs after a reconfigure', async () => {
+    // The flip side of not restarting: the loop must not be pinned to
+    // the bundle it was constructed with, or a mid-session reconfigure
+    // would provision against stale building / site config.
+    const Probe = await probeComponent();
+    enabled = true;
+    const first = makeBundle();
+    const view = render(<Probe bundle={first} />);
+    await waitFor(() => expect(startRemoteApplyLoop).toHaveBeenCalledTimes(1));
+    const args = startRemoteApplyLoop.mock.calls[0]?.[0] as RemoteApplyLoopArgs;
+    expect(args.bundle).toBe(first);
+
+    const next = makeBundle();
+    view.rerender(<Probe bundle={next} />);
+    expect(args.bundle).toBe(next);
   });
 
   it('publishes nothing on a first mount that was never opted in', async () => {
