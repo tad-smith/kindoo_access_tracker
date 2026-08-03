@@ -45,7 +45,10 @@
 // (`filterAppAccessCallings` — ward callings for ward scopes, stake
 // callings for 'stake' scope, plus the stake-gated Elders Quorum
 // President ward calling when `stake.eq_president_app_access` is on).
-// `applyScopeMismatch` /
+// Every access write also stamps the scope's access tier (D26) into
+// `importer_limited_callings` (`filterLimitedTierCallings`) in the same
+// write, so the stored tier can never drift from the callings it
+// describes. `applyScopeMismatch` /
 // `applyBuildingsMismatch` don't touch type or callings, so that
 // bookkeeping doesn't apply to them.
 //
@@ -74,6 +77,7 @@ import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
 import {
   canonicalEmail,
   filterAppAccessCallings,
+  filterLimitedTierCallings,
   resolveWardSite,
   seatCallingOrder,
 } from '@kindoo/shared';
@@ -1038,15 +1042,52 @@ async function applySbaOnlyRemove(
 // ---------------------------------------------------------------------------
 // Auto-seat helpers: the access-doc upsert that backs every auto-seat
 // write. App-access callings (`filterAppAccessCallings`) → access doc;
-// canonical calling order (`seatCallingOrder`) → roster sort key.
+// canonical calling order (`seatCallingOrder`) → roster sort key;
+// limited-tier policy (`filterLimitedTierCallings`) → the stored tier
+// stamp in `importer_limited_callings`.
+//
+// D26 tier stamp: every helper below writes `importer_limited_callings`
+// in the SAME write as `importer_callings`, always as a fully-computed
+// map, so the two can never drift and a scope that stops being
+// limited-tier never leaves a stale stamp behind. The stamp is decided
+// here, at write time; nothing re-derives it on a read path. Scopes this
+// write doesn't own keep whatever stamp they already carry — including
+// none, which reads as full.
 // ---------------------------------------------------------------------------
+
+/**
+ * Recompute `importer_limited_callings` for a write that has just
+ * resolved `finalImporter`. Scopes other than `scope` keep their prior
+ * stamp (and are dropped when the scope itself is gone from
+ * `finalImporter`); `scope` is re-stamped from the writer-side policy
+ * against the callings being written.
+ */
+function buildLimitedMap(opts: {
+  priorLimited: Record<string, string[]> | undefined;
+  finalImporter: Record<string, string[]>;
+  scope: string;
+  callings: string[];
+}): Record<string, string[]> {
+  const { priorLimited, finalImporter, scope, callings } = opts;
+  const out: Record<string, string[]> = {};
+  for (const [s, c] of Object.entries(priorLimited ?? {})) {
+    if (s === scope) continue;
+    // Never strand a stamp for a scope that no longer has callings.
+    if (!(s in finalImporter)) continue;
+    if (Array.isArray(c) && c.length > 0) out[s] = [...c];
+  }
+  const limited = filterLimitedTierCallings(callings);
+  if (limited.length > 0) out[scope] = limited;
+  return out;
+}
 
 /**
  * Write an `access` doc for a sync-created/extended auto seat:
  *   - merges with any existing doc (preserves `manual_grants` and other
  *     scopes' `importer_callings`)
  *   - replaces `importer_callings[scope]` wholesale with `callings`
- *     (sorted, deduped)
+ *     (sorted, deduped), and `importer_limited_callings[scope]` with the
+ *     limited-tier subset of those callings
  *   - stamps `sort_order` from the caller (the canonical
  *     `seatCallingOrder` for this scope's callings).
  */
@@ -1078,6 +1119,13 @@ function writeAccessForAutoScope(
   }
   finalImporter[scope] = sortedCallings;
 
+  const finalLimited = buildLimitedMap({
+    priorLimited: priorAccess?.importer_limited_callings,
+    finalImporter,
+    scope,
+    callings: sortedCallings,
+  });
+
   // sort_order: if the prior doc had a smaller value (from another
   // scope's callings stamped earlier), keep it. Otherwise use this
   // scope's order.
@@ -1086,26 +1134,31 @@ function writeAccessForAutoScope(
 
   const now = FieldValue.serverTimestamp();
   if (priorAccess) {
-    tx.set(
-      ref,
-      {
-        member_canonical: canonical,
-        member_email: memberEmail,
-        member_name: memberName || priorAccess.member_name,
-        importer_callings: finalImporter,
-        sort_order: finalSort,
-        last_modified_at: now,
-        last_modified_by: actor,
-        lastActor: actor,
-      },
-      { merge: true },
-    );
+    // `tx.update` (NOT `tx.set merge`) so both maps are REPLACED
+    // wholesale with the values computed above. A `set merge`
+    // deep-merges nested maps key-by-key, which would keep a stale
+    // `importer_limited_callings[scope]` alive whenever this write
+    // drops the scope's last limited-tier calling — the member would
+    // stay limited on the strength of a calling they no longer hold.
+    // Same reasoning, and same `update`, as the two sibling helpers.
+    tx.update(ref, {
+      member_canonical: canonical,
+      member_email: memberEmail,
+      member_name: memberName || priorAccess.member_name,
+      importer_callings: finalImporter,
+      importer_limited_callings: finalLimited,
+      sort_order: finalSort,
+      last_modified_at: now,
+      last_modified_by: actor,
+      lastActor: actor,
+    });
   } else {
     tx.set(ref, {
       member_canonical: canonical,
       member_email: memberEmail,
       member_name: memberName,
       importer_callings: finalImporter,
+      importer_limited_callings: finalLimited,
       manual_grants: {},
       sort_order: finalSort,
       created_at: now,
@@ -1123,10 +1176,15 @@ function pickMin(a: number | null, b: number | null): number | null {
 }
 
 /**
- * Clear `importer_callings[scope]` for an access doc when its
- * corresponding auto seat flips away from auto. If the final
- * `importer_callings` is empty AND `manual_grants` is empty, the
- * access doc is deleted; otherwise it is updated in place.
+ * Clear `importer_callings[scope]` (and its `importer_limited_callings`
+ * tier stamp) for an access doc when its corresponding auto seat flips
+ * away from auto. If the final `importer_callings` is empty AND
+ * `manual_grants` is empty, the access doc is deleted; otherwise it is
+ * updated in place.
+ *
+ * The doc-existence test deliberately ignores `importer_limited_callings`:
+ * it is a stamp ON grants, never a grant, so it must not keep an
+ * otherwise-empty doc alive.
  */
 function clearImporterCallingsForScope(
   tx: Transaction,
@@ -1143,6 +1201,13 @@ function clearImporterCallingsForScope(
     if (s === scope) continue;
     if (c && c.length > 0) finalImporter[s] = [...c];
   }
+  // Nothing granted for `scope` any more, so nothing to stamp for it.
+  const finalLimited = buildLimitedMap({
+    priorLimited: access.importer_limited_callings,
+    finalImporter,
+    scope,
+    callings: [],
+  });
   const hasManual = Object.values(access.manual_grants ?? {}).some((arr) => arr && arr.length > 0);
   const finalImporterEmpty = Object.keys(finalImporter).length === 0;
 
@@ -1151,14 +1216,15 @@ function clearImporterCallingsForScope(
     return;
   }
 
-  // `tx.update` (not `tx.set merge`) so `importer_callings` is REPLACED
-  // wholesale with `finalImporter`. A `set merge` deep-merges nested
-  // maps key-by-key, which would leave the cleared scope's stale entry
-  // behind whenever another scope survives. `update` replaces the named
-  // field entirely while leaving `manual_grants` (and every other
-  // unmentioned field) untouched.
+  // `tx.update` (not `tx.set merge`) so both maps are REPLACED
+  // wholesale. A `set merge` deep-merges nested maps key-by-key, which
+  // would leave the cleared scope's stale entry behind whenever another
+  // scope survives. `update` replaces the named fields entirely while
+  // leaving `manual_grants` (and every other unmentioned field)
+  // untouched.
   tx.update(ref, {
     importer_callings: finalImporter,
+    importer_limited_callings: finalLimited,
     sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
     last_modified_at: FieldValue.serverTimestamp(),
     last_modified_by: actor,
@@ -1221,6 +1287,17 @@ function writeStakeScopeAccessForUnparseable(
   }
   if (stakeHasGrant) finalImporter['stake'] = [calling];
 
+  // The fresh stake entry is stamped from policy; surviving scopes keep
+  // their prior stamp. The abandoned old scope needs no special case —
+  // it's absent from `finalImporter`, and `buildLimitedMap` drops any
+  // stamp whose scope no longer has callings.
+  const finalLimited = buildLimitedMap({
+    priorLimited: priorAccess?.importer_limited_callings,
+    finalImporter,
+    scope: 'stake',
+    callings: stakeHasGrant ? [calling] : [],
+  });
+
   const hasManual = Object.values(priorAccess?.manual_grants ?? {}).some(
     (arr) => arr && arr.length > 0,
   );
@@ -1255,6 +1332,7 @@ function writeStakeScopeAccessForUnparseable(
       member_email: memberEmail,
       member_name: memberName || priorAccess.member_name,
       importer_callings: finalImporter,
+      importer_limited_callings: finalLimited,
       sort_order: finalSort,
       last_modified_at: now,
       last_modified_by: actor,
@@ -1266,6 +1344,7 @@ function writeStakeScopeAccessForUnparseable(
       member_email: memberEmail,
       member_name: memberName,
       importer_callings: finalImporter,
+      importer_limited_callings: finalLimited,
       manual_grants: {},
       sort_order: finalSort,
       created_at: now,

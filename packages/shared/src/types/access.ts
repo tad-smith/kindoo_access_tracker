@@ -47,6 +47,25 @@ export type Access = {
   importer_callings: Record<string, string[]>;
 
   /**
+   * SERVER-WRITTEN tier stamp for `importer_callings` (D26). Keys = the
+   * same scopes; each value is the SUBSET of `importer_callings[scope]`
+   * that confers LIMITED app access. Written together with
+   * `importer_callings` in the same update by whichever writer owns the
+   * scope (`syncApplyFix`, `backfillEqPresidentAccess`) so the two maps
+   * cannot drift; rules forbid every client write path from touching it.
+   *
+   * ABSENT field, absent scope key, or empty array ⇒ every importer
+   * calling in that scope is FULL. That is what every record written
+   * before this field existed means, so there is no migration — and it is
+   * why the tier is not retroactive: changing the writer-side policy
+   * ({@link LIMITED_TIER_CALLINGS}) re-tiers nothing already stored.
+   *
+   * Readers use this field alone; nothing derives a tier from a calling
+   * name at read time.
+   */
+  importer_limited_callings?: Record<string, string[]>;
+
+  /**
    * Manager-managed. Keys = scope. Values = explicit manual grants. The
    * client cannot mutate `importer_callings` on a write — rules enforce.
    */

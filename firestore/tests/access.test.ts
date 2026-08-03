@@ -12,6 +12,7 @@
 import { afterAll, afterEach, beforeAll, describe, it } from 'vitest';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import type { RulesTestEnvironment } from '@firebase/rules-unit-testing';
+import { deleteField } from 'firebase/firestore';
 import {
   clearAll,
   lastActorOf,
@@ -114,6 +115,35 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
         db.doc(PATH).set(
           emptyAccessDoc({
             importer_callings: { stake: ['Stake Clerk'] },
+            manual_grants: { stake: [SAMPLE_GRANT] },
+          }),
+        ),
+      );
+    });
+
+    // `importer_limited_callings` is the D26 tier stamp on
+    // `importer_callings` — the subset of each scope's callings that
+    // confer LIMITED access. Server-only, for the same reason the map it
+    // stamps is: a manager who could write it could clear their own
+    // stamp and promote themselves from limited to full.
+    it('create carrying importer_limited_callings → denied (server-only field)', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          emptyAccessDoc({
+            importer_limited_callings: { CO: ['Elders Quorum President'] },
+            manual_grants: { stake: [SAMPLE_GRANT] },
+          }),
+        ),
+      );
+    });
+
+    it('create carrying an EMPTY importer_limited_callings → denied (absent is the only allowed shape)', async () => {
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          emptyAccessDoc({
+            importer_limited_callings: {},
             manual_grants: { stake: [SAMPLE_GRANT] },
           }),
         ),
@@ -225,6 +255,86 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
         db.doc(PATH).update({
           importer_callings: { stake: ['Bishop'] }, // forbidden
           last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager ADDS importer_limited_callings to a doc that lacks it → denied', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: { CO: ['Elders Quorum President'] },
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          importer_limited_callings: { CO: ['Elders Quorum President'] },
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager MODIFIES an existing importer_limited_callings → denied', async () => {
+      // The attack this blocks: clearing your own stamp promotes you
+      // from limited to full on the next claim mint.
+      const seed = emptyAccessDoc({
+        importer_callings: { CO: ['Elders Quorum President'] },
+        importer_limited_callings: { CO: ['Elders Quorum President'] },
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          importer_limited_callings: {},
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('manager REMOVES importer_limited_callings → denied', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: { CO: ['Elders Quorum President'] },
+        importer_limited_callings: { CO: ['Elders Quorum President'] },
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(
+        db.doc(PATH).update({
+          importer_limited_callings: deleteField(),
+          last_modified_at: new Date(),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
+    it('the ordinary manual-grant update still works on a doc carrying the stamp', async () => {
+      // The compatibility half: the new field must not break the one
+      // client write path that legitimately touches these docs.
+      const seed = emptyAccessDoc({
+        importer_callings: { CO: ['Elders Quorum President'] },
+        importer_limited_callings: { CO: ['Elders Quorum President'] },
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [SAMPLE_GRANT],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
           lastActor: lastActorOf(personas.manager),
         }),
       );
@@ -352,6 +462,20 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
     it('manager deletes a doc with both maps empty → ok', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(PATH).set(emptyAccessDoc());
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).delete());
+    });
+
+    it('manager deletes a doc whose only remaining field is a stale tier stamp → ok', async () => {
+      // `importer_limited_callings` stamps grants; it is not one. It must
+      // never satisfy the "some grant exists" invariant on its own, or a
+      // leftover stamp would make the doc undeletable.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(emptyAccessDoc({ importer_limited_callings: { CO: ['Elders Quorum President'] } }));
       });
       const db = managerContext(env, STAKE_ID).firestore();
       await assertSucceeds(db.doc(PATH).delete());

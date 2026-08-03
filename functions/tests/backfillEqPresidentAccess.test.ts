@@ -109,6 +109,8 @@ async function seedSeat(opts: {
 async function seedAccess(opts: {
   canonical?: string;
   importer_callings?: Record<string, string[]>;
+  /** Omit to seed the pre-D26 shape — no tier stamp at all. */
+  importer_limited_callings?: Record<string, string[]>;
   manual_grants?: Record<string, ManualGrant[]>;
   sort_order?: number | null;
   lastActor?: { email: string; canonical: string };
@@ -128,6 +130,9 @@ async function seedAccess(opts: {
     lastActor: actor,
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+  if (opts.importer_limited_callings !== undefined) {
+    body.importer_limited_callings = opts.importer_limited_callings;
+  }
   await db.doc(`stakes/${STAKE_ID}/access/${canonical}`).set(body);
 }
 
@@ -523,6 +528,193 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
       docs_deleted: 0,
     });
     expect((await readAccess())?.importer_callings).toEqual({ CO: ['Bishop'] });
+  });
+
+  // ----- D26 tier stamp -----
+  //
+  // The entry this callable INSERTS is limited-tier, so it stamps
+  // `importer_limited_callings[scope]` in the same update as
+  // `importer_callings`. It never re-tiers an entry it didn't insert:
+  // the skip-if-present idempotency above short-circuits first, which is
+  // D23(a)'s "not retroactive in either direction" applied to the tier.
+
+  describe('importer_limited_callings tier stamp', () => {
+    it('grant: a created doc carries the stamp beside the calling', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: true });
+      await seedSeat({});
+
+      expect(await run('grant')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 1,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: [EQP] });
+      expect(access?.importer_limited_callings).toEqual({ CO: [EQP] });
+    });
+
+    it('grant: merging into an existing scope stamps only the calling it added', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: true });
+      await seedSeat({ scope: 'CO', callings: ['Bishop', EQP] });
+      await seedAccess({
+        importer_callings: { CO: ['Bishop'], DR: ['Ward Clerk'] },
+        sort_order: 42,
+      });
+
+      expect(await run('grant')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 1,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: ['Bishop', EQP], DR: ['Ward Clerk'] });
+      // Bishop stays full; the other scope gets no stamp it didn't have.
+      expect(access?.importer_limited_callings).toEqual({ CO: [EQP] });
+    });
+
+    it('grant: the stamp preserves the seat casing, so it is a literal subset', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: true });
+      await seedSeat({ callings: ['  elders quorum PRESIDENT '] });
+
+      await run('grant');
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: ['  elders quorum PRESIDENT '] });
+      expect(access?.importer_limited_callings).toEqual({ CO: ['  elders quorum PRESIDENT '] });
+    });
+
+    it('grant: NOT retroactive — an entry that already exists is left untiered', async () => {
+      // The already-granted population. The skip-if-present idempotency
+      // fires before any tier logic, so nothing is written, no claim is
+      // re-minted, and these people stay FULL until their scope is next
+      // written by something else. Deliberate: the tier belongs to the
+      // writer that inserted the record.
+      await seedManager();
+      await seedStake({ eqPresidentAccess: true });
+      await seedSeat({});
+      await seedAccess({ importer_callings: { CO: [EQP] }, sort_order: EQP_ORDER });
+
+      expect(await run('grant')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 0,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: [EQP] });
+      expect(access?.importer_limited_callings).toBeUndefined();
+      // Untouched, so no access-doc write and therefore no claim re-mint.
+      expect(access?.lastActor).toEqual(ACTOR);
+    });
+
+    it('grant: re-run over a doc this callable stamped writes nothing', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: true });
+      await seedSeat({});
+
+      await run('grant');
+      expect(await run('grant')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 0,
+        docs_deleted: 0,
+      });
+      expect((await readAccess())?.importer_limited_callings).toEqual({ CO: [EQP] });
+    });
+
+    it('revoke: removes the calling from BOTH maps', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: false });
+      await seedSeat({ callings: ['Bishop', EQP] });
+      await seedAccess({
+        importer_callings: { CO: ['Bishop', EQP] },
+        importer_limited_callings: { CO: [EQP] },
+        sort_order: 42,
+      });
+
+      expect(await run('revoke')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 1,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: ['Bishop'] });
+      // The scope's stamp list empties, so the key is dropped entirely —
+      // no stale stamp to read the member as limited.
+      expect(access?.importer_limited_callings).toEqual({});
+    });
+
+    it("revoke: another scope's stamp survives untouched", async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: false });
+      await seedSeat({ scope: 'CO', callings: [EQP] });
+      await seedAccess({
+        importer_callings: { CO: [EQP], DR: [EQP] },
+        importer_limited_callings: { CO: [EQP], DR: [EQP] },
+        sort_order: EQP_ORDER,
+      });
+
+      expect(await run('revoke')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 1,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ DR: [EQP] });
+      expect(access?.importer_limited_callings).toEqual({ DR: [EQP] });
+    });
+
+    it('revoke: a stale stamp does not keep an otherwise-empty doc alive', async () => {
+      await seedManager();
+      await seedStake({ eqPresidentAccess: false });
+      await seedSeat({});
+      await seedAccess({
+        importer_callings: { CO: [EQP] },
+        importer_limited_callings: { CO: [EQP] },
+        sort_order: EQP_ORDER,
+        lastActor: SYNC_ACTOR,
+      });
+
+      expect(await run('revoke')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 0,
+        docs_deleted: 1,
+      });
+      expect(await readAccess()).toBeUndefined();
+    });
+
+    it('revoke: a doc with the calling but no stamp still revokes cleanly', async () => {
+      // The pre-D26 shape on the revoke side: nothing to unstamp, and
+      // the calling still comes out.
+      await seedManager();
+      await seedStake({ eqPresidentAccess: false });
+      await seedSeat({ callings: ['Bishop', EQP] });
+      await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: 42 });
+
+      expect(await run('revoke')).toEqual({
+        ok: true,
+        seats_matched: 1,
+        docs_written: 1,
+        docs_deleted: 0,
+      });
+
+      const access = await readAccess();
+      expect(access?.importer_callings).toEqual({ CO: ['Bishop'] });
+      expect(access?.importer_limited_callings).toEqual({});
+    });
   });
 
   // ----- Revoke delete: attribution + re-validation -----

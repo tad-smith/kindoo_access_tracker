@@ -32,14 +32,23 @@ export const STAKE_APP_ACCESS_CALLINGS = [
 export const EQ_PRESIDENT_CALLING = 'Elders Quorum President';
 
 /**
- * Importer callings that confer LIMITED app access rather than full.
- * Empty today: every calling the importer grants is full-tier. The next
- * step (Elders Quorum Presidents get limited access) adds
- * `EQ_PRESIDENT_CALLING` here — which also requires re-minting claims for
- * existing EQ-President access docs, since `syncAccessClaims` only fires
- * on access-doc writes.
+ * WRITER-SIDE POLICY (D26). App-access callings whose derived access is
+ * the LIMITED tier (D25) rather than full.
+ *
+ * Consulted **only** where a writer inserts or replaces an access
+ * record's calling list — `syncApplyFix` and `backfillEqPresidentAccess`
+ * — and never on a read path. The tier is decided once, at write time,
+ * and stored in `Access.importer_limited_callings[scope]`; every reader
+ * (claim minter, App Access page) reads that stored field. Deriving a
+ * tier from a calling name at read time would let the page and the claim
+ * minter disagree, and would silently re-tier existing records the moment
+ * this constant changed.
+ *
+ * Consequence of storing it: changing this set does NOT re-tier records
+ * already written. They keep whatever the writer stamped until that scope
+ * is next written.
  */
-export const LIMITED_ACCESS_CALLINGS: ReadonlySet<string> = new Set<string>();
+export const LIMITED_TIER_CALLINGS: ReadonlySet<string> = new Set<string>([EQ_PRESIDENT_CALLING]);
 
 export interface AppAccessOptions {
   /** Pass `stake.eq_president_app_access === true`. Adds Elders Quorum
@@ -53,6 +62,7 @@ function normalize(calling: string): string {
   return calling.trim().toLowerCase();
 }
 
+const LIMITED_TIER_SET: ReadonlySet<string> = new Set([...LIMITED_TIER_CALLINGS].map(normalize));
 const WARD_SET: ReadonlySet<string> = new Set(WARD_APP_ACCESS_CALLINGS.map(normalize));
 const STAKE_SET: ReadonlySet<string> = new Set(STAKE_APP_ACCESS_CALLINGS.map(normalize));
 const WARD_SET_WITH_EQ: ReadonlySet<string> = new Set(
@@ -87,21 +97,17 @@ export function filterAppAccessCallings(
 }
 
 /**
- * True when `calling` sits in the limited-access set — i.e. holding it
- * confers limited rather than full app access. Both sides are matched on
- * the trim+lowercase key the access sets use, so `limitedCallings` may
- * hold titles in display casing. `limitedCallings` is injectable so a
- * caller (and the tests) can exercise the non-empty path while the
- * shipped set is still empty.
+ * WRITER-SIDE. Subset of `callings` whose normalised form is
+ * limited-tier ({@link LIMITED_TIER_CALLINGS}). Original casing is
+ * preserved, so the result is a literal subset of the input and can be
+ * stored verbatim in `Access.importer_limited_callings[scope]` beside the
+ * `importer_callings[scope]` it was derived from.
+ *
+ * Callers pass the already-app-access-filtered list
+ * (`filterAppAccessCallings`), so the result names exactly the granted
+ * callings that confer limited access. Never call this on a read path —
+ * readers consult the stored field.
  */
-export function isLimitedAccessCalling(
-  calling: string,
-  limitedCallings: ReadonlySet<string> = LIMITED_ACCESS_CALLINGS,
-): boolean {
-  if (limitedCallings.size === 0) return false;
-  const key = normalize(calling);
-  for (const limited of limitedCallings) {
-    if (normalize(limited) === key) return true;
-  }
-  return false;
+export function filterLimitedTierCallings(callings: readonly string[]): string[] {
+  return callings.filter((c) => LIMITED_TIER_SET.has(normalize(c)));
 }

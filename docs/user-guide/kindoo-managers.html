@@ -131,7 +131,7 @@
     <p class="sub">Everything you need to set up a stake, install the companion Chrome extension, and process building-access requests against Kindoo — from first run to daily work.</p>
     <div class="meta">
       <span><b>Audience:</b> Kindoo Managers</span>
-      <span><b>Version:</b> 1.2</span>
+      <span><b>Version:</b> 1.3</span>
       <span><b>Updated:</b> August 2026</span>
       <span><b>App:</b> stakebuildingaccess.org</span>
     </div>
@@ -349,17 +349,19 @@
     <thead><tr><th>Scope</th><th>Callings that grant app access</th></tr></thead>
     <tbody>
       <tr><td><strong>Stake</strong></td><td>Stake President · Stake Presidency First Counselor · Stake Presidency Second Counselor · Stake Clerk · Stake Executive Secretary · Stake High Councilor</td></tr>
-      <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary · <em>Elders Quorum President — only when your stake's setting is turned on</em></td></tr>
+      <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary · <em>Elders Quorum President — only when your stake's setting is turned on, and at the <span class="badge limited">LIMITED</span> level</em></td></tr>
     </tbody>
   </table>
   <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span> and pick the right <strong>access level</strong> — see <a href="#levels">Full and Limited access</a> below.</p>
 
   <h3>Elders Quorum Presidents</h3>
   <p>Elders Quorum Presidents can assign temporary access for building cleaning and building lockup assignments. Not every stake works that way, so this one calling is a stake setting rather than a fixed rule. Turn on <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> under <span class="ui">Configuration&nbsp;→&nbsp;Config</span> and every Elders Quorum President in your stake can sign in.</p>
-  <p>Two things to know:</p>
+  <p>The access this calling grants is <span class="badge limited">LIMITED</span>, not full — it matches what the calling is for. An Elders Quorum President can request <strong>temporary</strong> access for their own ward's building, up to <strong>90 days</strong> at a time, and can change or remove only those temporary seats. Ongoing access isn't offered to them, and automatic and ongoing rows on their roster show no Edit or Remove option. <a href="#levels">Full and Limited access</a> below has the detail.</p>
+  <p>Three things to know:</p>
   <ul>
     <li><strong>It's the president only.</strong> Elders Quorum counselors and the quorum secretary never get app access from this setting.</li>
     <li><strong>It applies to wards, not the stake.</strong> The stake-level list above is unchanged either way.</li>
+    <li><strong>A full grant outranks it.</strong> Levels are worked out per person per stake, so an Elders Quorum President you also give a full manual grant is full everywhere in the stake.</li>
   </ul>
   <div class="callout imp"><span class="lbl">Turning it off does not remove anyone's access on its own</span><p>The setting decides what happens as callings change from here on. Anyone who already has access keeps it until their callings next change through Sync. That's why saving a change to this switch offers you a second step.</p></div>
   <p>When you save the Config tab after <strong>changing</strong> this switch, SBA asks whether you also want to apply it to people who already hold the calling:</p>
@@ -380,10 +382,10 @@
     <li>Change or remove <strong>temporary</strong> seats. Automatic and ongoing seats show them no Edit or Remove option at all.</li>
   </ul>
   <p>Everything else is unchanged: their requests land in your queue like anyone else's, and you complete or reject them the same way.</p>
-  <div class="callout"><span class="lbl">Every row states its level</span><p>The <span class="ui">App&nbsp;Access</span> page labels every row with its access level — either <span class="badge full">Full</span> or <span class="badge limited">LIMITED</span>. In the table the badge sits in the <span class="ui">Scope</span> column, just after the scope name. In the card view it sits beside each grant's reason, because one scope can hold grants at different levels.</p></div>
-  <div class="callout warn"><span class="lbl">To change someone's level, delete the grant and add it again</span><p>There's no way to edit a grant's access level in place. Delete the existing grant, then use <span class="ui">Add&nbsp;manual&nbsp;access</span> to re-add the person at the level you want. Their sign-in isn't affected in between — but until you re-add them, they have no app access at all, so do both steps together.</p></div>
+  <div class="callout"><span class="lbl">Every row states its level</span><p>The <span class="ui">App&nbsp;Access</span> page labels every row with its access level — either <span class="badge full">Full</span> or <span class="badge limited">LIMITED</span>. In the table the badge sits in the <span class="ui">Scope</span> column, just after the scope name. In the card view it sits beside each calling or reason, because one scope can hold entries at different levels — a ward where the Bishop is Full and the Elders Quorum President is Limited, for instance.</p></div>
+  <div class="callout warn"><span class="lbl">To change someone's level, delete the grant and add it again</span><p>There's no way to edit a grant's access level in place. Delete the existing grant, then use <span class="ui">Add&nbsp;manual&nbsp;access</span> to re-add the person at the level you want. Their sign-in isn't affected in between — but until you re-add them, they have no app access at all, so do both steps together.</p><p>This covers manual grants only. Calling-based rows are read-only — to change what an Elders Quorum President holds, either use the grant and revoke steps in the section above, or add them a full manual grant, which makes them full everywhere in the stake.</p></div>
   <div class="callout"><span class="lbl">One full grant anywhere makes the person full</span><p>Access levels are worked out per stake, not per grant. If someone holds several grants, they're limited only when <em>every</em> one of them is limited. Add a full grant in any scope and they become full everywhere in that stake; delete their last full grant and they drop back to limited. Anyone who is an active Kindoo Manager is always full, whatever their grants say.</p></div>
-  <div class="callout"><span class="lbl">Calling-based access is always full</span><p>Access that comes from a calling is full access today. The level applies only to grants you add by hand.</p></div>
+  <div class="callout"><span class="lbl">Calling-based access is full, with one exception</span><p>Every calling on the app-access list grants <span class="badge full">Full</span> access except <strong>Elders Quorum President</strong>, which grants <span class="badge limited">LIMITED</span> access in stakes that have turned that setting on (see <a href="#appaccess">above</a>). The level is recorded on the person's access record at the moment access is granted, so the <span class="ui">App&nbsp;Access</span> page shows the level each row actually carries — it never guesses from the calling's name. That's also why a president who had access before the change still reads <span class="badge full">Full</span>: their record was written under the old rule and hasn't been rewritten.</p></div>
   <p class="small">A level change takes effect the next time the person's sign-in refreshes — within a couple of seconds if they're using the app, or up to about an hour if they've left it idle. Signing out and back in applies it immediately.</p>
 
   <!-- 9 -->
@@ -444,7 +446,7 @@
   <p>Check that <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> is on under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, then run Sync so their calling is picked up. If you turned that setting on and skipped the <span class="ui">Grant&nbsp;access&nbsp;now</span> step, a Sync run is what grants them access. Note the setting covers the president only — not quorum counselors or the secretary — and their calling must be current in Kindoo. (See <a href="#appaccess">Section 8</a>.)</p>
 
   <h4>A leader says the request form only offers temporary access.</h4>
-  <p>They hold a <strong>Limited</strong> grant. On the <span class="ui">App&nbsp;Access</span> page, check the <span class="ui">Scope</span> column of their row for a <span class="badge limited">LIMITED</span> badge. If they should have full authority, delete that grant and re-add it at the <strong>Full</strong> level — there's no in-place level edit. Remember that one full grant anywhere in the stake makes them full everywhere in it. (See <a href="#levels">Section 8</a>.)</p>
+  <p>They have <strong>Limited</strong> access. On the <span class="ui">App&nbsp;Access</span> page, check the <span class="ui">Scope</span> column of their row for a <span class="badge limited">LIMITED</span> badge. Two things land someone there: a manual grant added at the <strong>Limited</strong> level, or the <strong>Elders Quorum President</strong> calling in a stake with that setting on. For a manual grant, delete it and re-add it at the <strong>Full</strong> level — there's no in-place level edit. For an Elders Quorum President, Limited is what the calling grants; give them a full manual grant if they need more. Either way, one full grant anywhere in the stake makes them full everywhere in it. (See <a href="#levels">Section 8</a>.)</p>
 
   <h4>Someone with limited access can't submit — "This ward has no building configured."</h4>
   <p>A limited ward-scope request is tied to the ward's own building, and that ward has none set. Open <span class="ui">Configuration&nbsp;→&nbsp;Wards</span>, set the ward's building, and have them try again.</p>
@@ -465,7 +467,7 @@
       <tr><td><strong>Drift</strong></td><td>A difference between SBA's seat list and Kindoo's actual state, surfaced by Sync.</td></tr>
       <tr><td><strong>Provision</strong></td><td>Making the access change in Kindoo (inviting a user, granting doors) when completing a request.</td></tr>
       <tr><td><strong>Organization</strong></td><td>An optional stake-level grouping for seats, used for reporting against an organization's own cap.</td></tr>
-      <tr><td><strong>Access level</strong></td><td>Full or Limited — how much authority a manual app-access grant carries. See <a href="#levels">Section 8</a>.</td></tr>
+      <tr><td><strong>Access level</strong></td><td>Full or Limited — how much authority someone's app access carries. You choose it on a manual grant; the Elders Quorum President calling always grants Limited. See <a href="#levels">Section 8</a>.</td></tr>
     </tbody>
   </table>
 
@@ -475,7 +477,7 @@
 
   <footer>
     <div class="footer-grid">
-      <span><strong>Stake Building Access</strong> — Kindoo Manager Guide<br>Version 1.2 · August 2026</span>
+      <span><strong>Stake Building Access</strong> — Kindoo Manager Guide<br>Version 1.3 · August 2026</span>
       <span>stakebuildingaccess.org<br><a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a></span>
     </div>
   </footer>

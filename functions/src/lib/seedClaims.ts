@@ -11,10 +11,12 @@
 //
 // Reads a deliberately minimal access-doc shape: presence of
 // `importer_callings` OR `manual_grants` with at least one non-empty
-// scope, plus each grant's access tier (D25 limited access).
+// scope, plus each grant's STORED access tier (D25 limited access) —
+// `manual_grants[scope][].level` on the manual side, and per D26
+// `importer_limited_callings[scope]` on the importer side. Nothing here
+// classifies a calling by name; the tier is whatever the writer stamped.
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
-import { LIMITED_ACCESS_CALLINGS, isLimitedAccessCalling } from '@kindoo/shared';
 import { getDb } from './admin.js';
 import { getStakeIds } from './stakeIds.js';
 
@@ -118,25 +120,24 @@ export function isLimitedTier(opts: { limited: boolean; manager: boolean }): boo
  * `limited` is true iff the user holds >=1 grant AND *every* grant
  * across *all* scopes is limited — one full grant anywhere in the doc
  * makes the whole stake block full. A grant counts as limited only on
- * positive evidence: an importer calling listed in `limitedCallings`,
- * or a manual grant object whose `level === 'limited'`. Everything else
- * — a missing `level`, `'full'`, wrong casing, a null / string / array
- * entry — counts as FULL. Garbage data must never be read as a
- * restriction; the failure direction is toward more access, not less.
+ * positive evidence STORED ON THE DOC: an importer calling named in
+ * `importer_limited_callings[scope]`, or a manual grant object whose
+ * `level === 'limited'`. Everything else — a missing `level`, `'full'`,
+ * wrong casing, a null / string / array entry, an absent or malformed
+ * `importer_limited_callings` — counts as FULL. Garbage data must never
+ * be read as a restriction; the failure direction is toward more access,
+ * not less.
  *
- * `limitedCallings` is injectable so callers (and tests) can exercise
- * the importer-limited path while the shipped
- * {@link LIMITED_ACCESS_CALLINGS} set is still empty. It is the seam
- * the Elders-Quorum-President follow-up flips.
+ * Nothing here classifies a calling by name (D26). The writer decided
+ * the tier when it wrote the record, which is why a doc written before
+ * the field existed (no `importer_limited_callings`) reads exactly as it
+ * always did: all-full, no migration.
  *
  * Tolerant of missing fields, partial shapes, and arrays of mixed
  * truthiness — the trigger should never reject inputs that are merely
  * "not yet filled in."
  */
-export function scopesFromAccessDoc(
-  data: Record<string, unknown> | undefined,
-  limitedCallings: ReadonlySet<string> = LIMITED_ACCESS_CALLINGS,
-): {
+export function scopesFromAccessDoc(data: Record<string, unknown> | undefined): {
   hasStake: boolean;
   wards: string[];
   limited: boolean;
@@ -144,6 +145,9 @@ export function scopesFromAccessDoc(
   if (!data) return { hasStake: false, wards: [], limited: false };
 
   const importer = isPlainObject(data['importer_callings']) ? data['importer_callings'] : {};
+  const importerLimited = isPlainObject(data['importer_limited_callings'])
+    ? data['importer_limited_callings']
+    : {};
   const manual = isPlainObject(data['manual_grants']) ? data['manual_grants'] : {};
 
   const wardSet = new Set<string>();
@@ -155,9 +159,14 @@ export function scopesFromAccessDoc(
     if (!hasNonEmptyArray(value)) continue;
     if (scope === 'stake') hasStake = true;
     else wardSet.add(scope);
+    // Names the writer stamped as limited for THIS scope. A non-array
+    // (or absent) value yields an empty set ⇒ every calling here is
+    // full. Entries naming a calling that isn't in `importer_callings`
+    // simply never match.
+    const limitedKeys = limitedKeysForScope(importerLimited[scope]);
     for (const calling of value) {
       sawGrant = true;
-      if (typeof calling !== 'string' || !isLimitedAccessCalling(calling, limitedCallings)) {
+      if (typeof calling !== 'string' || !limitedKeys.has(normalizeCalling(calling))) {
         sawFullGrant = true;
       }
     }
@@ -194,6 +203,28 @@ function isNonEmptyStakeClaims(s: StakeClaims): boolean {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Trim + lowercase — the key scheme `appAccessCallings.ts` matches on,
+ * so a hand-edited stamp in different casing still lines up. */
+function normalizeCalling(calling: string): string {
+  return calling.trim().toLowerCase();
+}
+
+const EMPTY_KEYS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * `importer_limited_callings[scope]` → the set of normalised calling
+ * keys it marks limited. Anything that isn't an array of strings
+ * contributes nothing, so malformed data degrades to "all full".
+ */
+function limitedKeysForScope(value: unknown): ReadonlySet<string> {
+  if (!Array.isArray(value)) return EMPTY_KEYS;
+  const keys = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry === 'string') keys.add(normalizeCalling(entry));
+  }
+  return keys;
 }
 
 function hasNonEmptyArray(v: unknown): v is unknown[] {
