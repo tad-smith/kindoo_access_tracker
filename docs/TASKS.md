@@ -7,9 +7,11 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
-Status: open
+Status: done (2026-08-03 — `feat/remote-apply-docs2`, ahead of PR #250 merging)
 Owner: @docs-keeper
 Phase: remote apply (D27)
+
+**Done.** `spec.md` §16 now carries the precedence rule and the reason for it (the duplicate's loser is claimed after the job that succeeded, so recency reports a failure on a request that applied), the withheld-until-resolved button, the two-phone duplicate as an accepted limitation, and the reworded `failed` row. Landed with the rest of the review follow-ups: the stranded-job sweep (§16 "When the desktop stops partway"), the desktop button gate, and the opt-out re-check — `architecture.md` D27 (k)–(o), `firebase-schema.md` §3.4 / §5.1, `docs/changelog/remote-apply.md`.
 
 `spec.md` §16 already claims "one job per request at a time"; the queue now holds that claim properly (the tap latch is synchronous, so two taps in one task can't both write). What §16 doesn't say is what the card does when a request ends up with several jobs anyway — the create rule permits it, so the display has to be defined:
 
