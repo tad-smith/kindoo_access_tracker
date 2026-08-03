@@ -1,21 +1,29 @@
 // Remote apply — the phone-facing half of D27.
 //
-// The manager's desktop extension publishes presence; this surface
-// turns that into (a) one plain-language line at the top of the queue
-// saying whether the desktop can act, and (b) an **Apply via extension**
-// button on each pending card while it can. Tapping writes a job doc;
-// the desktop claims it, runs the same provisioning code path as its own
+// The manager's desktop extension publishes one presence doc per Kindoo
+// site it has a live tab on; this surface turns that into (a) one plain
+// line at the top of the queue naming the sites that are covered, and
+// (b) an **Apply via extension** button on each pending card whose site
+// one of those tabs can actually serve. Tapping writes a job doc; the
+// desktop claims it, runs the same provisioning code path as its own
 // button, and writes the outcome back, which the row renders live.
 //
 // Everything here is written for a phone first — a manager at the
 // building on their phone is the entire reason the feature exists.
 //
-// Deliberately absent: any site-mismatch check. `checkRequestSite` runs
-// on the desktop, which is the only place that knows which Kindoo site
-// is actually open, and its message names both sites. We display it.
+// Coverage is per request, not per manager, because a Kindoo tab can
+// only provision for the site it is inside. The card that can't be
+// applied says which site to open rather than leaving a manager to
+// discover it from a failed job — the old `site_mismatch` message told
+// them to switch sites in Kindoo, advice that is actively wrong when
+// they already have that site open in the next tab.
 
 import { useEffect, useRef, useState } from 'react';
-import { isRemoteApplyTerminal, type RemoteApplyJob } from '@kindoo/shared';
+import {
+  isRemoteApplyTerminal,
+  type RemoteApplyDesktopWithId,
+  type RemoteApplyJob,
+} from '@kindoo/shared';
 import { Button } from '../../../components/ui/Button';
 import {
   useQueueRemoteApplyJob,
@@ -25,12 +33,19 @@ import {
 } from './hooks';
 
 /**
- * One line under the queue header: can the manager's own desktop act
- * right now, and if not, what should they go do about it. Renders
- * nothing until presence resolves so the page doesn't flash advice at
- * someone whose desktop is fine.
+ * One line under the queue header: which Kindoo sites the manager can
+ * apply for right now, or what to go do about it when the answer is
+ * none. Renders nothing until presence resolves so the page doesn't
+ * flash advice at someone whose desktop is fine.
  */
-export function RemoteApplyPresenceNote({ presence }: { presence: RemoteApplyPresenceResult }) {
+export function RemoteApplyPresenceNote({
+  presence,
+  siteNames,
+}: {
+  presence: RemoteApplyPresenceResult;
+  /** Display names of the covered sites, in the order they should read. */
+  siteNames: readonly string[];
+}) {
   if (presence.state === 'loading') return null;
   return (
     <p
@@ -40,31 +55,70 @@ export function RemoteApplyPresenceNote({ presence }: { presence: RemoteApplyPre
       role="status"
     >
       <span className="kd-remote-apply-dot" aria-hidden="true" />
-      {presenceCopy(presence)}
+      {presenceCopy(presence.state, siteNames)}
     </p>
   );
 }
 
-function presenceCopy(presence: RemoteApplyPresenceResult): string {
-  switch (presence.state) {
-    case 'online':
-      return presence.siteName
-        ? `Desktop online — Kindoo site: ${presence.siteName}`
-        : 'Desktop online';
+/**
+ * The queue-header sentence. Exported for direct unit tests — this copy
+ * is the deliverable of the per-site change, and it has to read right
+ * at zero, one, and several live tabs.
+ */
+export function presenceCopy(
+  state: RemoteApplyPresenceResult['state'],
+  siteNames: readonly string[],
+): string {
+  switch (state) {
+    case 'live':
+      // Naming every covered site is the point: with two tabs open,
+      // naming one would read as a promise about the other.
+      return siteNames.length > 0
+        ? `You can apply requests for ${joinNames(siteNames)} from here.`
+        : 'Kindoo is open on your computer — you can apply requests from here.';
     case 'stale':
-      return "Your desktop extension isn't online — open Kindoo in Chrome on your computer.";
+      return 'Open Kindoo in Chrome on your computer to apply requests from here.';
     case 'other-stake':
-      return 'Your desktop has a different stake open in Kindoo. Switch it to this stake to apply from your phone.';
+      return 'Your computer has a different stake open in Kindoo. Switch it to this stake to apply requests from here.';
     case 'off':
     case 'loading':
-      return 'Turn on “Allow requests from my phone” in the extension on your desktop.';
+      return 'Turn on “Allow requests from my phone” in the extension on your computer.';
   }
+}
+
+/**
+ * `A`, `A and B`, `A, B and C`. Serial comma omitted deliberately — at
+ * 390px the list is read at a glance, and the shorter form wraps less.
+ */
+export function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
 export interface RemoteApplyRowProps {
   requestId: string;
-  /** Desktop is opted in, fresh, and in this stake. */
-  online: boolean;
+  /**
+   * The site key this request must be provisioned on, from
+   * `remoteApplyTargetSiteKey`. `null` means the wards / buildings
+   * catalogues haven't landed, so the derivation isn't trustworthy yet
+   * — the row offers nothing rather than route a request to whichever
+   * site an empty catalogue implies.
+   */
+  targetSiteKey: string | null;
+  /**
+   * The live tab that can run THIS request, or null when none can.
+   * Resolved by `remoteApplyDesktopForRequest` against the request's own
+   * site — a fresh tab on a different site cannot help here.
+   */
+  desktop: RemoteApplyDesktopWithId | null;
+  /**
+   * At least one tab is live in this stake. Gates the "open <site>"
+   * line: with nothing live at all the header already says to open
+   * Kindoo, and repeating that on every card is noise.
+   */
+  anyDesktopLive: boolean;
+  /** Display name of the site this request needs, when it resolves. */
+  requestSiteName?: string | null;
   /**
    * The job this request's card speaks for, resolved by
    * `pickRemoteApplyJob` from every job in the mailbox — from a reload
@@ -81,13 +135,16 @@ export interface RemoteApplyRowProps {
 }
 
 /**
- * The per-card action + live job status. Renders nothing when the
- * desktop is unusable and there's no job to report, so a card looks
+ * The per-card action + live job status. Renders nothing when no tab can
+ * serve this request and there's no job to report, so a card looks
  * exactly as it did before this feature when remote apply is off.
  */
 export function RemoteApplyRow({
   requestId,
-  online,
+  targetSiteKey,
+  desktop,
+  anyDesktopLive,
+  requestSiteName,
   job,
   jobsLoading = false,
 }: RemoteApplyRowProps) {
@@ -126,24 +183,36 @@ export function RemoteApplyRow({
     queue.isPending || createStarted || (status !== undefined && !isRemoteApplyTerminal(status));
 
   const apply = () => {
-    if (inFlight || createStartedRef.current) return;
+    if (inFlight || createStartedRef.current || targetSiteKey === null) return;
     createStartedRef.current = true;
     setCreateStarted(true);
     const tappedAt = Date.now();
-    queue.mutate(requestId, {
-      onSuccess: () => {
-        setQueuedAtMs(tappedAt);
+    queue.mutate(
+      { requestId, targetSiteKey },
+      {
+        onSuccess: () => {
+          setQueuedAtMs(tappedAt);
+        },
+        onError: () => {
+          // Nothing was written, so nothing is in flight — let them retry.
+          createStartedRef.current = false;
+          setCreateStarted(false);
+        },
       },
-      onError: () => {
-        // Nothing was written, so nothing is in flight — let them retry.
-        createStartedRef.current = false;
-        setCreateStarted(false);
-      },
-    });
+    );
   };
 
-  const showButton = online && !inFlight && !jobsLoading && !isSettled(status);
-  if (!showButton && !hasJob && !inFlight && !queue.isError) return null;
+  const covered = desktop !== null;
+  const showButton = covered && !inFlight && !jobsLoading && !isSettled(status);
+  // The new not-covered state. Only worth saying while something IS
+  // live — it is the difference between the sites they have open and
+  // the one this request needs, and with nothing open there is no
+  // difference to explain. Suppressed too when the target site didn't
+  // resolve: there is no site to name and no claim we can honestly make
+  // about whether a tab could serve it.
+  const showNeedsSite =
+    !covered && anyDesktopLive && targetSiteKey !== null && !inFlight && !isSettled(status);
+  if (!showButton && !showNeedsSite && !hasJob && !inFlight && !queue.isError) return null;
 
   return (
     <div className="kd-remote-apply" data-testid={`remote-apply-${requestId}`}>
@@ -158,6 +227,14 @@ export function RemoteApplyRow({
           Couldn&apos;t send this to your desktop. Try again.
         </div>
       ) : null}
+      {showNeedsSite ? (
+        <p
+          className="kd-remote-apply-needs-site"
+          data-testid={`remote-apply-needs-site-${requestId}`}
+        >
+          {needsSiteCopy(requestSiteName)}
+        </p>
+      ) : null}
       {showButton ? (
         <Button
           variant="secondary"
@@ -170,6 +247,17 @@ export function RemoteApplyRow({
       ) : null}
     </div>
   );
+}
+
+/**
+ * What a card says when the manager's live tabs are on other sites.
+ * Names the site so they can go open the right one — the whole reason
+ * presence is keyed by site.
+ */
+export function needsSiteCopy(requestSiteName: string | null | undefined): string {
+  return requestSiteName
+    ? `Open ${requestSiteName} in Kindoo on your computer to apply this one.`
+    : "Open this request's Kindoo site in Chrome on your computer to apply it.";
 }
 
 /**

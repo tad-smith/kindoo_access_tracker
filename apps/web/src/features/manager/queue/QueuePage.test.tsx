@@ -22,6 +22,13 @@ vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
   useRemoteApplyPresence: () => useRemoteApplyPresenceMock(),
   useRemoteApplyJobsByRequest: () => ({ byRequest: new Map(), isLoading: false }),
+  // The catalogues remote apply derives a request's target Kindoo site
+  // from. Empty here — the surface that reads them is stubbed below.
+  useKindooSites: () => ({ data: [], isLoading: false }),
+  useQueueWards: () => ({ data: [], isLoading: false }),
+
+  useQueueBuildings: () => ({ data: [], isLoading: false }),
+  useQueueStakeDoc: () => ({ data: undefined, isLoading: false }),
 }));
 
 // The remote-apply surface has its own test file; stub it out here so
@@ -120,8 +127,8 @@ beforeEach(() => {
   // it did before remote apply existed.
   useRemoteApplyPresenceMock.mockReturnValue({
     state: 'off',
-    online: false,
-    siteName: null,
+    desktops: [],
+    desktopForSite: () => null,
     presence: undefined,
   });
   useSeatForMemberMock.mockReturnValue(liveDocResult(undefined));
@@ -826,11 +833,14 @@ describe('<ManagerQueuePage /> — extension note', () => {
     );
   });
 
-  it('tells the manager an apply can be started here when their desktop is online', () => {
+  it('tells the manager an apply can be started here once Kindoo is open on their computer', () => {
+    // Deliberately not "when your desktop is online" — coverage is per
+    // Kindoo site now, and the presence line below the note is what
+    // answers which requests are actually applicable.
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
     expect(screen.getByTestId('queue-extension-note').textContent).toMatch(
-      /when your desktop is online, you can apply them from here/i,
+      /with Kindoo open there, you can apply them from here/i,
     );
   });
 
