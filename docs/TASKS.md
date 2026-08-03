@@ -7,9 +7,22 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-81] Spec §4.4 / §15 / §16: the web queue's duplicate gate, and the phone's result dialog
-Status: open
+Status: done (2026-08-03 — `feat/remote-apply-docs4`, against `feat/remote-apply-shared2` at `60c1297`)
 Owner: @docs-keeper
 Phase: remote apply (D27)
+
+**Done.** Both changes documented, plus the three other review fixes that landed alongside them and one correction to the desktop-side expiry paragraph `extension-engineer` had added to §16.
+
+- `spec.md` §5.3 — the duplicate-chip sentence gained the carve-out and names `addBlockedByExistingSeat` as the single definition, stating outright that the chip and the withheld Apply button are one boolean; the per-card-control sentence now mentions the dialog.
+- `spec.md` §15 — the extension queue bullet re-pointed at the shared predicate, with the drift that produced it recorded (`isAdd && !!seat` did not fail safe) and T-82 named as the extension's adoption.
+- `spec.md` §16 — new **"Acknowledging the result"** subsection: raise-on-transition, undismissable, all four terminal statuses, the `applied` note + "Now over cap:" block, and why `partial` has no retry. Plus a new paragraph under "Opting in" for the unresolved-tab retry budget, and the desktop-side expiry passage split into two paragraphs with the job-trail distinction added.
+- `firebase-schema.md` §3.4 — `over_caps` on the outcome shape with its writer rules; the `cancelled` lifecycle bullet rewritten around two writers; the lifecycle diagram, written-by, and read-by corrected; the terminal-write gaps section is now three gaps, with the CEL-cannot-iterate and render-bound reasoning. §6 rules paste and §6.1 notes updated.
+- `architecture.md` D27 — extended with **(v)–(z)**; (b)'s one-call-per-60s claim amended in place.
+- `docs/changelog/remote-apply.md` — new "The second review round, and the smoke test that produced a dialog" section, the deliberate no-`partial`-retry note, two "what didn't change" entries, two new known issues (T-82, the unvalidated `over_caps` entry shape), and the fourth-pass doc summary.
+- `packages/shared/CLAUDE.md` — new convention: a predicate two surfaces must agree on lives in `shared`, take facts as arguments not prop shapes. Consumers line corrected (`extension/` was missing) and the file layout given `existingSeatGate.ts` / `remoteApply.ts`.
+- `extension/CLAUDE.md` — verified against the merged code, not rewritten. The eight remote-apply bullets are accurate.
+
+Original entry:
 
 Two behavioural changes on `feat/remote-apply-webfix2` that `spec.md` doesn't yet describe.
 
