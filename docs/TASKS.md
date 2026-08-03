@@ -6,6 +6,23 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-78] A server-side remote-apply job writer must stamp `target_site_key` itself
+Status: open
+Owner: @backend-engineer
+Phase: remote apply (D27)
+
+Pre-emptive. Nothing to do today — this exists so the assumption is written down before someone unknowingly invalidates it.
+
+A `remoteApply/{canonicalEmail}/jobs/{jobId}` doc with no `target_site_key` is **permanently stuck**, not merely malformed. The rules' `jobCoreUnchanged` reads `before.target_site_key` bare; a missing-key read errors, and an erroring condition denies — and that helper gates `allow update` ahead of all three transition branches. So such a doc can't be claimed by a desktop, can't be cancelled by the phone's no-pickup timeout, and can't be reported on. `allow delete: if false` means no client can clear it either: Console or Admin SDK only.
+
+This is unreachable today, and only for one reason: **every writer of that collection is a client**, gated by a create rule requiring `target_site_key is string && .size() > 0`. Nothing in `functions/src` writes it.
+
+If a Cloud Function ever queues remote-apply jobs server-side — an auto-provision trigger, a retry sweep, a backfill — it **bypasses rules entirely** and can mint fieldless docs for real. Such a writer must derive and stamp `target_site_key` at the write. The derivation is settled and already implemented twice (`extension/src/content/kindoo/siteCheck.ts` → `checkRequestSite`, and the phone's queue-job writer): `request.scope === 'stake'` → the home site unconditionally; a ward scope → `resolveWardSite(ward, buildings)`, where `null` also means home. Run the result through `remoteApplySiteKey` (`@kindoo/shared`).
+
+The extension defends by dropping such docs from both its queued and running queries with a warning rather than guessing a site — guessing would buy a doomed claim every poll that `claimRemoteApplyJob` misreports as "already claimed elsewhere", and would provision real Kindoo access against a guessed site if the freeze were ever lifted. That defence is deliberately inert; don't treat its existence as licence to write fieldless docs.
+
+Noted in `extension/CLAUDE.md` (remote apply bullets) and on the create rule in `firestore/firestore.rules`. Surfaced during PR #250 by `extension-engineer` and `backend-engineer` working the rules.
+
 ## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
 Status: done (2026-08-03 — `feat/remote-apply-docs2`, ahead of PR #250 merging)
 Owner: @docs-keeper
