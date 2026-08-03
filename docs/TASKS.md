@@ -7,16 +7,26 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-78] Spec §16 + §15: remote-apply presence is per Kindoo site, not per manager
-Status: open
+Status: done (2026-08-03 — `feat/remote-apply-docs3`, against `feat/remote-apply` at `31366f8`)
 Owner: @docs-keeper
 Phase: remote apply (D27)
 
-Landed on `feat/remote-apply-web2` (PR #250). `spec.md` §16 and the §15 Requests Queue bullet still describe the per-manager model, which is now wrong in four places:
+**Done.** All four drifts closed, plus three the walk of the merged code turned up.
+
+- `spec.md` §16 — new "Coverage is per Kindoo site, not per manager" paragraph; the opt-in section split into the profile-wide flag and the per-site heartbeat, with the opt-out delete and the move-doesn't-delete rule; the presence table rewritten around the four real states and their verbatim copy; a new **"Which Kindoo site a request needs"** subsection carrying the derivation, the `AccessRequest.kindoo_site_id` warning, the no-catalogue-no-button rule, and the not-covered card copy; the claim now described as filter-then-claim over a page; the sweep's two thresholds and the sweep-before-session-check ordering; the site-mismatch paragraph rewritten as "the phone routes, the desktop refuses".
+- `spec.md` §5.3 — per-card gating, and the extension note's quoted sentence updated to the new wording. §3.1's `remoteApply` bullet updated for the three-level shape and the split `isManager` gating.
+- `firebase-schema.md` §3.4 — restructured around the three levels; new `desktops/{siteKey}` section (site keys, the reserved `'home'`, whole-doc `setDoc`, owner-delete); `target_site_key` added to the job shape with its derivation and the `kindoo_site_id` warning stated outright; the frozen-job note with the **clear-staging-before-deploy** warning; the parent doc's missing `isManager` gate and why `ext_version.size() <= 32` is load-bearing. §5.1's no-composite-index note confirmed and corrected (`limit(20)`, and why site routing added no index). §6 rules paste and §6.1 notes updated.
+- `architecture.md` D27 — extended with **(p)–(u)** rather than a new D-number; (g) and (k) amended in place.
+- `docs/changelog/remote-apply.md` — new "The multi-site reshape, and the question that caused it" section, including the deploy warning; stale bullets in "What shipped", "What didn't change", and "Known issues" corrected.
+- `extension/CLAUDE.md` — bullet count corrected (said five, lists seven). Its remote-apply content was already accurate against the merged code.
+
+Original drifts:
 
 1. **Presence is two docs, not one.** `remoteApply/{canonical}` carries only the profile-wide opt-in; liveness lives in `remoteApply/{canonical}/desktops/{siteKey}`, one doc per Kindoo site with a live tab. Two tabs on two sites coexist instead of overwriting each other.
 2. **The Apply button is gated per request, not per manager.** A request's target Kindoo site is *derived* (scope → ward → building; stake scope is home), and the button appears only when a live tab is on that site. `AccessRequest.kindoo_site_id` is NOT that site — it is the site of the grant a `remove` targets — so nothing reads it here. A request whose target site can't be resolved (orphaned ward/building reference, catalogues not loaded) gets no button: an unknown target can't be routed.
 3. **Jobs carry `target_site_key`** (required; `'home'` is the reserved key for the home site, which has no `kindooSites` doc). Only a tab inside that site may claim it. Also needs a `firebase-schema.md` §3.4 field entry.
 4. **The copy changed.** The queue-header line now names *every* covered site ("You can apply requests for Colorado Springs North and East Stake from here."), a not-covered card names the site to open ("Open East Stake in Kindoo on your computer to apply this one."), and the nothing-live line reads "Open Kindoo in Chrome on your computer to apply requests from here." The top-of-queue extension note lost its "When your desktop is online" clause — spec.md §15 quotes that sentence verbatim; it now reads "Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open there, you can apply them from here."
+
 ## [T-79] A server-side remote-apply job writer must stamp `target_site_key` itself
 Status: open
 Owner: @backend-engineer
