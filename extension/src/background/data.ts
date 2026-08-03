@@ -24,6 +24,7 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -45,7 +46,7 @@ import type {
   Stake,
   Ward,
 } from '@kindoo/shared';
-import { canonicalEmail } from '@kindoo/shared';
+import { REMOTE_APPLY_HOME_SITE_KEY, canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
 import type {
@@ -650,15 +651,45 @@ export async function resolveEidStakes(
 // ---------------------------------------------------------------------------
 
 /**
- * Publish this desktop's presence — the heartbeat the phone reads to
- * decide whether to offer "Apply via extension" at all.
+ * Bound on both job queries. Not a page size in the paging sense —
+ * nothing pages past it — but a ceiling on how much one poll can read.
  *
- * The caller only sends this while the Kindoo session is usable, with
- * one exception: the disable write (`enabled: false`) fires regardless,
- * because clearing consent must never be blocked by a dead Kindoo tab.
+ * The queued query needs the headroom because it is now a filter-then-
+ * claim: jobs this tab cannot serve sit ahead of ones it can, and a
+ * limit that only covered the unservable ones would deadlock the tab
+ * that could do the work. The backlog is bounded anyway — the phone
+ * cancels any job nobody claims within `REMOTE_APPLY_PICKUP_TIMEOUT_MS`
+ * (90s), so what accumulates is at most what a manager can tap in 90
+ * seconds, against a stake seeing 1–2 requests a week.
+ */
+const REMOTE_APPLY_JOB_QUERY_LIMIT = 20;
+
+/**
+ * Publish or revoke this desktop's presence.
  *
- * `setDoc(..., { merge: true })` rather than `updateDoc` — the first
- * heartbeat on a new profile creates the doc.
+ * Two docs, because the two facts have different lifetimes:
+ *
+ *   - `remoteApply/{canonical}` carries the profile-wide opt-in. Ticking
+ *     the box in one Kindoo tab enables every tab in that Chrome
+ *     profile, so this level knows nothing about sites.
+ *   - `remoteApply/{canonical}/desktops/{siteId}` carries liveness for
+ *     ONE Kindoo site. A tab can only provision for the site it is
+ *     currently inside, so a second tab on a second site writes a second
+ *     doc instead of overwriting the first — which is what made
+ *     `kindoo_eid` flap between sites every 60 seconds.
+ *
+ * The caller only sends the heartbeat form while the Kindoo session is
+ * usable AND its EID resolves to a configured site. The revoke form
+ * fires regardless: clearing consent must never be blocked by a dead
+ * Kindoo tab.
+ *
+ * Both writes are whole-document `setDoc`s, NOT `{ merge: true }`. Rules
+ * enforce an exact key set on each, and rules see the MERGED result — so
+ * merging onto a parent doc that a previous extension version left
+ * carrying `stake_id` / `last_seen_at` / `kindoo_eid` / `kindoo_site_name`
+ * produces a seven-key document and a `permission-denied`. Overwriting is
+ * also what migrates those profiles: the first heartbeat from this
+ * version drops the fields that moved down to `desktops`.
  */
 export async function writeRemotePresence(
   payload: RemoteApplyPresenceInput,
@@ -667,39 +698,60 @@ export async function writeRemotePresence(
   const actorRef = await readActor(actor);
   const db = firestore();
   const ref = doc(db, 'remoteApply', actorRef.canonical);
-  await setDoc(
-    ref,
-    {
-      remote_apply_enabled: payload.enabled,
-      last_seen_at: serverTimestamp(),
-      stake_id: payload.stakeId,
-      kindoo_eid: payload.kindooEid,
-      kindoo_site_name: payload.kindooSiteName,
-      ext_version: payload.extVersion,
-      lastActor: actorRef,
-    },
-    { merge: true },
-  );
+  await setDoc(ref, {
+    remote_apply_enabled: payload.enabled,
+    ext_version: payload.extVersion,
+    lastActor: actorRef,
+  });
+  if (payload.siteKey === null) return;
+  const desktopRef = doc(db, 'remoteApply', actorRef.canonical, 'desktops', payload.siteKey);
+  if (!payload.enabled) {
+    // Delete rather than backdate: a stale-but-present doc still names a
+    // site on the phone, and the parent flag having gone false means no
+    // sibling tab is serving that site either. Best effort — the flag is
+    // what actually gates the button, so a failed delete costs the
+    // manager a lingering site label for one staleness window, not a
+    // working button they revoked.
+    try {
+      await deleteDoc(desktopRef);
+    } catch (err) {
+      console.warn('[sba-ext] remote apply: could not clear the desktop doc', err);
+    }
+    return;
+  }
+  await setDoc(desktopRef, {
+    stake_id: payload.stakeId,
+    // Doc id and this field encode the same site two ways because a doc
+    // id cannot be null. Rules deliberately don't check that they agree,
+    // so keeping them consistent is this function's job — both derive
+    // from one `resolveTabSite` result, never independently.
+    kindoo_site_id: payload.kindooSiteId,
+    last_seen_at: serverTimestamp(),
+    kindoo_eid: payload.kindooEid,
+    kindoo_site_name: payload.kindooSiteName,
+    ext_version: payload.extVersion,
+    lastActor: actorRef,
+  });
 }
 
 /**
- * Return at most one `queued` job from the operator's mailbox, or
- * `null` when the mailbox is empty. Single equality filter + `limit(1)`
- * — no composite index required.
+ * A page of `queued` jobs from the operator's mailbox — the input to the
+ * poller's site-aware claim.
+ *
+ * Deliberately unordered. Ordering by `created_at` alongside the status
+ * equality would need a composite index for a query that, at this scale,
+ * returns nought or one document; document-id order is arbitrary but
+ * deterministic, and the caller claims the first job it can serve rather
+ * than insisting on the oldest.
  */
-export async function findQueuedRemoteApplyJob(actor: User): Promise<RemoteApplyJobRef | null> {
+export async function findQueuedRemoteApplyJobs(actor: User): Promise<RemoteApplyJobRef[]> {
   const actorRef = await readActor(actor);
   const db = firestore();
   const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
-  const snap = await getDocs(query(jobs, where('status', '==', 'queued'), limit(1)));
-  const first = snap.docs[0];
-  if (!first) return null;
-  const data = first.data() as RemoteApplyJob;
-  return {
-    jobId: first.id,
-    requestId: data.request_id,
-    stakeId: data.stake_id,
-  };
+  const snap = await getDocs(
+    query(jobs, where('status', '==', 'queued'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
+  );
+  return snap.docs.map((d) => toJobRef(d.id, d.data() as RemoteApplyJob));
 }
 
 /**
@@ -707,9 +759,8 @@ export async function findQueuedRemoteApplyJob(actor: User): Promise<RemoteApply
  * content script's stranded-job sweep.
  *
  * Same single-equality shape as the queued query, so no composite index.
- * `limit(20)` is a sanity bound, not a page size: at 1–2 requests/week a
- * mailbox with even two concurrent `running` jobs already means something
- * went wrong.
+ * At 1–2 requests/week a mailbox with even two concurrent `running` jobs
+ * already means something went wrong.
  *
  * `claimed_at` is returned as epoch ms rather than a `Timestamp` — the
  * value has to survive `chrome.runtime.sendMessage`'s structured
@@ -720,16 +771,35 @@ export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApp
   const actorRef = await readActor(actor);
   const db = firestore();
   const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
-  const snap = await getDocs(query(jobs, where('status', '==', 'running'), limit(20)));
+  const snap = await getDocs(
+    query(jobs, where('status', '==', 'running'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
+  );
   return snap.docs.map((d) => {
     const data = d.data() as RemoteApplyJob;
     return {
-      jobId: d.id,
-      requestId: data.request_id,
-      stakeId: data.stake_id,
+      ...toJobRef(d.id, data),
       claimedAtMs: toMillis(data.claimed_at) ?? toMillis(data.created_at),
     };
   });
+}
+
+/**
+ * Job doc → the wire shape.
+ *
+ * `target_site_key` is required on the type but defaulted here anyway:
+ * these docs are written by the phone, and a job that predates the field
+ * (or arrives from a client that failed to derive one) must not read as
+ * "servable by whoever asks first". Falling back to the home key keeps an
+ * unlabelled job claimable only by a home tab, which is where every
+ * single-site stake's work belongs.
+ */
+function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef {
+  return {
+    jobId,
+    requestId: data.request_id,
+    stakeId: data.stake_id,
+    targetSiteKey: data.target_site_key ?? REMOTE_APPLY_HOME_SITE_KEY,
+  };
 }
 
 /** `TimestampLike` → epoch ms, or null for anything that isn't one

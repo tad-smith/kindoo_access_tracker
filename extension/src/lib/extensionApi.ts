@@ -41,8 +41,8 @@ import type {
   DataRemoteApplyClaimJobResponse,
   DataRemoteApplyFinishJobRequest,
   DataRemoteApplyFinishJobResponse,
-  DataRemoteApplyNextJobRequest,
-  DataRemoteApplyNextJobResponse,
+  DataRemoteApplyQueuedJobsRequest,
+  DataRemoteApplyQueuedJobsResponse,
   DataRemoteApplyRunningJobsRequest,
   DataRemoteApplyRunningJobsResponse,
   DataResolveEidStakesRequest,
@@ -383,9 +383,10 @@ export async function resolveEidStakes(eid: number): Promise<ResolveEidStakesPay
 // these wrappers takes a canonical email.
 
 /**
- * Publish (or clear) this desktop's presence. Called on the heartbeat
- * while the opt-in is on and the Kindoo session is usable, and once
- * with `enabled: false` when the operator switches the opt-in off.
+ * Publish (or revoke) this desktop's presence. Called on the heartbeat
+ * while the opt-in is on, the Kindoo session is usable, and the active
+ * EID resolves to a configured site; and once with `enabled: false`
+ * when the operator switches the opt-in off.
  */
 export async function writeRemotePresence(payload: RemoteApplyPresenceInput): Promise<void> {
   const req: DataWriteRemotePresenceRequest = { type: 'data.writeRemotePresence', payload };
@@ -393,10 +394,14 @@ export async function writeRemotePresence(payload: RemoteApplyPresenceInput): Pr
   unwrap(res);
 }
 
-/** Fetch at most one queued job; `null` when the mailbox is empty. */
-export async function remoteApplyNextJob(): Promise<RemoteApplyJobRef | null> {
-  const req: DataRemoteApplyNextJobRequest = { type: 'data.remoteApplyNextJob' };
-  const res: DataRemoteApplyNextJobResponse = await sendMessage(req);
+/**
+ * A page of queued jobs; empty when the mailbox has none. The caller
+ * claims the first one its Kindoo site can serve — see
+ * `content/remoteApply/loop.ts`.
+ */
+export async function remoteApplyQueuedJobs(): Promise<RemoteApplyJobRef[]> {
+  const req: DataRemoteApplyQueuedJobsRequest = { type: 'data.remoteApplyQueuedJobs' };
+  const res: DataRemoteApplyQueuedJobsResponse = await sendMessage(req);
   return unwrap(res);
 }
 

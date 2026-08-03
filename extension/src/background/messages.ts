@@ -19,7 +19,7 @@ import {
 import { getMyPendingRequests, markRequestComplete, syncApplyFix } from '../lib/api';
 import {
   claimRemoteApplyJob,
-  findQueuedRemoteApplyJob,
+  findQueuedRemoteApplyJobs,
   findRunningRemoteApplyJobs,
   finishRemoteApplyJob,
   loadAccessByEmail,
@@ -304,7 +304,7 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
         return { ok: false, error: toWireError(err) };
       }
     }
-    case 'data.remoteApplyNextJob': {
+    case 'data.remoteApplyQueuedJobs': {
       try {
         await waitForAuthHydrated();
         const user = currentUser();
@@ -314,8 +314,8 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
             error: { code: 'unauthenticated', message: 'sign in before polling for jobs' },
           };
         }
-        const job = await findQueuedRemoteApplyJob(user);
-        return { ok: true, data: job };
+        const jobs = await findQueuedRemoteApplyJobs(user);
+        return { ok: true, data: jobs };
       } catch (err) {
         return { ok: false, error: toWireError(err) };
       }

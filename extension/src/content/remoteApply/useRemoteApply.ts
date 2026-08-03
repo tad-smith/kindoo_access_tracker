@@ -15,7 +15,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRemoteApplyEnabled } from '../../lib/remoteApplyPrefs';
 import { writeRemotePresence, type StakeConfigBundle } from '../../lib/extensionApi';
-import { readKindooSession } from '../kindoo/auth';
 import { startRemoteApplyLoop } from './loop';
 
 export interface RemoteApplyState {
@@ -47,23 +46,34 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
    * `enabled: false` on a first mount would create a presence doc for a
    * manager who never opted in. */
   const wasEnabled = useRef(false);
+  /**
+   * Site key of the desktop doc this tab last published, so opting out
+   * can delete it. Held here rather than read off the loop because the
+   * loop is already stopped by the time the disable write runs — and
+   * because resolving it afresh would need a live Kindoo session, which
+   * revoking consent must never depend on.
+   */
+  const publishedSiteKey = useRef<string | null>(null);
 
   const publishDisabled = useCallback(async () => {
-    const session = readKindooSession();
     try {
       await writeRemotePresence({
-        stakeId,
-        kindooEid: session.ok ? session.session.eid : null,
-        kindooSiteName: null,
-        extVersion: extensionVersion(),
         enabled: false,
+        // Clears the flag AND this tab's desktop doc. Flipping the
+        // profile-wide flag alone would leave the phone still naming a
+        // Kindoo site as covered for a full staleness window — a dead
+        // button with a confident label under it. Deleting is safe
+        // precisely because the flag is profile-wide: with it off, no
+        // sibling tab is serving that site either.
+        siteKey: publishedSiteKey.current,
+        extVersion: extensionVersion(),
       });
     } catch (err) {
       // Worst case the phone waits out the staleness window instead of
       // losing the button immediately. Not worth surfacing.
       console.warn('[sba-ext] remote apply: could not clear presence', err);
     }
-  }, [stakeId]);
+  }, []);
 
   useEffect(() => {
     if (!loaded) return;
@@ -83,6 +93,14 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
       onJobEnd: () => {
         setRunning(null);
         setFinishedCount((n) => n + 1);
+      },
+      // Sticky on purpose. A tab that moves to a second Kindoo site
+      // publishes the new site and leaves the old doc to go stale — a
+      // sibling tab may still be serving it, so deleting on a site
+      // switch would blank a live desktop. Only opt-out, which kills
+      // every tab in the profile, gets to delete.
+      onSitePublished: (siteKey) => {
+        publishedSiteKey.current = siteKey;
       },
     });
     // `stop()` cancels the scheduler but cannot abort a tick already

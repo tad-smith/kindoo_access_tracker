@@ -1,57 +1,97 @@
 // Unit tests for the heartbeat + poll loop.
 //
-// The heartbeat-suppression cases are the ones that matter most. The
-// phone decides whether to offer "Apply via extension" purely from the
-// freshness of this heartbeat, so any tick that publishes presence
-// while the desktop cannot actually drive Kindoo puts a button in front
-// of the manager that fails every time they press it.
+// Two families of case carry the weight.
+//
+// The heartbeat-suppression cases: the phone decides whether to offer
+// "Apply via extension" purely from the freshness of a desktop doc, so
+// any tick that publishes one while the desktop cannot actually drive
+// Kindoo puts a button in front of the manager that fails every time
+// they press it.
+//
+// The site-scoping cases: a manager with two Kindoo tabs on two sites of
+// one stake runs two of these loops at once, and the foreground one
+// polls six times as often. Nothing here may let it publish over, claim
+// from, or sweep away the other tab's work.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_HOME_SITE_KEY,
   REMOTE_APPLY_POLL_HIDDEN_MS,
   REMOTE_APPLY_POLL_VISIBLE_MS,
 } from '@kindoo/shared';
+import type { KindooSite, Stake } from '@kindoo/shared';
 import type {
   RemoteApplyJobRef,
   RemoteApplyRunningJobRef,
   StakeConfigBundle,
 } from '../../lib/extensionApi';
-import { REMOTE_APPLY_STRANDED_MS, startRemoteApplyLoop, type RemoteApplyLoopDeps } from './loop';
+import {
+  REMOTE_APPLY_STRANDED_MS,
+  REMOTE_APPLY_STRANDED_OTHER_SITE_MS,
+  startRemoteApplyLoop,
+  type RemoteApplyLoopDeps,
+} from './loop';
 
 const STAKE_ID = 'csnorth';
 const EXT_VERSION = '1.2.3';
+/** EID of the stake's home Kindoo site, as `kindoo_config.site_id`. */
+const HOME_EID = 27994;
+/** EID of a second, foreign Kindoo site the same stake manages. */
+const EAST_EID = 31001;
+const EAST_SITE_ID = 'east-stake';
 
+/** Home site configured, plus one foreign site with a known EID — the
+ * two-site shape every site-scoping test below needs. */
 function bundle(): StakeConfigBundle {
   return {
-    stake: { stake_id: STAKE_ID, stake_name: 'CS North' } as unknown as StakeConfigBundle['stake'],
+    stake: {
+      stake_id: STAKE_ID,
+      stake_name: 'CS North',
+      kindoo_config: { site_id: HOME_EID, site_name: 'CS North' },
+    } as unknown as Stake,
     buildings: [],
     wards: [],
-    kindooSites: [],
+    kindooSites: [
+      {
+        id: EAST_SITE_ID,
+        display_name: 'East Stake (Pine)',
+        kindoo_expected_site_name: 'East Stake',
+        kindoo_eid: EAST_EID,
+      } as unknown as KindooSite,
+    ],
   };
 }
 
 function job(overrides: Partial<RemoteApplyJobRef> = {}): RemoteApplyJobRef {
-  return { jobId: 'j1', requestId: 'r1', stakeId: STAKE_ID, ...overrides };
+  return {
+    jobId: 'j1',
+    requestId: 'r1',
+    stakeId: STAKE_ID,
+    targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+    ...overrides,
+  };
 }
 
 function runningJob(
   claimedAtMs: number | null,
   overrides: Partial<RemoteApplyRunningJobRef> = {},
 ): RemoteApplyRunningJobRef {
-  return { jobId: 'j1', requestId: 'r1', stakeId: STAKE_ID, claimedAtMs, ...overrides };
+  return { ...job(), claimedAtMs, ...overrides };
 }
 
-/** Every dep mocked; individual tests override what they exercise. */
+/** Every dep mocked; individual tests override what they exercise.
+ * Defaults put the tab on the stake's HOME Kindoo site. */
 function makeDeps(overrides: Partial<RemoteApplyLoopDeps> = {}) {
   let clock = 1_000_000;
   const base = {
-    readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: 27994 } })),
+    readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: HOME_EID } })),
     getEnvironments: vi.fn(async () => [
-      { EID: 27994, Name: 'CS North', TimeZone: 'Mountain Standard Time' },
+      { EID: HOME_EID, Name: 'CS North', TimeZone: 'Mountain Standard Time' },
+      { EID: EAST_EID, Name: 'East Stake', TimeZone: 'Mountain Standard Time' },
     ]),
     writeRemotePresence: vi.fn(async () => undefined),
-    nextJob: vi.fn(async () => null),
+    queuedJobs: vi.fn(async () => [] as RemoteApplyJobRef[]),
     runningJobs: vi.fn(async () => [] as RemoteApplyRunningJobRef[]),
     claimJob: vi.fn(async () => true),
     finishJob: vi.fn<RemoteApplyLoopDeps['finishJob']>(async () => undefined),
@@ -89,19 +129,122 @@ describe('startRemoteApplyLoop', () => {
     vi.restoreAllMocks();
   });
 
-  it('publishes presence with the active Kindoo site and EID', async () => {
+  it('publishes a home-site desktop doc keyed by the reserved home key', async () => {
     const deps = makeDeps();
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
     await handle.tick();
     handle.stop();
 
     expect(deps.writeRemotePresence).toHaveBeenCalledWith({
+      enabled: true,
+      siteKey: REMOTE_APPLY_HOME_SITE_KEY,
+      kindooSiteId: null,
       stakeId: STAKE_ID,
-      kindooEid: 27994,
+      kindooEid: HOME_EID,
       kindooSiteName: 'CS North',
       extVersion: EXT_VERSION,
-      enabled: true,
     });
+  });
+
+  it('publishes a foreign-site desktop doc under that site’s own key', async () => {
+    // The whole point of the per-site split: a second tab on a second
+    // site writes a second doc instead of overwriting the first's EID.
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: EAST_EID } })),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.writeRemotePresence).toHaveBeenCalledWith({
+      enabled: true,
+      siteKey: EAST_SITE_ID,
+      kindooSiteId: EAST_SITE_ID,
+      stakeId: STAKE_ID,
+      kindooEid: EAST_EID,
+      kindooSiteName: 'East Stake',
+      extVersion: EXT_VERSION,
+    });
+  });
+
+  it('publishes nothing and claims nothing when the EID maps to no configured site', async () => {
+    // The manager is inside a Kindoo site this stake doesn't manage.
+    // Not an error — they legitimately visit other sites — but the tab
+    // can neither name the site to the phone nor provision for it, so
+    // it stays invisible rather than advertising a doomed button.
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: 99999 } })),
+      getEnvironments: vi.fn(async () => [
+        { EID: 99999, Name: 'Some Other Stake', TimeZone: 'Mountain Standard Time' },
+      ]),
+      queuedJobs: vi.fn(async () => [job()]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.writeRemotePresence).not.toHaveBeenCalled();
+    expect(deps.queuedJobs).not.toHaveBeenCalled();
+    expect(deps.claimJob).not.toHaveBeenCalled();
+    // Silent-to-the-operator: info, not a console error.
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('re-resolves its site when the operator switches Kindoo sites mid-period', async () => {
+    // Kindoo is an SPA: the EID changes with no page load and no
+    // remount. A resolution cached against the old EID would leave this
+    // tab claiming the site it just left for up to a full heartbeat.
+    let eid = HOME_EID;
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid } })),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+
+    eid = EAST_EID;
+    deps.advance(1_000);
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.writeRemotePresence).toHaveBeenCalledTimes(2);
+    expect(deps.writeRemotePresence).toHaveBeenLastCalledWith(
+      expect.objectContaining({ siteKey: EAST_SITE_ID, kindooEid: EAST_EID }),
+    );
+  });
+
+  it('reports each published site key so opt-out knows which doc to clear', async () => {
+    const onSitePublished = vi.fn();
+    const deps = makeDeps();
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onSitePublished,
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(onSitePublished).toHaveBeenCalledWith(REMOTE_APPLY_HOME_SITE_KEY);
+  });
+
+  it('does not report a site key when the presence write failed', async () => {
+    // There is nothing to delete for a heartbeat that never landed.
+    const onSitePublished = vi.fn();
+    const deps = makeDeps({
+      writeRemotePresence: vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onSitePublished,
+    });
+    await expect(handle.tick()).rejects.toThrow('offline');
+    handle.stop();
+
+    expect(onSitePublished).not.toHaveBeenCalled();
   });
 
   it('does NOT heartbeat when the Kindoo session is unreadable', async () => {
@@ -115,7 +258,7 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
 
     expect(deps.writeRemotePresence).not.toHaveBeenCalled();
-    expect(deps.nextJob).not.toHaveBeenCalled();
+    expect(deps.queuedJobs).not.toHaveBeenCalled();
   });
 
   it('does NOT heartbeat when the active site cannot be identified', async () => {
@@ -143,7 +286,7 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
 
     expect(deps.writeRemotePresence).not.toHaveBeenCalled();
-    expect(deps.nextJob).not.toHaveBeenCalled();
+    expect(deps.queuedJobs).not.toHaveBeenCalled();
   });
 
   it('heartbeats at most once per heartbeat period', async () => {
@@ -160,13 +303,13 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
     expect(deps.writeRemotePresence).toHaveBeenCalledTimes(2);
     // Polling still runs on every tick — only the heartbeat is rate-limited.
-    expect(deps.nextJob).toHaveBeenCalledTimes(3);
+    expect(deps.queuedJobs).toHaveBeenCalledTimes(3);
   });
 
   it('claims a queued job, runs it, and writes the terminal status', async () => {
     const onJobStart = vi.fn();
     const onJobEnd = vi.fn();
-    const deps = makeDeps({ nextJob: vi.fn(async () => job()) });
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]) });
     const handle = start(deps, {
       stakeId: STAKE_ID,
       bundle: bundle(),
@@ -193,7 +336,7 @@ describe('startRemoteApplyLoop', () => {
     // terminal status is written, and the banner never appears.
     const onJobStart = vi.fn();
     const deps = makeDeps({
-      nextJob: vi.fn(async () => job()),
+      queuedJobs: vi.fn(async () => [job()]),
       claimJob: vi.fn(async () => false),
     });
     const handle = start(deps, {
@@ -211,7 +354,7 @@ describe('startRemoteApplyLoop', () => {
   });
 
   it('leaves a job that targets a different stake for the tab that can run it', async () => {
-    const deps = makeDeps({ nextJob: vi.fn(async () => job({ stakeId: 'other-stake' })) });
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job({ stakeId: 'other-stake' })]) });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
     await handle.tick();
     handle.stop();
@@ -220,10 +363,65 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.runJob).not.toHaveBeenCalled();
   });
 
+  // ---- Site-scoped claiming: the two-tab regression ------------------
+
+  it('claims only its own site’s job from a two-site queue, and leaves the other', async () => {
+    // The operator's bug. Two tabs, two sites, one stake. The visible
+    // tab polls every 10s and the hidden one every 60s, so without a
+    // site filter the foreground tab takes essentially everything —
+    // then fails the sibling's work with "switch Kindoo sites and try
+    // again", which is nonsense advice when that site is open next door.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({ jobId: 'east', requestId: 'r-east', targetSiteKey: EAST_SITE_ID }),
+        job({ jobId: 'home', requestId: 'r-home', targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    // The home tab looks PAST the east job rather than stalling on it —
+    // a limit(1) poll would have taken the east job or blocked forever.
+    expect(deps.claimJob).toHaveBeenCalledTimes(1);
+    expect(deps.claimJob).toHaveBeenCalledWith('home', EXT_VERSION, HOME_EID);
+  });
+
+  it('claims the sibling site’s job from the tab that is actually on that site', async () => {
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: true as const, session: { token: 'tok', eid: EAST_EID } })),
+      queuedJobs: vi.fn(async () => [
+        job({ jobId: 'home', requestId: 'r-home', targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY }),
+        job({ jobId: 'east', requestId: 'r-east', targetSiteKey: EAST_SITE_ID }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).toHaveBeenCalledTimes(1);
+    expect(deps.claimJob).toHaveBeenCalledWith('east', EXT_VERSION, EAST_EID);
+  });
+
+  it('logs a skipped job at info, not warn', async () => {
+    // Leaving a sibling tab's work alone is the feature working. A warn
+    // here would cry wolf on every poll of a healthy two-tab setup.
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job({ jobId: 'east', targetSiteKey: EAST_SITE_ID })]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining('leaving job east'));
+  });
+
   it('clears the running flag even when finishing the job throws', async () => {
     const onJobEnd = vi.fn();
     const deps = makeDeps({
-      nextJob: vi.fn(async () => job()),
+      queuedJobs: vi.fn(async () => [job()]),
       finishJob: vi.fn(async () => {
         throw new Error('offline');
       }),
@@ -249,17 +447,17 @@ describe('startRemoteApplyLoop', () => {
         deps,
       );
       // First tick is deferred to the next macrotask, not run inline.
-      expect(deps.nextJob).not.toHaveBeenCalled();
+      expect(deps.queuedJobs).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(0);
-      expect(deps.nextJob).toHaveBeenCalledTimes(1);
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(1);
 
       // Visible tab → 10s cadence.
       await vi.advanceTimersByTimeAsync(REMOTE_APPLY_POLL_VISIBLE_MS);
-      expect(deps.nextJob).toHaveBeenCalledTimes(2);
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(2);
 
       handle.stop();
       await vi.advanceTimersByTimeAsync(120_000);
-      expect(deps.nextJob).toHaveBeenCalledTimes(2);
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
@@ -274,7 +472,7 @@ describe('startRemoteApplyLoop', () => {
       .fn<RemoteApplyLoopDeps['finishJob']>()
       .mockRejectedValueOnce(new Error('network blip'))
       .mockResolvedValue(undefined);
-    const deps = makeDeps({ nextJob: vi.fn(async () => job()), finishJob });
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]), finishJob });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
 
     await handle.tick();
@@ -293,7 +491,7 @@ describe('startRemoteApplyLoop', () => {
     const finishJob = vi
       .fn<RemoteApplyLoopDeps['finishJob']>()
       .mockRejectedValue(Object.assign(new Error('denied'), { code: 'permission-denied' }));
-    const deps = makeDeps({ nextJob: vi.fn(async () => job()), finishJob });
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]), finishJob });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
 
     await expect(handle.tick()).rejects.toThrow('denied');
@@ -309,6 +507,13 @@ describe('startRemoteApplyLoop', () => {
       runningJobs: vi.fn(async () => [runningJob(1_000_000 - REMOTE_APPLY_STRANDED_MS - 1)]),
     });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    // Two ticks, because the sweep runs ahead of site resolution on
+    // purpose (it must survive a dead Kindoo session) — so the very
+    // first sweep after a page load has no site yet and holds
+    // everything to the longer threshold. The second, one sweep
+    // interval later, has one.
+    await handle.tick();
+    deps.advance(120_000);
     await handle.tick();
     handle.stop();
 
@@ -323,18 +528,76 @@ describe('startRemoteApplyLoop', () => {
     expect(payload?.outcome.message).toMatch(/check this request on your desktop/);
   });
 
-  it('sweeps a stranded job whatever stake it targets', async () => {
-    // The tab that could have run it is by definition gone; requiring a
-    // same-stake tab to clean up requires the thing that just failed.
+  it('does NOT sweep another site’s running job at the same-site threshold', async () => {
+    // The regression. The sibling tab may be genuinely mid-provision;
+    // finalising its job writes "check on your desktop" over work that
+    // is completing, and blocks the sibling's own terminal write.
     const deps = makeDeps({
       runningJobs: vi.fn(async () => [
-        runningJob(1_000_000 - REMOTE_APPLY_STRANDED_MS - 1, { stakeId: 'other-stake' }),
+        runningJob(1_000_000 - REMOTE_APPLY_STRANDED_MS - 1, {
+          jobId: 'east',
+          targetSiteKey: EAST_SITE_ID,
+        }),
       ]),
     });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
     await handle.tick();
     handle.stop();
 
+    expect(deps.finishJob).not.toHaveBeenCalled();
+  });
+
+  it('eventually sweeps another site’s job, at the longer threshold', async () => {
+    // A filter alone would be worse than no filter: the likeliest way a
+    // job strands is that the manager CLOSED the tab on its site, so
+    // requiring a tab on that site to clean up requires the thing that
+    // just failed to happen — and the phone would spin forever.
+    const deps = makeDeps({
+      runningJobs: vi.fn(async () => [
+        runningJob(1_000_000 - REMOTE_APPLY_STRANDED_OTHER_SITE_MS - 1, {
+          jobId: 'east',
+          targetSiteKey: EAST_SITE_ID,
+        }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.finishJob).toHaveBeenCalledTimes(1);
+    expect(deps.finishJob.mock.calls[0]?.[0]).toBe('east');
+  });
+
+  it('sweeps a stranded job from another stake, at the longer threshold', async () => {
+    const deps = makeDeps({
+      runningJobs: vi.fn(async () => [
+        runningJob(1_000_000 - REMOTE_APPLY_STRANDED_OTHER_SITE_MS - 1, { stakeId: 'other-stake' }),
+      ]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.finishJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a tab that hasn’t resolved a site to the longer threshold', async () => {
+    // No resolved site ⇒ this tab can serve nothing, so it has no
+    // standing to claim the prompt sweep for anything.
+    const deps = makeDeps({
+      readSession: vi.fn(() => ({ ok: false as const, error: 'no-eid' as const })),
+      runningJobs: vi
+        .fn<RemoteApplyLoopDeps['runningJobs']>()
+        .mockResolvedValueOnce([runningJob(1_000_000 - REMOTE_APPLY_STRANDED_MS - 1)])
+        .mockResolvedValue([runningJob(1_000_000 - REMOTE_APPLY_STRANDED_OTHER_SITE_MS - 1)]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    expect(deps.finishJob).not.toHaveBeenCalled();
+
+    deps.advance(120_000);
+    await handle.tick();
+    handle.stop();
     expect(deps.finishJob).toHaveBeenCalledTimes(1);
   });
 
@@ -364,7 +627,10 @@ describe('startRemoteApplyLoop', () => {
     // that would report "check your desktop" for work in progress.
     let release: (() => void) | undefined;
     const deps = makeDeps({
-      nextJob: vi.fn<RemoteApplyLoopDeps['nextJob']>().mockResolvedValueOnce(job()),
+      queuedJobs: vi
+        .fn<RemoteApplyLoopDeps['queuedJobs']>()
+        .mockResolvedValueOnce([job()])
+        .mockResolvedValue([]),
       runJob: vi.fn(
         () =>
           new Promise<{ status: 'applied'; outcome: { code: 'applied'; message: string } }>(
@@ -436,7 +702,7 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
 
     expect(deps.writeRemotePresence).not.toHaveBeenCalled();
-    expect(deps.nextJob).not.toHaveBeenCalled();
+    expect(deps.queuedJobs).not.toHaveBeenCalled();
     // The sweep still runs: a job stranded before the opt-out still has
     // to reach a terminal status, and it needs no Kindoo session.
     expect(deps.runningJobs).toHaveBeenCalledTimes(1);
@@ -452,9 +718,9 @@ describe('startRemoteApplyLoop', () => {
       );
       await vi.advanceTimersByTimeAsync(0);
       await vi.advanceTimersByTimeAsync(REMOTE_APPLY_POLL_VISIBLE_MS);
-      expect(deps.nextJob).toHaveBeenCalledTimes(1);
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(REMOTE_APPLY_POLL_HIDDEN_MS - REMOTE_APPLY_POLL_VISIBLE_MS);
-      expect(deps.nextJob).toHaveBeenCalledTimes(2);
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(2);
       handle.stop();
     } finally {
       vi.useRealTimers();

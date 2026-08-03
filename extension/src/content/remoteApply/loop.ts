@@ -11,6 +11,20 @@
 // the operator signed out of Kindoo would leave the manager tapping a
 // button that fails every time, with nothing on screen explaining why.
 //
+// Everything here is scoped to ONE Kindoo site — the one this tab is
+// currently inside — because that is the only site this tab can
+// provision for. A manager with two tabs on two sites of one stake runs
+// two independent loops, and they must not tread on each other:
+//
+//   - each publishes its own `desktops/{siteKey}` doc, so the phone can
+//     see both sites as covered rather than watching one tab overwrite
+//     the other's EID every 60 seconds;
+//   - each claims only jobs whose `target_site_key` it serves, so the
+//     foreground tab (10s cadence) can't hoover up work belonging to the
+//     backgrounded tab (60s cadence) and then fail it with "switch
+//     Kindoo sites" — advice that is nonsense when the right site is
+//     open in the next tab.
+//
 // A third job rides the same tick: a sweep that finalises jobs left
 // `running` by a tab that died mid-flight. Nothing else can — the poller
 // queries only `queued` and the phone's timeout only cancels `queued` —
@@ -31,11 +45,12 @@ import {
   REMOTE_APPLY_HEARTBEAT_MS,
   REMOTE_APPLY_POLL_HIDDEN_MS,
   REMOTE_APPLY_POLL_VISIBLE_MS,
+  canClaimRemoteApplyJob,
 } from '@kindoo/shared';
 import {
   remoteApplyClaimJob,
   remoteApplyFinishJob,
-  remoteApplyNextJob,
+  remoteApplyQueuedJobs,
   remoteApplyRunningJobs,
   writeRemotePresence,
   type RemoteApplyJobRef,
@@ -45,9 +60,10 @@ import { remoteApplyEnabledSnapshot } from '../../lib/remoteApplyPrefs';
 import { readKindooSession, type KindooSession } from '../kindoo/auth';
 import { getEnvironments } from '../kindoo/endpoints';
 import { runRemoteApplyJob } from './runner';
+import { activeKindooSiteName, resolveTabSite, type ResolvedTabSite } from './site';
 
 /**
- * How long a job may sit `running` before any of this manager's tabs
+ * How long a job may sit `running` before a tab that CAN serve its site
  * treats it as stranded and writes it terminal.
  *
  * A real run is a handful of Kindoo calls plus two SBA round-trips —
@@ -60,6 +76,29 @@ import { runRemoteApplyJob } from './runner';
  * that a manager watching their phone isn't stuck for long.
  */
 export const REMOTE_APPLY_STRANDED_MS = 300_000;
+
+/**
+ * The same threshold for a job this tab CANNOT serve — another site, or
+ * another stake, or a tab that hasn't resolved its own site yet.
+ *
+ * Two thresholds rather than a site filter, because a plain filter trades
+ * one bug for a worse one. Filter absolutely and a job stranded on site B
+ * is only ever cleaned up by a tab on site B — but the overwhelmingly
+ * likely way a job strands is that the manager CLOSED the site-B tab, so
+ * the cleanup would wait on the thing that just failed to happen, and the
+ * phone would show "Your desktop is applying this…" forever. Don't filter
+ * at all and the foreground site-A tab finalises site-B's genuinely
+ * in-flight work out from under it.
+ *
+ * Splitting by threshold keeps both properties. The tab that could have
+ * run the job sweeps promptly; any other tab still guarantees eventual
+ * cleanup, but only after twice as long — by which point "a sibling is
+ * still running it" is not a credible reading of a job whose real
+ * duration is measured in seconds. The cost of waiting is a spinner on
+ * the phone; the cost of sweeping too eagerly is telling a manager to go
+ * check work that was in fact completing.
+ */
+export const REMOTE_APPLY_STRANDED_OTHER_SITE_MS = REMOTE_APPLY_STRANDED_MS * 2;
 
 /** How often a tab looks for stranded jobs. One extra `getDocs` a
  * minute per open Kindoo tab, against a collection of a few docs. */
@@ -91,6 +130,14 @@ export interface RemoteApplyLoopArgs {
    * Drives the desktop's "running" banner + post-run queue refresh. */
   onJobStart?: (job: RemoteApplyJobRef) => void;
   onJobEnd?: (job: RemoteApplyJobRef) => void;
+  /**
+   * Called with the site key each time this tab successfully publishes a
+   * desktop doc. The React host remembers it so opting out can DELETE
+   * that doc — the loop is stopped by then and can't clean up after
+   * itself, and a lingering desktop doc keeps naming a site the manager
+   * has just stopped serving.
+   */
+  onSitePublished?: (siteKey: string) => void;
 }
 
 /** Everything the loop touches that a test wants to control. */
@@ -98,7 +145,7 @@ export interface RemoteApplyLoopDeps {
   readSession: typeof readKindooSession;
   getEnvironments: typeof getEnvironments;
   writeRemotePresence: typeof writeRemotePresence;
-  nextJob: typeof remoteApplyNextJob;
+  queuedJobs: typeof remoteApplyQueuedJobs;
   runningJobs: typeof remoteApplyRunningJobs;
   claimJob: typeof remoteApplyClaimJob;
   finishJob: typeof remoteApplyFinishJob;
@@ -117,7 +164,7 @@ function defaultDeps(): RemoteApplyLoopDeps {
     readSession: readKindooSession,
     getEnvironments,
     writeRemotePresence,
-    nextJob: remoteApplyNextJob,
+    queuedJobs: remoteApplyQueuedJobs,
     runningJobs: remoteApplyRunningJobs,
     claimJob: remoteApplyClaimJob,
     finishJob: remoteApplyFinishJob,
@@ -173,6 +220,24 @@ export function startRemoteApplyLoop(
    * are the one set of `running` jobs it can positively attribute to a
    * live runner. */
   const inFlight = new Set<string>();
+  /**
+   * The SBA-side Kindoo site this tab is inside, resolved on the last
+   * heartbeat. `null` means "not resolved" — no Kindoo session, or an
+   * EID this stake hasn't configured — and in that state the tab claims
+   * nothing, since `canClaimRemoteApplyJob` reads a null tab site as
+   * "can serve no job at all".
+   */
+  let activeSite: ResolvedTabSite | null = null;
+
+  /** Whether this tab could itself run `job`. The one place the claim
+   * rule is consulted; the poller uses it to pick work and the sweep to
+   * pick a threshold. */
+  const canServe = (job: { stakeId: string; targetSiteKey: string }): boolean =>
+    canClaimRemoteApplyJob(
+      { stake_id: job.stakeId, target_site_key: job.targetSiteKey },
+      args.stakeId,
+      activeSite?.siteKey ?? null,
+    );
 
   const clear = () => {
     if (timer !== undefined) {
@@ -242,13 +307,21 @@ export function startRemoteApplyLoop(
    *     tab-unique, so it cannot tell a live sibling tab from a dead one.
    *     Filtering on it would only mean strands from another site or an
    *     older build never get cleaned up.
-   *   - What is left is age (`REMOTE_APPLY_STRANDED_MS`, orders of
-   *     magnitude beyond a real run) plus `inFlight`, which rules out
-   *     this tab's own work.
+   *   - What is left is age plus `inFlight`, which rules out this tab's
+   *     own work.
    *
-   * Stake is deliberately NOT filtered: the tab that stranded a job is
-   * by definition gone, so requiring a tab in the job's stake to clean
-   * up is requiring the thing that just failed to happen.
+   * The site this tab serves does NOT gate the sweep — it only picks
+   * which age applies. A job this tab could have run is swept at
+   * `REMOTE_APPLY_STRANDED_MS`; anything else waits
+   * `REMOTE_APPLY_STRANDED_OTHER_SITE_MS`. See those constants for why
+   * gating outright would be worse than not filtering at all.
+   *
+   * Note the interaction with tick ordering: this runs ahead of site
+   * resolution, so the FIRST sweep after a page load has no site yet
+   * and holds everything to the longer threshold. Deliberate — running
+   * the sweep first is what keeps it working when Kindoo is unreachable,
+   * and that is worth more than the one sweep interval of delay it costs
+   * a freshly-loaded tab cleaning up its predecessor's strand.
    *
    * Worst case a sweep races a genuinely-live sibling: that tab's own
    * terminal write is then rejected (its `running` precondition no longer
@@ -261,15 +334,17 @@ export function startRemoteApplyLoop(
     lastSweepAt = deps.now();
     try {
       const jobs = await deps.runningJobs();
-      const cutoff = deps.now() - REMOTE_APPLY_STRANDED_MS;
       for (const job of jobs) {
         if (inFlight.has(job.jobId)) continue;
         // No usable claim age ⇒ nothing to justify the sweep on. Leave it;
         // the next pass will have a resolved server timestamp to read.
-        if (job.claimedAtMs === null || job.claimedAtMs > cutoff) continue;
+        if (job.claimedAtMs === null) continue;
+        const servable = canServe(job);
+        const threshold = servable ? REMOTE_APPLY_STRANDED_MS : REMOTE_APPLY_STRANDED_OTHER_SITE_MS;
+        if (job.claimedAtMs > deps.now() - threshold) continue;
         console.warn(
-          `[sba-ext] remote apply: job ${job.jobId} has been running since ` +
-            `${new Date(job.claimedAtMs).toISOString()}; finalising as stranded`,
+          `[sba-ext] remote apply: job ${job.jobId} (site '${job.targetSiteKey}') has been ` +
+            `running since ${new Date(job.claimedAtMs).toISOString()}; finalising as stranded`,
         );
         try {
           await deps.finishJob(job.jobId, {
@@ -320,25 +395,51 @@ export function startRemoteApplyLoop(
   };
 
   /**
-   * Publish presence when due. Returns false when the Kindoo session
-   * turned out to be dead — `readKindooSession` only proves a token
-   * string exists in localStorage, and an expired token looks identical
-   * to a live one until something calls the API. `getEnvironments` is
-   * that call: it is needed anyway to resolve the site name the phone
-   * displays, and its failure is the earliest honest signal that this
-   * desktop cannot provision. Both the heartbeat and the poll stop on
-   * it, so the phone's button goes away instead of failing on tap.
+   * Resolve this tab's site and publish presence when due. Returns false
+   * when the tab must not go on to poll.
+   *
+   * Two failure modes end the tick here, and both are deliberately
+   * silent-to-the-phone:
+   *
+   *   - The Kindoo session turned out to be dead. `readKindooSession`
+   *     only proves a token string exists in localStorage, and an
+   *     expired token looks identical to a live one until something
+   *     calls the API. `getEnvironments` is that call, and its failure
+   *     is the earliest honest signal that this desktop cannot
+   *     provision.
+   *   - The active EID maps to no Kindoo site this stake has configured.
+   *     Such a tab can't name its site to the phone and couldn't
+   *     provision for it either, so it publishes nothing and claims
+   *     nothing. Not an error — a manager legitimately visits Kindoo
+   *     sites SBA doesn't manage.
+   *
+   * Re-resolution is NOT purely time-driven: Kindoo is an SPA, so the
+   * operator can switch sites with no page load and no remount, and a
+   * resolution cached against the previous EID would leave this tab
+   * claiming the site it just left for up to a full heartbeat period.
    */
   const heartbeatIfDue = async (session: KindooSession): Promise<boolean> => {
-    if (deps.now() - lastHeartbeatAt < REMOTE_APPLY_HEARTBEAT_MS) return true;
-    let siteName: string | null = null;
+    const due = deps.now() - lastHeartbeatAt >= REMOTE_APPLY_HEARTBEAT_MS;
+    const resolvedForThisSite = activeSite !== null && activeSite.kindooEid === session.eid;
+    if (!due && resolvedForThisSite) return true;
+    let envs: Awaited<ReturnType<typeof getEnvironments>>;
     try {
-      const envs = await deps.getEnvironments(session);
-      siteName = envs.find((e) => e.EID === session.eid)?.Name ?? null;
+      envs = await deps.getEnvironments(session);
     } catch (err) {
+      activeSite = null;
       console.warn('[sba-ext] remote apply: Kindoo session unusable; skipping heartbeat', err);
       return false;
     }
+    const site = resolveTabSite({ session, envs, bundle: args.bundle });
+    if (!site) {
+      activeSite = null;
+      console.info(
+        `[sba-ext] remote apply: Kindoo site ${session.eid} is not configured for stake ` +
+          `'${args.stakeId}'; this tab publishes no presence and claims no jobs`,
+      );
+      return false;
+    }
+    activeSite = site;
     // Last gate before the write, and it has to be here rather than at
     // the top of the tick. Opting out stops the loop and then publishes
     // `enabled: false`, but stopping does not abort a tick already in
@@ -351,29 +452,52 @@ export function startRemoteApplyLoop(
       return false;
     }
     await deps.writeRemotePresence({
+      enabled: true,
+      siteKey: site.siteKey,
+      kindooSiteId: site.kindooSiteId,
       stakeId: args.stakeId,
       kindooEid: session.eid,
-      kindooSiteName: siteName,
+      kindooSiteName: activeKindooSiteName(envs, session),
       extVersion: args.extVersion,
-      enabled: true,
     });
     lastHeartbeatAt = deps.now();
+    // After the write, not before: the React host uses this to decide
+    // which desktop doc to delete on opt-out, and there is nothing to
+    // delete for a heartbeat that never landed.
+    args.onSitePublished?.(site.siteKey);
     return true;
   };
 
+  /**
+   * Claim and run the first queued job this tab's site can serve.
+   *
+   * A page of jobs rather than the single oldest one, because with two
+   * tabs on two sites the oldest queued job routinely belongs to the
+   * other tab. Taking it would fail the run with "switch Kindoo sites"
+   * while the right site sits open next door; refusing to look past it
+   * would let one unservable job block every servable one behind it.
+   * So: skip what this tab can't do, claim the first thing it can.
+   */
   const pollOnce = async (session: KindooSession): Promise<void> => {
-    const job = await deps.nextJob();
-    if (!job) return;
-    if (job.stakeId !== args.stakeId) {
-      // Can't normally happen — the phone only offers the button when
-      // the presence doc's stake matches the one it is looking at. If
-      // it does, another Kindoo tab on the right stake is the one that
-      // should claim it, so leave the job alone.
-      console.warn(
-        `[sba-ext] remote apply: job ${job.jobId} targets stake '${job.stakeId}'; this tab is on '${args.stakeId}'`,
+    const jobs = await deps.queuedJobs();
+    const claimable: RemoteApplyJobRef[] = [];
+    for (const candidate of jobs) {
+      if (canServe(candidate)) {
+        claimable.push(candidate);
+        continue;
+      }
+      // Info, not warn: leaving a sibling tab's work alone is the
+      // feature working, not a fault. It is logged at all so a manager
+      // debugging "why didn't my phone tap do anything" can see which
+      // site the job wanted and which site this tab is on.
+      console.info(
+        `[sba-ext] remote apply: leaving job ${candidate.jobId} for another tab — it needs ` +
+          `stake '${candidate.stakeId}' site '${candidate.targetSiteKey}'; this tab serves ` +
+          `stake '${args.stakeId}' site '${activeSite?.siteKey ?? 'none'}'`,
       );
-      return;
     }
+    const job = claimable[0];
+    if (!job) return;
     const claimed = await deps.claimJob(job.jobId, args.extVersion, session.eid);
     if (!claimed) return;
 
