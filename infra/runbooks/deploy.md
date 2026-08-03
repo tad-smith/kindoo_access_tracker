@@ -236,6 +236,69 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
 
      If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
+### Deploying a PR branch to staging (`--from-pr`)
+
+To rehearse an unmerged PR on staging without merging it:
+
+```bash
+pnpm deploy:staging -- --from-pr <PR-number>
+```
+
+The `main`-branch and up-to-date-with-`origin/main` pre-flight guards are skipped for this mode; the clean-working-tree guard still applies, because the script moves `HEAD` under you. `--from-pr` composes with `--web-only` and `--skip-verify`, in any order. It is **staging-only** by design — production always ships from `main`.
+
+**The checkout is detached, on purpose.** The script fetches GitHub's `refs/pull/<number>/head` and checks out the PR's exact head commit with `git checkout --detach`. It does **not** run `gh pr checkout`, and it creates no local branch.
+
+This is the fix for a blocker that stopped real deploys three separate times. `gh pr checkout` creates and checks out a local branch for the PR head, and git permits a branch ref to be checked out in only one worktree at a time. Because this repo accumulates agent worktrees under `.claude/worktrees/`, any worktree holding the PR's branch killed the deploy on the spot:
+
+```
+[run] gh pr checkout 244
+fatal: 'feat/limited-app-access' is already used by worktree at '/Users/tad/projects/Kindoo/.claude/worktrees/fold-limited-access'
+failed to run git: exit status 128
+```
+
+A detached `HEAD` names a commit and claims no branch ref, so worktree locks cannot apply. Pruning stale worktrees is **not** required before a deploy, and this is not a "try again after cleanup" situation — the failure mode is structurally gone. Fork PRs still work: `refs/pull/<n>/head` exists in this repo for every PR, including cross-repo ones.
+
+Expected output for the checkout block (the SHA is echoed so you can confirm exactly what is being deployed, rather than inferring it from a branch name):
+
+```
+PR title: feat: welcome email on first app-access grant
+PR branch: feat/welcome-email-on-access-grant
+PR author: tad-smith
+PR head SHA: f3d371a34c644848643d77731c5f8fbd235bbfe4
+Commits ahead of main: 4
+
+[run] git fetch origin refs/pull/243/head
+ * branch            refs/pull/243/head -> FETCH_HEAD
+[run] git checkout --detach f3d371a34c644848643d77731c5f8fbd235bbfe4
+Deploying commit: f3d371a34c644848643d77731c5f8fbd235bbfe4
+[run] node infra/scripts/stamp-version.js
+stamp-version: wrote 2 file(s), skipped 0 missing dir(s) — sha=f3d371a builtAt=...
+```
+
+Confirm the `sha=` from the stamper matches the first 7 characters of `PR head SHA`. That value is what the deployed bundle reports in the topbar, so it is how you check later that staging is running the PR you think it is.
+
+If the script instead prints `warn: PR #<n> head <sha> is not among the objects fetched`, the PR was pushed to while the script was running (`gh pr view` and GitHub's pull ref disagreed). It deploys the commit it actually fetched and names it. Re-run to pick up fresh metadata if that is not what you wanted.
+
+**On exit — success, failure, or Ctrl-C — a `trap` puts you back where you started:** the branch you were on, or the exact commit still detached if you invoked the script from a detached `HEAD`. Nothing is left to clean up, since no branch was created.
+
+**Manual verification** (no Firebase project touched; substitute any open PR number):
+
+```bash
+bash infra/scripts/deploy-staging.sh --from-pr <PR-number> --dry-run
+bash infra/scripts/deploy-staging.sh --from-pr <PR-number> --web-only --dry-run
+bash infra/scripts/deploy-staging.sh --from-pr <PR-number> --skip-verify --dry-run
+```
+
+Expected: the PR title/branch/author/head-SHA block resolves, then
+
+```
+[dry-run] would: git fetch origin refs/pull/<n>/head
+[dry-run] would: git checkout --detach <full-40-char-sha>
+[dry-run] on exit (trap): would restore branch '<your-branch>'
+```
+
+and nothing is fetched or checked out — `git branch --show-current` is unchanged afterwards, and no new local branch exists. If the dry run reports `would: gh pr checkout`, you are on an old copy of the script; the worktree blocker is back.
+
 ## Prod deploy
 
 1. **Pre-flight, additional for prod:**

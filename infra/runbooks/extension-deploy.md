@@ -152,7 +152,7 @@ Staging:
 ```bash
 pnpm deploy:staging                                # current main
 # or, to test a PR branch without merging:
-pnpm deploy:staging -- --from-pr <PR-number>       # checks out the PR, deploys, restores your branch
+pnpm deploy:staging -- --from-pr <PR-number>       # deploys the PR's head commit (detached), restores where you were
 ```
 
 Production:
@@ -161,7 +161,7 @@ Production:
 pnpm deploy:prod
 ```
 
-`--from-pr` is staging-only by design. See `infra/runbooks/deploy.md` for the deploy script's pre-flight requirements and rollback notes.
+`--from-pr` is staging-only by design, and checks the PR head out detached — it creates no local branch, so a `.claude/worktrees/` worktree holding the PR's branch does not block the deploy. See `infra/runbooks/deploy.md` § "Deploying a PR branch to staging (`--from-pr`)" for the full behaviour, plus the deploy script's pre-flight requirements and rollback notes.
 
 ### 3. Build the extension
 
