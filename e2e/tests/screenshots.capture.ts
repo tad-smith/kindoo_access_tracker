@@ -4,13 +4,26 @@
 // `.spec` suffix so it does NOT match Playwright's default `testMatch`
 // (`**/*.@(spec|test).ts`) — `pnpm test:e2e` skips it, so a normal CI run
 // never rewrites the tracked PNGs under `docs/user-guide/img/`. Run it
-// explicitly by path to (re)generate the six web-app screenshots wired
-// into the HTML guides under `docs/user-guide/`:
+// explicitly to (re)generate the seven web-app screenshots wired into
+// the HTML guides under `docs/user-guide/`. Two things the invocation
+// has to get right:
 //
-//   npx playwright test tests/screenshots.capture.ts
+//   1. Collection. A positional path argument is only a FILTER over the
+//      already-collected set — it does not widen `testMatch` — so
+//      `playwright test tests/screenshots.capture.ts` finds zero tests.
+//      Run it through a throwaway config that spreads
+//      `playwright.config.ts` and overrides
+//      `testMatch: '**/screenshots.capture.ts'`.
+//   2. Project id. `fixtures/emulator.ts` seeds the emulators in the
+//      `kindoo-staging` namespace (matching the SPA's build-time
+//      `VITE_FIREBASE_PROJECT_ID`), so the emulators must be started on
+//      that project — under a demo project id the user lands in a
+//      different namespace and `setCustomClaims` 400s USER_NOT_FOUND.
 //
-// (Always run it under a fresh emulator instance — see the command in
-// the task brief / the worktree report.)
+//   firebase emulators:exec --only firestore,auth \
+//     "npx playwright test -c <capture-config>" --project kindoo-staging
+//
+// Always run it against a fresh emulator instance.
 //
 // All data is clearly-fake demo data (Cedar Springs Stake, Maple /
 // Pine wards, James Whitfield / Sarah Bennett / @example.org emails).
@@ -18,11 +31,12 @@
 // `page.screenshot`, captured at a desktop viewport with
 // deviceScaleFactor 2 for crisp images.
 //
-// The six figures captured here (placeholders the guides leave for the
-// web app):
+// The seven figures captured here (placeholders the guides leave for
+// the web app):
 //   creating-requests.html  Fig 2.1  sign-in (signed-out)        → sign-in.png
 //   creating-requests.html  Fig 4.1  bishopric ward roster       → ward-roster.png
 //   creating-requests.html  Fig 5.1  New Request form (dialog)   → new-request-form.png
+//   creating-requests.html  Fig 6.1  New Request, limited (D25)  → limited-new-request.png
 //   creating-requests.html  Fig 9.1  My Requests (mixed status)  → my-requests.png
 //   kindoo-managers.html    Fig 2.1  bootstrap setup wizard      → bootstrap-wizard.png
 //   kindoo-managers.html    Fig 11.1 audit log (expanded diff)   → audit-log-expanded.png
@@ -75,6 +89,8 @@ interface Claims {
   manager?: boolean;
   stake?: boolean;
   wards?: string[];
+  /** D25 — narrows an existing role; absent / false = full access. */
+  limited?: boolean;
 }
 
 async function signInWithClaims(
@@ -91,6 +107,9 @@ async function signInWithClaims(
         manager: claims.manager ?? false,
         stake: claims.stake ?? false,
         wards: claims.wards ?? [],
+        // Only stamp the flag when it's on — the claim-sync trigger's
+        // normalised block never carries `limited: false`.
+        ...(claims.limited === true ? { limited: true } : {}),
       },
     },
   });
@@ -400,6 +419,53 @@ test.describe('User-guide screenshot capture', () => {
     await dialog.getByTestId('new-request-reason').fill('New ward organist');
     // Capture just the dialog element, not the whole page.
     await dialog.screenshot({ path: path.join(IMG_DIR, 'new-request-form.png') });
+  });
+
+  test('Fig 6.1 (creating-requests) — New Request form under limited access', async ({ page }) => {
+    // Same 1280 width as every other shot — page layout, modal width and
+    // deviceScaleFactor are unchanged, so this sits beside Fig 5.1 at the
+    // same scale. Only the frame is taller: the limited form adds the cap
+    // hint plus both date fields, and at 800px the dialog's own Cancel /
+    // Submit row would fall below the fold. 940 clears the full modal
+    // with roughly the same margin below it that Fig 5.1 has.
+    await page.setViewportSize({ width: 1280, height: 940 });
+    await seedSetupCompleteStake();
+    await seedMapleWardRoster();
+    // `limited: true` on the stake claim is what narrows the form (D25).
+    // The capture stack boots only the Firestore + Auth emulators, so no
+    // claim-sync trigger is running to overwrite the seeded block.
+    await signInWithClaims(page, 'limited-bishop@example.org', {
+      wards: ['maple'],
+      limited: true,
+    });
+
+    await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+    await page.getByTestId('bishopric-roster-new-request').click();
+    // Select the modal by its accessible name — a Radix popover inside
+    // the form also carries role="dialog", so the bare role is ambiguous.
+    const dialog = page.getByRole('dialog', { name: 'New Request' });
+    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
+
+    // The three narrowings the figure has to show, asserted before the
+    // shutter so a regression fails the run instead of quietly shipping
+    // a screenshot of the full-access form.
+    const typeSelect = dialog.getByTestId('new-request-type');
+    await expect(typeSelect.locator('option')).toHaveText(['Temporary (dated)']);
+    await expect(dialog.getByTestId('new-request-temp-cap-hint')).toBeVisible();
+    await expect(dialog.getByTestId('new-request-locked-building')).toContainText('Maple Building');
+    await expect(dialog.getByTestId('new-request-buildings-trigger')).toHaveCount(0);
+
+    // Fill a realistic within-cap request so the dialog isn't an empty
+    // shell — 2026-06-08 → 2026-07-06 is 28 days, well inside the cap,
+    // so no validation error competes with the hint text.
+    await dialog.getByTestId('new-request-start-date').fill('2026-06-08');
+    await dialog.getByTestId('new-request-end-date').fill('2026-07-06');
+    await dialog.getByTestId('new-request-email').fill('olivia.morgan@example.org');
+    await dialog.getByTestId('new-request-name').fill('Olivia Morgan');
+    await dialog.getByTestId('new-request-reason').fill('Youth conference setup crew');
+    // Same framing as Fig 5.1: the dialog locator is the full-viewport
+    // positioner, so this captures the modal over the dimmed roster.
+    await dialog.screenshot({ path: path.join(IMG_DIR, 'limited-new-request.png') });
   });
 
   test('Fig 9.1 (creating-requests) — My Requests, mixed statuses', async ({ page }) => {
