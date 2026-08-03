@@ -12,8 +12,8 @@
 // Reads a deliberately minimal access-doc shape: presence of
 // `importer_callings` OR `manual_grants` with at least one non-empty
 // scope, plus each grant's STORED access tier (D25 limited access) —
-// `importer_limited_callings[scope]` on the importer side,
-// `manual_grants[scope][].level` on the manual side. Nothing here
+// `manual_grants[scope][].level` on the manual side, and per D26
+// `importer_limited_callings[scope]` on the importer side. Nothing here
 // classifies a calling by name; the tier is whatever the writer stamped.
 
 import type { CustomClaims, StakeClaims } from '@kindoo/shared';
@@ -128,10 +128,10 @@ export function isLimitedTier(opts: { limited: boolean; manager: boolean }): boo
  * be read as a restriction; the failure direction is toward more access,
  * not less.
  *
- * Nothing here classifies a calling by name. The writer decided the tier
- * when it wrote the record, which is why a doc written before the field
- * existed (no `importer_limited_callings`) reads exactly as it always
- * did: all-full, no migration.
+ * Nothing here classifies a calling by name (D26). The writer decided
+ * the tier when it wrote the record, which is why a doc written before
+ * the field existed (no `importer_limited_callings`) reads exactly as it
+ * always did: all-full, no migration.
  *
  * Tolerant of missing fields, partial shapes, and arrays of mixed
  * truthiness — the trigger should never reject inputs that are merely

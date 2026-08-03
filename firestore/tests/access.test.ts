@@ -121,7 +121,7 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
       );
     });
 
-    // `importer_limited_callings` is the D25 tier stamp on
+    // `importer_limited_callings` is the D26 tier stamp on
     // `importer_callings` — the subset of each scope's callings that
     // confer LIMITED access. Server-only, for the same reason the map it
     // stamps is: a manager who could write it could clear their own

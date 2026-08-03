@@ -32,8 +32,8 @@ export const STAKE_APP_ACCESS_CALLINGS = [
 export const EQ_PRESIDENT_CALLING = 'Elders Quorum President';
 
 /**
- * WRITER-SIDE POLICY. App-access callings whose derived access is
- * LIMITED rather than full (D25).
+ * WRITER-SIDE POLICY (D26). App-access callings whose derived access is
+ * the LIMITED tier (D25) rather than full.
  *
  * Consulted **only** where a writer inserts or replaces an access
  * record's calling list — `syncApplyFix` and `backfillEqPresidentAccess`

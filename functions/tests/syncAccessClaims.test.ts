@@ -187,7 +187,7 @@ describe('scopesFromAccessDoc — limited tier', () => {
     ).toEqual({ hasStake: true, wards: ['CO', 'GE'], limited: true });
   });
 
-  // ---- importer tier comes from the STORED stamp ----
+  // ---- importer tier comes from the STORED stamp (D26) ----
   //
   // The tier is decided by the writer and stored in
   // `importer_limited_callings`. Nothing here classifies a calling by
