@@ -19,9 +19,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import {
-  MAX_LIMITED_TEMP_WINDOW_DAYS,
   REQUESTER_GUIDE_PATH,
-  REQUESTER_GUIDE_TEMPORARY_PATH,
   auditId,
   deriveRequesterDisplay,
   formatRequesterLabel,
@@ -277,7 +275,6 @@ export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
     welcomeGreeting(opts.memberName),
     '',
     `You've been given access to Stake Building Access, the app ${opts.stakeName} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for ${opts.scopeList}.`,
-    ...(opts.isLimited ? ['', LIMITED_SENTENCE] : []),
     '',
     `Open the app: ${opts.appLink}`,
     '',
@@ -300,10 +297,8 @@ export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
     'padding:12px 24px;border-radius:6px;font-weight:600';
   return [
     `<div style="${wrapper}">`,
-    `<h1 style="font-size:20px;line-height:1.3;margin:0 0 16px">You can now request building access</h1>`,
     `<p style="${para}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
     `<p style="${para}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
-    ...(opts.isLimited ? [`<p style="${para}">${escapeHtml(LIMITED_SENTENCE)}</p>`] : []),
     `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${button}">Open Stake Building Access</a></p>`,
     `<p style="${para}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
     `<p style="margin:0">For more details read the <a href="${escapeHtml(opts.guideLink)}" style="color:#2b6cb0">full documentation</a>.</p>`,
@@ -315,13 +310,6 @@ export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
 function accessNoun(isLimited: boolean): string {
   return isLimited ? 'temporary building access' : 'building access';
 }
-
-// The "own ward's building only" constraint is deliberately omitted —
-// the email already names the exact scope, so it is implied.
-const LIMITED_SENTENCE =
-  `Your access is limited: you can request temporary access for up to ` +
-  `${MAX_LIMITED_TEMP_WINDOW_DAYS} days at a time, and change or remove only ` +
-  `the temporary access you've requested.`;
 
 function welcomeGreeting(memberName?: string): string {
   const name = memberName?.trim();
@@ -493,12 +481,8 @@ export async function notifyMemberAccessGranted(
 
   const appLink = safeBuildLink(deps, '/');
   if (appLink === undefined) return;
-  // A limited recipient lands on the guide's temporary-access section —
-  // temp requests are all they can make.
-  const guideLink = safeBuildLink(
-    deps,
-    isLimited ? REQUESTER_GUIDE_TEMPORARY_PATH : REQUESTER_GUIDE_PATH,
-  );
+  // Same guide for both tiers.
+  const guideLink = safeBuildLink(deps, REQUESTER_GUIDE_PATH);
   if (guideLink === undefined) return;
 
   const name = memberName?.trim();

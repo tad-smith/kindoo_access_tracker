@@ -237,13 +237,15 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
       '[Stake Building Access] You can now request temporary building access for Greenwood Ward',
     );
     expect(c.text).toContain('request temporary building access for Greenwood Ward');
-    expect(c.text).toContain(
-      "Your access is limited: you can request temporary access for up to 90 days at a time, and change or remove only the temporary access you've requested.",
+    expect(c.html).toContain(
+      'request temporary building access for <strong>Greenwood Ward</strong>',
     );
+    // Same guide URL as a full recipient — no anchor variant.
     expect(c.text).toContain(
-      'https://stakebuildingaccess.org/help/requesting-access.html#temporary',
+      'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
     );
-    expect(c.html).toContain('#temporary"');
+    expect(c.text).not.toContain('#temporary');
+    expect(c.html).not.toContain('#temporary');
   });
 
   it('a mixed full + limited first grant gets the FULL copy', async () => {
@@ -267,7 +269,7 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
     expect(calls[0]!.subject).toBe(
       '[Stake Building Access] You can now request building access for the Stake and Greenwood Ward',
     );
-    expect(calls[0]!.text).not.toContain('Your access is limited');
+    expect(calls[0]!.text).not.toContain('temporary building access');
   });
 
   // Mirrors `computeStakeClaims`: an active Kindoo Manager is never limited.
@@ -286,7 +288,7 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
     expect(calls[0]!.subject).toBe(
       '[Stake Building Access] You can now request building access for Greenwood Ward',
     );
-    expect(calls[0]!.text).not.toContain('Your access is limited');
+    expect(calls[0]!.text).not.toContain('temporary building access');
   });
 
   it('an INACTIVE manager row does not rescue a limited grant', async () => {
@@ -301,7 +303,9 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.text).toContain('Your access is limited');
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] You can now request temporary building access for Greenwood Ward',
+    );
   });
 
   it('a non-gmail limited recipient gets both narrowed branches', async () => {
@@ -323,7 +327,6 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.text).toContain('Send me a sign-in link');
-    expect(calls[0]!.text).toContain('Your access is limited');
     expect(calls[0]!.text).toContain('request temporary building access');
   });
 

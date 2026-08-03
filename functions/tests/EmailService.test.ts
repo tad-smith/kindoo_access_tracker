@@ -59,11 +59,10 @@ const WELCOME_GMAIL: WelcomeEmailOpts = {
   isLimited: false,
 };
 
-// A limited recipient lands on the guide's temporary-access section.
+// Same links as full — only the subject and opening sentence differ.
 const WELCOME_LIMITED: WelcomeEmailOpts = {
   ...WELCOME_GMAIL,
   scopeList: 'Greenwood Ward',
-  guideLink: 'https://stakebuildingaccess.org/help/requesting-access.html#temporary',
   isLimited: true,
 };
 
@@ -408,23 +407,20 @@ describe('EmailService — pure builders', () => {
     expect(buildWelcomeTextBody(opts).startsWith('Hello,\n')).toBe(true);
   });
 
-  // D25 limited tier. The `90` is hardcoded here on purpose: the source
-  // interpolates MAX_LIMITED_TEMP_WINDOW_DAYS, and a change to the cap
-  // should force a deliberate re-read of this user-facing sentence.
-  it('welcome text body (limited) says temporary and states the cap', () => {
+  // D25 limited tier. It differs from full in exactly one word, in two
+  // places — the subject and the opening sentence. Nothing else.
+  it('welcome text body (limited) says temporary building access', () => {
     expect(buildWelcomeTextBody(WELCOME_LIMITED)).toBe(
       [
         'Hi Jane Doe,',
         '',
         "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request temporary building access for Greenwood Ward.",
         '',
-        "Your access is limited: you can request temporary access for up to 90 days at a time, and change or remove only the temporary access you've requested.",
-        '',
         'Open the app: https://stakebuildingaccess.org/',
         '',
         'Signing in: this is a Gmail address, so on the sign-in page just click "Continue with Google" and choose this account (jane@gmail.com). No password needed.',
         '',
-        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html#temporary',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
       ].join('\n'),
     );
   });
@@ -441,40 +437,52 @@ describe('EmailService — pure builders', () => {
         '',
         "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request temporary building access for Greenwood Ward.",
         '',
-        "Your access is limited: you can request temporary access for up to 90 days at a time, and change or remove only the temporary access you've requested.",
-        '',
         'Open the app: https://stakebuildingaccess.org/',
         '',
         'Signing in: on the sign-in page, enter this email address (jane@csnorth.org) and click "Send me a sign-in link". You\'ll receive an email with a link that signs you in — no password needed.',
         '',
-        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html#temporary',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
       ].join('\n'),
     );
   });
 
   // Guards against the limited branch leaking into the default path.
-  it('welcome text body (full) is unchanged by the tier work', () => {
+  it('welcome text body (full) carries no limited copy', () => {
     const full = buildWelcomeTextBody(WELCOME_GMAIL);
-    expect(full).not.toContain('Your access is limited');
     expect(full).not.toContain('temporary building access');
     expect(full).toContain('request building access for the Stake and Greenwood Ward');
   });
 
-  it('welcome html body (limited) carries the cap sentence and the temporary anchor', () => {
+  // The tiers deliberately share one guide URL — no anchor variant.
+  it('both tiers link the same guide URL', () => {
+    const guide = 'For more details read the full documentation here: ';
+    const full = buildWelcomeTextBody(WELCOME_GMAIL);
+    const limited = buildWelcomeTextBody(WELCOME_LIMITED);
+    const tail = (body: string): string => body.slice(body.lastIndexOf(guide) + guide.length);
+    expect(tail(limited)).toBe(tail(full));
+    expect(tail(full)).toBe('https://stakebuildingaccess.org/help/requesting-access.html');
+    expect(limited).not.toContain('#temporary');
+    expect(buildWelcomeHtmlBody(WELCOME_LIMITED)).not.toContain('#temporary');
+  });
+
+  it('welcome html body (limited) says temporary building access', () => {
     const html = buildWelcomeHtmlBody(WELCOME_LIMITED);
-    expect(html).toContain(
-      'Your access is limited: you can request temporary access for up to 90 days at a time, and change or remove only the temporary access you&#39;ve requested.',
-    );
     expect(html).toContain('request temporary building access for <strong>Greenwood Ward</strong>');
-    expect(html).toContain(
-      'href="https://stakebuildingaccess.org/help/requesting-access.html#temporary"',
-    );
+    expect(html).toContain('href="https://stakebuildingaccess.org/help/requesting-access.html"');
   });
 
   it('welcome html body (full) carries no limited copy', () => {
     const html = buildWelcomeHtmlBody(WELCOME_GMAIL);
-    expect(html).not.toContain('Your access is limited');
     expect(html).not.toContain('temporary building access');
+  });
+
+  it('welcome html body has no heading element', () => {
+    for (const opts of [WELCOME_GMAIL, WELCOME_LIMITED]) {
+      const html = buildWelcomeHtmlBody(opts);
+      expect(html).not.toContain('<h1');
+      // The greeting is now the first element inside the wrapper.
+      expect(html.split('\n')[1]).toBe('<p style="margin:0 0 16px">Hi Jane Doe,</p>');
+    }
   });
 
   it('welcome html body carries both links, the scope list, and the gmail copy', () => {
