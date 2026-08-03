@@ -109,7 +109,7 @@ async function seedSeat(opts: {
 async function seedAccess(opts: {
   canonical?: string;
   importer_callings?: Record<string, string[]>;
-  /** Omit to seed the pre-D25 shape — no tier stamp at all. */
+  /** Omit to seed the pre-D26 shape — no tier stamp at all. */
   importer_limited_callings?: Record<string, string[]>;
   manual_grants?: Record<string, ManualGrant[]>;
   sort_order?: number | null;
@@ -530,7 +530,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     expect((await readAccess())?.importer_callings).toEqual({ CO: ['Bishop'] });
   });
 
-  // ----- D25 tier stamp -----
+  // ----- D26 tier stamp -----
   //
   // The entry this callable INSERTS is limited-tier, so it stamps
   // `importer_limited_callings[scope]` in the same update as
@@ -697,7 +697,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     });
 
     it('revoke: a doc with the calling but no stamp still revokes cleanly', async () => {
-      // The pre-D25 shape on the revoke side: nothing to unstamp, and
+      // The pre-D26 shape on the revoke side: nothing to unstamp, and
       // the calling still comes out.
       await seedManager();
       await seedStake({ eqPresidentAccess: false });

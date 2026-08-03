@@ -25,7 +25,7 @@
 //   - Skip-if-equal idempotency. A grant whose scope entry already
 //     carries the calling, or a revoke whose entry doesn't, writes
 //     nothing — a second run reports `docs_written: 0`.
-//   - D25 tier stamp maintained in lockstep. An entry this run INSERTS
+//   - D26 tier stamp maintained in lockstep. An entry this run INSERTS
 //     is stamped limited in `importer_limited_callings[scope]`, in the
 //     same update as `importer_callings`; the revoke direction removes
 //     the calling from both maps. An entry that already exists is left
@@ -176,7 +176,7 @@ export async function backfillEqPresidentAccessForStake(
         // Original casing preserved from the seat.
         const eqCallings = (seat.callings ?? []).filter(isEqPresident);
         const merged = [...new Set([...prior, ...eqCallings])].sort();
-        // The D25 tier stamp for the entry this run inserts. Written in
+        // The D26 tier stamp for the entry this run inserts. Written in
         // the SAME update as `importer_callings` so the two can't drift;
         // the names are taken from `merged` so the stamp is a literal
         // subset of it. Any prior stamp for this scope is preserved.

@@ -545,7 +545,7 @@ describe('accessSchema', () => {
     expect(accessSchema.parse(seed)).toEqual(seed);
   });
 
-  // The pre-D25 shape: no `importer_limited_callings` at all. Every
+  // The pre-D26 shape: no `importer_limited_callings` at all. Every
   // record written before the field existed looks like this, and it must
   // keep parsing — absent means every importer calling is full-tier.
   it('parses a doc with no importer_limited_callings (the no-migration shape)', () => {

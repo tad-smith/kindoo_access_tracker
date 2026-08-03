@@ -45,7 +45,7 @@
 // (`filterAppAccessCallings` — ward callings for ward scopes, stake
 // callings for 'stake' scope, plus the stake-gated Elders Quorum
 // President ward calling when `stake.eq_president_app_access` is on).
-// Every access write also stamps the scope's D25 access tier into
+// Every access write also stamps the scope's access tier (D26) into
 // `importer_limited_callings` (`filterLimitedTierCallings`) in the same
 // write, so the stored tier can never drift from the callings it
 // describes. `applyScopeMismatch` /
@@ -1046,7 +1046,7 @@ async function applySbaOnlyRemove(
 // limited-tier policy (`filterLimitedTierCallings`) → the stored tier
 // stamp in `importer_limited_callings`.
 //
-// D25 tier stamp: every helper below writes `importer_limited_callings`
+// D26 tier stamp: every helper below writes `importer_limited_callings`
 // in the SAME write as `importer_callings`, always as a fully-computed
 // map, so the two can never drift and a scope that stops being
 // limited-tier never leaves a stale stamp behind. The stamp is decided

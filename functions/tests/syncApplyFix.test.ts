@@ -91,7 +91,7 @@ async function seedSeat(opts: {
 async function seedAccess(opts: {
   canonical?: string;
   importer_callings?: Record<string, string[]>;
-  /** Omit to seed the pre-D25 shape — no tier stamp at all. */
+  /** Omit to seed the pre-D26 shape — no tier stamp at all. */
   importer_limited_callings?: Record<string, string[]>;
   manual_grants?: Record<string, Access['manual_grants'][string]>;
   sort_order?: number | null;
@@ -2801,7 +2801,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       });
     });
 
-    // D25 tier stamp. The writer decides the tier once and stores it in
+    // D26 tier stamp. The writer decides the tier once and stores it in
     // `importer_limited_callings[scope]` — the subset of that scope's
     // `importer_callings` that confers LIMITED access. Both maps are
     // always written together, so a scope whose limited calling goes
@@ -3111,7 +3111,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
         const { db } = requireEmulators();
         await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: EQP });
-        // Pre-D25 shape: the calling is granted, nothing is stamped.
+        // Pre-D26 shape: the calling is granted, nothing is stamped.
         await seedAccess({ importer_callings: { CO: [EQP] }, sort_order: 51 });
 
         await syncApplyFix.run(

@@ -428,10 +428,10 @@ service cloud.firestore {
       //     byte-equal to the prior value on every client update.
       //
       //   - `importer_limited_callings` — server-only, same treatment.
-      //     It is the D25 access-tier stamp on `importer_callings`
-      //     (the subset of each scope's callings that confer LIMITED
-      //     access), written by the same server writers in the same
-      //     update. A client that could set it could grant itself full
+      //     It is the D26 access-tier stamp on `importer_callings`
+      //     (the subset of each scope's callings that confer D25's
+      //     LIMITED tier), written by the same server writers in the
+      //     same update. A client that could set it could grant itself full
       //     access by clearing the stamp, so it is gated exactly like
       //     the map it describes: absent on create, byte-equal on
       //     update, and NOT in the affectedKeys() allowlist. Absent

@@ -47,7 +47,7 @@ export type Access = {
   importer_callings: Record<string, string[]>;
 
   /**
-   * SERVER-WRITTEN tier stamp for `importer_callings` (D25). Keys = the
+   * SERVER-WRITTEN tier stamp for `importer_callings` (D26). Keys = the
    * same scopes; each value is the SUBSET of `importer_callings[scope]`
    * that confers LIMITED app access. Written together with
    * `importer_callings` in the same update by whichever writer owns the

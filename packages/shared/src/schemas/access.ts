@@ -22,7 +22,7 @@ export const accessSchema = z.object({
 
   importer_callings: z.record(z.string(), z.array(z.string())),
   // Server-only tier stamp; a subset of `importer_callings[scope]`.
-  // Absent => every importer calling is full (the pre-D25 shape).
+  // Absent => every importer calling is full (the pre-D26 shape).
   importer_limited_callings: z.record(z.string(), z.array(z.string())).optional(),
   manual_grants: z.record(z.string(), z.array(manualGrantSchema)),
 
