@@ -200,6 +200,27 @@ describe('stakeSchema', () => {
     expect(stakeSchema.parse(seed)).toEqual(seed);
   });
 
+  it('parses a doc with web_base_url_override set', () => {
+    const seed = {
+      stake_name: 'CS North Stake',
+      created_at: T,
+      created_by: 'admin@kindoo.example',
+      bootstrap_admin_email: 'Bishop@example.org',
+      setup_complete: true,
+      stake_seat_cap: 250,
+      timezone: 'America/Denver',
+      notifications_enabled: true,
+      web_base_url_override: 'https://legacy.example.org',
+      last_over_caps_json: [],
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    const parsed = stakeSchema.parse(seed);
+    expect(parsed).toEqual(seed);
+    expect(parsed.web_base_url_override).toBe('https://legacy.example.org');
+  });
+
   it('parses with the operational over-cap field populated', () => {
     const seed = {
       stake_name: 'CS North Stake',

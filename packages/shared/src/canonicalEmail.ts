@@ -49,3 +49,19 @@ export function canonicalEmail(typed: string | null | undefined): string {
 export function emailsEqual(a: string | null | undefined, b: string | null | undefined): boolean {
   return canonicalEmail(a) === canonicalEmail(b);
 }
+
+/**
+ * True iff the address is a consumer Gmail account — i.e. the "Continue
+ * with Google" sign-in path applies. Google Workspace domains are NOT
+ * Gmail for this purpose (they can also use Google sign-in, but we can't
+ * tell from the address, so they get the magic-link instructions).
+ *
+ * Exact compare of everything after the first `@` — not `endsWith` — so
+ * a malformed `a@b@gmail.com` is false. `googlemail.com` already folds
+ * to `gmail.com` inside `canonicalEmail`.
+ */
+export function isGmailAddress(typed: string | null | undefined): boolean {
+  const canon = canonicalEmail(typed);
+  const at = canon.indexOf('@');
+  return at !== -1 && canon.slice(at + 1) === 'gmail.com';
+}

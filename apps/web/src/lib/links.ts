@@ -3,6 +3,8 @@
 // no-cross-feature-internal-imports rule when one feature needs
 // another's constant).
 
+import { REQUESTER_GUIDE_PATH } from '@kindoo/shared';
+
 /**
  * Chrome Web Store listing for the Stake Building Access extension. Used
  * by the sign-in page footer and the manager queue's read-only note
@@ -18,6 +20,9 @@ export const CHROME_WEB_STORE_URL =
  * plain `<a href>`, NOT TanStack `<Link>`. The PWA service worker
  * denylists `/help/` so navigations resolve to the static HTML rather
  * than the cached SPA shell (see `vite.config.ts`).
+ *
+ * The requester guide path is sourced from `@kindoo/shared` because the
+ * welcome email links it too and the two must not drift.
  */
-export const REQUESTER_GUIDE_URL = '/help/requesting-access.html';
+export const REQUESTER_GUIDE_URL = REQUESTER_GUIDE_PATH;
 export const MANAGER_GUIDE_URL = '/help/kindoo-manager-guide.html';

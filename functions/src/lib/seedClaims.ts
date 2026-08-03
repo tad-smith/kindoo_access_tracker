@@ -68,8 +68,7 @@ export async function computeStakeClaims(stakeId: string, canonical: string): Pr
     db.doc(`stakes/${stakeId}/access/${canonical}`).get(),
   ]);
 
-  const manager =
-    managerSnap.exists && (managerSnap.data() as { active?: unknown } | undefined)?.active === true;
+  const manager = managerSnap.exists && isActiveManagerDoc(managerSnap.data());
 
   const { hasStake, wards, limited } = scopesFromAccessDoc(
     accessSnap.exists ? (accessSnap.data() as Record<string, unknown> | undefined) : undefined,
@@ -82,8 +81,31 @@ export async function computeStakeClaims(stakeId: string, canonical: string): Pr
   // nothing. An active Kindoo Manager is never limited: the manager row
   // is a full-trust role, and the rules' manager carve-outs assume it.
   const block: StakeClaims = { manager, stake: hasStake, wards };
-  if (!manager && limited) block.limited = true;
+  if (isLimitedTier({ limited, manager })) block.limited = true;
   return block;
+}
+
+/**
+ * `kindooManagers/{canonical}` doc body → active-manager boolean.
+ * Manager status comes from the doc plus `active === true`, never from
+ * the claim (which can be ~1h stale on an idle session).
+ */
+export function isActiveManagerDoc(data: unknown): boolean {
+  return isPlainObject(data) && data['active'] === true;
+}
+
+/**
+ * D25 effective access tier. Limited iff every grant in the stake is
+ * limited AND the person is not an active Kindoo Manager — the manager
+ * row is a full-trust role and the rules' manager carve-outs assume it.
+ *
+ * The single definition of "limited", shared by the claim minter above
+ * and the welcome email's copy branch (`notifyOnAccessGranted`). Both
+ * must agree: a person told their access is limited is exactly a person
+ * whose claim carries `limited`.
+ */
+export function isLimitedTier(opts: { limited: boolean; manager: boolean }): boolean {
+  return opts.limited && !opts.manager;
 }
 
 /**

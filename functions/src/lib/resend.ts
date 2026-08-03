@@ -12,14 +12,16 @@ import { Resend } from 'resend';
 
 /**
  * Outbound email payload accepted by the wrapper. Mirrors the subset
- * of Resend's `emails.send` we use — plain text only for v1, no HTML,
- * no attachments. `replyTo` optional.
+ * of Resend's `emails.send` we use — no attachments. `text` is always
+ * required; when `html` is also set Resend ships a multipart message
+ * with `text` as the fallback part.
  */
 export type EmailPayload = {
   from: string;
   to: string[];
   subject: string;
   text: string;
+  html?: string;
   replyTo?: string;
 };
 
@@ -62,6 +64,7 @@ const defaultSender: ResendSender = {
         to: payload.to,
         subject: payload.subject,
         text: payload.text,
+        ...(payload.html ? { html: payload.html } : {}),
         ...(payload.replyTo ? { replyTo: payload.replyTo } : {}),
       });
       // Resend SDK returns `{ data, error }`; either may be null.

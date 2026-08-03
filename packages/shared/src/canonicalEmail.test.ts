@@ -2,7 +2,7 @@
 // Gmail dot/+suffix collapse, the googlemail.com fold, and the
 // preserve-as-typed behaviour for non-Gmail providers.
 import { describe, expect, it } from 'vitest';
-import { canonicalEmail, emailsEqual } from './canonicalEmail.js';
+import { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js';
 
 describe('canonicalEmail', () => {
   it('lowercases and strips dots from gmail.com local-part', () => {
@@ -58,5 +58,38 @@ describe('emailsEqual', () => {
   it('handles null / empty inputs symmetrically', () => {
     expect(emailsEqual('', '')).toBe(true);
     expect(emailsEqual(null, undefined)).toBe(true);
+  });
+});
+
+describe('isGmailAddress', () => {
+  it('recognises gmail.com in any casing', () => {
+    expect(isGmailAddress('alice@gmail.com')).toBe(true);
+    expect(isGmailAddress('Alice@GMAIL.com')).toBe(true);
+  });
+
+  it('recognises googlemail.com via the canonical fold', () => {
+    expect(isGmailAddress('alice@GoogleMail.com')).toBe(true);
+  });
+
+  it('recognises dotted and +suffix gmail variants', () => {
+    expect(isGmailAddress('alice.smith@gmail.com')).toBe(true);
+    expect(isGmailAddress('alice+church@gmail.com')).toBe(true);
+  });
+
+  it('returns false for Workspace / custom domains', () => {
+    expect(isGmailAddress('alice@csnorth.org')).toBe(false);
+    expect(isGmailAddress('alice@example.com')).toBe(false);
+  });
+
+  it('returns false for a domain that merely ends in gmail.com', () => {
+    expect(isGmailAddress('alice@notgmail.com')).toBe(false);
+    expect(isGmailAddress('a@b@gmail.com')).toBe(false);
+  });
+
+  it('returns false for null / empty / no-@ input', () => {
+    expect(isGmailAddress(null)).toBe(false);
+    expect(isGmailAddress(undefined)).toBe(false);
+    expect(isGmailAddress('')).toBe(false);
+    expect(isGmailAddress('no-at-sign')).toBe(false);
   });
 });

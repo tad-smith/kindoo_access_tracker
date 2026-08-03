@@ -17,7 +17,12 @@ import {
   buildOverCapSubject,
   buildRejectedBody,
   buildRejectedSubject,
+  buildWelcomeHtmlBody,
+  buildWelcomeSubject,
+  buildWelcomeTextBody,
+  formatScopeList,
   scopeLabel,
+  type WelcomeEmailOpts,
 } from '../src/services/EmailService.js';
 
 const STAKE: Pick<Stake, 'stake_name'> = { stake_name: 'CSNorth Stake' };
@@ -41,6 +46,30 @@ const baseRequest: AccessRequest = {
   requester_canonical: 'bish@gmail.com',
   requested_at: Timestamp.now(),
   lastActor: { email: 'Bish@gmail.com', canonical: 'bish@gmail.com' },
+};
+
+const WELCOME_GMAIL: WelcomeEmailOpts = {
+  stakeName: 'CSNorth Stake',
+  memberName: 'Jane Doe',
+  memberEmail: 'jane@gmail.com',
+  scopeList: 'the Stake and Greenwood Ward',
+  appLink: 'https://stakebuildingaccess.org/',
+  guideLink: 'https://stakebuildingaccess.org/help/requesting-access.html',
+  isGmail: true,
+  isLimited: false,
+};
+
+// Same links as full — only the subject and opening sentence differ.
+const WELCOME_LIMITED: WelcomeEmailOpts = {
+  ...WELCOME_GMAIL,
+  scopeList: 'Greenwood Ward',
+  isLimited: true,
+};
+
+const WELCOME_NON_GMAIL: WelcomeEmailOpts = {
+  ...WELCOME_GMAIL,
+  memberEmail: 'jane@csnorth.org',
+  isGmail: false,
 };
 
 describe('EmailService — pure builders', () => {
@@ -79,6 +108,59 @@ describe('EmailService — pure builders', () => {
   it('buildLink throws cleanly when WEB_BASE_URL is unset', () => {
     delete process.env['WEB_BASE_URL'];
     expect(() => buildLink('/manager/queue')).toThrow(/WEB_BASE_URL/);
+  });
+
+  // ---- buildLink: per-stake override --------------------------------------
+
+  it('buildLink prefers the stake web_base_url_override over the param', () => {
+    expect(buildLink('/my-requests', { web_base_url_override: 'https://kindoo.csnorth.org' })).toBe(
+      'https://kindoo.csnorth.org/my-requests',
+    );
+  });
+
+  it('buildLink strips a trailing slash from the override', () => {
+    expect(
+      buildLink('/my-requests', { web_base_url_override: 'https://kindoo.csnorth.org/' }),
+    ).toBe('https://kindoo.csnorth.org/my-requests');
+  });
+
+  it('buildLink accepts an http:// override', () => {
+    expect(buildLink('/my-requests', { web_base_url_override: 'http://kindoo.csnorth.org' })).toBe(
+      'http://kindoo.csnorth.org/my-requests',
+    );
+  });
+
+  it('buildLink falls back to the param when the override is absent / empty / whitespace', () => {
+    expect(buildLink('/my-requests', {})).toBe('https://stakebuildingaccess.org/my-requests');
+    expect(buildLink('/my-requests', { web_base_url_override: '' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+    expect(buildLink('/my-requests', { web_base_url_override: '   ' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+  });
+
+  it('buildLink ignores an override with no http(s) scheme', () => {
+    expect(buildLink('/my-requests', { web_base_url_override: 'kindoo.csnorth.org' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+    expect(buildLink('/my-requests', { web_base_url_override: 'javascript:alert(1)' })).toBe(
+      'https://stakebuildingaccess.org/my-requests',
+    );
+  });
+
+  it('buildLink still throws when the param is unset and the override is rejected', () => {
+    delete process.env['WEB_BASE_URL'];
+    expect(() => buildLink('/', { web_base_url_override: 'kindoo.csnorth.org' })).toThrow(
+      /WEB_BASE_URL/,
+    );
+  });
+
+  it('buildLink uses the override even when the param is unset', () => {
+    delete process.env['WEB_BASE_URL'];
+    expect(buildLink('/', { web_base_url_override: 'https://kindoo.csnorth.org' })).toBe(
+      'https://kindoo.csnorth.org/',
+    );
   });
 
   // ---- scopeLabel ----------------------------------------------------------
@@ -239,5 +321,216 @@ describe('EmailService — pure builders', () => {
     expect(body).toContain('Stake: 22 of 20 (over by 2)');
     expect(body).toContain('GE: 25 of 20 (over by 5)');
     expect(body).toContain('View seats: https://stakebuildingaccess.org/manager/seats');
+  });
+
+  // ---- welcome (first app-access grant) ------------------------------------
+
+  it('formatScopeList renders Stake alone as "the Stake"', () => {
+    expect(formatScopeList(['Stake'])).toBe('the Stake');
+  });
+
+  it('formatScopeList passes a single ward name through', () => {
+    expect(formatScopeList(['Greenwood Ward'])).toBe('Greenwood Ward');
+  });
+
+  it('formatScopeList joins two labels with "and"', () => {
+    expect(formatScopeList(['Greenwood Ward', 'Cedar Ward'])).toBe('Greenwood Ward and Cedar Ward');
+  });
+
+  it('formatScopeList joins three or more labels with an Oxford comma', () => {
+    expect(formatScopeList(['Greenwood Ward', 'Cedar Ward', 'Maple Ward'])).toBe(
+      'Greenwood Ward, Cedar Ward, and Maple Ward',
+    );
+  });
+
+  it('formatScopeList puts the Stake ahead of the wards the caller ordered', () => {
+    expect(formatScopeList(['Stake', 'Greenwood Ward'])).toBe('the Stake and Greenwood Ward');
+  });
+
+  it('welcome subject names the scope list', () => {
+    expect(buildWelcomeSubject('the Stake and Greenwood Ward', false)).toBe(
+      '[Stake Building Access] You can now request building access for the Stake and Greenwood Ward',
+    );
+  });
+
+  it('welcome subject says "temporary" for a limited recipient', () => {
+    expect(buildWelcomeSubject('Greenwood Ward', true)).toBe(
+      '[Stake Building Access] You can now request temporary building access for Greenwood Ward',
+    );
+  });
+
+  it('welcome text body (gmail) renders the Continue-with-Google instructions', () => {
+    expect(buildWelcomeTextBody(WELCOME_GMAIL)).toBe(
+      [
+        'Hi Jane Doe,',
+        '',
+        "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request building access for the Stake and Greenwood Ward.",
+        '',
+        'Open the app: https://stakebuildingaccess.org/',
+        '',
+        'Signing in: this is a Gmail address, so on the sign-in page just click "Continue with Google" and choose this account (jane@gmail.com). No password needed.',
+        '',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
+      ].join('\n'),
+    );
+  });
+
+  it('welcome text body (non-gmail) renders the magic-link instructions', () => {
+    expect(buildWelcomeTextBody(WELCOME_NON_GMAIL)).toBe(
+      [
+        'Hi Jane Doe,',
+        '',
+        "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request building access for the Stake and Greenwood Ward.",
+        '',
+        'Open the app: https://stakebuildingaccess.org/',
+        '',
+        'Signing in: on the sign-in page, enter this email address (jane@csnorth.org) and click "Send me a sign-in link". You\'ll receive an email with a link that signs you in — no password needed.',
+        '',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
+      ].join('\n'),
+    );
+  });
+
+  it('welcome text body picks exactly one sign-in variant', () => {
+    const gmail = buildWelcomeTextBody(WELCOME_GMAIL);
+    expect(gmail).toContain('Continue with Google');
+    expect(gmail).not.toContain('Send me a sign-in link');
+
+    const other = buildWelcomeTextBody(WELCOME_NON_GMAIL);
+    expect(other).toContain('Send me a sign-in link');
+    expect(other).not.toContain('Continue with Google');
+  });
+
+  it('welcome text body greets with Hello, when no member name is known', () => {
+    const opts: WelcomeEmailOpts = { ...WELCOME_GMAIL };
+    delete opts.memberName;
+    expect(buildWelcomeTextBody(opts).startsWith('Hello,\n')).toBe(true);
+  });
+
+  // D25 limited tier. It differs from full in exactly one word, in two
+  // places — the subject and the opening sentence. Nothing else.
+  it('welcome text body (limited) says temporary building access', () => {
+    expect(buildWelcomeTextBody(WELCOME_LIMITED)).toBe(
+      [
+        'Hi Jane Doe,',
+        '',
+        "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request temporary building access for Greenwood Ward.",
+        '',
+        'Open the app: https://stakebuildingaccess.org/',
+        '',
+        'Signing in: this is a Gmail address, so on the sign-in page just click "Continue with Google" and choose this account (jane@gmail.com). No password needed.',
+        '',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
+      ].join('\n'),
+    );
+  });
+
+  it('welcome text body (limited, non-gmail) composes both branches', () => {
+    const opts: WelcomeEmailOpts = {
+      ...WELCOME_LIMITED,
+      memberEmail: WELCOME_NON_GMAIL.memberEmail,
+      isGmail: false,
+    };
+    expect(buildWelcomeTextBody(opts)).toBe(
+      [
+        'Hi Jane Doe,',
+        '',
+        "You've been given access to Stake Building Access, the app CSNorth Stake uses to manage access to its buildings. You can now sign in and request temporary building access for Greenwood Ward.",
+        '',
+        'Open the app: https://stakebuildingaccess.org/',
+        '',
+        'Signing in: on the sign-in page, enter this email address (jane@csnorth.org) and click "Send me a sign-in link". You\'ll receive an email with a link that signs you in — no password needed.',
+        '',
+        'For more details read the full documentation here: https://stakebuildingaccess.org/help/requesting-access.html',
+      ].join('\n'),
+    );
+  });
+
+  // Guards against the limited branch leaking into the default path.
+  it('welcome text body (full) carries no limited copy', () => {
+    const full = buildWelcomeTextBody(WELCOME_GMAIL);
+    expect(full).not.toContain('temporary building access');
+    expect(full).toContain('request building access for the Stake and Greenwood Ward');
+  });
+
+  // The tiers deliberately share one guide URL — no anchor variant.
+  it('both tiers link the same guide URL', () => {
+    const guide = 'For more details read the full documentation here: ';
+    const full = buildWelcomeTextBody(WELCOME_GMAIL);
+    const limited = buildWelcomeTextBody(WELCOME_LIMITED);
+    const tail = (body: string): string => body.slice(body.lastIndexOf(guide) + guide.length);
+    expect(tail(limited)).toBe(tail(full));
+    expect(tail(full)).toBe('https://stakebuildingaccess.org/help/requesting-access.html');
+    expect(limited).not.toContain('#temporary');
+    expect(buildWelcomeHtmlBody(WELCOME_LIMITED)).not.toContain('#temporary');
+  });
+
+  it('welcome html body (limited) says temporary building access', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_LIMITED);
+    expect(html).toContain('request temporary building access for <strong>Greenwood Ward</strong>');
+    expect(html).toContain('href="https://stakebuildingaccess.org/help/requesting-access.html"');
+  });
+
+  it('welcome html body (full) carries no limited copy', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_GMAIL);
+    expect(html).not.toContain('temporary building access');
+  });
+
+  it('welcome html body has no heading element', () => {
+    for (const opts of [WELCOME_GMAIL, WELCOME_LIMITED]) {
+      const html = buildWelcomeHtmlBody(opts);
+      expect(html).not.toContain('<h1');
+      // The greeting is now the first element inside the wrapper.
+      expect(html.split('\n')[1]).toBe('<p style="margin:0 0 16px">Hi Jane Doe,</p>');
+    }
+  });
+
+  it('welcome html body carries both links, the scope list, and the gmail copy', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_GMAIL);
+    expect(html).toContain('href="https://stakebuildingaccess.org/"');
+    expect(html).toContain('href="https://stakebuildingaccess.org/help/requesting-access.html"');
+    expect(html).toContain('<strong>the Stake and Greenwood Ward</strong>');
+    expect(html).toContain('Hi Jane Doe,');
+    expect(html).toContain('Continue with Google');
+    expect(html).not.toContain('Send me a sign-in link');
+  });
+
+  // Regression: a raw `"` inside an inline style (an unquoted-with-double-
+  // quotes font name) terminates the `style="…"` attribute early and every
+  // declaration after it is silently dropped by the mail client.
+  it('welcome html wrapper style survives attribute parsing intact', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_GMAIL);
+    // `[^"]*` stops at the first `"` — exactly where a parser would.
+    const wrapperStyle = /^<div style="([^"]*)"/.exec(html)?.[1] ?? '';
+    expect(wrapperStyle).toContain('max-width:560px');
+    expect(wrapperStyle).toContain('padding:24px');
+    expect(wrapperStyle).toContain('font-size:16px');
+    expect(wrapperStyle).toContain('margin:0 auto');
+  });
+
+  it('no welcome html attribute value is truncated by a raw double quote', () => {
+    const html = buildWelcomeHtmlBody({ ...WELCOME_GMAIL, memberName: 'Jane "JD" Doe' });
+    // Every quoted attribute must close right before the tag end or the
+    // next attribute — never mid-value.
+    for (const m of html.matchAll(/(?:style|href)="[^"]*"(.?)/g)) {
+      expect(['>', ' ']).toContain(m[1]);
+    }
+  });
+
+  it('welcome html body carries the non-gmail copy', () => {
+    const html = buildWelcomeHtmlBody(WELCOME_NON_GMAIL);
+    expect(html).toContain('Send me a sign-in link');
+    expect(html).not.toContain('Continue with Google');
+  });
+
+  it('welcome html body escapes user data in names', () => {
+    const html = buildWelcomeHtmlBody({
+      ...WELCOME_GMAIL,
+      memberName: '<b>Bob</b> & Sons',
+      stakeName: 'Smith & <Jones> Stake',
+    });
+    expect(html).toContain('Hi &lt;b&gt;Bob&lt;/b&gt; &amp; Sons,');
+    expect(html).toContain('Smith &amp; &lt;Jones&gt; Stake');
+    expect(html).not.toContain('<b>Bob</b>');
   });
 });

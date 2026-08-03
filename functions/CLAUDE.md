@@ -28,6 +28,7 @@ src/
 │   ├── auditTrigger.ts                # parameterized; fans audit rows for every entity write (9 collections)
 │   ├── notifyOnRequestWrite.ts        # email on submit/complete/reject/cancel
 │   ├── notifyOnOverCap.ts             # email when last_over_caps_json transitions
+│   ├── notifyOnAccessGranted.ts       # welcome email on the no-scopes → some-scopes access transition
 │   ├── pushOnRequestSubmit.ts         # FCM push on new request submission
 │   └── removeSeatOnRequestComplete.ts # Admin-SDK delete for remove-request completions
 ├── scheduled/

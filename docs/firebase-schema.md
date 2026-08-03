@@ -172,6 +172,17 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
 
+  // Hidden operator-only escape hatch — there is NO UI for it anywhere; the operator
+  // sets it by hand in the Firestore console, and `createStake` never writes it. When
+  // it trims to a non-empty value starting `http://` or `https://` it is the base URL
+  // for ALL of this stake's email links (all six templates — `spec.md` §9), replacing
+  // the `WEB_BASE_URL` function param. Absent, empty, or missing the scheme ⇒ ignored
+  // (a rejected value emits a `logger.warn` from `EmailService.resolveBaseUrl`) and the
+  // param applies. Exists because the app is dual-hosted, so a stake whose members live
+  // on the legacy host can get email links on that host. Email links ONLY — never
+  // routing, hosting, or auth domains.
+  web_base_url_override?: string;
+
   // Operational state (`last_over_caps_json` written by request-completion over-cap recomputes; read by manager UI)
   // The `pool: 'stake'` entry's `count` is the home stake count: stake-primary seats
   // plus one per foreign-ward-primary seat carrying a parallel-site `scope:'stake'`
@@ -196,7 +207,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -332,7 +343,9 @@ Importer callings carry **no** stored tier. A calling's tier is derived at claim
 
 **No access-rules change was needed.** `manual_grants` already sits in the access-update `affectedKeys()` allowlist, so writing a grant with an extra `level` key rides the existing predicate. See §6 and D25.
 
-**Read by:** `syncAccessClaims` trigger (via `scopesFromAccessDoc`, which folds both maps into `{hasStake, wards, limited}`); manager Access page.
+**Read by:** `syncAccessClaims` trigger and `notifyOnAccessGranted` trigger (both via `scopesFromAccessDoc`, which folds both maps into `{hasStake, wards, limited}`); manager Access page.
+
+**Triggers on this path.** Three Cloud Functions watch `stakes/{stakeId}/access/{memberCanonical}` (§7): `syncAccessClaims` re-mints the member's custom claims, `auditAccessWrites` (the parameterized `auditTrigger`'s access binding) fans the audit row, and `notifyOnAccessGranted` sends the app-access welcome email (`spec.md` §9) on the **no-scopes → at-least-one-scope** transition, computed by `scopesFromAccessDoc` over `importer_callings` and `manual_grants` together. The welcome email hangs off the document rather than off `syncApplyFix` / `backfillEqPresidentAccess` because the document is the only hook that sees every grant path — including the manager Access page's raw client write to `manual_grants`, which goes through no callable. The email's **fire condition** reads only `hasStake` / `wards`, so a **limited** grant (D25) is a grant like any other: a first limited grant welcomes the member exactly as a full one does. The **copy** does read `limited`. Having decided to send, the trigger folds `scopesFromAccessDoc(after).limited` with a direct read of `stakes/{stakeId}/kindooManagers/{memberCanonical}` (batched into its stake-doc read) through the shared `isLimitedTier` / `isActiveManagerDoc` — the same helpers `computeStakeClaims` uses (§2) — and a limited recipient's subject and opening sentence read "temporary building access" where a full recipient's read "building access". That one word is the whole difference; the links are the same for both tiers (`spec.md` §9).
 
 **Invariants:**
 - Sync's `syncApplyFix` never mutates `manual_grants` (rules enforce on client side; the callable enforces on Admin SDK side).
@@ -749,7 +762,8 @@ service cloud.firestore {
       // where the superadmin holds no per-stake role on any stake.
       // Note: `update` carries NO per-field allowlist — a manager (or the bootstrap
       // admin pre-setup) may write any stake-doc field. Adding a config field such as
-      // `eq_president_app_access` (§4.1, D23) therefore needs no rules change.
+      // `eq_president_app_access` (§4.1, D23) or `web_base_url_override` (§4.1)
+      // therefore needs no rules change.
       allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId)
         || isSetupInProgressReadable(stakeId)
         || isPlatformSuperadmin();
@@ -1101,6 +1115,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `backfillEqPresidentAccess` | Callable (manager-invoked from the Configuration → Config backfill dialog) | Reconciles `access` docs after a stake flips `eq_president_app_access` (§4.1). `{stakeId, direction:'grant'\|'revoke'}` → `{ok, seats_matched, docs_written, docs_deleted}`. Sweeps auto ward-scope seats holding the Elders Quorum President calling and merges that one entry into / out of `importer_callings[scope]`; `manual_grants` untouched. Auth reads `kindooManagers/{canonical}` directly (not the ~1h-stale claim); `direction` must match the stake's current flag or `failed-precondition`. Single-field `type == 'auto'` query — no composite index. Idempotent. See `spec.md` §8, D23. |
 | `backfillKindooSiteId` | Callable (superadmin-invoked from the Stake List Apply Fixes menu) | Re-derives each seat's `kindoo_site_id` from its ward's building and writes only the diffs (idempotent). **Platform superadmin only** (`isPlatformSuperadmin` claim) — the former active-Kindoo-Manager gate was removed. See `spec.md` §15. |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel) |
+| `notifyOnAccessGranted` | Firestore write on `stakes/{sid}/access/{memberCanonical}` | Sends the app-access welcome email to the granted member per spec.md §9 — the only email with an HTML part. Fires only on the no-scopes → at-least-one-scope transition (`scopesFromAccessDoc` over `importer_callings` + `manual_grants`): a scope added to an existing holder, a revoke to zero, and a delete are all silent; a re-grant after a full revoke fires again. Third trigger on this path alongside `syncAccessClaims` and `auditAccessWrites` (§4.5). Reads the stake doc and the member's `kindooManagers` row together — the latter to resolve the D25 tier, which narrows the copy for a limited recipient (§4.5). Not gated on `setup_complete`; suppressed by `notifications_enabled === false`. |
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends over-cap warning email when the array goes from empty to non-empty |
 | `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |

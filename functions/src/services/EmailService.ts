@@ -1,5 +1,5 @@
-// Five typed wrappers for the notification emails the system ships
-// per `docs/spec.md` §9. Each wrapper:
+// Typed wrappers for the notification emails the system ships per
+// `docs/spec.md` §9. Each wrapper:
 //
 //   1. Short-circuits if `stake.notifications_enabled === false` (the
 //      operator kill-switch). This kill-switch is email-only; push has
@@ -18,7 +18,17 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
-import { auditId, deriveRequesterDisplay, formatRequesterLabel } from '@kindoo/shared';
+import {
+  REQUESTER_GUIDE_PATH,
+  auditId,
+  deriveRequesterDisplay,
+  formatRequesterLabel,
+  isGmailAddress,
+  // Resolves a ward_code to its display `ward_name`. Aliased so it can't
+  // be confused with the local `scopeLabel` below, which uppercases the
+  // raw code for the five request-lifecycle emails.
+  scopeLabel as wardScopeLabel,
+} from '@kindoo/shared';
 import type {
   Access,
   AccessRequest,
@@ -27,6 +37,7 @@ import type {
   OverCapEntry,
   RequestType,
   Stake,
+  Ward,
 } from '@kindoo/shared';
 import { WEB_BASE_URL } from '../lib/params.js';
 import { getResendSender, type EmailPayload } from '../lib/resend.js';
@@ -71,8 +82,11 @@ export function buildFromAddress(stake: Pick<Stake, 'stake_name'>): string {
 }
 
 /**
- * Read `WEB_BASE_URL` (Firebase Functions param) and append a route.
- * Throws if unset — the trigger surface catches and writes an
+ * Read the stake's base URL and append a route. The per-stake
+ * `web_base_url_override` wins over the `WEB_BASE_URL` param — see
+ * {@link resolveBaseUrl} for the guard on it.
+ *
+ * Throws if neither is set — the trigger surface catches and writes an
  * `email_send_failed` audit row, so deploy-time misconfiguration is
  * visible-but-not-silent.
  *
@@ -81,14 +95,30 @@ export function buildFromAddress(stake: Pick<Stake, 'stake_name'>): string {
  * returns `''` for unset params, so the empty-check below catches both
  * "missing" and "empty string" the same way.
  */
-export function buildLink(route: string): string {
-  const base = WEB_BASE_URL.value();
+export function buildLink(route: string, stake?: Pick<Stake, 'web_base_url_override'>): string {
+  const base = resolveBaseUrl(stake);
   if (!base) {
     throw new Error('WEB_BASE_URL is not set on the function. Set it at deploy time.');
   }
   const trimmed = base.replace(/\/+$/, '');
   const path = route.startsWith('/') ? route : `/${route}`;
   return `${trimmed}${path}`;
+}
+
+/**
+ * The override applies only when it trims to a non-empty `http(s)://`
+ * string; anything else is logged and ignored, falling back to the
+ * `WEB_BASE_URL` param exactly as if the field were absent. The scheme
+ * check is the whole validation — the field is operator-only and set by
+ * hand in the Firestore console, but it drives every link in every
+ * email this stake sends, so a typo shouldn't be silent.
+ */
+function resolveBaseUrl(stake?: Pick<Stake, 'web_base_url_override'>): string {
+  const override = stake?.web_base_url_override?.trim();
+  if (!override) return WEB_BASE_URL.value();
+  if (override.startsWith('https://') || override.startsWith('http://')) return override;
+  logger.warn('web_base_url_override ignored — needs an http:// or https:// scheme', { override });
+  return WEB_BASE_URL.value();
 }
 
 /** Pretty scope label for subject lines. */
@@ -201,6 +231,106 @@ export function buildOverCapBody(pools: OverCapEntry[], link: string): string {
   lines.push('');
   lines.push(`View seats: ${link}`);
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Welcome email (first app-access grant). The only email that ships an
+// HTML part — it goes to a member who may never have seen the app, so
+// the call to action gets a real button. `text` remains the fallback
+// part; the other five emails stay plain-text.
+// ---------------------------------------------------------------------------
+
+export type WelcomeEmailOpts = {
+  stakeName: string;
+  memberName?: string;
+  memberEmail: string;
+  /** Pre-formatted by `formatScopeList`. */
+  scopeList: string;
+  appLink: string;
+  guideLink: string;
+  isGmail: boolean;
+  /** D25 effective tier — see `isLimitedTier`. Narrows the copy. */
+  isLimited: boolean;
+};
+
+/**
+ * Join resolved scope labels into the fragment the welcome copy reads:
+ * `A` / `A and B` / `A, B, and C`. `'Stake'` becomes `'the Stake'`;
+ * ward names pass through. Callers order Stake first, then wards.
+ */
+export function formatScopeList(labels: string[]): string {
+  const parts = labels.map((l) => (l === SCOPE_LABEL_STAKE ? 'the Stake' : l));
+  if (parts.length <= 1) return parts[0] ?? '';
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+}
+
+export function buildWelcomeSubject(scopeList: string, isLimited: boolean): string {
+  const what = isLimited ? 'temporary building access' : 'building access';
+  return `[Stake Building Access] You can now request ${what} for ${scopeList}`;
+}
+
+export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
+  return [
+    welcomeGreeting(opts.memberName),
+    '',
+    `You've been given access to Stake Building Access, the app ${opts.stakeName} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for ${opts.scopeList}.`,
+    '',
+    `Open the app: ${opts.appLink}`,
+    '',
+    `Signing in: ${welcomeSignInSentence(opts.memberEmail, opts.isGmail)}`,
+    '',
+    `For more details read the full documentation here: ${opts.guideLink}`,
+  ].join('\n');
+}
+
+export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
+  // Font names quote with SINGLE quotes: these strings land inside
+  // double-quoted `style="…"` attributes, and a `"` would terminate the
+  // attribute early and drop every declaration after it.
+  const wrapper =
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;" +
+    'font-size:16px;line-height:1.5;color:#1a202c;max-width:560px;margin:0 auto;padding:24px';
+  const para = 'margin:0 0 16px';
+  const button =
+    'display:inline-block;background-color:#2b6cb0;color:#ffffff;text-decoration:none;' +
+    'padding:12px 24px;border-radius:6px;font-weight:600';
+  return [
+    `<div style="${wrapper}">`,
+    `<p style="${para}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
+    `<p style="${para}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
+    `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${button}">Open Stake Building Access</a></p>`,
+    `<p style="${para}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
+    `<p style="margin:0">For more details read the <a href="${escapeHtml(opts.guideLink)}" style="color:#2b6cb0">full documentation</a>.</p>`,
+    `</div>`,
+  ].join('\n');
+}
+
+/** What the recipient may request — the one word the tier changes. */
+function accessNoun(isLimited: boolean): string {
+  return isLimited ? 'temporary building access' : 'building access';
+}
+
+function welcomeGreeting(memberName?: string): string {
+  const name = memberName?.trim();
+  return name ? `Hi ${name},` : 'Hello,';
+}
+
+/** Sign-in instructions minus the `Signing in:` lead, shared by both parts. */
+function welcomeSignInSentence(memberEmail: string, isGmail: boolean): string {
+  return isGmail
+    ? `this is a Gmail address, so on the sign-in page just click "Continue with Google" and choose this account (${memberEmail}). No password needed.`
+    : `on the sign-in page, enter this email address (${memberEmail}) and click "Send me a sign-in link". You'll receive an email with a link that signs you in — no password needed.`;
+}
+
+/** Member names, stake names and ward names are user data. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ---------------------------------------------------------------------------
@@ -328,9 +458,74 @@ export async function notifyManagersOverCap(
   });
 }
 
+/** Member-bound: their access doc just gained its first scope. */
+export async function notifyMemberAccessGranted(
+  deps: BaseDeps & {
+    memberCanonical: string;
+    memberEmail: string;
+    memberName?: string;
+    grantedScopes: { hasStake: boolean; wards: string[] };
+    /** D25 effective tier, resolved by the caller via `isLimitedTier`. */
+    isLimited: boolean;
+  },
+): Promise<void> {
+  const { db, stakeId, stake, memberCanonical, memberEmail, memberName, grantedScopes, isLimited } =
+    deps;
+  if (!emailsEnabled(stake, stakeId, 'accessGranted')) return;
+
+  const wardLabels = await resolveWardLabels(db, stakeId, grantedScopes.wards);
+  const scopeList = formatScopeList([
+    ...(grantedScopes.hasStake ? [SCOPE_LABEL_STAKE] : []),
+    ...wardLabels,
+  ]);
+
+  const appLink = safeBuildLink(deps, '/');
+  if (appLink === undefined) return;
+  // Same guide for both tiers.
+  const guideLink = safeBuildLink(deps, REQUESTER_GUIDE_PATH);
+  if (guideLink === undefined) return;
+
+  const name = memberName?.trim();
+  const opts: WelcomeEmailOpts = {
+    stakeName: stake.stake_name?.trim() || 'your stake',
+    ...(name ? { memberName: name } : {}),
+    memberEmail,
+    scopeList,
+    appLink,
+    guideLink,
+    isGmail: isGmailAddress(memberEmail),
+    isLimited,
+  };
+
+  await sendOne(deps, {
+    payload: buildPayload({
+      stake,
+      to: [memberEmail],
+      subject: buildWelcomeSubject(scopeList, isLimited),
+      text: buildWelcomeTextBody(opts),
+      html: buildWelcomeHtmlBody(opts),
+    }),
+    // `source` keys the deterministic `email_send_failed` audit id so
+    // retries collapse to one row.
+    context: { type: 'accessGranted', source: memberCanonical },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Internals.
 // ---------------------------------------------------------------------------
+
+/** One wards-collection read; unresolved codes fall back to the raw code. */
+async function resolveWardLabels(
+  db: Firestore,
+  stakeId: string,
+  wards: string[],
+): Promise<string[]> {
+  if (wards.length === 0) return [];
+  const snap = await db.collection(`stakes/${stakeId}/wards`).get();
+  const wardDocs = snap.docs.map((d) => d.data() as Ward);
+  return wards.map((code) => wardScopeLabel(code, wardDocs));
+}
 
 function emailsEnabled(stake: Stake, stakeId: string, type: string): boolean {
   if (stake.notifications_enabled === false) {
@@ -345,6 +540,7 @@ function buildPayload(opts: {
   to: string[];
   subject: string;
   text: string;
+  html?: string;
 }): EmailPayload {
   const payload: EmailPayload = {
     from: buildFromAddress(opts.stake),
@@ -352,6 +548,7 @@ function buildPayload(opts: {
     subject: opts.subject,
     text: opts.text,
   };
+  if (opts.html) payload.html = opts.html;
   if (opts.stake.notifications_reply_to && opts.stake.notifications_reply_to.trim().length > 0) {
     payload.replyTo = opts.stake.notifications_reply_to.trim();
   }
@@ -374,11 +571,11 @@ function tryReadWebBaseUrl(): string | null {
 
 /** Wrap `buildLink` so a missing env var lands as an audit row, not a throw. */
 function safeBuildLink(
-  deps: { db: Firestore; stakeId: string },
+  deps: { db: Firestore; stakeId: string; stake?: Pick<Stake, 'web_base_url_override'> },
   route: string,
 ): string | undefined {
   try {
-    return buildLink(route);
+    return buildLink(route, deps.stake);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
