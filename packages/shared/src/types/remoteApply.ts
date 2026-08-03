@@ -34,6 +34,7 @@
 // disagree about staleness.
 
 import type { ActorRef } from './actor.js';
+import type { OverCapEntry } from './stake.js';
 import type { TimestampLike } from './userIndex.js';
 
 /**
@@ -127,6 +128,16 @@ export type RemoteApplyOutcome = {
   /** Mirrors `AccessRequest.kindoo_uid` when the provision resolved one. */
   kindoo_uid?: string;
   provisioning_note?: string;
+  /**
+   * Pools pushed over their seat cap by this completion, as
+   * `markRequestComplete` reported them. Carried so the phone can show
+   * the same warning the desktop's result dialog does — without it, a
+   * manager applying remotely never learns a cap was breached.
+   *
+   * Only ever present on `applied`: the `partial` path means the SBA
+   * write never landed, so the server had nothing to report.
+   */
+  over_caps?: OverCapEntry[];
 };
 
 /**
