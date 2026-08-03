@@ -101,9 +101,11 @@ function unconfiguredBundle() {
 }
 
 // Re-import after mocks so the module graph picks them up.
-async function renderApp() {
+async function renderApp(onPendingCountChange?: (count: number | null) => void) {
   const { App } = await import('./App');
-  return render(<App />);
+  return render(
+    onPendingCountChange ? <App onPendingCountChange={onPendingCountChange} /> : <App />,
+  );
 }
 
 function fakeRequest(overrides: Record<string, unknown> = {}) {
@@ -291,6 +293,65 @@ describe('App', () => {
     expect(screen.getByTestId('sba-tab-queue')).toHaveAttribute('aria-selected', 'false');
     expect(screen.getByTestId('sba-sync')).toBeInTheDocument();
     expect(screen.getByTestId('sba-sync-idle')).toBeInTheDocument();
+  });
+
+  // The whole reason the queue fetch is lifted into TabbedShell: the
+  // Queue tab unmounts on every tab switch, and a fetch owned by
+  // QueuePanel would blank the handle's badge and refetch on return.
+  it('reports the pending count and holds it across a tab switch', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [fakeRequest(), fakeRequest({ request_id: 'r2' })],
+    });
+
+    const onPendingCountChange = vi.fn();
+    const user = userEvent.setup();
+    await renderApp(onPendingCountChange);
+
+    await waitFor(() => expect(onPendingCountChange).toHaveBeenCalledWith(2));
+    const fetchesBefore = getMyPendingRequestsMock.mock.calls.length;
+
+    onPendingCountChange.mockClear();
+    await user.click(screen.getByTestId('sba-tab-sync'));
+    expect(screen.getByTestId('sba-sync')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-queue')).toBeNull();
+
+    // Queue body is gone, but the count is neither cleared nor refetched.
+    expect(onPendingCountChange).not.toHaveBeenCalledWith(null);
+    expect(getMyPendingRequestsMock.mock.calls.length).toBe(fetchesBefore);
+
+    // And returning to the queue does not re-fetch either.
+    await user.click(screen.getByTestId('sba-tab-queue'));
+    await waitFor(() => expect(screen.getByTestId('sba-queue-sections')).toBeInTheDocument());
+    expect(getMyPendingRequestsMock.mock.calls.length).toBe(fetchesBefore);
+  });
+
+  it('clears the pending count when the shell drops to NotAuthorized', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    // First call resolves so the shell mounts and reports a count; the
+    // refresh then trips permission-denied and unmounts it.
+    getMyPendingRequestsMock
+      .mockResolvedValueOnce({ requests: [fakeRequest()] })
+      .mockRejectedValue(Object.assign(new Error('nope'), { code: 'permission-denied' }));
+
+    const onPendingCountChange = vi.fn();
+    const user = userEvent.setup();
+    await renderApp(onPendingCountChange);
+
+    await waitFor(() => expect(onPendingCountChange).toHaveBeenCalledWith(1));
+
+    await user.click(screen.getByTestId('sba-refresh'));
+
+    await waitFor(() => expect(screen.getByTestId('sba-not-authorized')).toBeInTheDocument());
+    expect(onPendingCountChange).toHaveBeenCalledWith(null);
   });
 
   it('switches to the Configure (gear) tab when clicked — body has no wizard header', async () => {

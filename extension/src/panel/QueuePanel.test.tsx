@@ -180,9 +180,12 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-has-seat')).toBeInTheDocument());
+    // Cards render as soon as the queue resolves; the seat-existence
+    // overlay lands a tick later, so wait on the overlay itself.
+    await waitFor(() =>
+      expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-has-seat', 'true'),
+    );
     // Present → has-seat true, absent false.
-    expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-has-seat', 'true');
     expect(screen.getByTestId('card-has-seat')).toHaveAttribute('data-seat-absent', 'false');
     // Positively absent → has-seat false, absent true.
     expect(screen.getByTestId('card-no-seat')).toHaveAttribute('data-has-seat', 'false');
@@ -223,11 +226,11 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-primary-stake')).toBeInTheDocument());
-    // Primary-scope stake → has stake grant.
-    expect(screen.getByTestId('card-primary-stake')).toHaveAttribute(
-      'data-has-stake-grant',
-      'true',
+    await waitFor(() =>
+      expect(screen.getByTestId('card-primary-stake')).toHaveAttribute(
+        'data-has-stake-grant',
+        'true',
+      ),
     );
     // Ward primary + stake duplicate → has stake grant.
     expect(screen.getByTestId('card-dup-stake')).toHaveAttribute('data-has-stake-grant', 'true');
@@ -252,9 +255,10 @@ describe('QueuePanel', () => {
     });
     await renderPanel();
 
-    await waitFor(() => expect(screen.getByTestId('card-edit-has')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-has-seat', 'true'),
+    );
     // Edit with a present seat → not absent (provision button stays).
-    expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-has-seat', 'true');
     expect(screen.getByTestId('card-edit-has')).toHaveAttribute('data-seat-absent', 'false');
     // Edit with no seat → seat-absent flag set (edit gate fires).
     expect(screen.getByTestId('card-edit-missing')).toHaveAttribute('data-seat-absent', 'true');

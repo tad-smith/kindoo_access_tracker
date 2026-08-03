@@ -38,6 +38,7 @@
   --sba-handle-top: 12px;
   --sba-handle-width: 74px;
   --sba-handle-height: 28px;
+  --sba-panel-border: 1px;
 
   position: fixed;
   top: 0;
@@ -46,7 +47,7 @@
   width: 400px;
   max-width: 100vw;
   background: #ffffff;
-  border-left: 1px solid #d8d8dc;
+  border-left: var(--sba-panel-border) solid #d8d8dc;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
   transition:
     transform 180ms ease-out,
@@ -69,7 +70,11 @@
 .sba-handle {
   position: absolute;
   top: var(--sba-handle-top);
-  left: calc(-1 * var(--sba-handle-width));
+  /* `left` is measured from the containing block's PADDING box, which
+   * starts inside the panel's left border — so the border width has to
+   * come out too, or the handle sits 1px past the viewport edge when
+   * closed and overlaps the border when open. */
+  left: calc(-1 * (var(--sba-handle-width) + var(--sba-panel-border)));
   box-sizing: border-box;
   width: var(--sba-handle-width);
   height: var(--sba-handle-height);
