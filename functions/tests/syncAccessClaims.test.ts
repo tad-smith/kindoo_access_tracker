@@ -187,33 +187,141 @@ describe('scopesFromAccessDoc — limited tier', () => {
     ).toEqual({ hasStake: true, wards: ['CO', 'GE'], limited: true });
   });
 
-  it('any importer calling is full tier under the shipped (empty) set', () => {
+  // ---- importer tier comes from the STORED stamp ----
+  //
+  // The tier is decided by the writer and stored in
+  // `importer_limited_callings`. Nothing here classifies a calling by
+  // name, so the same calling reads limited or full purely on what the
+  // doc says.
+
+  it('THE NO-MIGRATION CASE: no importer_limited_callings at all => every importer calling is full', () => {
+    // Every access doc written before the field existed looks like this,
+    // including the Elders Quorum Presidents already granted access.
+    // They must keep computing exactly the claim block they compute
+    // today, or shipping this revokes refresh tokens for nothing.
     expect(
       scopesFromAccessDoc({
-        importer_callings: { GE: ['Bishop'] },
+        importer_callings: { GE: ['Elders Quorum President'] },
         manual_grants: {},
       }),
     ).toEqual({ hasStake: false, wards: ['GE'], limited: false });
   });
 
-  it('importer calling present in an INJECTED limited set => limited', () => {
-    // Proves the Elders-Quorum-President follow-up path before the
-    // shipped `LIMITED_ACCESS_CALLINGS` set is populated. Match is on
-    // the trim+lowercase key, so display casing on either side is fine.
-    const injected = new Set(['Elders Quorum President']);
+  it('importer calling listed in importer_limited_callings[scope] => limited', () => {
     expect(
-      scopesFromAccessDoc(
-        { importer_callings: { GE: ['  elders quorum PRESIDENT '] }, manual_grants: {} },
-        injected,
-      ),
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+        manual_grants: {},
+      }),
     ).toEqual({ hasStake: false, wards: ['GE'], limited: true });
   });
 
-  it('importer calling outside the injected limited set => full', () => {
-    const injected = new Set(['Elders Quorum President']);
-    expect(scopesFromAccessDoc({ importer_callings: { GE: ['Bishop'] } }, injected).limited).toBe(
-      false,
-    );
+  it('importer calling NOT listed in the stamp => full', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Bishop'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+        manual_grants: {},
+      }).limited,
+    ).toBe(false);
+  });
+
+  it('one stamped + one unstamped calling in the same scope => full', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Bishop', 'Elders Quorum President'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+      }).limited,
+    ).toBe(false);
+  });
+
+  it('a stamp on one scope does not cover an unstamped calling in another', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'], CO: ['Bishop'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+      }),
+    ).toEqual({ hasStake: false, wards: ['CO', 'GE'], limited: false });
+  });
+
+  it('every scope stamped => limited', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'], CO: ['Elders Quorum President'] },
+        importer_limited_callings: {
+          GE: ['Elders Quorum President'],
+          CO: ['Elders Quorum President'],
+        },
+      }),
+    ).toEqual({ hasStake: false, wards: ['CO', 'GE'], limited: true });
+  });
+
+  it('matches the stamp on the trim+lowercase key, so hand-edited casing still lines up', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['  elders quorum PRESIDENT '] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+      }).limited,
+    ).toBe(true);
+  });
+
+  it('limited importer calling + full manual grant => full', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+        manual_grants: { CO: [fullGrant('g1')] },
+      }),
+    ).toEqual({ hasStake: false, wards: ['CO', 'GE'], limited: false });
+  });
+
+  it('limited importer calling + limited manual grant => limited', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+        manual_grants: { CO: [limitedGrant('g1')] },
+      }),
+    ).toEqual({ hasStake: false, wards: ['CO', 'GE'], limited: true });
+  });
+
+  it.each([
+    ['non-array scope value', { GE: 'Elders Quorum President' }],
+    ['null scope value', { GE: null }],
+    ['empty array', { GE: [] }],
+    ['non-string entries', { GE: [null, 42] }],
+    ['stamp under the wrong scope', { CO: ['Elders Quorum President'] }],
+    ['whole field not an object', 'nope'],
+    ['whole field an array', ['Elders Quorum President']],
+  ])('malformed importer_limited_callings (%s) counts as full and never throws', (_l, stamp) => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Elders Quorum President'] },
+        importer_limited_callings: stamp,
+      }),
+    ).toEqual({ hasStake: false, wards: ['GE'], limited: false });
+  });
+
+  it('a stamped name that is not in importer_callings grants nothing by itself', () => {
+    // The stamp is a tier ON a grant, never a grant. It adds no scope,
+    // and the calling that IS present stays full.
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: { GE: ['Bishop'] },
+        importer_limited_callings: { GE: ['Ward Clerk'], DR: ['Elders Quorum President'] },
+      }),
+    ).toEqual({ hasStake: false, wards: ['GE'], limited: false });
+  });
+
+  it('a stamp on a doc with no importer_callings confers nothing', () => {
+    expect(
+      scopesFromAccessDoc({
+        importer_callings: {},
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+        manual_grants: {},
+      }),
+    ).toEqual({ hasStake: false, wards: [], limited: false });
   });
 
   it('limited grant in one scope + full grant in another => full', () => {
@@ -256,12 +364,11 @@ describe('scopesFromAccessDoc — limited tier', () => {
   });
 
   it('non-string importer entries count as full', () => {
-    const injected = new Set(['Elders Quorum President']);
     expect(
-      scopesFromAccessDoc(
-        { importer_callings: { GE: [null, 'Elders Quorum President'] } },
-        injected,
-      ).limited,
+      scopesFromAccessDoc({
+        importer_callings: { GE: [null, 'Elders Quorum President'] },
+        importer_limited_callings: { GE: ['Elders Quorum President'] },
+      }).limited,
     ).toBe(false);
   });
 
@@ -315,6 +422,45 @@ describe.skipIf(!hasEmulators())('computeStakeClaims — limited tier', () => {
 
     const block = await computeStakeClaims('csnorth', 'x@gmail.com');
     expect(block).toEqual({ manager: false, stake: false, wards: ['GE'], limited: true });
+  });
+
+  it('sets limited for an Elders-Quorum-President-only user carrying the stored stamp', async () => {
+    const { db } = requireEmulators();
+    await db.doc('stakes/csnorth/access/eqp@gmail.com').set({
+      importer_callings: { GE: ['Elders Quorum President'] },
+      importer_limited_callings: { GE: ['Elders Quorum President'] },
+      manual_grants: {},
+    });
+
+    const block = await computeStakeClaims('csnorth', 'eqp@gmail.com');
+    expect(block).toEqual({ manager: false, stake: false, wards: ['GE'], limited: true });
+  });
+
+  it('omits limited for that same user when they are an ACTIVE manager', async () => {
+    const { db } = requireEmulators();
+    await db.doc('stakes/csnorth/kindooManagers/eqpmgr@gmail.com').set({ active: true });
+    await db.doc('stakes/csnorth/access/eqpmgr@gmail.com').set({
+      importer_callings: { GE: ['Elders Quorum President'] },
+      importer_limited_callings: { GE: ['Elders Quorum President'] },
+      manual_grants: {},
+    });
+
+    const block = await computeStakeClaims('csnorth', 'eqpmgr@gmail.com');
+    expect(block).toEqual({ manager: true, stake: false, wards: ['GE'] });
+    expect('limited' in block).toBe(false);
+  });
+
+  it('omits limited for an Elders Quorum President whose doc predates the stamp', async () => {
+    // The already-granted population. Not retroactive: no stamp, so the
+    // block is byte-identical to what it was before this shipped.
+    const { db } = requireEmulators();
+    await db
+      .doc('stakes/csnorth/access/legacyeqp@gmail.com')
+      .set({ importer_callings: { GE: ['Elders Quorum President'] }, manual_grants: {} });
+
+    const block = await computeStakeClaims('csnorth', 'legacyeqp@gmail.com');
+    expect(block).toEqual({ manager: false, stake: false, wards: ['GE'] });
+    expect('limited' in block).toBe(false);
   });
 
   it('leaves an ordinary full user block byte-identical to today', async () => {

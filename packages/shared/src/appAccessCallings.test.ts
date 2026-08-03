@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   EQ_PRESIDENT_CALLING,
-  LIMITED_ACCESS_CALLINGS,
+  LIMITED_TIER_CALLINGS,
   STAKE_APP_ACCESS_CALLINGS,
   WARD_APP_ACCESS_CALLINGS,
   appAccessCallingsForScope,
   filterAppAccessCallings,
-  isLimitedAccessCalling,
+  filterLimitedTierCallings,
 } from './appAccessCallings.js';
 import { callingSortOrder } from './callingSortOrder.js';
 
@@ -119,35 +119,54 @@ describe('filterAppAccessCallings', () => {
   });
 });
 
-describe('isLimitedAccessCalling', () => {
-  it('ships with an empty limited set — every importer calling is full-tier today', () => {
-    expect(LIMITED_ACCESS_CALLINGS.size).toBe(0);
+describe('LIMITED_TIER_CALLINGS', () => {
+  it('is exactly Elders Quorum President', () => {
+    expect([...LIMITED_TIER_CALLINGS]).toEqual([EQ_PRESIDENT_CALLING]);
   });
 
-  it('returns false for every ward and stake app-access calling', () => {
+  it('holds no base ward or stake app-access calling — those stay full-tier', () => {
     for (const name of [...WARD_APP_ACCESS_CALLINGS, ...STAKE_APP_ACCESS_CALLINGS]) {
-      expect(isLimitedAccessCalling(name)).toBe(false);
+      expect(LIMITED_TIER_CALLINGS.has(name)).toBe(false);
     }
   });
+});
 
-  it('returns false for Elders Quorum President until the set says otherwise', () => {
-    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING)).toBe(false);
+describe('filterLimitedTierCallings', () => {
+  it('keeps only the limited-tier calling and preserves input order', () => {
+    expect(filterLimitedTierCallings(['Bishop', EQ_PRESIDENT_CALLING, 'Ward Clerk'])).toEqual([
+      EQ_PRESIDENT_CALLING,
+    ]);
   });
 
-  it('returns true for a calling in an injected limited set', () => {
-    // Proves the next step's path (EQ Presidents → limited) works
-    // before the shipped set is flipped on.
-    const injected = new Set([EQ_PRESIDENT_CALLING]);
-    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING, injected)).toBe(true);
-    expect(isLimitedAccessCalling('Bishop', injected)).toBe(false);
+  it('returns an empty array when nothing is limited-tier', () => {
+    expect(filterLimitedTierCallings(['Bishop', 'Ward Clerk'])).toEqual([]);
+    expect(filterLimitedTierCallings([])).toEqual([]);
   });
 
-  it('matches an injected set case- and whitespace-insensitively', () => {
+  it('matches case- and whitespace-insensitively, preserving original casing', () => {
+    // The result must be a literal subset of the input so it can be
+    // stored verbatim beside `importer_callings[scope]`.
+    expect(filterLimitedTierCallings(['  eLDERS quorum PRESIDENT  '])).toEqual([
+      '  eLDERS quorum PRESIDENT  ',
+    ]);
+  });
+
+  it('covers the president title only, not the rest of the quorum presidency', () => {
     expect(
-      isLimitedAccessCalling('  eLDERS quorum PRESIDENT  ', new Set([EQ_PRESIDENT_CALLING])),
-    ).toBe(true);
-    expect(isLimitedAccessCalling(EQ_PRESIDENT_CALLING, new Set(['elders quorum president']))).toBe(
-      true,
-    );
+      filterLimitedTierCallings([
+        EQ_PRESIDENT_CALLING,
+        'Elders Quorum First Counselor',
+        'Elders Quorum Second Counselor',
+        'Elders Quorum Secretary',
+      ]),
+    ).toEqual([EQ_PRESIDENT_CALLING]);
+  });
+
+  it('composes with filterAppAccessCallings — the writer stamps a subset of what it granted', () => {
+    const granted = filterAppAccessCallings('CO', ['Bishop', EQ_PRESIDENT_CALLING], {
+      eqPresidentAccess: true,
+    });
+    expect(granted).toEqual(['Bishop', EQ_PRESIDENT_CALLING]);
+    expect(filterLimitedTierCallings(granted)).toEqual([EQ_PRESIDENT_CALLING]);
   });
 });

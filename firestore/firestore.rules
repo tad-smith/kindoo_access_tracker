@@ -427,6 +427,18 @@ service cloud.firestore {
       //     Rules forbid client mutation by requiring it to be
       //     byte-equal to the prior value on every client update.
       //
+      //   - `importer_limited_callings` — server-only, same treatment.
+      //     It is the D25 access-tier stamp on `importer_callings`
+      //     (the subset of each scope's callings that confer LIMITED
+      //     access), written by the same server writers in the same
+      //     update. A client that could set it could grant itself full
+      //     access by clearing the stamp, so it is gated exactly like
+      //     the map it describes: absent on create, byte-equal on
+      //     update, and NOT in the affectedKeys() allowlist. Absent
+      //     means every importer calling is full, which is what every
+      //     record predating the field says — hence `.get(…, {})`
+      //     rather than a bare field read on both sides.
+      //
       //   - `manual_grants` — manager-only client-writable. The
       //     `affectedKeys()` allowlist below enumerates exactly the
       //     fields a manager update may touch.
@@ -438,21 +450,25 @@ service cloud.firestore {
 
         // Manager creates a manual-only access doc — no importer
         // rows yet (the importer would have created the doc itself
-        // if there were any). At least one manual_grants entry is
-        // required so we don't create empty docs that would
-        // immediately satisfy the delete predicate.
+        // if there were any), so no tier stamp either. At least one
+        // manual_grants entry is required so we don't create empty
+        // docs that would immediately satisfy the delete predicate.
         allow create: if isManager(stakeId)
           && memberCanonical == request.resource.data.member_canonical
           && request.resource.data.importer_callings == {}
+          && !('importer_limited_callings' in request.resource.data)
           && request.resource.data.manual_grants.size() > 0
           && lastActorMatchesAuth(request.resource.data);
 
-        // Manager edits manual_grants only — `importer_callings`
-        // is immutable from clients, and only the manual side +
-        // bookkeeping fields are in the affected-keys allowlist.
+        // Manager edits manual_grants only — `importer_callings` and
+        // its tier stamp are immutable from clients, and only the
+        // manual side + bookkeeping fields are in the affected-keys
+        // allowlist.
         allow update: if isManager(stakeId)
           && request.resource.data.member_canonical == resource.data.member_canonical
           && request.resource.data.importer_callings == resource.data.importer_callings
+          && request.resource.data.get('importer_limited_callings', {})
+             == resource.data.get('importer_limited_callings', {})
           && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['manual_grants', 'last_modified_by', 'last_modified_at', 'lastActor'])
           && lastActorMatchesAuth(request.resource.data);
@@ -463,7 +479,9 @@ service cloud.firestore {
         // empties `manual_grants` by removing its last entry.
         // The delete only fires when both are empty so the doc-
         // existence invariant ("exists iff some grant exists") is
-        // preserved.
+        // preserved. `importer_limited_callings` is deliberately NOT
+        // consulted: it stamps grants, it is not one, so a stale stamp
+        // must never keep an otherwise-empty doc alive.
         allow delete: if isManager(stakeId)
           && resource.data.importer_callings == {}
           && resource.data.manual_grants == {};

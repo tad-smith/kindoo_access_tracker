@@ -25,6 +25,15 @@
 //   - Skip-if-equal idempotency. A grant whose scope entry already
 //     carries the calling, or a revoke whose entry doesn't, writes
 //     nothing — a second run reports `docs_written: 0`.
+//   - D25 tier stamp maintained in lockstep. An entry this run INSERTS
+//     is stamped limited in `importer_limited_callings[scope]`, in the
+//     same update as `importer_callings`; the revoke direction removes
+//     the calling from both maps. An entry that already exists is left
+//     alone in both maps by the skip above — the tier belongs to the
+//     writer that inserted the record, and this callable does not
+//     re-tier records it didn't write. Existing Elders Quorum Presidents
+//     therefore stay FULL until their scope is next written, which is
+//     D23(a)'s "not retroactive in either direction" applied to the tier.
 //   - ≤250 seats at target scale: one `where('type','==','auto')` query
 //     (single-field, no composite index) then in-memory filtering. No
 //     pagination, no batching.
@@ -78,11 +87,12 @@ function isEqPresident(calling: string): boolean {
 }
 
 /**
- * Rebuild an `importer_callings` map with one scope's entry replaced.
- * Other scopes are copied verbatim; an empty replacement drops the key
- * entirely. Mirrors the map-rebuild pattern in `syncApplyFix.ts`.
+ * Rebuild a per-scope calling map (`importer_callings` or its
+ * `importer_limited_callings` tier stamp) with one scope's entry
+ * replaced. Other scopes are copied verbatim; an empty replacement drops
+ * the key entirely. Mirrors the map-rebuild pattern in `syncApplyFix.ts`.
  */
-function rebuildImporter(
+function rebuildScopeMap(
   prior: Record<string, string[]> | undefined,
   scope: string,
   next: string[],
@@ -153,14 +163,26 @@ export async function backfillEqPresidentAccessForStake(
       const snap = await tx.get(accessRef);
       const access = snap.exists ? (snap.data() as Access) : undefined;
       const prior = access?.importer_callings?.[seat.scope] ?? [];
+      const priorLimited = access?.importer_limited_callings?.[seat.scope] ?? [];
       const now = FieldValue.serverTimestamp();
 
       if (direction === 'grant') {
         // Already granted for this scope → nothing to do (idempotent).
+        // Deliberately NOT re-stamping a pre-existing untiered entry:
+        // the tier is decided when the record is written, and this
+        // callable does not re-tier records it didn't insert (D23(a),
+        // "the toggle is not retroactive in either direction").
         if (prior.some(isEqPresident)) return 'skipped';
         // Original casing preserved from the seat.
         const eqCallings = (seat.callings ?? []).filter(isEqPresident);
         const merged = [...new Set([...prior, ...eqCallings])].sort();
+        // The D25 tier stamp for the entry this run inserts. Written in
+        // the SAME update as `importer_callings` so the two can't drift;
+        // the names are taken from `merged` so the stamp is a literal
+        // subset of it. Any prior stamp for this scope is preserved.
+        const mergedLimited = [
+          ...new Set([...priorLimited, ...merged.filter(isEqPresident)]),
+        ].sort();
 
         if (!access) {
           tx.set(accessRef, {
@@ -168,6 +190,7 @@ export async function backfillEqPresidentAccessForStake(
             member_email: seat.member_email,
             member_name: seat.member_name,
             importer_callings: { [seat.scope]: merged },
+            importer_limited_callings: { [seat.scope]: mergedLimited },
             manual_grants: {},
             sort_order: eqOrder,
             created_at: now,
@@ -181,11 +204,16 @@ export async function backfillEqPresidentAccessForStake(
         const priorSort = typeof access.sort_order === 'number' ? access.sort_order : null;
         // `tx.update`, NOT `tx.set(..., { merge: true })`: a merge
         // deep-merges nested maps key-by-key, which would strand stale
-        // scope entries. `update` replaces `importer_callings` wholesale
-        // with the map we just rebuilt and leaves `manual_grants` (and
-        // every other unmentioned field) untouched.
+        // scope entries. `update` replaces both maps wholesale with the
+        // ones we just rebuilt and leaves `manual_grants` (and every
+        // other unmentioned field) untouched.
         tx.update(accessRef, {
-          importer_callings: rebuildImporter(access.importer_callings, seat.scope, merged),
+          importer_callings: rebuildScopeMap(access.importer_callings, seat.scope, merged),
+          importer_limited_callings: rebuildScopeMap(
+            access.importer_limited_callings,
+            seat.scope,
+            mergedLimited,
+          ),
           sort_order: pickMin(priorSort, eqOrder),
           last_modified_at: now,
           last_modified_by: actor,
@@ -199,8 +227,15 @@ export async function backfillEqPresidentAccessForStake(
       if (!access) return 'skipped';
       const next = prior.filter((c) => !isEqPresident(c));
       if (next.length === prior.length) return 'skipped';
+      // The tier stamp goes with the calling it described.
+      const nextLimited = priorLimited.filter((c) => !isEqPresident(c));
 
-      const finalImporter = rebuildImporter(access.importer_callings, seat.scope, next);
+      const finalImporter = rebuildScopeMap(access.importer_callings, seat.scope, next);
+      const finalLimited = rebuildScopeMap(
+        access.importer_limited_callings,
+        seat.scope,
+        nextLimited,
+      );
       if (Object.keys(finalImporter).length === 0 && !hasManualGrants(access)) {
         // Nothing left to keep the doc alive, so it gets dropped — but
         // the delete has to be a SEPARATE committed write. The audit
@@ -229,6 +264,7 @@ export async function backfillEqPresidentAccessForStake(
       const remaining = Object.values(finalImporter).flat();
       tx.update(accessRef, {
         importer_callings: finalImporter,
+        importer_limited_callings: finalLimited,
         sort_order: seatCallingOrder(remaining),
         last_modified_at: now,
         last_modified_by: actor,
@@ -254,13 +290,23 @@ export async function backfillEqPresidentAccessForStake(
         const freshNext = (fresh.importer_callings?.[seat.scope] ?? []).filter(
           (c) => !isEqPresident(c),
         );
-        const freshImporter = rebuildImporter(fresh.importer_callings, seat.scope, freshNext);
+        const freshNextLimited = (fresh.importer_limited_callings?.[seat.scope] ?? []).filter(
+          (c) => !isEqPresident(c),
+        );
+        const freshImporter = rebuildScopeMap(fresh.importer_callings, seat.scope, freshNext);
+        // The tier stamp is never part of the doc-existence test — it
+        // stamps grants, it isn't one.
         if (Object.keys(freshImporter).length === 0 && !hasManualGrants(fresh)) {
           tx.delete(accessRef);
           return 'deleted';
         }
         tx.update(accessRef, {
           importer_callings: freshImporter,
+          importer_limited_callings: rebuildScopeMap(
+            fresh.importer_limited_callings,
+            seat.scope,
+            freshNextLimited,
+          ),
           sort_order: seatCallingOrder(Object.values(freshImporter).flat()),
           last_modified_at: FieldValue.serverTimestamp(),
           last_modified_by: actor,

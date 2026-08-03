@@ -6,12 +6,12 @@
 // ---- Pure helpers -----------------------------------------------------
 export {
   EQ_PRESIDENT_CALLING,
-  LIMITED_ACCESS_CALLINGS,
+  LIMITED_TIER_CALLINGS,
   STAKE_APP_ACCESS_CALLINGS,
   WARD_APP_ACCESS_CALLINGS,
   appAccessCallingsForScope,
   filterAppAccessCallings,
-  isLimitedAccessCalling,
+  filterLimitedTierCallings,
   type AppAccessOptions,
 } from './appAccessCallings.js';
 export { auditId } from './auditId.js';
