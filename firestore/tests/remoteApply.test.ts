@@ -719,6 +719,38 @@ describe('firestore.rules — remoteApply', () => {
       await assertFails(db.doc(JOB_PATH).update(finishPayload('applied')));
     });
 
+    // A job with no `target_site_key` cannot be created through the
+    // rules at all, and no Cloud Function writes this collection, so
+    // one can only exist as leftover test data from before the field
+    // was required. Such a doc is INERT: `jobCoreUnchanged` reads the
+    // field bare, and a bare read of a missing key errors, so every
+    // transition — claim, cancel, report — is denied.
+    //
+    // That is the safe failure. The target site of such a job is
+    // unknowable, and claiming it would run a real provision in Kindoo
+    // against a guessed site. Frozen-and-visible beats applied-to-the-
+    // wrong-place. Clients therefore do NOT need to defend against the
+    // missing field; leftovers need deleting, not defaulting.
+    it('a job with no target_site_key is frozen, not claimable', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        const { target_site_key: _omit, ...withoutSite } = queuedJob();
+        await ctx
+          .firestore()
+          .doc(JOB_PATH)
+          .set({ ...withoutSite, created_at: new Date() });
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertFails(db.doc(JOB_PATH).update(claimPayload()));
+      // Not even the phone's cancel can move it.
+      await assertFails(
+        db.doc(JOB_PATH).update({
+          status: 'cancelled',
+          finished_at: SERVER_TIMESTAMP(),
+          lastActor: lastActorOf(OWNER),
+        }),
+      );
+    });
+
     it('queued → partial / failed is denied', async () => {
       await seedJob(env, { status: 'queued' });
       const db = managerContext(env, STAKE_ID).firestore();
