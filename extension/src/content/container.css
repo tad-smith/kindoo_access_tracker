@@ -1,10 +1,16 @@
 /* Slide-over container styles. Live in the Shadow DOM so Kindoo CSS
  * cannot reach them. The host element on the page itself is
- * non-visible; the slide-over chrome lives inside the shadow root. */
+ * non-visible; the slide-over chrome lives inside the shadow root.
+ *
+ * Colours are hardcoded here, not taken from panel.css's custom
+ * properties: those are declared on `.sba-slideover-root`, which is a
+ * CHILD of `.sba-slideover`, so the handle (its sibling) cannot inherit
+ * them. Keep the values below in sync with panel.css. */
 
 /* :host targets the shadow-root host element from inside the shadow
- * tree. We use a data attribute on the host to drive the open /
- * closed transition without re-rendering. */
+ * tree. We use data attributes on the host to drive the open / closed
+ * transition and the handle's pending-count badge without
+ * re-rendering. */
 :host {
   all: initial;
   position: fixed;
@@ -16,6 +22,10 @@
 
 :host([data-sba-open='false']) .sba-slideover {
   transform: translateX(100%);
+  /* Closed, the panel sits off-viewport but its shadow still bleeds a
+   * smudge down the right edge — directly under the handle. Drop it
+   * and let the handle carry its own. */
+  box-shadow: none;
 }
 
 :host([data-sba-open='true']) .sba-slideover {
@@ -23,6 +33,13 @@
 }
 
 .sba-slideover {
+  /* Vertical offset of the handle. Single knob — nudge this one value
+   * if Kindoo's own top-right page chrome collides. */
+  --sba-handle-top: 40px;
+  --sba-handle-width: 74px;
+  --sba-handle-height: 28px;
+  --sba-panel-border: 1px;
+
   position: fixed;
   top: 0;
   right: 0;
@@ -30,33 +47,107 @@
   width: 400px;
   max-width: 100vw;
   background: #ffffff;
-  border-left: 1px solid #d8d8dc;
+  border-left: var(--sba-panel-border) solid #d8d8dc;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
-  transition: transform 180ms ease-out;
+  transition:
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out;
   pointer-events: auto;
   display: flex;
   flex-direction: column;
 }
 
-.sba-slideover-close {
+/* The open / close handle. Positioned against `.sba-slideover` (its
+ * `position: fixed` ancestor) and overhanging the panel's left edge, so
+ * the panel's own transform places it in both states for free:
+ *   closed → panel left edge at 100vw → handle flush to the viewport's
+ *            right edge
+ *   open   → panel left edge at 100vw - 400px → handle parked just
+ *            outside it
+ * No second animation, no separate positioning logic. `pointer-events`
+ * is inherited from `.sba-slideover`, so the handle stays clickable
+ * through the host's `pointer-events: none`. */
+.sba-handle {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  width: 1.75rem;
-  height: 1.75rem;
+  top: var(--sba-handle-top);
+  /* `left` is measured from the containing block's PADDING box, which
+   * starts inside the panel's left border — so the border width has to
+   * come out too, or the handle sits 1px past the viewport edge when
+   * closed and overlaps the border when open. */
+  left: calc(-1 * (var(--sba-handle-width) + var(--sba-panel-border)));
+  box-sizing: border-box;
+  width: var(--sba-handle-width);
+  height: var(--sba-handle-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  margin: 0;
   border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: #5a5a5a;
-  font-size: 20px;
+  border-radius: 6px 0 0 6px; /* flush right — round the left only */
+  background: #2563eb; /* panel.css --sba-primary */
+  color: #ffffff;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  box-shadow: -2px 1px 6px rgba(0, 0, 0, 0.22);
+  transition:
+    transform 120ms ease-out,
+    box-shadow 120ms ease-out;
   z-index: 1;
 }
 
-.sba-slideover-close:hover {
-  background: #f0f0f3;
-  color: #1a1a1a;
+.sba-handle:hover {
+  transform: translateX(-3px);
+  box-shadow: -5px 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+.sba-handle:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: -4px;
+}
+
+.sba-handle-chevron {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Direction always tells you what the click does: pull open / push
+ * closed. Driven from the host attribute so no JS toggles the glyph. */
+:host([data-sba-open='false']) .sba-handle-chevron::before {
+  content: '\2039';
+}
+
+:host([data-sba-open='true']) .sba-handle-chevron::before {
+  content: '\203A';
+}
+
+.sba-handle-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* No badge when the count is unknown (attribute absent) or zero. */
+:host(:not([data-sba-count])) .sba-handle-badge,
+:host([data-sba-count='0']) .sba-handle-badge {
+  display: none;
 }
 
 .sba-slideover-root {

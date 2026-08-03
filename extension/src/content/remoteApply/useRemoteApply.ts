@@ -54,6 +54,20 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
    * revoking consent must never depend on.
    */
   const publishedSiteKey = useRef<string | null>(null);
+  /**
+   * The loop reads `bundle` at tick time, so it must NOT be an effect
+   * dependency: keying on its identity means every re-render that
+   * rebuilds the object tears the loop down and starts a fresh one.
+   * TabbedShell re-renders on every queue fetch, and a restart cadence
+   * faster than the loop's first (0ms macrotask) tick means no tick ever
+   * completes — `drive()` returns early, `lastHeartbeatAt` resets to 0
+   * with each construction, and the heartbeat silently never publishes.
+   * No error, no log; the manager's phone just never sees a desktop.
+   * Reading through a ref also means a reconfigure reaches the next tick
+   * without a teardown.
+   */
+  const bundleRef = useRef(bundle);
+  bundleRef.current = bundle;
 
   const publishDisabled = useCallback(async () => {
     try {
@@ -87,7 +101,12 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
     wasEnabled.current = true;
     const handle = startRemoteApplyLoop({
       stakeId,
-      bundle,
+      // Getter, not a snapshot: the loop reads this per tick, so a
+      // reconfigure lands on the next tick with no restart. See
+      // `bundleRef`.
+      get bundle() {
+        return bundleRef.current;
+      },
       extVersion: extensionVersion(),
       onJobStart: (job) => setRunning({ jobId: job.jobId, requestId: job.requestId }),
       onJobEnd: () => {
@@ -109,7 +128,8 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
     // the opt-in immediately before every presence write for exactly that
     // reason — see `heartbeatIfDue`.
     return () => handle.stop();
-  }, [enabled, loaded, stakeId, bundle, publishDisabled]);
+    // `bundle` is deliberately absent — see `bundleRef`.
+  }, [enabled, loaded, stakeId, publishDisabled]);
 
   return { running, finishedCount };
 }
