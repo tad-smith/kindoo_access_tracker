@@ -28,7 +28,7 @@ import {
 } from '../../lib/docs';
 import { useActiveStake } from '../../lib/useActiveStake';
 import { usePrincipal } from '../../lib/principal';
-import { allowedScopesFor } from './scopeOptions';
+import { allowedScopesFor, isLimitedInStake } from './scopeOptions';
 import type { ScopeOption } from './components/NewRequestForm';
 
 /**
@@ -183,6 +183,11 @@ export interface NewRequestFormData {
   /** True while the buildings catalogue is still loading (the page /
    *  dialog gates the form on this). */
   isLoading: boolean;
+  /** True when the principal holds LIMITED app access in the active
+   *  stake (D25) — the form then offers `add_temp` only, caps the temp
+   *  window at 90 days, and locks a ward-scope request to the ward's own
+   *  building. `false` when there is no active stake. */
+  limited: boolean;
 }
 
 /**
@@ -218,6 +223,7 @@ export function useNewRequestFormData(): NewRequestFormData {
     buildings: buildings.data ?? [],
     wards: wards.data ?? [],
     isLoading: buildings.isLoading || buildings.data === undefined,
+    limited: activeStakeId !== null && isLimitedInStake(principal, activeStakeId),
   };
 }
 
