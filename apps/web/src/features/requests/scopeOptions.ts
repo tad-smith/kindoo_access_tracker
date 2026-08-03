@@ -21,6 +21,7 @@
 // (manager + stake + bishopric) never duplicate a scope.
 
 import type { Seat, Ward } from '@kindoo/shared';
+import type { GrantView } from '../../lib/grants';
 import type { Principal } from '../../lib/principal';
 import { scopeLabel } from '../../lib/scopeLabel';
 import type { ScopeOption } from './components/NewRequestForm';
@@ -88,7 +89,22 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
 }
 
 /**
- * "Can this principal submit an edit for this seat?" Two gates:
+ * "Does this principal hold LIMITED app access in this stake?" (D25).
+ *
+ * `limited` is a narrowing flag on an existing role, not a role of its
+ * own — a limited user still needs the bishopric / stake claim that
+ * `isScopeAllowed` tests. What the flag removes is authority over the
+ * durable seat types: a limited user may only ever touch `temp` seats,
+ * and only within a 90-day window. Every gate below consults this
+ * predicate rather than reading `limitedStakes` directly, so the
+ * narrowing lands on all call sites at once.
+ */
+export function isLimitedInStake(principal: Principal, stakeId: string): boolean {
+  return principal.limitedStakes.includes(stakeId);
+}
+
+/**
+ * "Can this principal submit an edit for this seat?" Three gates:
  *
  *   1. **Policy 1 — stake-scope auto seats are non-editable.** Church-
  *      granted access to every stake building; nothing to add or
@@ -98,7 +114,15 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
  *      locked; additions only) — Policy 1 covers the stake-scope case
  *      only.
  *
- *   2. **Role-for-scope.** Same `isScopeAllowed` predicate as the per-
+ *   2. **D25 — a limited user edits temp seats and nothing else.** Auto
+ *      and manual seats are durable grants outside their authority, so
+ *      the Edit affordance never renders on those rows. Placing the gate
+ *      here (rather than at each roster page) means all three roster
+ *      pages and `EditSeatAffordance` inherit it, and `EditSeatDialog`
+ *      can assume `edit_temp` is the only sub-mode a limited user
+ *      reaches.
+ *
+ *   3. **Role-for-scope.** Same `isScopeAllowed` predicate as the per-
  *      row Remove button — if you can Remove, you can Edit. A bishopric
  *      can edit ward-scope seats in their ward; a stake member can edit
  *      stake-scope seats; a Kindoo Manager can edit any scope.
@@ -110,5 +134,40 @@ export function isScopeAllowed(principal: Principal, stakeId: string, scope: str
  */
 export function canEditSeat(principal: Principal, stakeId: string, seat: Seat): boolean {
   if (seat.type === 'auto' && seat.scope === 'stake') return false;
+  if (isLimitedInStake(principal, stakeId) && seat.type !== 'temp') return false;
   return isScopeAllowed(principal, stakeId, seat.scope);
+}
+
+/**
+ * "Can this principal submit a removal for this grant row?" The base
+ * gate is `isScopeAllowed` against the GRANT's scope (a seat can carry
+ * duplicate grants in scopes the viewer has no authority over), plus the
+ * D25 narrowing: a limited user may remove temp grants only.
+ *
+ * **Deliberately stricter than the rules.** `limitedRemoveTargetIsTemp`
+ * checks only the SEAT's primary `type`, because a rules `get()` can
+ * read the seat doc but can't cheaply prove which `duplicate_grants[]`
+ * row a removal targets. The client knows exactly which row the button
+ * sits on, so it additionally requires the grant row itself to be temp.
+ * The asymmetry is one-directional and safe: everything this predicate
+ * admits, the rules also admit. It exists so the UI never renders a
+ * Remove button whose submit the server would reject — a limited user
+ * looking at the temp primary of a seat that also carries a manual
+ * duplicate grant sees Remove on the temp row only.
+ *
+ * Callers keep their own `grant.type !== 'auto'` gate: auto grants are
+ * LCR-managed for everyone, limited or not.
+ *
+ * Pure helper; tested in `tests/scopeOptions.test.ts`.
+ */
+export function canRemoveSeat(
+  principal: Principal,
+  stakeId: string,
+  seat: Seat,
+  grant: Pick<GrantView, 'scope' | 'type'>,
+): boolean {
+  if (isLimitedInStake(principal, stakeId) && (seat.type !== 'temp' || grant.type !== 'temp')) {
+    return false;
+  }
+  return isScopeAllowed(principal, stakeId, grant.scope);
 }

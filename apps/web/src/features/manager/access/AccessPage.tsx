@@ -222,6 +222,43 @@ interface AccessTableRow {
   grant?: ManualGrant;
 }
 
+// ----- Access tier (D25) -----
+//
+// The tier is stated on every row rather than only on limited ones: an
+// empty cell used to be indistinguishable from a full grant, a render
+// bug, and a stale service-worker bundle.
+
+type AccessLevel = 'full' | 'limited';
+
+/** Manual grants carry the marker. Absent means full; `'full'` is never
+ * stored (`firebase-schema.md` §4.5). */
+function grantLevel(grant: ManualGrant | undefined): AccessLevel {
+  return grant?.level === 'limited' ? 'limited' : 'full';
+}
+
+// Importer rows are Full by construction, and the page must NOT infer
+// their tier from the calling name. `importer_callings` is a
+// `Record<scope, string[]>` of bare calling strings with nowhere to
+// record a tier, and nothing can currently mint a limited tier from an
+// importer calling. Inferring one at read time would also break the
+// moment a calling joined the limited set: claims re-mint only when the
+// access doc is written, so existing holders would still hold full
+// access while this page labelled them LIMITED. A calling-derived
+// limited tier has to be **stored on the record** before it is shown —
+// then the page and the claim minter read one fact and cannot disagree.
+
+function LevelBadge({ level, testId }: { level: AccessLevel; testId: string }) {
+  return level === 'limited' ? (
+    <Badge variant="limited" data-testid={testId}>
+      LIMITED
+    </Badge>
+  ) : (
+    <Badge variant="info" data-testid={testId}>
+      Full
+    </Badge>
+  );
+}
+
 function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTableRow[] {
   const rows: AccessTableRow[] = [];
   for (const u of users) {
@@ -290,7 +327,27 @@ function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTable
       <tbody>
         {rows.map((r, i) => (
           <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
-            <td>{scopeLabel(r.scope, wards)}</td>
+            {/* Scope + tier share a cell: a table row is exactly one grant
+                (or one importer calling), so the pairing is accurate.
+                Testid keys on the grant id for manual rows; importer rows
+                have no grant, so they key on scope + calling — the pair
+                that makes an importer row unique within a doc. */}
+            <td>
+              {scopeLabel(r.scope, wards)}{' '}
+              {r.grant ? (
+                <LevelBadge
+                  level={grantLevel(r.grant)}
+                  testId={`access-table-level-${r.canonical}-${r.grant.grant_id}`}
+                />
+              ) : (
+                // Importer row — tier is not stored on `importer_callings`,
+                // so it is Full by construction. See the Access tier note.
+                <LevelBadge
+                  level="full"
+                  testId={`access-table-level-${r.canonical}-${r.scope}-${r.calling}`}
+                />
+              )}
+            </td>
             <td>{r.calling}</td>
             <td>
               <RosterMemberLine name={null} email={r.email} />
@@ -327,6 +384,9 @@ interface AccessCardProps {
   onDeleteRequest: (scope: string, grant: ManualGrant) => void;
 }
 
+// Unlike the table, the card's tier chip sits beside each grant, not on
+// the scope chip: a card groups every grant for a scope under one
+// heading and those grants can differ in tier.
 function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardProps) {
   const importerScopes = Object.entries(access.importer_callings ?? {})
     .filter(([scope, callings]) => (!scopeFilter || scope === scopeFilter) && callings.length > 0)
@@ -353,7 +413,15 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
               <span className="roster-card-chip roster-card-scope">{scopeLabel(scope, wards)}</span>
               <ul className="kd-access-grants">
                 {callings.map((c) => (
-                  <li key={c}>{c}</li>
+                  <li key={c}>
+                    {c}{' '}
+                    {/* Importer calling — no stored tier, Full by
+                        construction. See the Access tier note. */}
+                    <LevelBadge
+                      level="full"
+                      testId={`access-grant-level-${access.member_canonical}-${scope}-${c}`}
+                    />
+                  </li>
                 ))}
               </ul>
             </div>
@@ -373,6 +441,10 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
                 {grants.map((g) => (
                   <li key={g.grant_id}>
                     {g.reason}{' '}
+                    <LevelBadge
+                      level={grantLevel(g)}
+                      testId={`access-grant-level-${access.member_canonical}-${g.grant_id}`}
+                    />{' '}
                     <Button
                       variant="danger"
                       onClick={() => onDeleteRequest(scope, g)}
@@ -395,9 +467,17 @@ const addManualSchema = z.object({
   member_email: z.string().trim().min(1).email('Must be a valid email.'),
   member_name: z.string().trim().min(1, 'Name is required.'),
   scope: z.string().trim().min(1, 'Scope is required.'),
+  // Form-level tri-state is binary; the stored grant only ever carries
+  // `level: 'limited'`. 'full' is the form's representation of "no
+  // marker" — the mutation drops the key. See `useAddManualGrantMutation`.
+  level: z.enum(['full', 'limited']).default('full'),
   reason: z.string().trim().min(1, 'Reason is required.'),
 });
-type AddManualForm = z.infer<typeof addManualSchema>;
+// `level`'s `.default()` splits input from output: the raw form value may
+// omit it, the parsed value never does. RHF needs both generics so
+// `register` types against the input and `onSubmit` against the output.
+type AddManualFormInput = z.input<typeof addManualSchema>;
+type AddManualForm = z.output<typeof addManualSchema>;
 
 interface AddManualGrantDialogProps {
   open: boolean;
@@ -418,15 +498,16 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
     () => [...(wards.data ?? [])].sort((a, b) => a.ward_code.localeCompare(b.ward_code)),
     [wards.data],
   );
-  const form = useForm<AddManualForm>({
+  const form = useForm<AddManualFormInput, unknown, AddManualForm>({
     resolver: zodResolver(addManualSchema),
-    defaultValues: { member_email: '', member_name: '', scope: 'stake', reason: '' },
+    defaultValues: { member_email: '', member_name: '', scope: 'stake', level: 'full', reason: '' },
   });
   const { register, handleSubmit, reset, formState } = form;
 
   // Reset whenever the dialog opens so a previous draft doesn't carry.
   useEffect(() => {
-    if (open) reset({ member_email: '', member_name: '', scope: 'stake', reason: '' });
+    if (open)
+      reset({ member_email: '', member_name: '', scope: 'stake', level: 'full', reason: '' });
   }, [open, reset]);
 
   async function onSubmit(input: AddManualForm) {
@@ -488,6 +569,17 @@ function AddManualGrantDialog({ open, onClose }: AddManualGrantDialogProps) {
             No wards configured. Add wards via Configuration to grant ward-scope access.
           </p>
         ) : null}
+        <label>
+          Access level
+          <Select {...register('level')} data-testid="add-manual-level">
+            <option value="full">Full</option>
+            <option value="limited">Limited</option>
+          </Select>
+        </label>
+        <p className="kd-form-hint">
+          Full gives the same authority you have. Limited lets them request temporary access only —
+          up to 90 days — and change or remove just those temporary seats.
+        </p>
         <label>
           Reason
           <Input {...register('reason')} placeholder="Covering bishop" />

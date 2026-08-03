@@ -4,25 +4,41 @@
 // `.spec` suffix so it does NOT match Playwright's default `testMatch`
 // (`**/*.@(spec|test).ts`) — `pnpm test:e2e` skips it, so a normal CI run
 // never rewrites the tracked PNGs under `docs/user-guide/img/`. Run it
-// explicitly by path to (re)generate the six web-app screenshots wired
-// into the HTML guides under `docs/user-guide/`:
+// explicitly to (re)generate the seven web-app screenshots wired into
+// the HTML guides under `docs/user-guide/`. Two things the invocation
+// has to get right:
 //
-//   npx playwright test tests/screenshots.capture.ts
+//   1. Collection. A positional path argument is only a FILTER over the
+//      already-collected set — it does not widen `testMatch` — so
+//      `playwright test tests/screenshots.capture.ts` finds zero tests.
+//      Run it through a throwaway config that spreads
+//      `playwright.config.ts` and overrides
+//      `testMatch: '**/screenshots.capture.ts'`.
+//   2. Project id. `fixtures/emulator.ts` seeds the emulators in the
+//      `kindoo-staging` namespace (matching the SPA's build-time
+//      `VITE_FIREBASE_PROJECT_ID`), so the emulators must be started on
+//      that project — under a demo project id the user lands in a
+//      different namespace and `setCustomClaims` 400s USER_NOT_FOUND.
 //
-// (Always run it under a fresh emulator instance — see the command in
-// the task brief / the worktree report.)
+//   firebase emulators:exec --only firestore,auth \
+//     "npx playwright test -c <capture-config>" --project kindoo-staging
+//
+// Always run it against a fresh emulator instance.
 //
 // All data is clearly-fake demo data (Cedar Springs Stake, Maple /
 // Pine wards, James Whitfield / Sarah Bennett / @example.org emails).
 // No real identifiers. The shots are deterministic seed → render →
 // `page.screenshot`, captured at a desktop viewport with
-// deviceScaleFactor 2 for crisp images.
+// deviceScaleFactor 2 for crisp images. The two modal figures (5.1 and
+// 6.1) instead crop to the dialog card and run at 3 — see the
+// `Modal card figures` group.
 //
-// The six figures captured here (placeholders the guides leave for the
-// web app):
+// The seven figures captured here (placeholders the guides leave for
+// the web app):
 //   creating-requests.html  Fig 2.1  sign-in (signed-out)        → sign-in.png
 //   creating-requests.html  Fig 4.1  bishopric ward roster       → ward-roster.png
 //   creating-requests.html  Fig 5.1  New Request form (dialog)   → new-request-form.png
+//   creating-requests.html  Fig 6.1  New Request, limited (D25)  → limited-new-request.png
 //   creating-requests.html  Fig 9.1  My Requests (mixed status)  → my-requests.png
 //   kindoo-managers.html    Fig 2.1  bootstrap setup wizard      → bootstrap-wizard.png
 //   kindoo-managers.html    Fig 11.1 audit log (expanded diff)   → audit-log-expanded.png
@@ -33,7 +49,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   clearAuth,
   clearFirestore,
@@ -75,6 +91,8 @@ interface Claims {
   manager?: boolean;
   stake?: boolean;
   wards?: string[];
+  /** D25 — narrows an existing role; absent / false = full access. */
+  limited?: boolean;
 }
 
 async function signInWithClaims(
@@ -91,6 +109,9 @@ async function signInWithClaims(
         manager: claims.manager ?? false,
         stake: claims.stake ?? false,
         wards: claims.wards ?? [],
+        // Only stamp the flag when it's on — the claim-sync trigger's
+        // normalised block never carries `limited: false`.
+        ...(claims.limited === true ? { limited: true } : {}),
       },
     },
   });
@@ -356,6 +377,36 @@ async function shoot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: path.join(IMG_DIR, name) });
 }
 
+// Crop a modal figure to the white card (`.kd-modal-inner`) instead of
+// the `role="dialog"` positioner, which is `inset: 0` and would yield a
+// whole-page shot. The positioner also sets `overflow-y: auto`, and a
+// Playwright element screenshot cannot capture past a clipping
+// ancestor — so assert the card fits the frame first. A form that grows
+// taller than its viewport then fails the run instead of quietly
+// shipping a figure with its Cancel / Submit row sliced off.
+async function shootModalCard(page: Page, dialog: Locator, name: string): Promise<void> {
+  const card = dialog.locator('.kd-modal-inner');
+  await expect(card).toBeVisible();
+  const box = await card.boundingBox();
+  expect(box, 'modal card has no layout box').not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport, 'capture runs with an explicit viewport').not.toBeNull();
+  expect(box!.y, `${name}: card is clipped at the top of the frame`).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height, `${name}: card overflows the frame`).toBeLessThanOrEqual(
+    viewport!.height,
+  );
+  // Square the card for the shutter. An element screenshot clips to the
+  // border box, so the card's own 8px radius leaves four wedges of the
+  // dimmed backdrop in the corners — grey crescents the guide's `<img>`
+  // rounding doesn't fully cover. The guides already render every figure
+  // with `border-radius:10px`, so shooting a square card gives a
+  // correctly-rounded figure with clean edges.
+  await card.evaluate((el: HTMLElement) => {
+    el.style.borderRadius = '0';
+  });
+  await card.screenshot({ path: path.join(IMG_DIR, name) });
+}
+
 test.describe('User-guide screenshot capture', () => {
   test.beforeEach(async () => {
     await clearAuth();
@@ -383,23 +434,90 @@ test.describe('User-guide screenshot capture', () => {
     await shoot(page, 'ward-roster.png');
   });
 
-  test('Fig 5.1 (creating-requests) — New Request form dialog', async ({ page }) => {
-    await seedSetupCompleteStake();
-    await seedMapleWardRoster();
-    await signInWithClaims(page, 'bishop@example.org', { wards: ['maple'] });
+  // Fig 5.1 and Fig 6.1 both frame the New Request modal, and both crop
+  // to the white card rather than the page. Two things that group needs
+  // and the page-level shots don't:
+  //
+  //   1. The crop target. Radix puts role="dialog" on the *positioner*
+  //      (`.kd-modal-positioner`: `position:fixed; inset:0`), so an
+  //      "element screenshot" of the dialog is really a full-page shot
+  //      with the app chrome and dimmed roster in it — the form ends up
+  //      small and hard to read in the guide. The card itself is
+  //      `.kd-modal-inner`; shoot that. Keep locating the dialog by its
+  //      accessible name for scoping and assertions.
+  //   2. deviceScaleFactor. The card is `width:min(480px,100%)`, and the
+  //      guides render figures full-bleed in a 736px column, so a
+  //      2x/960px capture gets upscaled and goes soft. 3x lands 1440px —
+  //      ~2x the rendered width, so it stays sharp on a retina reader
+  //      and in the PDFs.
+  test.describe('Modal card figures', () => {
+    test.use({ deviceScaleFactor: 3 });
 
-    await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
-    await page.getByTestId('bishopric-roster-new-request').click();
-    // Select the modal by its accessible name — a Radix popover inside
-    // the form also carries role="dialog", so the bare role is ambiguous.
-    const dialog = page.getByRole('dialog', { name: 'New Request' });
-    await expect(dialog.getByTestId('new-request-form')).toBeVisible();
-    // Fill a realistic set of fields so the dialog isn't an empty shell.
-    await dialog.getByTestId('new-request-email').fill('olivia.morgan@example.org');
-    await dialog.getByTestId('new-request-name').fill('Olivia Morgan');
-    await dialog.getByTestId('new-request-reason').fill('New ward organist');
-    // Capture just the dialog element, not the whole page.
-    await dialog.screenshot({ path: path.join(IMG_DIR, 'new-request-form.png') });
+    test('Fig 5.1 (creating-requests) — New Request form dialog', async ({ page }) => {
+      await seedSetupCompleteStake();
+      await seedMapleWardRoster();
+      await signInWithClaims(page, 'bishop@example.org', { wards: ['maple'] });
+
+      await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+      await page.getByTestId('bishopric-roster-new-request').click();
+      // Select the modal by its accessible name — a Radix popover inside
+      // the form also carries role="dialog", so the bare role is ambiguous.
+      const dialog = page.getByRole('dialog', { name: 'New Request' });
+      await expect(dialog.getByTestId('new-request-form')).toBeVisible();
+      // Fill a realistic set of fields so the dialog isn't an empty shell.
+      await dialog.getByTestId('new-request-email').fill('olivia.morgan@example.org');
+      await dialog.getByTestId('new-request-name').fill('Olivia Morgan');
+      await dialog.getByTestId('new-request-reason').fill('New ward organist');
+      await shootModalCard(page, dialog, 'new-request-form.png');
+    });
+
+    test('Fig 6.1 (creating-requests) — New Request form under limited access', async ({
+      page,
+    }) => {
+      // The limited form adds the cap hint plus both date fields, so its
+      // card is ~640px tall. `.kd-modal-positioner` scrolls its overflow,
+      // and an element screenshot can't reach past a clipping ancestor —
+      // at the default 800px frame the Cancel / Submit row would be cut
+      // off. 940 clears the whole card in one viewport.
+      await page.setViewportSize({ width: 1280, height: 940 });
+      await seedSetupCompleteStake();
+      await seedMapleWardRoster();
+      // `limited: true` on the stake claim is what narrows the form (D25).
+      // The capture stack boots only the Firestore + Auth emulators, so no
+      // claim-sync trigger is running to overwrite the seeded block.
+      await signInWithClaims(page, 'limited-bishop@example.org', {
+        wards: ['maple'],
+        limited: true,
+      });
+
+      await expect(page.getByRole('heading', { name: /^Roster$/ })).toBeVisible();
+      await page.getByTestId('bishopric-roster-new-request').click();
+      // Select the modal by its accessible name — a Radix popover inside
+      // the form also carries role="dialog", so the bare role is ambiguous.
+      const dialog = page.getByRole('dialog', { name: 'New Request' });
+      await expect(dialog.getByTestId('new-request-form')).toBeVisible();
+
+      // The three narrowings the figure has to show, asserted before the
+      // shutter so a regression fails the run instead of quietly shipping
+      // a screenshot of the full-access form.
+      const typeSelect = dialog.getByTestId('new-request-type');
+      await expect(typeSelect.locator('option')).toHaveText(['Temporary (dated)']);
+      await expect(dialog.getByTestId('new-request-temp-cap-hint')).toBeVisible();
+      await expect(dialog.getByTestId('new-request-locked-building')).toContainText(
+        'Maple Building',
+      );
+      await expect(dialog.getByTestId('new-request-buildings-trigger')).toHaveCount(0);
+
+      // Fill a realistic within-cap request so the dialog isn't an empty
+      // shell — 2026-06-08 → 2026-07-06 is 28 days, well inside the cap,
+      // so no validation error competes with the hint text.
+      await dialog.getByTestId('new-request-start-date').fill('2026-06-08');
+      await dialog.getByTestId('new-request-end-date').fill('2026-07-06');
+      await dialog.getByTestId('new-request-email').fill('olivia.morgan@example.org');
+      await dialog.getByTestId('new-request-name').fill('Olivia Morgan');
+      await dialog.getByTestId('new-request-reason').fill('Youth conference setup crew');
+      await shootModalCard(page, dialog, 'limited-new-request.png');
+    });
   });
 
   test('Fig 9.1 (creating-requests) — My Requests, mixed statuses', async ({ page }) => {

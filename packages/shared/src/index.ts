@@ -6,10 +6,12 @@
 // ---- Pure helpers -----------------------------------------------------
 export {
   EQ_PRESIDENT_CALLING,
+  LIMITED_ACCESS_CALLINGS,
   STAKE_APP_ACCESS_CALLINGS,
   WARD_APP_ACCESS_CALLINGS,
   appAccessCallingsForScope,
   filterAppAccessCallings,
+  isLimitedAccessCalling,
   type AppAccessOptions,
 } from './appAccessCallings.js';
 export { auditId } from './auditId.js';
@@ -43,6 +45,11 @@ export {
   type AutomatedActorName,
   type SyncDiscrepancyCode,
 } from './systemActors.js';
+export {
+  MAX_LIMITED_TEMP_WINDOW_DAYS,
+  exceedsLimitedTempWindow,
+  isoDateSpanDays,
+} from './tempWindow.js';
 
 // ---- Domain types -----------------------------------------------------
 export type {

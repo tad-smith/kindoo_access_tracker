@@ -292,6 +292,32 @@ describe('firestore.rules — stakes/{sid}/access/{canonical}', () => {
       );
     });
 
+    // Limited app access (D25). The per-grant `level: 'limited'` marker
+    // rides inside `manual_grants`, which is already the manager's lane
+    // in the affectedKeys() allowlist — so D25 required NO rules change
+    // here. This test is the proof of that decision: if someone later
+    // tightens the access block into per-grant field validation, the new
+    // marker turns this red instead of silently breaking the feature in
+    // production.
+    it('manager writes a manual_grant carrying level: "limited" → ok (no rules change needed)', async () => {
+      const seed = emptyAccessDoc({
+        importer_callings: {},
+        manual_grants: {},
+      });
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(seed);
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(
+        db.doc(PATH).update({
+          [`manual_grants.stake`]: [{ ...SAMPLE_GRANT, level: 'limited' }],
+          last_modified_at: new Date(),
+          last_modified_by: lastActorOf(personas.manager),
+          lastActor: lastActorOf(personas.manager),
+        }),
+      );
+    });
+
     it('manager update with bad lastActor → denied', async () => {
       const seed = emptyAccessDoc({ manual_grants: { stake: [SAMPLE_GRANT] } });
       await seedAsAdmin(env, async (ctx) => {

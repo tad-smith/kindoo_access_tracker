@@ -106,6 +106,7 @@ function mockFormData(overrides: Partial<NewRequestFormData> = {}) {
     buildings: overrides.buildings ?? [building('maple', 'Maple Building')],
     wards: overrides.wards ?? [ward('CO', 'Maple Building'), ward('GE', 'Maple Building')],
     isLoading: overrides.isLoading ?? false,
+    limited: overrides.limited ?? false,
   });
 }
 
@@ -126,6 +127,18 @@ describe('<NewRequestDialog />', () => {
   it('renders nothing when closed', () => {
     render(<NewRequestDialog open={false} onOpenChange={() => {}} scope="CO" />);
     expect(screen.queryByTestId('new-request-form')).toBeNull();
+  });
+
+  it('describes both request types for a full submitter', () => {
+    render(<NewRequestDialog open onOpenChange={() => {}} scope="CO" />);
+    expect(screen.getByText('Submit a manual or temporary access request.')).toBeInTheDocument();
+  });
+
+  it('omits manual from the description for a limited submitter', () => {
+    mockFormData({ limited: true });
+    render(<NewRequestDialog open onOpenChange={() => {}} scope="CO" />);
+    expect(screen.getByText('Submit a temporary access request.')).toBeInTheDocument();
+    expect(screen.queryByText(/manual/i)).toBeNull();
   });
 
   it('locks the launched scope to a fixed label (no dropdown) for a multi-scope principal', () => {

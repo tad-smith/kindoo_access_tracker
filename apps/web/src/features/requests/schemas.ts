@@ -18,7 +18,11 @@
 // or future callable validation needs it) the server side.
 
 import { z } from 'zod';
-import { resolveWardBuilding } from '@kindoo/shared';
+import {
+  MAX_LIMITED_TEMP_WINDOW_DAYS,
+  exceedsLimitedTempWindow,
+  resolveWardBuilding,
+} from '@kindoo/shared';
 import type { Building, Ward } from '@kindoo/shared';
 
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -181,6 +185,21 @@ export const newRequestSchema = z
 
 export type NewRequestForm = z.infer<typeof newRequestSchema>;
 
+/** User-facing copy for the D25 temp-window cap. One string, three
+ *  call sites (new-request schema, edit-seat schema, the forms' helper
+ *  text) so the number the user is told matches the number enforced. */
+export const LIMITED_TEMP_WINDOW_MESSAGE = `Temporary access is limited to ${MAX_LIMITED_TEMP_WINDOW_DAYS} days.`;
+
+/** Options bag for the schema factories. */
+export interface LimitedAccessOptions {
+  /**
+   * The submitter holds LIMITED app access in the active stake (D25).
+   * Adds the narrowed gates on top of the normal shape; `false` /
+   * omitted leaves validation byte-for-byte as it was for full users.
+   */
+  limited?: boolean;
+}
+
 /**
  * Schema factory that closes over the wards + buildings catalogues so
  * the cross-ward-comment-required gate can resolve a ward code to its
@@ -188,9 +207,44 @@ export type NewRequestForm = z.infer<typeof newRequestSchema>;
  * `useMemo` keyed on the wards + buildings subscriptions. Server-side
  * validation should keep using `newRequestSchema` directly — the
  * cross-ward rule is a UX nudge, not a defense-in-depth gate.
+ *
+ * `opts.limited` layers the D25 gates on top:
+ *
+ *   - the request type must be `add_temp`. The form already renders
+ *     Temporary as the only option, so this is defense in depth against
+ *     a tampered `<select>` — and against a future call site that
+ *     forgets to pass `limited` to the form but remembers the schema.
+ *   - the temp window is capped at `MAX_LIMITED_TEMP_WINDOW_DAYS`,
+ *     reported on `end_date` (the field the user changes to fix it).
+ *     Uses the shared `exceedsLimitedTempWindow` so the client, the
+ *     Cloud Functions, and the rules' `duration.value(90, 'd')` compare
+ *     agree on the boundary — exactly 90 days passes, 91 does not.
+ *
+ * The cross-ward-comment rule keeps working for limited users; in
+ * practice a limited ward-scope request is locked to the ward's own
+ * building, so it never fires there.
  */
-export function makeNewRequestSchema(wards: readonly Ward[], buildings: readonly Building[] = []) {
+export function makeNewRequestSchema(
+  wards: readonly Ward[],
+  buildings: readonly Building[] = [],
+  opts: LimitedAccessOptions = {},
+) {
   return newRequestSchema.superRefine((val, ctx) => {
+    if (opts.limited === true) {
+      if (val.type !== 'add_temp') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['type'],
+          message: 'Your access allows temporary requests only.',
+        });
+      } else if (exceedsLimitedTempWindow(val.start_date, val.end_date)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['end_date'],
+          message: LIMITED_TEMP_WINDOW_MESSAGE,
+        });
+      }
+    }
     if (val.urgent) return; // urgent path already requires a comment.
     if (!isCrossWardSelection(val.scope, val.building_names, wards, buildings)) return;
     if (val.comment.trim().length > 0) return;
@@ -300,6 +354,33 @@ export const editSeatSchema = z
   });
 
 export type EditSeatForm = z.infer<typeof editSeatSchema>;
+
+/**
+ * `editSeatSchema` plus the D25 temp-window cap. `opts.limited` is the
+ * only difference: when set, an `edit_temp` submission whose window runs
+ * longer than `MAX_LIMITED_TEMP_WINDOW_DAYS` raises an issue on
+ * `end_date`, matching the rules' `tempWindowWithin90Days` compare.
+ *
+ * Only `edit_temp` is gated because `canEditSeat` already hides the Edit
+ * affordance on auto and manual seats for a limited principal — there is
+ * no reachable `edit_auto` / `edit_manual` path to cap.
+ *
+ * The plain `editSeatSchema` export stays as-is for callers that never
+ * see a limited principal; a full user goes through this factory with
+ * `limited: false` and gets identical validation.
+ */
+export function makeEditSeatSchema(opts: LimitedAccessOptions = {}) {
+  return editSeatSchema.superRefine((val, ctx) => {
+    if (opts.limited !== true) return;
+    if (val.type !== 'edit_temp') return;
+    if (!exceedsLimitedTempWindow(val.start_date, val.end_date)) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['end_date'],
+      message: LIMITED_TEMP_WINDOW_MESSAGE,
+    });
+  });
+}
 
 /**
  * "Give Access To Stake Buildings" modal schema — the manager-only

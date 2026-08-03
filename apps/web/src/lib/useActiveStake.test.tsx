@@ -27,6 +27,7 @@ const mockedPrincipal: { current: Principal } = {
     managerStakes: ['csnorth', 'ridgeline'],
     stakeMemberStakes: [],
     bishopricWards: {},
+    limitedStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
   },
