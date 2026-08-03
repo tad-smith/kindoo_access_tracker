@@ -1296,20 +1296,53 @@ describe('remote apply — SW-side mailbox operations', () => {
     ]);
   });
 
-  it('leaves a legacy job with no target site unclaimable rather than guessing home', async () => {
-    // Rules make this unwritable now — `target_site_key` is on the jobs
-    // create allowlist as a non-empty string. Docs left in a staging
-    // mailbox by earlier builds are frozen by rules regardless: the
-    // immutability check reads the field bare, and a bare read of a
-    // missing key errors, so claim / cancel / report are all denied.
-    // Defaulting the key here would only buy a claim attempt that rules
-    // reject, so such docs are left alone and deleted server-side.
+  it('drops a legacy job with no target site rather than guessing one', async () => {
+    // Such a doc is FROZEN, not merely unlabelled: rules' `jobCoreUnchanged`
+    // reads `before.target_site_key` bare, a missing-key read errors, and
+    // an erroring condition denies — so no transition on it can succeed.
+    // Guessing `home` would buy a doomed claim every 10s, reported by
+    // `claimRemoteApplyJob` as "already claimed elsewhere" (the wrong
+    // diagnosis), and would provision against a guessed site if the
+    // freeze were ever lifted.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     getDocsMock.mockResolvedValue({
-      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+      docs: [
+        { id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) },
+        {
+          id: 'job-2',
+          data: () => ({ request_id: 'r2', stake_id: 'csnorth', target_site_key: 'home' }),
+        },
+      ],
     });
     const { findQueuedRemoteApplyJobs } = await import('./data');
     const jobs = await findQueuedRemoteApplyJobs(mailboxActor());
-    expect(jobs[0]?.targetSiteKey).toBeUndefined();
+
+    // The healthy sibling still comes through — one bad doc must not
+    // take the whole page down with it.
+    expect(jobs.map((j) => j.jobId)).toEqual(['job-2']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('job-1 has no target_site_key'));
+  });
+
+  it('drops a frozen job from the sweep’s input too', async () => {
+    // The sweep's only move is a terminal write, denied for the same
+    // reason the claim is. Handing it over buys a rejected write a
+    // minute and no cleanup.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    getDocsMock.mockResolvedValue({
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({
+            request_id: 'r1',
+            stake_id: 'csnorth',
+            status: 'running',
+            claimed_at: { toMillis: () => 2_000 },
+          }),
+        },
+      ],
+    });
+    const { findRunningRemoteApplyJobs } = await import('./data');
+    await expect(findRunningRemoteApplyJobs(mailboxActor())).resolves.toEqual([]);
   });
 
   it('returns an empty page when the mailbox is empty', async () => {
@@ -1360,6 +1393,7 @@ describe('remote apply — SW-side mailbox operations', () => {
           data: () => ({
             request_id: 'r1',
             stake_id: 'csnorth',
+            target_site_key: 'home',
             status: 'running',
             created_at: { toMillis: () => 1_000 },
             claimed_at: null,
@@ -1374,7 +1408,12 @@ describe('remote apply — SW-side mailbox operations', () => {
 
   it('reports no claim age when neither timestamp is readable', async () => {
     getDocsMock.mockResolvedValue({
-      docs: [{ id: 'job-1', data: () => ({ request_id: 'r1', stake_id: 'csnorth' }) }],
+      docs: [
+        {
+          id: 'job-1',
+          data: () => ({ request_id: 'r1', stake_id: 'csnorth', target_site_key: 'home' }),
+        },
+      ],
     });
     const { findRunningRemoteApplyJobs } = await import('./data');
     const jobs = await findRunningRemoteApplyJobs(mailboxActor());

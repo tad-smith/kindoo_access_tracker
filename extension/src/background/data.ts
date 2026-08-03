@@ -751,7 +751,7 @@ export async function findQueuedRemoteApplyJobs(actor: User): Promise<RemoteAppl
   const snap = await getDocs(
     query(jobs, where('status', '==', 'queued'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
   );
-  return snap.docs.map((d) => toJobRef(d.id, d.data() as RemoteApplyJob));
+  return snap.docs.map((d) => toJobRef(d.id, d.data() as RemoteApplyJob)).filter(isJobRef);
 }
 
 /**
@@ -774,37 +774,67 @@ export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApp
   const snap = await getDocs(
     query(jobs, where('status', '==', 'running'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
   );
-  return snap.docs.map((d) => {
-    const data = d.data() as RemoteApplyJob;
-    return {
-      ...toJobRef(d.id, data),
-      claimedAtMs: toMillis(data.claimed_at) ?? toMillis(data.created_at),
-    };
-  });
+  return snap.docs
+    .map((d) => {
+      const data = d.data() as RemoteApplyJob;
+      const ref = toJobRef(d.id, data);
+      // A frozen doc is dropped here too. The sweep's only move is a
+      // terminal write, and rules deny that one for the same reason
+      // they deny the claim — handing it over would buy a rejected
+      // write every 60 seconds and no cleanup.
+      if (!ref) return null;
+      return { ...ref, claimedAtMs: toMillis(data.claimed_at) ?? toMillis(data.created_at) };
+    })
+    .filter(isJobRef);
 }
 
 /**
- * Job doc → the wire shape.
+ * Job doc → the wire shape, or `null` for a doc the extension must not
+ * touch.
  *
- * `target_site_key` is required on the type and on the rules' create
- * allowlist (`is string && .size() > 0`), so no phone can write a job
- * without one.
+ * `target_site_key` is required by the rules' create allowlist, so no
+ * client can write a job without one. Docs that PREDATE that rule can
+ * still exist — earlier builds of this branch queued jobs with no site
+ * field — and those are frozen, not merely unlabelled: the rules'
+ * `jobCoreUnchanged` reads `before.target_site_key` bare, a missing-key
+ * read errors, and an erroring condition denies. That gates every
+ * transition, so such a job can't be claimed, can't be cancelled by the
+ * phone's pickup timeout, and can't be reported on. It is stuck.
  *
- * A doc predating that rule — earlier builds of this branch queued jobs
- * with no site field — is beyond rescue here rather than merely
- * mis-keyed: the rules' immutability check reads the field bare, and a
- * bare read of a missing key errors, so every transition is denied. It
- * can't be claimed, cancelled, or reported on. Defaulting the key would
- * only buy a claim attempt that rules reject anyway, so such docs are
- * left alone and must be deleted server-side.
+ * Dropping it here rather than guessing a site is the difference between
+ * one honest warning and a doomed claim every ten seconds — and
+ * `claimRemoteApplyJob` reads the resulting `permission-denied` as a
+ * lost race, so the guess would also log "already claimed elsewhere"
+ * forever, which is the wrong diagnosis entirely. Guessing `home` would
+ * be actively unsafe if the freeze were ever lifted: the target site of
+ * such a doc is unknowable, and a wrong guess provisions real Kindoo
+ * access against the wrong site.
+ *
+ * The warning repeats on every poll deliberately. This state needs an
+ * operator to clear the doc with admin credentials (`allow delete: if
+ * false` blocks the client), and it is self-limiting — it stops the
+ * moment they do.
  */
-function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef {
+function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef | null {
+  if (typeof data.target_site_key !== 'string' || data.target_site_key.length === 0) {
+    console.warn(
+      `[sba-ext] remote apply: job ${jobId} has no target_site_key; it predates the current ` +
+        `contract and rules freeze every transition on it — no tab can claim, cancel, or ` +
+        `complete it. Clear it from the mailbox with admin credentials.`,
+    );
+    return null;
+  }
   return {
     jobId,
     requestId: data.request_id,
     stakeId: data.stake_id,
     targetSiteKey: data.target_site_key,
   };
+}
+
+/** Drop the `null`s `toJobRef` returns for frozen docs. */
+function isJobRef<T>(value: T | null): value is T {
+  return value !== null;
 }
 
 /** `TimestampLike` → epoch ms, or null for anything that isn't one
