@@ -89,11 +89,18 @@ function req(overrides: Partial<AccessRequest> = {}): AccessRequest {
   } as AccessRequest;
 }
 
+// QueuePanel no longer owns the queue fetch — TabbedShell hosts it via
+// `usePendingRequests` so it survives tab switches. Mirror that wiring
+// here so the fetch-driven assertions below keep exercising the real
+// hook rather than a hand-rolled stub.
 async function renderPanel(onPermissionDenied = vi.fn()) {
   const { QueuePanel } = await import('./QueuePanel');
-  return render(
-    <QueuePanel stakeId="csnorth" bundle={bundle()} onPermissionDenied={onPermissionDenied} />,
-  );
+  const { usePendingRequests } = await import('./usePendingRequests');
+  function Harness() {
+    const pending = usePendingRequests('csnorth', onPermissionDenied);
+    return <QueuePanel stakeId="csnorth" bundle={bundle()} pending={pending} />;
+  }
+  return render(<Harness />);
 }
 
 describe('QueuePanel', () => {

@@ -6,12 +6,17 @@
 //
 // Each card runs its own Provision & Complete flow (RequestCard owns
 // the Kindoo orchestration + the result dialog). When the operator
-// dismisses a result dialog OR rejects a request, we drop the card from
-// the local list and refetch the queue to pick up any sibling changes.
+// dismisses a result dialog OR rejects a request, `pending.dismiss`
+// drops the card and refetches to pick up any sibling changes.
 //
-// Seat-existence: after the request list loads we fetch `getSeatByEmail`
-// for every non-`remove` request and build a `request_id → 'present' |
-// 'absent'` map. A handful of extra reads is fine at this scale. The
+// The queue fetch itself is NOT owned here — it lives in
+// `usePendingRequests`, hosted by TabbedShell, so it survives this
+// component unmounting on every tab switch. We consume it as the
+// `pending` prop.
+//
+// Seat-existence: whenever the request list resolves we fetch
+// `getSeatByEmail` for every non-`remove` request and build a
+// `request_id → 'present' | 'absent'` map. A handful of extra reads is fine at this scale. The
 // map is three-state by omission: a lookup that resolved records
 // `'present'` (seat found) or `'absent'` (returned null); a lookup that
 // FAILED is left out of the map entirely → "unknown". RequestCard maps
@@ -25,15 +30,16 @@
 // has moved to the shared toolbar + tab bar in TabbedShell. This file
 // renders the queue sections and its Refresh control only.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   partitionPendingRequests,
   type AccessRequest,
   type QueueSections,
   type Seat,
 } from '@kindoo/shared';
-import { getMyPendingRequests, getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
+import { getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
 import { RequestCard } from './RequestCard';
+import type { PendingRequests } from './usePendingRequests';
 
 interface QueuePanelProps {
   /** Active stake — threaded from App's resolution step. */
@@ -41,17 +47,11 @@ interface QueuePanelProps {
   /** Stake / building / ward config loaded by App; threaded down so
    * each RequestCard can run the v2.2 provision flow. */
   bundle: StakeConfigBundle;
-  /**
-   * Called when the queue fetch fails with `permission-denied`; the
-   * root switches to `NotAuthorizedPanel`.
-   */
-  onPermissionDenied: () => void;
+  /** Lifted queue fetch, hosted by TabbedShell so it outlives this
+   * component's per-tab-switch unmount. Owns the permission-denied
+   * escalation too. */
+  pending: PendingRequests;
 }
-
-type FetchState =
-  | { status: 'loading' }
-  | { status: 'ready'; requests: AccessRequest[] }
-  | { status: 'error'; message: string };
 
 /**
  * Per-request seat snapshot keyed by `request_id`. A present entry
@@ -102,52 +102,24 @@ async function fetchSeatMap(stakeId: string, requests: readonly AccessRequest[])
   return Object.fromEntries(entries.filter((e): e is [string, SeatInfo] => e !== null));
 }
 
-export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelProps) {
-  const [state, setState] = useState<FetchState>({ status: 'loading' });
+export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
+  const { state, refreshing, refresh, dismiss } = pending;
   const [seatMap, setSeatMap] = useState<SeatMap>({});
-  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchQueue = useCallback(
-    async (mode: 'initial' | 'refresh' = 'initial') => {
-      if (mode === 'refresh') setRefreshing(true);
-      else setState({ status: 'loading' });
-      try {
-        const result = await getMyPendingRequests({ stakeId });
-        setState({ status: 'ready', requests: result.requests });
-        // Seat-existence is a best-effort overlay — never fails the
-        // queue. `fetchSeatMap` catches per-lookup, so this resolves.
-        const map = await fetchSeatMap(stakeId, result.requests);
-        setSeatMap(map);
-      } catch (err) {
-        const code = readFunctionsErrorCode(err);
-        if (code === 'permission-denied') {
-          onPermissionDenied();
-          return;
-        }
-        const message = err instanceof Error ? err.message : String(err);
-        setState({ status: 'error', message });
-      } finally {
-        setRefreshing(false);
-      }
-    },
-    [stakeId, onPermissionDenied],
-  );
-
+  // Seat-existence is a best-effort overlay — never fails the queue.
+  // `fetchSeatMap` catches per-lookup, so this never rejects. Re-runs
+  // whenever the lifted queue yields a new ready list (load, refresh,
+  // optimistic dismissal) and on remount after a tab switch.
   useEffect(() => {
-    void fetchQueue('initial');
-  }, [fetchQueue]);
-
-  const handleDismissed = useCallback(
-    (requestId: string) => {
-      setState((prev) =>
-        prev.status === 'ready'
-          ? { status: 'ready', requests: prev.requests.filter((r) => r.request_id !== requestId) }
-          : prev,
-      );
-      void fetchQueue('refresh');
-    },
-    [fetchQueue],
-  );
+    if (state.status !== 'ready') return;
+    let cancelled = false;
+    void fetchSeatMap(stakeId, state.requests).then((map) => {
+      if (!cancelled) setSeatMap(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stakeId, state]);
 
   const requests = state.status === 'ready' ? state.requests : EMPTY_REQUESTS;
   // Compute "now" once per render; the day-level section boundary is
@@ -160,7 +132,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
         <button
           type="button"
           className="sba-btn"
-          onClick={() => void fetchQueue('refresh')}
+          onClick={refresh}
           disabled={refreshing || state.status === 'loading'}
           data-testid="sba-refresh"
         >
@@ -187,7 +159,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            onDismissed={handleDismissed}
+            onDismissed={dismiss}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -196,7 +168,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            onDismissed={handleDismissed}
+            onDismissed={dismiss}
           />
           <QueueSection
             title="Future Requests"
@@ -205,7 +177,7 @@ export function QueuePanel({ stakeId, bundle, onPermissionDenied }: QueuePanelPr
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            onDismissed={handleDismissed}
+            onDismissed={dismiss}
           />
         </div>
       ) : null}
@@ -258,16 +230,4 @@ function QueueSection({
       </ul>
     </div>
   );
-}
-
-/**
- * Firebase Functions httpsCallable rejections surface as an `Error`
- * with `.code` set to the HttpsError code (e.g. `'permission-denied'`,
- * `'failed-precondition'`). Plain `Error` instances do not carry the
- * field; narrow safely.
- */
-function readFunctionsErrorCode(err: unknown): string | null {
-  if (typeof err !== 'object' || err === null) return null;
-  const code = (err as { code?: unknown }).code;
-  return typeof code === 'string' ? code : null;
 }
