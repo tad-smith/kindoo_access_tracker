@@ -544,6 +544,42 @@ describe('accessSchema', () => {
     };
     expect(accessSchema.parse(seed)).toEqual(seed);
   });
+
+  // The pre-D25 shape: no `importer_limited_callings` at all. Every
+  // record written before the field existed looks like this, and it must
+  // keep parsing — absent means every importer calling is full-tier.
+  it('parses a doc with no importer_limited_callings (the no-migration shape)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      importer_callings: { CO: ['Bishop', 'Elders Quorum President'] },
+      manual_grants: {},
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    const parsed = accessSchema.parse(seed);
+    expect(parsed).toEqual(seed);
+    expect(parsed.importer_limited_callings).toBeUndefined();
+  });
+
+  it('parses a doc carrying importer_limited_callings (a subset of importer_callings)', () => {
+    const seed = {
+      member_canonical: 'alice@gmail.com',
+      member_email: 'Alice@gmail.com',
+      member_name: 'Alice Smith',
+      importer_callings: { CO: ['Bishop', 'Elders Quorum President'], DR: ['Ward Clerk'] },
+      importer_limited_callings: { CO: ['Elders Quorum President'] },
+      manual_grants: {},
+      created_at: T,
+      last_modified_at: T,
+      last_modified_by: ACTOR,
+      lastActor: ACTOR,
+    };
+    expect(accessSchema.parse(seed)).toEqual(seed);
+  });
 });
 
 describe('seatSchema', () => {

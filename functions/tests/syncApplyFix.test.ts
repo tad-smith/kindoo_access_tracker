@@ -91,6 +91,8 @@ async function seedSeat(opts: {
 async function seedAccess(opts: {
   canonical?: string;
   importer_callings?: Record<string, string[]>;
+  /** Omit to seed the pre-D25 shape — no tier stamp at all. */
+  importer_limited_callings?: Record<string, string[]>;
   manual_grants?: Record<string, Access['manual_grants'][string]>;
   sort_order?: number | null;
 }): Promise<void> {
@@ -108,6 +110,9 @@ async function seedAccess(opts: {
     lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
+  if (opts.importer_limited_callings !== undefined) {
+    body.importer_limited_callings = opts.importer_limited_callings;
+  }
   await db.doc(`stakes/${STAKE_ID}/access/${canonical}`).set(body);
 }
 
@@ -2793,6 +2798,340 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         // replaces it — both maps empty → doc deleted.
         const accessSnap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
         expect(accessSnap.exists).toBe(false);
+      });
+    });
+
+    // D25 tier stamp. The writer decides the tier once and stores it in
+    // `importer_limited_callings[scope]` — the subset of that scope's
+    // `importer_callings` that confers LIMITED access. Both maps are
+    // always written together, so a scope whose limited calling goes
+    // away must never leave a stale stamp behind.
+    describe('importer_limited_callings tier stamp', () => {
+      const EQP = 'Elders Quorum President';
+
+      it('kindoo-only: a scope containing the limited calling stamps BOTH maps in one write', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: ['Bishop', EQP],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop', EQP] });
+        // Only the limited-tier calling is stamped, and it is a literal
+        // subset of the list above.
+        expect(access.importer_limited_callings).toEqual({ CO: [EQP] });
+      });
+
+      it('kindoo-only: a scope with no limited calling writes an EMPTY stamp map, not a missing one', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: ['Bishop'],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        expect(access.importer_limited_callings).toEqual({});
+      });
+
+      it('kindoo-only: the calling with the gate OFF earns no grant, so no stamp either', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: false });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'CO',
+                  type: 'auto',
+                  callings: [EQP],
+                  buildingNames: ['Maple Building'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        expect((await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()).exists).toBe(
+          false,
+        );
+      });
+
+      it('callings-mismatch: replacing a full calling with the limited one adds the stamp', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 42 });
+        await seedAccess({ importer_callings: { CO: ['Bishop'] }, sort_order: 42 });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: [EQP] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: [EQP] });
+        expect(access.importer_limited_callings).toEqual({ CO: [EQP] });
+      });
+
+      it('callings-mismatch: replacing the limited calling with a full one CLEARS the stale stamp', async () => {
+        // The regression this pins: a `set merge` would deep-merge the
+        // stamp map key-by-key and leave `{ CO: [EQP] }` behind, keeping
+        // the member limited on the strength of a calling they no longer
+        // hold. The write must replace the map wholesale.
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: [EQP], sort_order: 51 });
+        await seedAccess({
+          importer_callings: { CO: [EQP] },
+          importer_limited_callings: { CO: [EQP] },
+          sort_order: 51,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Bishop'] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+        expect(access.importer_limited_callings).toEqual({});
+      });
+
+      it("callings-mismatch: writing one scope leaves ANOTHER scope's stamp untouched", async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'], sort_order: 42 });
+        await seedAccess({
+          importer_callings: { CO: ['Bishop'], DR: [EQP] },
+          importer_limited_callings: { DR: [EQP] },
+          sort_order: 42,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: ['Ward Clerk'] },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: ['Ward Clerk'], DR: [EQP] });
+        expect(access.importer_limited_callings).toEqual({ DR: [EQP] });
+      });
+
+      it('type-mismatch demote: clearing a scope drops its stamp with it', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: [EQP], sort_order: 51 });
+        await seedAccess({
+          importer_callings: { CO: [EQP], DR: ['Bishop'] },
+          importer_limited_callings: { CO: [EQP] },
+          sort_order: 42,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'manual' },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ DR: ['Bishop'] });
+        expect(access.importer_limited_callings).toEqual({});
+      });
+
+      it('sba-only reap: a stale stamp never keeps an otherwise-empty access doc alive', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: [EQP], sort_order: 51 });
+        await seedAccess({
+          importer_callings: { CO: [EQP] },
+          importer_limited_callings: { CO: [EQP] },
+          sort_order: 51,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        expect((await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()).exists).toBe(
+          false,
+        );
+      });
+
+      it('kindoo-unparseable: the ward stamp is reaped along with the ward scope', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'auto', callings: [EQP], sort_order: 51 });
+        await seedAccess({
+          importer_callings: { CO: [EQP] },
+          importer_limited_callings: { CO: [EQP] },
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'grant-1',
+                reason: 'manager grant',
+                granted_by: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+                granted_at: Timestamp.now(),
+              },
+            ],
+          },
+          sort_order: 51,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-unparseable',
+                payload: { memberEmail: MEMBER_EMAIL, calling: 'Stake Clerk' },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        // Moved to stake scope on a full-tier stake calling: the ward
+        // grant and its stamp are both gone, the new grant is unstamped.
+        expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+        expect(access.importer_limited_callings).toEqual({});
+        expect(access.manual_grants.CO?.length).toBe(1);
+      });
+
+      it('an untiered pre-existing doc is re-stamped when Sync next writes that scope', async () => {
+        // The one path by which an already-granted Elders Quorum
+        // President becomes limited: not a sweep, just the next ordinary
+        // write to their scope.
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+        await seedSeat({ scope: 'CO', type: 'manual', callings: [] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ reason: EQP });
+        // Pre-D25 shape: the calling is granted, nothing is stamped.
+        await seedAccess({ importer_callings: { CO: [EQP] }, sort_order: 51 });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: [EQP] },
+              },
+            },
+          }),
+        );
+
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ CO: [EQP] });
+        expect(access.importer_limited_callings).toEqual({ CO: [EQP] });
       });
     });
   });
