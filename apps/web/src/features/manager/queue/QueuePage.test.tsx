@@ -832,11 +832,14 @@ describe('<ManagerQueuePage /> — extension note', () => {
     );
   });
 
-  it('tells the manager an apply can be started here when their desktop is online', () => {
+  it('tells the manager an apply can be started here once Kindoo is open on their computer', () => {
+    // Deliberately not "when your desktop is online" — coverage is per
+    // Kindoo site now, and the presence line below the note is what
+    // answers which requests are actually applicable.
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
     expect(screen.getByTestId('queue-extension-note').textContent).toMatch(
-      /when your desktop is online, you can apply them from here/i,
+      /with Kindoo open there, you can apply them from here/i,
     );
   });
 

@@ -6,6 +6,18 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-78] Spec §16 + §15: remote-apply presence is per Kindoo site, not per manager
+Status: open
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+Landed on `feat/remote-apply-web2` (PR #250). `spec.md` §16 and the §15 Requests Queue bullet still describe the per-manager model, which is now wrong in four places:
+
+1. **Presence is two docs, not one.** `remoteApply/{canonical}` carries only the profile-wide opt-in; liveness lives in `remoteApply/{canonical}/desktops/{siteKey}`, one doc per Kindoo site with a live tab. Two tabs on two sites coexist instead of overwriting each other.
+2. **The Apply button is gated per request, not per manager.** A request's target Kindoo site is *derived* (scope → ward → building; stake scope is home), and the button appears only when a live tab is on that site. `AccessRequest.kindoo_site_id` is NOT that site — it is the site of the grant a `remove` targets — so nothing reads it here. A request whose target site can't be resolved (orphaned ward/building reference, catalogues not loaded) gets no button: an unknown target can't be routed.
+3. **Jobs carry `target_site_key`** (required; `'home'` is the reserved key for the home site, which has no `kindooSites` doc). Only a tab inside that site may claim it. Also needs a `firebase-schema.md` §3.4 field entry.
+4. **The copy changed.** The queue-header line now names *every* covered site ("You can apply requests for Colorado Springs North and East Stake from here."), a not-covered card names the site to open ("Open East Stake in Kindoo on your computer to apply this one."), and the nothing-live line reads "Open Kindoo in Chrome on your computer to apply requests from here." The top-of-queue extension note lost its "When your desktop is online" clause — spec.md §15 quotes that sentence verbatim; it now reads "Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open there, you can apply them from here."
+
 ## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
 Status: done (2026-08-03 — `feat/remote-apply-docs2`, ahead of PR #250 merging)
 Owner: @docs-keeper

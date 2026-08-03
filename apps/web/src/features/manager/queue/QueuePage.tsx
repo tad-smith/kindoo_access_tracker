@@ -221,14 +221,15 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
 }
 
 // Muted note pointing managers at the Chrome extension. Completing by
-// hand and rejecting still live there; remote apply (below the note)
-// is the one thing that can be started from this page, and only while
-// the manager's own desktop is online.
+// hand and rejecting still live there; remote apply (below the note) is
+// the one thing that can be started from this page. Deliberately vague
+// about *which* requests — that is per Kindoo site now, and the presence
+// line directly underneath answers it precisely.
 function ExtensionNote() {
   return (
     <p className="kd-queue-readonly-note font-bold" data-testid="queue-extension-note" role="note">
-      Requests are completed and rejected in the Chrome extension on your computer. When your
-      desktop is online, you can apply them from here.{' '}
+      Requests are completed and rejected in the Chrome extension on your computer. With Kindoo
+      open there, you can apply them from here.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
         target="_blank"
