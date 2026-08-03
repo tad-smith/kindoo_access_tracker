@@ -656,12 +656,15 @@ describe('<AccessPage />', () => {
     expect(screen.getByTestId('access-grant-level-full@x.com-g-full')).toHaveTextContent('Full');
   });
 
-  // Importer rows are Full by construction: `importer_callings` stores
-  // bare calling strings with nowhere to put a tier, and the page must
-  // not infer one from the calling name — a read-time classifier would
-  // contradict the minted claim, which only re-mints on an access-doc
-  // write. A calling named after a would-be limited calling is still Full.
-  it('renders Full on every importer row, whatever the calling is named', () => {
+  // THE no-migration regression. `importer_limited_callings` is absent on
+  // every access doc written before the stamp shipped — the overwhelmingly
+  // common case — and those docs must render exactly as they did. The
+  // calling deliberately carries the name that DOES confer limited access
+  // once stamped: absent the stored map the page must still say Full,
+  // because the tier is read, never derived from the calling name. A
+  // read-time classifier would contradict the minted claim, which
+  // re-mints only on an access-doc write.
+  it('renders Full on every importer row when the doc stores no limited map at all', () => {
     useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
     useAccessListMock.mockReturnValue(
       liveResult([
@@ -685,6 +688,165 @@ describe('<AccessPage />', () => {
     ).toHaveTextContent('Full');
     // No row anywhere on the page claims the limited tier.
     expect(screen.queryByText('LIMITED')).toBeNull();
+  });
+
+  it('renders LIMITED on an importer calling stored in importer_limited_callings', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'eqp@x.com',
+          member_email: 'eqp@x.com',
+          importer_callings: { CO: ['Elders Quorum President'] },
+          importer_limited_callings: { CO: ['Elders Quorum President'] },
+          manual_grants: {},
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    // Table view — the chip lives in the Scope cell.
+    const chip = screen.getByTestId('access-table-level-eqp@x.com-CO-Elders Quorum President');
+    expect(chip).toHaveTextContent('LIMITED');
+    const cells = Array.from(screen.getByTestId('access-table').querySelectorAll('tbody tr td'));
+    expect(cells[0]).toContainElement(chip);
+    // Card view — the chip sits beside the calling in the <li>.
+    expect(
+      screen.getByTestId('access-grant-level-eqp@x.com-CO-Elders Quorum President'),
+    ).toHaveTextContent('LIMITED');
+  });
+
+  // A scope's stored list names a SUBSET of that scope's callings, so two
+  // callings under one scope heading can disagree. A single-calling doc
+  // could not catch a per-scope (rather than per-calling) regression.
+  it('labels each calling in a mixed scope independently', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'mixed@x.com',
+          member_email: 'mixed@x.com',
+          importer_callings: { CO: ['Bishop', 'Elders Quorum President'] },
+          importer_limited_callings: { CO: ['Elders Quorum President'] },
+          manual_grants: {},
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    expect(screen.getByTestId('access-table-level-mixed@x.com-CO-Bishop')).toHaveTextContent(
+      'Full',
+    );
+    expect(
+      screen.getByTestId('access-table-level-mixed@x.com-CO-Elders Quorum President'),
+    ).toHaveTextContent('LIMITED');
+    // Same split in the card view: one <li> per calling, each with its
+    // own chip.
+    const card = screen.getByTestId('access-card-mixed@x.com');
+    const items = Array.from(
+      within(card).getByTestId('access-section-importer').querySelectorAll('li'),
+    );
+    expect(items.map((li) => li.textContent?.trim())).toEqual([
+      'Bishop Full',
+      'Elders Quorum President LIMITED',
+    ]);
+  });
+
+  it('leaves manual rows on their own marker when the doc also stores a limited importer calling', () => {
+    useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+    useAccessListMock.mockReturnValue(
+      liveResult([
+        makeAccess({
+          member_canonical: 'both@x.com',
+          member_email: 'both@x.com',
+          importer_callings: { CO: ['Elders Quorum President'] },
+          importer_limited_callings: { CO: ['Elders Quorum President'] },
+          manual_grants: {
+            CO: [
+              {
+                grant_id: 'g-man',
+                reason: 'Building scheduler',
+                granted_by: { email: 'm@x.com', canonical: 'm@x.com' },
+                granted_at: {
+                  seconds: 0,
+                  nanoseconds: 0,
+                  toDate: () => new Date(),
+                  toMillis: () => 0,
+                },
+              },
+            ],
+          },
+        }),
+      ]),
+    );
+    render(<AccessPage />);
+    // The importer map never leaks onto the manual row.
+    expect(
+      screen.getByTestId('access-table-level-both@x.com-CO-Elders Quorum President'),
+    ).toHaveTextContent('LIMITED');
+    expect(screen.getByTestId('access-table-level-both@x.com-g-man')).toHaveTextContent('Full');
+    expect(screen.getByTestId('access-grant-level-both@x.com-g-man')).toHaveTextContent('Full');
+  });
+
+  // Only positive evidence — the calling present in that scope's stored
+  // list — reads as limited. Everything else degrades to Full without
+  // throwing.
+  describe('malformed importer_limited_callings', () => {
+    function renderWith(limited: unknown) {
+      useStakeWardsMock.mockReturnValue(liveResult([{ ward_code: 'CO', ward_name: 'Maple' }]));
+      useAccessListMock.mockReturnValue(
+        liveResult([
+          makeAccess({
+            member_canonical: 'bad@x.com',
+            member_email: 'bad@x.com',
+            importer_callings: { CO: ['Bishop', 'Elders Quorum President'] },
+            importer_limited_callings: limited as Record<string, string[]>,
+            manual_grants: {},
+          }),
+        ]),
+      );
+      render(<AccessPage />);
+    }
+
+    function tableLevels(): string[] {
+      return Array.from(
+        screen.getByTestId('access-table').querySelectorAll('[data-testid^="access-table-level-"]'),
+      ).map((el) => el.textContent?.trim() ?? '');
+    }
+
+    it('reads Full when the map has no key for the row scope', () => {
+      expect(() => renderWith({ GE: ['Elders Quorum President'] })).not.toThrow();
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
+
+    it('reads Full when the scope value is not an array', () => {
+      expect(() => renderWith({ CO: 'Elders Quorum President' })).not.toThrow();
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
+
+    it('reads Full when the scope value is null', () => {
+      expect(() => renderWith({ CO: null })).not.toThrow();
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
+
+    it('ignores non-string entries in the scope list', () => {
+      expect(() => renderWith({ CO: [null, 42, { name: 'Bishop' }] })).not.toThrow();
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
+
+    it('adds no row for a listed name absent from importer_callings', () => {
+      // The stored list is meant to be a subset; a name that is not in
+      // `importer_callings` grants nothing and must not invent a row.
+      renderWith({ CO: ['Stake President'] });
+      const rows = Array.from(
+        screen.getByTestId('access-table').querySelectorAll('tbody tr td:nth-child(2)'),
+      ).map((td) => td.textContent?.trim());
+      expect(rows).toEqual(['Bishop', 'Elders Quorum President']);
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
+
+    it('reads Full when the scope list is empty', () => {
+      renderWith({ CO: [] });
+      expect(tableLevels()).toEqual(['Full', 'Full']);
+    });
   });
 
   it('reads a manual row from the grant marker, never from its reason text', () => {

@@ -218,6 +218,8 @@ interface AccessTableRow {
   scope: string;
   calling: string;
   source: 'importer' | 'manual';
+  /** Resolved once here rather than re-derived per render. */
+  level: AccessLevel;
   /** Set only when source === 'manual'; carries the grant for delete. */
   grant?: ManualGrant;
 }
@@ -236,16 +238,43 @@ function grantLevel(grant: ManualGrant | undefined): AccessLevel {
   return grant?.level === 'limited' ? 'limited' : 'full';
 }
 
-// Importer rows are Full by construction, and the page must NOT infer
-// their tier from the calling name. `importer_callings` is a
-// `Record<scope, string[]>` of bare calling strings with nowhere to
-// record a tier, and nothing can currently mint a limited tier from an
-// importer calling. Inferring one at read time would also break the
-// moment a calling joined the limited set: claims re-mint only when the
-// access doc is written, so existing holders would still hold full
-// access while this page labelled them LIMITED. A calling-derived
-// limited tier has to be **stored on the record** before it is shown —
-// then the page and the claim minter read one fact and cannot disagree.
+// Trim + lowercase — the key scheme `packages/shared`'s calling sets
+// use. The writer stores `importer_limited_callings` entries as exact
+// copies of the `importer_callings` strings, so this only buys tolerance
+// to casing drift; it never widens a match beyond a string that is
+// actually stored.
+function callingKey(calling: string): string {
+  return calling.trim().toLowerCase();
+}
+
+/**
+ * Importer tier, READ from the access doc's stored
+ * `importer_limited_callings[scope]` — never derived from the calling
+ * name. That distinction is the whole point: claims re-mint only when the
+ * access doc is written, so a name-derived tier would label a row LIMITED
+ * while its holder still carried a full claim. Reading the stored field
+ * means this page and the claim minter consume one fact and cannot
+ * disagree.
+ *
+ * Only positive evidence — the calling present in that scope's stored
+ * list — reads as limited. An absent map, an absent scope key, a
+ * non-array value, and a non-string entry all read as full. Absent is the
+ * no-migration path and today's overwhelmingly common case: docs written
+ * before the stamp shipped carry no map at all and must render exactly as
+ * they did.
+ *
+ * The stamp is not retroactive, so a holder whose scope has not been
+ * rewritten since it shipped legitimately renders Full here — that agrees
+ * with their claim, which is the property this reader exists to preserve.
+ */
+function importerLevel(access: Access, scope: string, calling: string): AccessLevel {
+  const limited: unknown = access.importer_limited_callings?.[scope];
+  if (!Array.isArray(limited)) return 'full';
+  const key = callingKey(calling);
+  return limited.some((c: unknown) => typeof c === 'string' && callingKey(c) === key)
+    ? 'limited'
+    : 'full';
+}
 
 function LevelBadge({ level, testId }: { level: AccessLevel; testId: string }) {
   return level === 'limited' ? (
@@ -271,6 +300,7 @@ function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTab
           scope,
           calling,
           source: 'importer',
+          level: importerLevel(u, scope, calling),
         });
       }
     }
@@ -283,6 +313,7 @@ function flattenAccess(users: readonly Access[], scopeFilter: string): AccessTab
           scope,
           calling: g.reason,
           source: 'manual',
+          level: grantLevel(g),
           grant: g,
         });
       }
@@ -329,24 +360,21 @@ function AccessTable({ users, scopeFilter, wards, onDeleteRequest }: AccessTable
           <tr key={`${r.canonical}|${r.scope}|${r.source}|${r.calling}|${i}`}>
             {/* Scope + tier share a cell: a table row is exactly one grant
                 (or one importer calling), so the pairing is accurate.
-                Testid keys on the grant id for manual rows; importer rows
-                have no grant, so they key on scope + calling — the pair
-                that makes an importer row unique within a doc. */}
+                `r.level` is already resolved (manual → the grant marker,
+                importer → the stored limited map). Testid keys on the
+                grant id for manual rows; importer rows have no grant, so
+                they key on scope + calling — the pair that makes an
+                importer row unique within a doc. */}
             <td>
               {scopeLabel(r.scope, wards)}{' '}
-              {r.grant ? (
-                <LevelBadge
-                  level={grantLevel(r.grant)}
-                  testId={`access-table-level-${r.canonical}-${r.grant.grant_id}`}
-                />
-              ) : (
-                // Importer row — tier is not stored on `importer_callings`,
-                // so it is Full by construction. See the Access tier note.
-                <LevelBadge
-                  level="full"
-                  testId={`access-table-level-${r.canonical}-${r.scope}-${r.calling}`}
-                />
-              )}
+              <LevelBadge
+                level={r.level}
+                testId={
+                  r.grant
+                    ? `access-table-level-${r.canonical}-${r.grant.grant_id}`
+                    : `access-table-level-${r.canonical}-${r.scope}-${r.calling}`
+                }
+              />
             </td>
             <td>{r.calling}</td>
             <td>
@@ -384,9 +412,11 @@ interface AccessCardProps {
   onDeleteRequest: (scope: string, grant: ManualGrant) => void;
 }
 
-// Unlike the table, the card's tier chip sits beside each grant, not on
-// the scope chip: a card groups every grant for a scope under one
-// heading and those grants can differ in tier.
+// Unlike the table, the card's tier chip sits beside each calling /
+// grant, not on the scope chip: a card groups everything for a scope
+// under one heading and those entries can differ in tier — importer
+// callings included, since the stored limited map names a subset of a
+// scope's callings.
 function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardProps) {
   const importerScopes = Object.entries(access.importer_callings ?? {})
     .filter(([scope, callings]) => (!scopeFilter || scope === scopeFilter) && callings.length > 0)
@@ -412,13 +442,14 @@ function AccessCard({ access, scopeFilter, wards, onDeleteRequest }: AccessCardP
             <div key={`imp-${scope}`}>
               <span className="roster-card-chip roster-card-scope">{scopeLabel(scope, wards)}</span>
               <ul className="kd-access-grants">
+                {/* Chip stays per-calling, not per-scope: one scope can
+                    hold a mix of tiers. Level comes from the stored
+                    limited map, never from the calling name. */}
                 {callings.map((c) => (
                   <li key={c}>
                     {c}{' '}
-                    {/* Importer calling — no stored tier, Full by
-                        construction. See the Access tier note. */}
                     <LevelBadge
-                      level="full"
+                      level={importerLevel(access, scope, c)}
                       testId={`access-grant-level-${access.member_canonical}-${scope}-${c}`}
                     />
                   </li>
