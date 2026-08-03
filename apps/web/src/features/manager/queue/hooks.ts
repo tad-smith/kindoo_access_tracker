@@ -268,8 +268,9 @@ function createdAtRank(job: RemoteApplyJobWithId): number {
 
 /**
  * Queue one apply for the desktop. Resolves to the new job id, which
- * the card holds so it keeps rendering the outcome after the job goes
- * terminal and leaves {@link useActiveRemoteApplyJobs}.
+ * the card holds so it keeps rendering the outcome once the job goes
+ * terminal — see {@link useRemoteApplyJobsByRequest} for how a request
+ * with several jobs resolves to the one shown.
  *
  * Creates at `queued` and nothing else — rules reject any other status
  * on create, and every later transition except `cancelled` belongs to
