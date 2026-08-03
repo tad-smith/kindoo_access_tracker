@@ -34,7 +34,12 @@ vi.mock('./hooks', () => ({
   useRemoteApplyPickupTimeout: (...args: unknown[]) => pickupTimeoutMock(...args),
 }));
 
+// The result dialog only raises for a job THIS device queued, matched on
+// `created_by_device`. Pin the id so the fixture jobs below read as ours.
+vi.mock('../../notifications/lib', () => ({ getDeviceId: () => 'device-1' }));
+
 import { RemoteApplyPresenceNote, RemoteApplyRow, overCapLine, presenceCopy } from './RemoteApply';
+import { clearAcknowledgedJobs } from './acknowledgedJobs';
 import type { RemoteApplyJobWithId, RemoteApplyPresenceResult } from './hooks';
 
 function desktop(siteKey: string, siteName: string | null = null): RemoteApplyDesktopWithId {
@@ -89,6 +94,9 @@ function covered(overrides: Partial<React.ComponentProps<typeof RemoteApplyRow>>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Acknowledgements persist in localStorage on purpose; jsdom keeps it
+  // across tests in a file, so a dismissal in one would silence the next.
+  clearAcknowledgedJobs();
   useQueueRemoteApplyJobMock.mockReturnValue({
     mutate: queueMutateMock,
     isPending: false,
@@ -318,6 +326,10 @@ describe('<RemoteApplyRow />', () => {
         {...covered({ job: job('failed', { code: 'error', message: 'Kindoo said no.' }) })}
       />,
     );
+    // The failure raises its result dialog first — acknowledge, then act.
+    // The modal holds the card inert until it's dismissed, which is the
+    // sequence a manager actually walks: read what went wrong, retry.
+    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     await user.click(screen.getByTestId('remote-apply-button-req-1'));
     expect(queueMutateMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
@@ -498,6 +510,59 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     );
   });
 
+  it('raises for a job that had already finished before the page mounted', () => {
+    // The flow this feature is actually for: tap Apply, turn to the
+    // desktop to watch, phone locks. On wake the page has re-mounted and
+    // the job is terminal on first sight. Requiring a witnessed
+    // transition suppressed the dialog in exactly that case.
+    render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('remote-apply-result-note-req-1')).toHaveTextContent(
+      'Added Jane Doe to Maple Building.',
+    );
+  });
+
+  it('stays silent for a terminal job another device queued', () => {
+    // The manager's other phone owns that outcome's screen.
+    render(
+      <RemoteApplyRow
+        {...covered({ job: { ...applied(), created_by_device: 'some-other-phone' } })}
+      />,
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The row still reports it — this is about whose screen interrupts.
+    expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent('Applied ✓');
+  });
+
+  it('does not raise again after a remount once the outcome was dismissed', async () => {
+    // A locked phone guarantees the reload, so the acknowledgement has
+    // to outlive the component — otherwise the dialog re-pops every time
+    // the queue mounts until the request leaves it.
+    const user = userEvent.setup();
+    const { unmount } = render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
+    unmount();
+
+    render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('still raises for a different job on the same request after one was dismissed', async () => {
+    // A retry writes a new job; acknowledging the failure that prompted
+    // it must not swallow the retry's own outcome.
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <RemoteApplyRow
+        {...covered({ job: job('failed', { code: 'error', message: 'Kindoo said no.' }) })}
+      />,
+    );
+    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
+    unmount();
+
+    render(<RemoteApplyRow {...covered({ job: { ...applied(), job_id: 'job-2' } })} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('keeps the inline row status alongside the dialog', () => {
     const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
     rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
@@ -519,12 +584,6 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     // …and stays closed while the same terminal job keeps arriving.
     rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('does not raise for a job that was already finished when the page loaded', () => {
-    // Otherwise every reload pops a modal for last week's work.
-    render(<RemoteApplyRow {...covered({ job: applied() })} />);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 

@@ -18,7 +18,7 @@
 // them to switch sites in Kindoo, advice that is actively wrong when
 // they already have that site open in the next tab.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   isRemoteApplyTerminal,
   type OverCapEntry,
@@ -28,6 +28,8 @@ import {
 } from '@kindoo/shared';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
+import { getDeviceId } from '../../notifications/lib';
+import { acknowledgeJob, isJobAcknowledged } from './acknowledgedJobs';
 import {
   useQueueRemoteApplyJob,
   useRemoteApplyPickupTimeout,
@@ -184,24 +186,58 @@ export function RemoteApplyRow({
 
   useRemoteApplyPickupTimeout(job?.job_id ?? null, job, queuedAtMs);
 
-  // The job whose outcome is still waiting to be acknowledged. Set only
-  // on a terminal TRANSITION this device watched happen — never on
-  // first sight of an already-terminal job, or every page load would
-  // pop a modal for last week's work. A manager who taps Apply and
-  // pockets the phone comes back to the dialog; one who reloads after
-  // it finished gets the inline row, which is the correct
-  // at-a-glance-only treatment for history.
-  const [ackJobId, setAckJobId] = useState<string | null>(null);
-  const lastSeenRef = useRef<{ jobId: string; status: RemoteApplyJobStatus } | null>(null);
-  useEffect(() => {
-    const prev = lastSeenRef.current;
-    lastSeenRef.current = job ? { jobId: job.job_id, status: job.status } : null;
-    if (!job || prev === null || prev.jobId !== job.job_id) return;
-    if (prev.status === job.status) return;
-    if (!isRemoteApplyTerminal(job.status)) return;
-    setAckJobId(job.job_id);
-  }, [job]);
-  const ackJob = job && ackJobId === job.job_id ? job : undefined;
+  // The job whose outcome still needs acknowledging on this device.
+  //
+  // Deliberately NOT gated on having witnessed the transition. That was
+  // the first cut, and it argued a good case — a reload shouldn't pop
+  // modals for last week's work — but it fails for the exact device
+  // this feature exists for. The manager taps Apply, turns to their
+  // desktop to watch it work, and the phone locks; by the time they
+  // look back the page has re-mounted and the job is already terminal
+  // on first sight. Suppressing that is suppressing the commonest real
+  // flow. The desktop's `ResultDialog` never hits this because the
+  // desktop is the machine doing the work, with its panel open.
+  //
+  // "Not history, not someone else's" is carried by two narrower facts
+  // instead:
+  //
+  //   - `created_by_device` — the id this device wrote at tap time. A
+  //     job the manager queued from another phone belongs to that
+  //     phone's screen, and a job seeded by anything else stays silent.
+  //   - the persisted acknowledgement — dismissing is what makes an
+  //     outcome history, and it has to survive the reload that a locked
+  //     phone guarantees. See `acknowledgedJobs.ts`.
+  //
+  // A device id we can't read (storage locked down) matches nothing, so
+  // the dialog stays away rather than raising on jobs we can't attribute.
+  const deviceId = useMemo(() => {
+    try {
+      return getDeviceId();
+    } catch {
+      return null;
+    }
+  }, []);
+  // In-session half of the acknowledgement, so dismissing takes effect
+  // without re-reading storage; `acknowledgeJob` writes the half that
+  // survives the reload.
+  const [dismissedJobId, setDismissedJobId] = useState<string | null>(null);
+  const alreadyAcknowledged = useMemo(
+    () => (job ? isJobAcknowledged(job.job_id) : false),
+    [job?.job_id],
+  );
+  const ackJob =
+    job &&
+    isRemoteApplyTerminal(job.status) &&
+    deviceId !== null &&
+    job.created_by_device === deviceId &&
+    !alreadyAcknowledged &&
+    dismissedJobId !== job.job_id
+      ? job
+      : undefined;
+  const dismissResult = (jobId: string) => {
+    acknowledgeJob(jobId);
+    setDismissedJobId(jobId);
+  };
 
   const status = job?.status;
   const hasJob = job !== undefined;
@@ -279,7 +315,7 @@ export function RemoteApplyRow({
           job={ackJob}
           requestId={requestId}
           labelForScope={labelForScope}
-          onDismiss={() => setAckJobId(null)}
+          onDismiss={() => dismissResult(ackJob.job_id)}
         />
       ) : null}
     </div>
