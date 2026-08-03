@@ -219,6 +219,11 @@ describe('EmailService — pure builders', () => {
       expect(buildNewRequestTextBody(o)).not.toContain(`Request:   ${type}`);
       expect(buildNewRequestHtmlBody(o)).toContain(`>${label}</td>`);
       expect(buildNewRequestHtmlBody(o)).not.toContain(`>${type}<`);
+      // The leads read off the same map, so row and sentence can't drift.
+      const c = requestOpts({ req: { ...baseRequest, type } });
+      expect(buildCompletedTextBody(c)).toContain(
+        `Your ${label.toLowerCase()} request for Subject Person has been completed.`,
+      );
     }
   });
 
@@ -239,9 +244,7 @@ describe('EmailService — pure builders', () => {
   it('new-request text body renders the lead verb and the detail rows', () => {
     expect(buildNewRequestTextBody(managerOpts())).toBe(
       [
-        // `add_manual` is the one lead verb with no trailing "for" — carried
-        // over from the plain-text templates unchanged.
-        'John Smith (Bishop) submitted a new manual-add request Subject Person (Subject@gmail.com).',
+        'John Smith (Bishop) submitted a new manual-add request for Subject Person.',
         '',
         'Request:   Manual access',
         'Ward:      Greenwood Ward',
@@ -257,7 +260,7 @@ describe('EmailService — pure builders', () => {
   it('new-request html body carries the same rows, the mailto and the button', () => {
     const html = buildNewRequestHtmlBody(managerOpts());
     expect(html).toContain(
-      'John Smith (Bishop) submitted a new manual-add request Subject Person (Subject@gmail.com).',
+      'John Smith (Bishop) submitted a new manual-add request for Subject Person.',
     );
     expect(html).toContain('>Request</th>');
     expect(html).toContain('>Manual access</td>');
@@ -328,8 +331,16 @@ describe('EmailService — pure builders', () => {
     }
   });
 
+  // `personName` falls back to the address, so a nameless member still
+  // reads sensibly in the lead as well as the Member row.
   it('new-request body renders the address alone when the member has no name', () => {
     const o = managerOpts({ req: { ...baseRequest, member_name: '' } });
+    expect(buildNewRequestTextBody(o)).toContain(
+      'submitted a new manual-add request for Subject@gmail.com.',
+    );
+    expect(buildNewRequestHtmlBody(o)).toContain(
+      'submitted a new manual-add request for Subject@gmail.com.',
+    );
     expect(buildNewRequestTextBody(o)).toContain('Member:    Subject@gmail.com');
     expect(buildNewRequestHtmlBody(o)).toContain(
       '<a href="mailto:Subject@gmail.com" style="color:#2b6cb0">Subject@gmail.com</a>',
@@ -345,9 +356,16 @@ describe('EmailService — pure builders', () => {
     );
   });
 
-  it('completed subject falls back to the address when the member has no name', () => {
-    expect(buildCompletedSubject(requestOpts({ req: { ...baseRequest, member_name: '' } }))).toBe(
+  it('completed subject + lead fall back to the address when the member has no name', () => {
+    const o = requestOpts({ req: { ...baseRequest, member_name: '' } });
+    expect(buildCompletedSubject(o)).toBe(
       '[Stake Building Access] Your request for Subject@gmail.com has been completed',
+    );
+    expect(buildCompletedTextBody(o)).toContain(
+      'Your manual access request for Subject@gmail.com has been completed.',
+    );
+    expect(buildCompletedHtmlBody(o)).toContain(
+      'Your manual access request for Subject@gmail.com has been completed.',
     );
   });
 
@@ -356,7 +374,7 @@ describe('EmailService — pure builders', () => {
       buildCompletedTextBody(requestOpts({ req: { ...baseRequest, status: 'complete' } })),
     ).toBe(
       [
-        'Your request for manual access for Subject@gmail.com (Subject Person) has been completed.',
+        'Your manual access request for Subject Person has been completed.',
         '',
         'Request:   Manual access',
         'Ward:      Greenwood Ward',
@@ -370,9 +388,7 @@ describe('EmailService — pure builders', () => {
 
   it('completed html body carries the same rows and the button', () => {
     const html = buildCompletedHtmlBody(requestOpts());
-    expect(html).toContain(
-      'Your request for manual access for Subject@gmail.com (Subject Person) has been completed.',
-    );
+    expect(html).toContain('Your manual access request for Subject Person has been completed.');
     expect(html).toContain('>Manual access</td>');
     expect(html).toContain('>Greenwood Ward</td>');
     expect(html).toContain(`<a href="${MY_LINK}"`);
@@ -420,7 +436,7 @@ describe('EmailService — pure builders', () => {
   it('rejected text body renders the lead and the reason row', () => {
     expect(buildRejectedTextBody(requestOpts({ req: rejected }))).toBe(
       [
-        'Your request for manual access for Subject@gmail.com (Subject Person) was rejected.',
+        'Your manual access request for Subject Person was rejected.',
         '',
         'Request:   Manual access',
         'Ward:      Greenwood Ward',
@@ -476,7 +492,7 @@ describe('EmailService — pure builders', () => {
       buildCancelledTextBody(managerOpts({ req: { ...baseRequest, status: 'cancelled' } })),
     ).toBe(
       [
-        'John Smith (Bishop) cancelled their request for manual access for Subject@gmail.com (Subject Person).',
+        'John Smith (Bishop) cancelled their manual access request for Subject Person.',
         '',
         'Request:   Manual access',
         'Ward:      Greenwood Ward',
@@ -490,7 +506,7 @@ describe('EmailService — pure builders', () => {
 
   it('cancelled html body carries the same rows and the button', () => {
     const html = buildCancelledHtmlBody(managerOpts());
-    expect(html).toContain('John Smith (Bishop) cancelled their request for manual access');
+    expect(html).toContain('John Smith (Bishop) cancelled their manual access request');
     expect(html).toContain('>Greenwood Ward</td>');
     expect(html).toContain('>Open the queue</a>');
   });
@@ -500,8 +516,8 @@ describe('EmailService — pure builders', () => {
     expect(buildCancelledSubject(o)).toBe(
       '[Stake Building Access] Request cancelled by Bish@gmail.com — Greenwood Ward',
     );
-    expect(buildCancelledTextBody(o)).toContain('Bish@gmail.com cancelled their request');
-    expect(buildCancelledHtmlBody(o)).toContain('Bish@gmail.com cancelled their request');
+    expect(buildCancelledTextBody(o)).toContain('Bish@gmail.com cancelled their manual access');
+    expect(buildCancelledHtmlBody(o)).toContain('Bish@gmail.com cancelled their manual access');
   });
 
   // ---- over-cap ------------------------------------------------------------

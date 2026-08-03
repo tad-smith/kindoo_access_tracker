@@ -54,22 +54,14 @@ const ENVELOPE = 'noreply@mail.stakebuildingaccess.org';
 
 const SCOPE_LABEL_STAKE = 'Stake';
 
+// Every verb ends in `for` — the lead appends the subject person.
 const TYPE_LEAD_VERB: Record<RequestType, string> = {
-  add_manual: 'submitted a new manual-add request',
+  add_manual: 'submitted a new manual-add request for',
   add_temp: 'requested temp access for',
   remove: 'requested removal of',
   edit_auto: 'requested an edit to the auto seat for',
   edit_manual: 'requested an edit to the manual seat for',
   edit_temp: 'requested an edit to the temp seat for',
-};
-
-const TYPE_NOUN: Record<RequestType, string> = {
-  add_manual: 'manual access',
-  add_temp: 'temp access',
-  remove: 'removal',
-  edit_auto: 'auto-seat edit',
-  edit_manual: 'manual-seat edit',
-  edit_temp: 'temp-seat edit',
 };
 
 /** Detail-row rendering of `request.type`. Never show the raw enum. */
@@ -440,20 +432,24 @@ export function buildOverCapHtmlBody(o: OverCapEmailOpts): string {
 
 // ---- copy fragments shared by both parts -----------------------------------
 
+// Leads name the person, never the address — the Member row carries that.
+
 function newRequestLead(o: RequesterNamedEmailOpts): string {
-  return `${o.requesterLabel} ${TYPE_LEAD_VERB[o.req.type]} ${displayPerson(o.req)}.`;
+  return `${o.requesterLabel} ${TYPE_LEAD_VERB[o.req.type]} ${personName(o.req)}.`;
 }
 
 function cancelledLead(o: RequesterNamedEmailOpts): string {
-  const { req } = o;
-  const name = req.member_name?.trim();
-  return `${o.requesterLabel} cancelled their request for ${TYPE_NOUN[req.type]} for ${req.member_email}${name ? ` (${name})` : ''}.`;
+  return `${o.requesterLabel} cancelled their ${typeNoun(o.req.type)} request for ${personName(o.req)}.`;
 }
 
 /** Stem the completed and rejected leads share, minus the closing verb. */
 function requestLeadStem(req: AccessRequest): string {
-  const name = req.member_name?.trim();
-  return `Your request for ${TYPE_NOUN[req.type]} for ${req.member_email}${name ? ` (${name})` : ''}`;
+  return `Your ${typeNoun(req.type)} request for ${personName(req)}`;
+}
+
+/** `TYPE_LABEL` mid-sentence, so lead and detail row can't drift. */
+function typeNoun(type: RequestType): string {
+  return TYPE_LABEL[type].toLowerCase();
 }
 
 /** Sentence-cased; subject drops the period, the lead paragraph keeps it. */
@@ -955,12 +951,6 @@ async function writeEmailFailedAudit(
       message: err instanceof Error ? err.message : String(err),
     });
   }
-}
-
-/** Display string for the request's subject person used in body verbs. */
-function displayPerson(req: AccessRequest): string {
-  const name = req.member_name?.trim();
-  return name ? `${name} (${req.member_email})` : req.member_email;
 }
 
 /**

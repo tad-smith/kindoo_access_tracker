@@ -347,7 +347,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls[0]!.subject).toBe(
       '[Stake Building Access] Your request for Subject Person has been completed',
     );
-    expect(calls[0]!.text).toContain('Your request for manual access');
+    expect(calls[0]!.text).toContain('Your manual access request for Subject Person');
     expect(calls[0]!.text).toContain('https://stakebuildingaccess.org/my-requests');
     expect(calls[0]!.html).toContain('>View your requests</a>');
   });
@@ -413,8 +413,8 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to.sort()).toEqual(['alice@gmail.com', 'carol@gmail.com']);
     expect(calls[0]!.subject).toContain('Request cancelled by John Smith (Bishop) — GE');
-    expect(calls[0]!.text).toContain('John Smith (Bishop) cancelled their request');
-    expect(calls[0]!.html).toContain('John Smith (Bishop) cancelled their request');
+    expect(calls[0]!.text).toContain('John Smith (Bishop) cancelled their manual access request');
+    expect(calls[0]!.html).toContain('John Smith (Bishop) cancelled their manual access request');
     expect(calls[0]!.html).toContain('>Open the queue</a>');
   });
 
@@ -439,7 +439,9 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.subject).toContain('Request cancelled by Manager Mary (Kindoo Manager)');
-    expect(calls[0]!.text).toContain('Manager Mary (Kindoo Manager) cancelled their request');
+    expect(calls[0]!.text).toContain(
+      'Manager Mary (Kindoo Manager) cancelled their manual access request',
+    );
   });
 
   it('on pending → cancelled falls back to the raw email when neither an access nor a manager doc names the requester', async () => {
@@ -454,7 +456,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.subject).toContain('Request cancelled by Bish@gmail.com');
-    expect(calls[0]!.text).toContain('Bish@gmail.com cancelled their request');
+    expect(calls[0]!.text).toContain('Bish@gmail.com cancelled their manual access request');
   });
 
   it('non-status update on a pending request does not send anything', async () => {
