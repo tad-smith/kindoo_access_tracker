@@ -1219,3 +1219,130 @@ describe('<EditSeatDialog /> — limited app access (D25)', () => {
     expect((screen.getByTestId('edit-seat-building-cedar') as HTMLInputElement).checked).toBe(true);
   });
 });
+
+describe('<EditSeatDialog /> — limited temp window reports live (D25)', () => {
+  // Mirrors NewRequestForm: the ≤90-day cap lands as soon as both dates
+  // hold a date, not on Submit, and only for a limited principal on
+  // `edit_temp`. Everything else keeps submit-time validation.
+
+  function tempSeat(overrides: { start_date?: string; end_date?: string } = {}) {
+    return makeSeat({
+      type: 'temp',
+      scope: 'CO',
+      callings: [],
+      reason: 'visiting speaker',
+      building_names: ['Maple Building'],
+      start_date: overrides.start_date ?? '2026-05-01',
+      end_date: overrides.end_date ?? '2026-05-08',
+    });
+  }
+
+  function wardCatalogue() {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+  }
+
+  /** The inline cap error, not the always-present helper text — the two
+   *  carry identical copy and only the error has `role="alert"`. */
+  function capError(): HTMLElement | undefined {
+    return screen
+      .queryAllByRole('alert')
+      .find((el) => /limited to 90 days/i.test(el.textContent ?? ''));
+  }
+
+  it('shows the cap message as soon as the end date stretches past 90 days, with no submit', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat()} onOpenChange={() => {}} />);
+    expect(capError()).toBeUndefined();
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('renders the live cap message under the End date field', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat()} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-31');
+    await waitFor(() => expect(capError()).toBeDefined());
+    const endDate = screen.getByTestId('edit-seat-end-date');
+    expect(endDate.compareDocumentPosition(capError() as HTMLElement)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('clears the cap message when the end date comes back to 90 days, with no submit', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat()} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-30'); // 90 days
+    await waitFor(() => expect(capError()).toBeUndefined());
+    expect(submitMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('reports a seat that already exceeds the cap the moment the dialog opens', async () => {
+    // Both dates arrive pre-filled from the seat, so the pair is
+    // complete at mount — a limited user must see straight away that
+    // this window is not one they can re-submit.
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat({ end_date: '2026-07-31' })} onOpenChange={() => {}} />);
+    await waitFor(() => expect(capError()).toBeDefined());
+  });
+
+  it('raises nothing while the end date sits empty', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat()} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    // Half a pair must not surface "End date is required" before the
+    // user has typed the replacement.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a NON-limited 200-day edit stays silent and no field errors while typing', async () => {
+    const user = userEvent.setup();
+    wardCatalogue();
+    render(
+      <EditSeatDialog
+        seat={tempSeat({ start_date: '2026-01-01', end_date: '2026-01-08' })}
+        onOpenChange={() => {}}
+      />,
+    );
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-20'); // 200 days
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    // The dialog's global validation mode is unchanged — the required
+    // reason and comment stay quiet until Submit.
+    await user.clear(screen.getByTestId('edit-seat-reason'));
+    await user.type(screen.getByTestId('edit-seat-comment'), 'x');
+    await user.clear(screen.getByTestId('edit-seat-comment'));
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a limited dialog leaves the non-date fields on submit-time validation', async () => {
+    const user = userEvent.setup();
+    usePrincipalMock.mockReturnValue(principal({ limited: true }));
+    wardCatalogue();
+    render(<EditSeatDialog seat={tempSeat()} onOpenChange={() => {}} />);
+    await user.clear(screen.getByTestId('edit-seat-end-date'));
+    await user.type(screen.getByTestId('edit-seat-end-date'), '2026-07-30'); // 90 days, valid
+    await user.clear(screen.getByTestId('edit-seat-reason'));
+    // The live check revalidates `end_date` and nothing else, so the
+    // emptied reason and the still-empty required comment stay silent.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+});

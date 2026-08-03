@@ -1676,3 +1676,119 @@ describe('<NewRequestForm /> — limited app access (D25)', () => {
     expect(screen.getByTestId('new-request-locked-building')).toHaveTextContent('Maple Building');
   });
 });
+
+describe('<NewRequestForm /> — limited temp window reports live (D25)', () => {
+  // The ≤90-day cap must land as soon as both dates are filled, not on
+  // Submit. Scoped to limited + add_temp only: the global validation
+  // mode stays submit-time, so no other field starts erroring mid-typing.
+
+  const CO_WARDS = () => wards([{ code: 'CO', building_name: 'Maple Building' }]);
+
+  /** The inline cap error, not the always-present helper text — the two
+   *  carry identical copy and only the error has `role="alert"`. */
+  function capError(): HTMLElement | undefined {
+    return screen
+      .queryAllByRole('alert')
+      .find((el) => /limited to 90 days/i.test(el.textContent ?? ''));
+  }
+
+  function renderLimited() {
+    return render(
+      <NewRequestForm
+        limited
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+  }
+
+  it('shows the cap message once both dates are filled, with no submit', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('renders the live cap message under the End date field', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31');
+    await waitFor(() => expect(capError()).toBeDefined());
+    // Placement is load-bearing: the message belongs to End date, the
+    // field the user changes to fix it.
+    const endDate = screen.getByTestId('new-request-end-date');
+    expect(endDate.compareDocumentPosition(capError() as HTMLElement)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('clears the cap message when the end date comes back to 90 days, with no submit', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31'); // 91 days
+    await waitFor(() => expect(capError()).toBeDefined());
+    await user.clear(screen.getByTestId('new-request-end-date'));
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-30'); // 90 days
+    await waitFor(() => expect(capError()).toBeUndefined());
+    expect(submitMock).not.toHaveBeenCalled();
+  });
+
+  it('raises nothing while only the start date is filled', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    // Firing on a half-filled pair would surface "End date is required"
+    // on a field the user hasn't reached yet.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('raises nothing while only the end date is filled', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-31');
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a NON-limited 200-day window stays silent and no field errors while typing', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
+        buildings={buildings()}
+        wards={CO_WARDS()}
+        initialScope="CO"
+      />,
+    );
+    await user.selectOptions(screen.getByTestId('new-request-type'), 'add_temp');
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-01-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-07-20'); // 200 days
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+    // And the form's global validation mode is unchanged — required
+    // fields left empty mid-edit must stay quiet until Submit.
+    await user.type(screen.getByTestId('new-request-email'), 'not-an-email');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.clear(screen.getByTestId('new-request-name'));
+    await user.type(screen.getByTestId('new-request-reason'), 'x');
+    await user.clear(screen.getByTestId('new-request-reason'));
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+
+  it('regression — a limited form leaves the non-date fields on submit-time validation', async () => {
+    const user = userEvent.setup();
+    renderLimited();
+    await user.type(screen.getByTestId('new-request-start-date'), '2026-05-01');
+    await user.type(screen.getByTestId('new-request-end-date'), '2026-05-08');
+    await user.type(screen.getByTestId('new-request-email'), 'not-an-email');
+    await user.type(screen.getByTestId('new-request-name'), 'Bob');
+    await user.clear(screen.getByTestId('new-request-name'));
+    // The live check revalidates `end_date` and nothing else, so an
+    // invalid email and an emptied name stay silent until Submit.
+    expect(screen.queryAllByRole('alert')).toHaveLength(0);
+  });
+});

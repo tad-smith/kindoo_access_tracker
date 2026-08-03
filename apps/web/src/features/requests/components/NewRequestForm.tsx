@@ -35,6 +35,10 @@
 //     `add_manual`.
 //   - dates: still two free inputs, but the ≤90-day cap is stated up
 //     front as helper text and enforced by the schema on `end_date`.
+//     `useLiveTempWindowCheck` revalidates `end_date` as soon as both
+//     dates are filled in, so an over-long window reports itself before
+//     the user reaches Submit. All other fields keep submit-time
+//     validation — the form's global mode is untouched.
 //   - ward scope: the buildings checklist is replaced by a read-only row
 //     naming the ward's own building, and `building_names` is forced to
 //     exactly that one name — mirroring the rules' `limitedWardBuildingOk`
@@ -66,6 +70,7 @@ import {
   makeNewRequestSchema,
   type NewRequestForm,
 } from '../schemas';
+import { useLiveTempWindowCheck } from '../liveTempWindow';
 import { useSubmitRequest, useSeatForMember } from '../hooks';
 import {
   useOrganizations,
@@ -253,13 +258,25 @@ export function NewRequestForm({
       organization_id: null,
     },
   });
-  const { register, handleSubmit, reset, watch, setValue, formState, control } = form;
+  const { register, handleSubmit, reset, watch, setValue, formState, control, trigger } = form;
   const watchedType = watch('type');
   const watchedScope = watch('scope');
   const watchedEmail = watch('member_email');
   const watchedBuildings = watch('building_names') ?? [];
   const watchedUrgent = watch('urgent');
   const watchedOrganizationId = watch('organization_id') ?? null;
+  const watchedStartDate = watch('start_date');
+  const watchedEndDate = watch('end_date');
+
+  // Limited + add_temp only: report the ≤90-day cap as soon as both
+  // dates are filled in rather than waiting for Submit (D25). Inert for
+  // a full user and for `add_manual`.
+  useLiveTempWindowCheck({
+    enabled: limited && watchedType === 'add_temp',
+    startDate: watchedStartDate,
+    endDate: watchedEndDate,
+    triggerEndDate: trigger,
+  });
 
   // Two independent triggers force a comment: urgent submissions
   // (existing rule) and ward-scope submissions touching buildings

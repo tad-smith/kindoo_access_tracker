@@ -36,7 +36,12 @@
 // user can reach here — there is no auto / manual handling to add. What
 // this dialog adds for that user, mirroring `NewRequestForm`:
 //   - the ≤90-day temp-window cap, stated as helper text and enforced
-//     by `makeEditSeatSchema({ limited })` on `end_date`;
+//     by `makeEditSeatSchema({ limited })` on `end_date`.
+//     `useLiveTempWindowCheck` revalidates `end_date` whenever either
+//     date changes, so an over-long window reports itself before Submit
+//     (and on open, since an existing seat arrives with both dates
+//     already filled). Every other field keeps submit-time validation —
+//     the form's global mode is untouched;
 //   - at ward scope, the buildings checklist collapses to a read-only
 //     row naming the ward's own building, with `building_names` forced
 //     to exactly that name (the rules' `limitedWardBuildingOk` equality
@@ -66,6 +71,7 @@ import {
   type EditSeatForm,
 } from '../schemas';
 import { isLimitedInStake } from '../scopeOptions';
+import { useLiveTempWindowCheck } from '../liveTempWindow';
 import { filterBuildingsBySite, siteIdForScope } from '../../../lib/kindooSites';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -267,9 +273,21 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
     defaultValues: initial,
     values: initial,
   });
-  const { register, handleSubmit, watch, setValue, formState, control, reset } = form;
+  const { register, handleSubmit, watch, setValue, formState, control, reset, trigger } = form;
   const watchedBuildings = watch('building_names') ?? [];
   const watchedOrganizationId = watch('organization_id') ?? null;
+  const watchedStartDate = watch('start_date');
+  const watchedEndDate = watch('end_date');
+
+  // Limited + edit_temp only: report the ≤90-day cap as soon as both
+  // dates hold a date rather than waiting for Submit (D25). `initial.type`
+  // is `edit_manual` while `seat` is null, so this stays inert then.
+  useLiveTempWindowCheck({
+    enabled: limited && initial.type === 'edit_temp',
+    startDate: watchedStartDate,
+    endDate: watchedEndDate,
+    triggerEndDate: trigger,
+  });
 
   if (!seat) return null;
   const editType = initial.type;
