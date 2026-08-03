@@ -50,6 +50,16 @@
 // Chained `setTimeout` rather than `setInterval`: ticks do network work
 // and must never overlap, and the visible/hidden period switch falls
 // out of rescheduling instead of needing an interval teardown.
+//
+// One failure mode ends the loop instead of being retried: reloading or
+// updating the extension orphans the copy of this content script already
+// running in every open Kindoo page, severing `chrome.runtime` for good.
+// Nothing here can work again until the page is reloaded, so the loop
+// says so once and stops. Treating it as a transient tick failure — the
+// obvious reading, since it arrives as a thrown error like any other —
+// is what made every extension update leave a warning ticking away in
+// each open tab for as long as it stayed open. See
+// `haltForInvalidatedContext`.
 
 import {
   REMOTE_APPLY_HEARTBEAT_MS,
@@ -186,6 +196,17 @@ export interface RemoteApplyLoopDeps {
    * has to sit immediately before the presence write with no await in
    * between, or it reopens the race it exists to close. */
   isEnabled: () => boolean;
+  /**
+   * Whether this content script can still reach the extension.
+   *
+   * Reloading or updating the extension orphans the copy already running
+   * in every open Kindoo page: the `chrome.runtime` connection is
+   * severed and every message throws. Chrome clears `chrome.runtime.id`
+   * at the same moment, which makes it the cheapest signal and — unlike
+   * the exception's wording — not something a Chrome release can change
+   * out from under us.
+   */
+  isContextAlive: () => boolean;
   sleep: (ms: number) => Promise<void>;
 }
 
@@ -202,6 +223,18 @@ function defaultDeps(): RemoteApplyLoopDeps {
     now: () => Date.now(),
     isHidden: () => document.visibilityState === 'hidden',
     isEnabled: remoteApplyEnabledSnapshot,
+    isContextAlive: () => {
+      // Total by construction: `drive` probes before entering its try,
+      // so a throw here would surface as an unhandled rejection — a new
+      // console error in place of the one being fixed. `chrome.runtime`
+      // is the part Chrome severs; whether reading through it can throw
+      // rather than read `undefined` is not worth betting on.
+      try {
+        return Boolean(chrome.runtime?.id);
+      } catch {
+        return false;
+      }
+    },
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
@@ -211,6 +244,25 @@ function defaultDeps(): RemoteApplyLoopDeps {
 function isPermissionDenied(err: unknown): boolean {
   if (typeof err !== 'object' || err === null) return false;
   return (err as { code?: unknown }).code === 'permission-denied';
+}
+
+/**
+ * Whether an error is Chrome's orphaned-content-script exception.
+ *
+ * The fallback signal, not the primary one — `deps.isContextAlive` is,
+ * because matching message text breaks the day Chrome rewords it. Kept
+ * anyway because a missed detection reinstates exactly the bug this
+ * exists to fix: a severed loop logging a failure every tick, in every
+ * open Kindoo tab, for as long as the operator leaves them open.
+ *
+ * Note this arrives as a bare `Error`, not an `ExtensionApiError`:
+ * `chrome.runtime.sendMessage` throws it synchronously, so it never
+ * reaches the `lastError` branch that wraps wire failures.
+ */
+function isInvalidatedContextError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const message = (err as { message?: unknown }).message;
+  return typeof message === 'string' && message.includes('Extension context invalidated');
 }
 
 export interface RemoteApplyLoopHandle {
@@ -246,6 +298,9 @@ export function startRemoteApplyLoop(
    * first tick — a job stranded by the previous page load is exactly
    * what a fresh loop should clean up. */
   let lastSweepAt = 0;
+  /** Set the first time the loop finds itself orphaned by an extension
+   * reload, so the halt announces itself exactly once. */
+  let contextInvalidated = false;
   /** Jobs this tab is executing right now. The sweep skips them: they
    * are the one set of `running` jobs it can positively attribute to a
    * live runner. */
@@ -294,6 +349,47 @@ export function startRemoteApplyLoop(
     }
   };
 
+  const teardown = () => {
+    stopped = true;
+    clear();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  };
+
+  /**
+   * Whether this page's copy of the extension has been orphaned.
+   *
+   * Takes an optional error so a tick that discovers it by throwing gets
+   * the same answer as one that discovers it by probing.
+   */
+  const contextLost = (err?: unknown): boolean =>
+    !deps.isContextAlive() || isInvalidatedContextError(err);
+
+  /**
+   * End the loop for good, because there is no extension left to talk to.
+   *
+   * Reloading or updating the extension leaves the previous build's
+   * content script running in every open Kindoo page with its
+   * `chrome.runtime` connection severed. That is normal and expected —
+   * reloading the tab picks up the new build — but the loop would
+   * otherwise go on ticking in the dead page, failing every message and
+   * logging it, indefinitely.
+   *
+   * So: one line, at info because a refresh is the whole remedy, and
+   * then silence. `stopped` guarantees the timer never fires again;
+   * `contextInvalidated` guarantees the line is not repeated by a tick
+   * already in flight when the first one discovered it.
+   */
+  const haltForInvalidatedContext = () => {
+    if (contextInvalidated) return;
+    contextInvalidated = true;
+    console.info(
+      '[sba-ext] remote apply: this page still holds the copy of the extension that was ' +
+        'replaced when it reloaded or updated, so it can no longer reach it. Remote apply is ' +
+        'stopped on this tab — reload the page to restore it.',
+    );
+    teardown();
+  };
+
   const schedule = () => {
     if (stopped) return;
     clear();
@@ -303,16 +399,31 @@ export function startRemoteApplyLoop(
 
   const drive = async () => {
     if (stopped || running) return;
+    // Ahead of any message, because an orphaned content script can do
+    // nothing but throw. Probing costs a property read and saves the
+    // doomed round-trip that would otherwise be how we found out.
+    if (contextLost()) {
+      haltForInvalidatedContext();
+      return;
+    }
     running = true;
     try {
       await tick();
     } catch (err) {
-      // A tick failure is transient by assumption (Kindoo hiccup,
-      // Firestore blip). Log and keep the loop alive — stopping would
-      // strand the manager with a button that silently never works.
-      console.warn('[sba-ext] remote apply: tick failed', err);
+      // Not a tick failure — the extension went away underneath this
+      // page, and nothing this loop does can work again. Ends the loop
+      // rather than logging the same thing every 10 seconds forever.
+      if (contextLost(err)) {
+        haltForInvalidatedContext();
+      } else {
+        // A tick failure is transient by assumption (Kindoo hiccup,
+        // Firestore blip). Log and keep the loop alive — stopping would
+        // strand the manager with a button that silently never works.
+        console.warn('[sba-ext] remote apply: tick failed', err);
+      }
     } finally {
       running = false;
+      // No-op once halted: `teardown` has already set `stopped`.
       schedule();
     }
   };
@@ -400,11 +511,19 @@ export function startRemoteApplyLoop(
             outcome: { code: 'error', message: STRANDED_MESSAGE },
           });
         } catch (err) {
+          if (contextLost(err)) throw err;
           // Next sweep retries. Nothing the operator can act on.
           console.warn(`[sba-ext] remote apply: could not finalise job ${job.jobId}`, err);
         }
       }
     } catch (err) {
+      // Hand an orphaned context up to `drive` instead of swallowing it.
+      // This catch is what turned an extension reload into a warning
+      // every 60s in every open Kindoo tab: the sweep runs before every
+      // other gate, so it is the first thing to fail and — logging
+      // rather than propagating — it was also the only thing that ever
+      // reported the failure.
+      if (contextLost(err)) throw err;
       console.warn('[sba-ext] remote apply: stranded-job sweep failed', err);
     }
   };
@@ -431,7 +550,9 @@ export function startRemoteApplyLoop(
         await deps.finishJob(jobId, payload);
         return;
       } catch (err) {
-        if (attempt >= FINISH_ATTEMPTS || isPermissionDenied(err)) throw err;
+        // A severed context is as unretryable as a rules rejection, and
+        // burning the backoff against it only delays the halt.
+        if (attempt >= FINISH_ATTEMPTS || isPermissionDenied(err) || contextLost(err)) throw err;
         console.warn(
           `[sba-ext] remote apply: terminal write for job ${jobId} failed ` +
             `(attempt ${attempt}/${FINISH_ATTEMPTS}); retrying`,
@@ -605,6 +726,7 @@ export function startRemoteApplyLoop(
         );
         return;
       }
+      if (contextLost(err)) throw err;
       // Next poll retries; the job is still `queued` and still stale.
       console.warn(`[sba-ext] remote apply: could not cancel job ${job.jobId}`, err);
     }
@@ -683,11 +805,7 @@ export function startRemoteApplyLoop(
   timer = setTimeout(() => void drive(), 0);
 
   return {
-    stop: () => {
-      stopped = true;
-      clear();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    },
+    stop: teardown,
     tick: async () => {
       await tick();
     },

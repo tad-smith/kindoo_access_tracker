@@ -108,6 +108,7 @@ function makeDeps(overrides: Partial<RemoteApplyLoopDeps> = {}) {
     now: vi.fn(() => clock),
     isHidden: vi.fn(() => false),
     isEnabled: vi.fn(() => true),
+    isContextAlive: vi.fn(() => true),
     // Instant, so the terminal write's backoff doesn't cost real time.
     sleep: vi.fn(async () => undefined),
     advance: (ms: number) => {
@@ -953,6 +954,122 @@ describe('startRemoteApplyLoop', () => {
       await vi.advanceTimersByTimeAsync(REMOTE_APPLY_POLL_HIDDEN_MS - REMOTE_APPLY_POLL_VISIBLE_MS);
       expect(deps.queuedJobs).toHaveBeenCalledTimes(2);
       handle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ---- Orphaned by an extension reload --------------------------------
+  //
+  // Reloading or updating the extension leaves the previous build's
+  // content script running in every open Kindoo page with `chrome.runtime`
+  // severed. Every message throws from then on, and nothing recovers
+  // short of reloading the page. Read as an ordinary tick failure — which
+  // is exactly what it looks like — the loop goes on ticking in the dead
+  // page and logs a failure every 10 seconds until the tab is closed, in
+  // every tab, after every extension update.
+
+  /** Every dep that rides `chrome.runtime.sendMessage`, failing the way
+   * Chrome fails them in an orphaned content script. */
+  function orphanedDeps(overrides: Partial<RemoteApplyLoopDeps> = {}) {
+    const severed = async (): Promise<never> => {
+      throw new Error('Extension context invalidated.');
+    };
+    return makeDeps({
+      // Track the fake clock, so the 60s sweep really does come round
+      // again and the per-tick accumulation is the thing under test.
+      now: () => Date.now(),
+      writeRemotePresence: vi.fn(severed),
+      queuedJobs: vi.fn(severed),
+      runningJobs: vi.fn(severed),
+      claimJob: vi.fn(severed),
+      finishJob: vi.fn(severed),
+      ...overrides,
+    });
+  }
+
+  it('stops the loop and says so once when an extension reload orphans the page', async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = orphanedDeps({ isContextAlive: vi.fn(() => false) });
+      const handle = startRemoteApplyLoop(
+        { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION },
+        deps,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      // Five minutes of a tab the operator left open: 30 poll ticks and
+      // five sweep intervals, every one of which used to log.
+      await vi.advanceTimersByTimeAsync(300_000);
+      handle.stop();
+
+      // The symptom: one line for the whole episode, not one per tick.
+      expect(console.warn).not.toHaveBeenCalled();
+      expect(console.info).toHaveBeenCalledTimes(1);
+      expect(console.info).toHaveBeenCalledWith(expect.stringContaining('reload the page'));
+      // `chrome.runtime.id` is read before anything is sent, so not one
+      // doomed round-trip is attempted.
+      expect(deps.runningJobs).not.toHaveBeenCalled();
+      expect(deps.queuedJobs).not.toHaveBeenCalled();
+      expect(deps.writeRemotePresence).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recognises the orphan from the thrown error when the runtime id still reads live', async () => {
+    // The fallback half. The probe is the primary signal precisely
+    // because it cannot be reworded by a Chrome release — but if it ever
+    // reports a severed context as live, the message must still end the
+    // loop rather than leaving it logging forever.
+    vi.useFakeTimers();
+    try {
+      const deps = orphanedDeps({ isContextAlive: vi.fn(() => true) });
+      const handle = startRemoteApplyLoop(
+        { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION },
+        deps,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(300_000);
+      handle.stop();
+
+      expect(console.warn).not.toHaveBeenCalled();
+      expect(console.info).toHaveBeenCalledTimes(1);
+      expect(console.info).toHaveBeenCalledWith(expect.stringContaining('reload the page'));
+      // One tick's worth of discovery — the sweep runs first, throws,
+      // and the loop is over before the heartbeat or the poll.
+      expect(deps.runningJobs).toHaveBeenCalledTimes(1);
+      expect(deps.queuedJobs).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps ticking through an ordinary failure, warning each time', async () => {
+    // The counterweight. Only a severed context ends the loop: a
+    // Firestore blip or a rules rejection must leave it running, or one
+    // bad minute takes the desktop off the phone's radar until the
+    // manager happens to reload Kindoo.
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({
+        queuedJobs: vi.fn(async (): Promise<never> => {
+          throw new Error('Missing or insufficient permissions');
+        }),
+      });
+      const handle = startRemoteApplyLoop(
+        { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION },
+        deps,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(REMOTE_APPLY_POLL_VISIBLE_MS * 3);
+      handle.stop();
+
+      expect(deps.queuedJobs).toHaveBeenCalledTimes(4);
+      expect(console.warn).toHaveBeenCalledTimes(4);
+      expect(console.warn).toHaveBeenLastCalledWith(
+        '[sba-ext] remote apply: tick failed',
+        expect.any(Error),
+      );
     } finally {
       vi.useRealTimers();
     }
