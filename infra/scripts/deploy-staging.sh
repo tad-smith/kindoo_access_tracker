@@ -45,17 +45,51 @@
 #
 # What it requires (`--from-pr <number>` mode):
 #   - `gh` CLI installed and authenticated.
-#   - Working tree is clean (we will swap branches under you).
+#   - Working tree is clean (we move HEAD under you).
 #   - PR <number> exists and is OPEN.
 #   The main-branch / up-to-date-with-origin guards are skipped — the
 #   point of `--from-pr` is to deploy a non-main branch.
+#
+# How `--from-pr` checks out the PR, and why it is DETACHED:
+#   We fetch GitHub's server-side `refs/pull/<number>/head` and check the
+#   resulting commit out with `git checkout --detach`. We deliberately do
+#   NOT use `gh pr checkout`, which creates and checks out a local branch
+#   for the PR head.
+#
+#   Git allows a branch ref to be checked out in at most ONE worktree at
+#   a time. This repo accumulates agent worktrees under
+#   `.claude/worktrees/`, so any worktree holding the PR's branch killed
+#   the deploy before it started:
+#
+#     fatal: 'feat/limited-app-access' is already used by worktree at
+#            '/Users/tad/projects/Kindoo/.claude/worktrees/fold-limited-access'
+#     failed to run git: exit status 128
+#
+#   That blocked real deploys three separate times, each with a different
+#   worktree. Pruning worktrees only ever postponed it. The deploy never
+#   needed the branch — only the code at the PR head. A detached HEAD
+#   names a commit and claims no branch ref, so worktree locks cannot
+#   apply and the failure mode is gone structurally rather than made less
+#   likely. Do not "simplify" this back to `gh pr checkout`.
+#
+#   Two properties worth keeping:
+#     - `refs/pull/<n>/head` lives in the BASE repo for every PR,
+#       including PRs from forks, so fork PRs resolve with no extra
+#       remote and no extra fetch config. `gh pr checkout` handled forks;
+#       so does this. (Verified against cli/cli: cross-repo PRs'
+#       `headRefOid` matches that repo's `refs/pull/<n>/head`.)
+#     - We check out the exact `headRefOid` from `gh pr view` and echo
+#       it, so the operator sees the commit being deployed instead of a
+#       branch name that is one indirection away from it.
 #
 # What it leaves behind:
 #   - Updated apps/web/src/version.gen.ts and functions/src/version.gen.ts
 #     (gitignored; not committed).
 #   - apps/web/dist/ and functions/lib/ build artifacts (gitignored).
-#   - In `--from-pr` mode: the branch you started on is restored on exit
-#     (success OR failure) via a `trap`.
+#   - In `--from-pr` mode: wherever you started is restored on exit
+#     (success OR failure) via a `trap` — the branch you were on, or the
+#     exact commit if you were already detached. No local branch is
+#     created, so nothing is left to clean up.
 #
 # REQUIRES: Operator task **B1** in docs/firebase-migration.md must be
 # complete before this script can run successfully against the cloud:
@@ -67,11 +101,12 @@
 #   bash infra/scripts/deploy-staging.sh                    # full deploy from main
 #   bash infra/scripts/deploy-staging.sh --dry-run          # echo every command
 #                                                           # without running
-#   bash infra/scripts/deploy-staging.sh --from-pr 26       # check out PR #26 and
-#                                                           # deploy its branch to
-#                                                           # staging (no merge);
-#                                                           # restores your branch
-#                                                           # on exit
+#   bash infra/scripts/deploy-staging.sh --from-pr 26       # deploy PR #26's head
+#                                                           # commit to staging
+#                                                           # (detached checkout;
+#                                                           # no merge, no local
+#                                                           # branch); restores
+#                                                           # where you were on exit
 #   bash infra/scripts/deploy-staging.sh --from-pr 26 --dry-run
 #   bash infra/scripts/deploy-staging.sh --web-only         # deploy hosting only;
 #                                                           # skip the functions
@@ -257,25 +292,53 @@ guard_clean_tree() {
   fi
 }
 
-# --from-pr cleanup. Restores the branch the operator started on. The
-# stamper writes only to gitignored `version.gen.ts` files (see
-# .gitignore lines 53–56), so we don't need `git checkout --` to
-# discard them. Idempotent: safe to call from a trap even if we never
-# left the original branch.
-ORIGINAL_BRANCH=''
-restore_original_branch() {
-  if [[ -z "$ORIGINAL_BRANCH" ]]; then
+# --from-pr cleanup. Restores wherever the operator started: the branch
+# they were on, or — if they were ALREADY on a detached HEAD when they
+# invoked us — the exact commit, still detached.
+#
+# Handling the already-detached start matters now that this script
+# detaches on purpose. Note `git symbolic-ref --short HEAD` (empty when
+# detached) rather than `git rev-parse --abbrev-ref HEAD`, which returns
+# the literal string `HEAD` on a detached checkout and would turn the
+# restore into `git checkout HEAD` — a no-op that silently strands the
+# operator on the PR's commit.
+#
+# The stamper writes only to gitignored `version.gen.ts` files (see
+# .gitignore lines 53–56), so we don't need `git checkout --` to discard
+# them. Idempotent: safe to call from a trap even if we never moved.
+ORIGINAL_BRANCH=''  # branch name, or '' if the operator started detached
+ORIGINAL_SHA=''     # commit the operator started on; always set in --from-pr mode
+restore_original_ref() {
+  if [[ -z "$ORIGINAL_SHA" ]]; then
     return 0
   fi
-  local current
-  current="$(git symbolic-ref --short HEAD 2>/dev/null || echo '<detached>')"
-  if [[ "$current" == "$ORIGINAL_BRANCH" ]]; then
+
+  local current_branch current_sha where
+  current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo '')"
+  current_sha="$(git rev-parse HEAD 2>/dev/null || echo '<unknown>')"
+  where="${current_branch:-detached HEAD at $current_sha}"
+
+  if [[ -n "$ORIGINAL_BRANCH" ]]; then
+    if [[ "$current_branch" == "$ORIGINAL_BRANCH" ]]; then
+      return 0
+    fi
+    echo ""
+    echo "=== restoring original branch: $ORIGINAL_BRANCH (was on: $where) ==="
+    git checkout "$ORIGINAL_BRANCH" || {
+      echo "warn: could not restore branch '$ORIGINAL_BRANCH'. You are on $where." >&2
+      return 0
+    }
+    return 0
+  fi
+
+  # Started detached — put HEAD back on the same commit, still detached.
+  if [[ -z "$current_branch" && "$current_sha" == "$ORIGINAL_SHA" ]]; then
     return 0
   fi
   echo ""
-  echo "=== restoring original branch: $ORIGINAL_BRANCH (was on: $current) ==="
-  git checkout "$ORIGINAL_BRANCH" || {
-    echo "warn: could not restore branch '$ORIGINAL_BRANCH'. You are on '$current'." >&2
+  echo "=== restoring original detached HEAD: $ORIGINAL_SHA (was on: $where) ==="
+  git checkout --detach "$ORIGINAL_SHA" || {
+    echo "warn: could not restore detached HEAD '$ORIGINAL_SHA'. You are on $where." >&2
     return 0
   }
 }
@@ -287,9 +350,15 @@ if [[ -n "$FROM_PR" ]]; then
     exit 1
   fi
 
-  # Fetch PR metadata. Aborts if the PR doesn't exist.
-  PR_JSON="$(gh pr view "$FROM_PR" --json title,headRefName,author,commits,state 2>/dev/null)" || {
-    echo "error: could not fetch PR #$FROM_PR. Does it exist? Are you in the right repo?" >&2
+  # Fetch PR metadata. Aborts if the PR doesn't exist. `headRefOid` is the
+  # PR head commit — the thing we actually deploy; see the header block.
+  # stderr is captured rather than discarded so a field-support or repo
+  # -resolution error from `gh` is visible instead of being flattened into
+  # a generic "does it exist?".
+  PR_JSON="$(gh pr view "$FROM_PR" --json title,headRefName,headRefOid,author,commits,state 2>&1)" || {
+    echo "error: could not fetch metadata for PR #$FROM_PR. \`gh\` said:" >&2
+    echo "$PR_JSON" >&2
+    echo "Does the PR exist? Are you in the right repo?" >&2
     exit 1
   }
 
@@ -303,32 +372,71 @@ if [[ -n "$FROM_PR" ]]; then
   PR_BRANCH="$(printf '%s' "$PR_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("headRefName",""))')"
   PR_AUTHOR="$(printf '%s' "$PR_JSON" | python3 -c 'import json,sys;d=json.load(sys.stdin).get("author") or {};print(d.get("login",""))')"
   PR_COMMITS="$(printf '%s' "$PR_JSON" | python3 -c 'import json,sys;print(len(json.load(sys.stdin).get("commits",[])))')"
+  PR_HEAD_SHA="$(printf '%s' "$PR_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("headRefOid",""))')"
+
+  if [[ -z "$PR_HEAD_SHA" ]]; then
+    echo "error: PR #$FROM_PR metadata carries no headRefOid, so there is no commit to deploy." >&2
+    echo "Re-run \`gh pr view $FROM_PR --json headRefOid\` to see what \`gh\` returns." >&2
+    exit 1
+  fi
 
   echo "PR title: $PR_TITLE"
   echo "PR branch: $PR_BRANCH"
   echo "PR author: $PR_AUTHOR"
+  echo "PR head SHA: $PR_HEAD_SHA"
   echo "Commits ahead of main: $PR_COMMITS"
   echo ""
 
-  # Capture original branch BEFORE checkout so the trap can restore it.
+  # Capture where the operator started BEFORE checkout so the trap can put
+  # them back. ORIGINAL_BRANCH is empty on an already-detached start, which
+  # is a supported state — ORIGINAL_SHA carries the restore target either
+  # way.
   ORIGINAL_BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo '')"
-  if [[ -z "$ORIGINAL_BRANCH" ]]; then
-    echo "error: could not determine current branch (detached HEAD?). Refusing to proceed." >&2
+  ORIGINAL_SHA="$(git rev-parse HEAD 2>/dev/null || echo '')"
+  if [[ -z "$ORIGINAL_SHA" ]]; then
+    echo "error: could not resolve HEAD to a commit. Is this a git checkout with at least one commit?" >&2
     exit 1
   fi
 
   # Install cleanup trap. Fires on success, error, or signal.
-  trap restore_original_branch EXIT
+  trap restore_original_ref EXIT
 
   guard_clean_tree
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "[dry-run] would: gh pr checkout $FROM_PR"
-    echo "[dry-run] on exit (trap): would restore branch '$ORIGINAL_BRANCH'"
+    echo "[dry-run] would: git fetch origin refs/pull/$FROM_PR/head"
+    echo "[dry-run] would: git checkout --detach $PR_HEAD_SHA"
+    echo "[dry-run]       (detached — claims no branch ref, so a worktree holding"
+    echo "[dry-run]        '$PR_BRANCH' cannot block the deploy)"
+    if [[ -n "$ORIGINAL_BRANCH" ]]; then
+      echo "[dry-run] on exit (trap): would restore branch '$ORIGINAL_BRANCH'"
+    else
+      echo "[dry-run] on exit (trap): would restore detached HEAD at $ORIGINAL_SHA"
+      echo "[dry-run]       (you invoked this from a detached HEAD; that is supported)"
+    fi
     echo "[dry-run] note: version.gen.ts files are gitignored (.gitignore lines 53-56);"
     echo "[dry-run]       no \`git checkout --\` needed to discard stamper output."
   else
-    run "gh pr checkout $FROM_PR"
+    run "git fetch origin refs/pull/$FROM_PR/head"
+
+    # Deploy the exact commit `gh pr view` reported. If that object isn't
+    # present after the fetch, `refs/pull/<n>/head` and the PR metadata
+    # disagree — GitHub updates the pull ref asynchronously, so a push or
+    # force-push racing this run can leave the two seconds apart. Fall
+    # back to what we actually fetched and say so loudly; deploying an
+    # unnamed commit silently would be worse than either.
+    DEPLOY_SHA="$PR_HEAD_SHA"
+    if ! git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+      DEPLOY_SHA="$(git rev-parse FETCH_HEAD)"
+      echo "warn: PR #$FROM_PR head $PR_HEAD_SHA is not among the objects fetched from" >&2
+      echo "      refs/pull/$FROM_PR/head. The PR was almost certainly pushed to while this" >&2
+      echo "      script was running." >&2
+      echo "      Deploying the fetched head instead: $DEPLOY_SHA" >&2
+      echo "      Re-run to deploy against fresh metadata if that is not what you want." >&2
+    fi
+
+    run "git checkout --detach $DEPLOY_SHA"
+    echo "Deploying commit: $DEPLOY_SHA"
   fi
 else
   guard_main_clean
