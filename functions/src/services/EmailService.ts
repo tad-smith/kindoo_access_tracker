@@ -19,7 +19,9 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import {
+  MAX_LIMITED_TEMP_WINDOW_DAYS,
   REQUESTER_GUIDE_PATH,
+  REQUESTER_GUIDE_TEMPORARY_PATH,
   auditId,
   deriveRequesterDisplay,
   formatRequesterLabel,
@@ -249,6 +251,8 @@ export type WelcomeEmailOpts = {
   appLink: string;
   guideLink: string;
   isGmail: boolean;
+  /** D25 effective tier — see `isLimitedTier`. Narrows the copy. */
+  isLimited: boolean;
 };
 
 /**
@@ -263,15 +267,17 @@ export function formatScopeList(labels: string[]): string {
   return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
 }
 
-export function buildWelcomeSubject(scopeList: string): string {
-  return `[Stake Building Access] You can now request building access for ${scopeList}`;
+export function buildWelcomeSubject(scopeList: string, isLimited: boolean): string {
+  const what = isLimited ? 'temporary building access' : 'building access';
+  return `[Stake Building Access] You can now request ${what} for ${scopeList}`;
 }
 
 export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
   return [
     welcomeGreeting(opts.memberName),
     '',
-    `You've been given access to Stake Building Access, the app ${opts.stakeName} uses to manage access to its buildings. You can now sign in and request building access for ${opts.scopeList}.`,
+    `You've been given access to Stake Building Access, the app ${opts.stakeName} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for ${opts.scopeList}.`,
+    ...(opts.isLimited ? ['', LIMITED_SENTENCE] : []),
     '',
     `Open the app: ${opts.appLink}`,
     '',
@@ -296,13 +302,26 @@ export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
     `<div style="${wrapper}">`,
     `<h1 style="font-size:20px;line-height:1.3;margin:0 0 16px">You can now request building access</h1>`,
     `<p style="${para}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
-    `<p style="${para}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request building access for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
+    `<p style="${para}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
+    ...(opts.isLimited ? [`<p style="${para}">${escapeHtml(LIMITED_SENTENCE)}</p>`] : []),
     `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${button}">Open Stake Building Access</a></p>`,
     `<p style="${para}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
     `<p style="margin:0">For more details read the <a href="${escapeHtml(opts.guideLink)}" style="color:#2b6cb0">full documentation</a>.</p>`,
     `</div>`,
   ].join('\n');
 }
+
+/** What the recipient may request — the one word the tier changes. */
+function accessNoun(isLimited: boolean): string {
+  return isLimited ? 'temporary building access' : 'building access';
+}
+
+// The "own ward's building only" constraint is deliberately omitted —
+// the email already names the exact scope, so it is implied.
+const LIMITED_SENTENCE =
+  `Your access is limited: you can request temporary access for up to ` +
+  `${MAX_LIMITED_TEMP_WINDOW_DAYS} days at a time, and change or remove only ` +
+  `the temporary access you've requested.`;
 
 function welcomeGreeting(memberName?: string): string {
   const name = memberName?.trim();
@@ -458,9 +477,12 @@ export async function notifyMemberAccessGranted(
     memberEmail: string;
     memberName?: string;
     grantedScopes: { hasStake: boolean; wards: string[] };
+    /** D25 effective tier, resolved by the caller via `isLimitedTier`. */
+    isLimited: boolean;
   },
 ): Promise<void> {
-  const { db, stakeId, stake, memberCanonical, memberEmail, memberName, grantedScopes } = deps;
+  const { db, stakeId, stake, memberCanonical, memberEmail, memberName, grantedScopes, isLimited } =
+    deps;
   if (!emailsEnabled(stake, stakeId, 'accessGranted')) return;
 
   const wardLabels = await resolveWardLabels(db, stakeId, grantedScopes.wards);
@@ -471,7 +493,12 @@ export async function notifyMemberAccessGranted(
 
   const appLink = safeBuildLink(deps, '/');
   if (appLink === undefined) return;
-  const guideLink = safeBuildLink(deps, REQUESTER_GUIDE_PATH);
+  // A limited recipient lands on the guide's temporary-access section —
+  // temp requests are all they can make.
+  const guideLink = safeBuildLink(
+    deps,
+    isLimited ? REQUESTER_GUIDE_TEMPORARY_PATH : REQUESTER_GUIDE_PATH,
+  );
   if (guideLink === undefined) return;
 
   const name = memberName?.trim();
@@ -483,13 +510,14 @@ export async function notifyMemberAccessGranted(
     appLink,
     guideLink,
     isGmail: isGmailAddress(memberEmail),
+    isLimited,
   };
 
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: [memberEmail],
-      subject: buildWelcomeSubject(scopeList),
+      subject: buildWelcomeSubject(scopeList, isLimited),
       text: buildWelcomeTextBody(opts),
       html: buildWelcomeHtmlBody(opts),
     }),

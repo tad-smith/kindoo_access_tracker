@@ -99,6 +99,34 @@ async function seedWard(wardCode: string, wardName: string): Promise<void> {
   await db.doc(`stakes/${STAKE_ID}/wards/${wardCode}`).set(ward);
 }
 
+async function seedManager(canonical: string, active: boolean): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/kindooManagers/${canonical}`).set({
+    member_canonical: canonical,
+    member_email: canonical,
+    name: canonical,
+    active,
+    added_at: Timestamp.now(),
+    added_by: ACTOR,
+    lastActor: ACTOR,
+  });
+}
+
+/** A `manual_grants` map holding one D25 limited-tier grant in `scope`. */
+function limitedGrant(scope: string): AccessDoc {
+  return {
+    [scope]: [
+      {
+        grant_id: 'g1',
+        reason: 'Temp helper',
+        level: 'limited',
+        granted_by: ACTOR,
+        granted_at: Timestamp.now(),
+      },
+    ],
+  };
+}
+
 function mockSender(responses: SendResult[] = []): { sender: ResendSender; calls: EmailPayload[] } {
   const calls: EmailPayload[] = [];
   const sender: ResendSender = {
@@ -191,47 +219,34 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
     );
   });
 
-  // D25: the fire condition reads only `hasStake` / `wards`, so a limited
-  // grant is a grant like any other. Pins the CURRENT behaviour — a limited
-  // user is welcomed with the same copy a full user gets, which overstates
-  // what they can do (temp requests only, <=90 days, own ward's building).
-  // The copy decision is the operator's; this test is what changes with it.
-  it('a first LIMITED manual grant fires with the standard welcome copy', async () => {
+  // D25. The fire condition reads only `hasStake` / `wards`, so a limited
+  // grant fires like any other; only the copy narrows.
+  it('a first LIMITED manual grant gets the temporary-access copy', async () => {
     await seedStake();
     await seedWard('GE', 'Greenwood Ward');
     const { sender, calls } = mockSender();
     restoreSender = _setResendSender(sender);
 
     await notifyOnAccessGranted.run(
-      makeEvent({
-        before: null,
-        after: accessDoc({
-          manual_grants: {
-            GE: [
-              {
-                grant_id: 'g1',
-                reason: 'Temp helper',
-                level: 'limited',
-                granted_by: ACTOR,
-                granted_at: Timestamp.now(),
-              },
-            ],
-          },
-        }),
-      }),
+      makeEvent({ before: null, after: accessDoc({ manual_grants: limitedGrant('GE') }) }),
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toBe(
-      '[Stake Building Access] You can now request building access for Greenwood Ward',
+    const c = calls[0]!;
+    expect(c.subject).toBe(
+      '[Stake Building Access] You can now request temporary building access for Greenwood Ward',
     );
-    // No tier-aware wording today.
-    expect(calls[0]!.text).toContain('request building access for Greenwood Ward');
-    expect(calls[0]!.text).not.toContain('temporary');
-    expect(calls[0]!.text).toContain('/help/requesting-access.html');
+    expect(c.text).toContain('request temporary building access for Greenwood Ward');
+    expect(c.text).toContain(
+      "Your access is limited: you can request temporary access for up to 90 days at a time, and change or remove only the temporary access you've requested.",
+    );
+    expect(c.text).toContain(
+      'https://stakebuildingaccess.org/help/requesting-access.html#temporary',
+    );
+    expect(c.html).toContain('#temporary"');
   });
 
-  it('a mixed full + limited first grant fires once for both scopes', async () => {
+  it('a mixed full + limited first grant gets the FULL copy', async () => {
     await seedStake();
     await seedWard('GE', 'Greenwood Ward');
     const { sender, calls } = mockSender();
@@ -242,25 +257,74 @@ describe.skipIf(!hasEmulators())('notifyOnAccessGranted', () => {
         before: null,
         after: accessDoc({
           importer_callings: { stake: ['Stake Clerk'] },
-          manual_grants: {
-            GE: [
-              {
-                grant_id: 'g1',
-                reason: 'Temp helper',
-                level: 'limited',
-                granted_by: ACTOR,
-                granted_at: Timestamp.now(),
-              },
-            ],
-          },
+          manual_grants: limitedGrant('GE'),
         }),
       }),
     );
 
     expect(calls).toHaveLength(1);
+    // One full grant anywhere in the doc makes the whole stake full.
     expect(calls[0]!.subject).toBe(
       '[Stake Building Access] You can now request building access for the Stake and Greenwood Ward',
     );
+    expect(calls[0]!.text).not.toContain('Your access is limited');
+  });
+
+  // Mirrors `computeStakeClaims`: an active Kindoo Manager is never limited.
+  it('an active Kindoo Manager holding only limited grants gets the FULL copy', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    await seedManager(MEMBER_CANONICAL, true);
+    const { sender, calls } = mockSender();
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnAccessGranted.run(
+      makeEvent({ before: null, after: accessDoc({ manual_grants: limitedGrant('GE') }) }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] You can now request building access for Greenwood Ward',
+    );
+    expect(calls[0]!.text).not.toContain('Your access is limited');
+  });
+
+  it('an INACTIVE manager row does not rescue a limited grant', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    await seedManager(MEMBER_CANONICAL, false);
+    const { sender, calls } = mockSender();
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnAccessGranted.run(
+      makeEvent({ before: null, after: accessDoc({ manual_grants: limitedGrant('GE') }) }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toContain('Your access is limited');
+  });
+
+  it('a non-gmail limited recipient gets both narrowed branches', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    const { sender, calls } = mockSender();
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnAccessGranted.run(
+      makeEvent({
+        before: null,
+        after: accessDoc({
+          member_email: 'Jane@csnorth.org',
+          manual_grants: limitedGrant('GE'),
+        }),
+        memberCanonical: 'jane@csnorth.org',
+      }),
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.text).toContain('Send me a sign-in link');
+    expect(calls[0]!.text).toContain('Your access is limited');
+    expect(calls[0]!.text).toContain('request temporary building access');
   });
 
   it('adding a scope to an existing holder sends nothing', async () => {

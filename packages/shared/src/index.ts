@@ -19,7 +19,7 @@ export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js';
-export { REQUESTER_GUIDE_PATH } from './links.js';
+export { REQUESTER_GUIDE_PATH, REQUESTER_GUIDE_TEMPORARY_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
 export {
   deriveRequesterDisplay,

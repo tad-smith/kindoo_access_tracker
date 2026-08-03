@@ -9,3 +9,11 @@
  * `REQUESTER_GUIDE_URL`.
  */
 export const REQUESTER_GUIDE_PATH = '/help/requesting-access.html';
+
+/**
+ * §6 "Requesting temporary access" of the same guide — where a limited
+ * user (D25) needs to land, since temp requests are all they can make.
+ * The anchor is the `<h2 id="temporary">` in
+ * `docs/user-guide/creating-requests.html`.
+ */
+export const REQUESTER_GUIDE_TEMPORARY_PATH = `${REQUESTER_GUIDE_PATH}#temporary`;

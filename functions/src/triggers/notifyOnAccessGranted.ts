@@ -22,7 +22,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import type { Stake } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
-import { scopesFromAccessDoc } from '../lib/seedClaims.js';
+import { isActiveManagerDoc, isLimitedTier, scopesFromAccessDoc } from '../lib/seedClaims.js';
 import { notifyMemberAccessGranted } from '../services/EmailService.js';
 
 // `WEB_BASE_URL` is registered at module load by `lib/params.ts`,
@@ -56,12 +56,21 @@ export const notifyOnAccessGranted = onDocumentWritten(
     };
 
     const db = getDb();
-    const stakeSnap = await db.doc(`stakes/${stakeId}`).get();
+    // Manager status comes from the doc plus `active === true`, never
+    // from the claim, which can be ~1h stale on an idle session.
+    const [stakeSnap, managerSnap] = await Promise.all([
+      db.doc(`stakes/${stakeId}`).get(),
+      db.doc(`stakes/${stakeId}/kindooManagers/${memberCanonical}`).get(),
+    ]);
     if (!stakeSnap.exists) {
       logger.warn('notifyOnAccessGranted: stake doc missing', { stakeId, memberCanonical });
       return;
     }
     const stake = stakeSnap.data() as Stake;
+    const isLimited = isLimitedTier({
+      limited: grantedScopes.limited,
+      manager: managerSnap.exists && isActiveManagerDoc(managerSnap.data()),
+    });
 
     // The doc id is itself a canonical email, so it's a valid recipient
     // when the typed form is missing.
@@ -76,6 +85,7 @@ export const notifyOnAccessGranted = onDocumentWritten(
       memberEmail,
       ...(memberName ? { memberName } : {}),
       grantedScopes,
+      isLimited,
     });
   },
 );
