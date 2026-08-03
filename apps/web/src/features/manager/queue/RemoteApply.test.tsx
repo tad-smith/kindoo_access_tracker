@@ -224,6 +224,32 @@ describe('<RemoteApplyRow />', () => {
     expect(screen.getByTestId('remote-apply-button-req-1')).toHaveTextContent('Try again');
   });
 
+  it('does not claim the Kindoo write never happened when the desktop was stranded mid-run', () => {
+    // The extension finalises a job whose tab died as `failed`, with a
+    // message that refuses to say whether Kindoo took the write. The
+    // headline has to leave that open too — a manager who reads only the
+    // headline would go redo a provision that may already be done.
+    render(
+      <RemoteApplyRow
+        requestId="req-1"
+        online
+        job={job('failed', {
+          code: 'error',
+          message:
+            'Your desktop stopped partway through this request, so it never reported back. ' +
+            'It may or may not have gone through in Kindoo — check this request on your ' +
+            'desktop before applying again.',
+        })}
+      />,
+    );
+    const status = screen.getByTestId('remote-apply-status-req-1');
+    expect(status).toHaveTextContent(/didn't finish this/i);
+    expect(status).not.toHaveTextContent(/couldn't apply/i);
+    expect(status).toHaveTextContent(/may or may not have gone through in Kindoo/i);
+    // Retry stays available — `applyRequest` is lookup-first idempotent.
+    expect(screen.getByTestId('remote-apply-button-req-1')).toHaveTextContent('Try again');
+  });
+
   it('explains a job the desktop never picked up, and offers another try', () => {
     render(<RemoteApplyRow requestId="req-1" online job={job('cancelled')} />);
     const status = screen.getByTestId('remote-apply-status-req-1');

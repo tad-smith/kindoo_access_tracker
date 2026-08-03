@@ -229,9 +229,18 @@ function statusView(job: RemoteApplyJob): StatusView {
         detail: message ?? 'Finish it on your desktop to close it out.',
       };
     case 'failed':
+      // Deliberately NOT "couldn't apply this". A job whose tab died
+      // mid-run is finalised `failed` too, and the desktop's message for
+      // that case explicitly refuses to say whether Kindoo took the
+      // write. A headline that asserts it didn't would contradict the
+      // line under it, and a manager reading only the headline would go
+      // redo a provision that may already have consumed a licence — the
+      // same mistake `partial` is worded around. "Didn't finish" is true
+      // of every `failed` job without claiming anything about Kindoo;
+      // the detail carries the specifics.
       return {
         tone: 'error',
-        headline: "Your desktop couldn't apply this.",
+        headline: "Your desktop didn't finish this.",
         detail: message,
       };
     case 'cancelled':

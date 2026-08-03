@@ -204,7 +204,8 @@ test.describe('manager Request Queue — remote apply', () => {
     const status = page.getByTestId(`remote-apply-status-${REQUEST_ID}`);
     await expect(status).toHaveAttribute('data-status', 'applied');
     await expect(status).toContainText('Applied ✓');
-    await expect(status).not.toContainText(/couldn't apply/i);
+    await expect(status).not.toContainText(/didn't finish/i);
+    await expect(status).not.toContainText(/no longer pending/i);
     // Settled: no retry button to double-provision with.
     await expect(page.getByTestId(`remote-apply-button-${REQUEST_ID}`)).toHaveCount(0);
   });

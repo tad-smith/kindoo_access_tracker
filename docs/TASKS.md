@@ -17,7 +17,13 @@ Phase: remote apply (D27)
 
 Also worth a line: the Apply button is withheld until the job subscription has resolved, so it can't be tapped against a mailbox whose contents are still unknown.
 
-Behaviour lives in `pickRemoteApplyJob` / `useRemoteApplyJobsByRequest` (`apps/web/src/features/manager/queue/hooks.ts`).
+And one string change in the §16 status table (line ~753). The `failed` row currently reads:
+
+> | `failed` | "Your desktop couldn't apply this." plus the desktop's message. |
+
+The headline is now **"Your desktop didn't finish this."** The extension finalises a job stranded mid-run as `failed`, with a message that explicitly refuses to say whether Kindoo took the write ("It may or may not have gone through in Kindoo — check this request on your desktop before applying again."). The old headline contradicted that line, and a manager reading only the headline would go redo a provision that may already have consumed a licence.
+
+Behaviour lives in `pickRemoteApplyJob` / `useRemoteApplyJobsByRequest` and `statusView` (`apps/web/src/features/manager/queue/hooks.ts`, `RemoteApply.tsx`).
 
 ## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
