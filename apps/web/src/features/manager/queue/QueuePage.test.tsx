@@ -830,7 +830,7 @@ describe('<ManagerQueuePage /> — extension note', () => {
     usePendingMock.mockReturnValue(liveResult([] as AccessRequest[]));
     render(<ManagerQueuePage />);
     expect(screen.getByTestId('queue-extension-note').textContent).toMatch(
-      /when your desktop is online you can start one from here/i,
+      /when your desktop is online, you can apply them from here/i,
     );
   });
 

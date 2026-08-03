@@ -187,7 +187,7 @@ function ExtensionNote() {
   return (
     <p className="kd-queue-readonly-note font-bold" data-testid="queue-extension-note" role="note">
       Requests are completed and rejected in the Chrome extension on your computer. When your
-      desktop is online you can start one from here.{' '}
+      desktop is online, you can apply them from here.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
         target="_blank"
