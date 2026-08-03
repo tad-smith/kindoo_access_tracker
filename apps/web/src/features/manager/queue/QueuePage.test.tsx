@@ -9,7 +9,10 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import type { AccessRequest } from '@kindoo/shared';
-import { makeAccess, makeRequest } from '../../../../test/fixtures';
+import { makeAccess, makeRequest, makeSeat } from '../../../../test/fixtures';
+
+/** Resolved Firestore timestamp, for fixture sub-objects. */
+const NOW_TS = { seconds: 0, nanoseconds: 0, toDate: () => new Date(0), toMillis: () => 0 };
 
 const usePendingMock = vi.fn();
 const useSeatForMemberMock = vi.fn();
@@ -32,10 +35,15 @@ vi.mock('./hooks', () => ({
 }));
 
 // The remote-apply surface has its own test file; stub it out here so
-// the queue-rendering tests don't need its hooks wired.
+// the queue-rendering tests don't need its hooks wired. The row renders
+// a bare marker so this file can still assert the ONE decision it owns:
+// whether the card offers remote apply at all. Whether the row then
+// shows a button is `RemoteApply.test.tsx`'s business.
 vi.mock('./RemoteApply', () => ({
   RemoteApplyPresenceNote: () => null,
-  RemoteApplyRow: () => null,
+  RemoteApplyRow: ({ requestId }: { requestId: string }) => (
+    <div data-testid={`remote-apply-row-${requestId}`} />
+  ),
 }));
 
 vi.mock('../../requests/hooks', () => ({
@@ -723,9 +731,11 @@ describe('<ManagerQueuePage />', () => {
 
   it('shows the blocking duplicate chip on an add card when the member already has a seat', () => {
     const requests = [
+      // `add_temp` on purpose: the stake-scope carve-out below is
+      // `add_manual`-only, so this is the plain blocked shape.
       makeRequest({
         request_id: 'r1',
-        type: 'add_manual',
+        type: 'add_temp',
         scope: 'stake',
         member_email: 'a@x.com',
         member_canonical: 'a@x.com',
@@ -733,25 +743,7 @@ describe('<ManagerQueuePage />', () => {
     ];
     usePendingMock.mockReturnValue(liveResult(requests));
     useSeatForMemberMock.mockReturnValue(
-      liveDocResult({
-        member_canonical: 'a@x.com',
-        member_email: 'a@x.com',
-        member_name: 'A',
-        scope: 'GE',
-        type: 'auto',
-        callings: ['Bishop'],
-        building_names: [],
-        duplicate_grants: [],
-        created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-        last_modified_at: {
-          seconds: 0,
-          nanoseconds: 0,
-          toDate: () => new Date(),
-          toMillis: () => 0,
-        },
-        last_modified_by: { email: 'a@b.c', canonical: 'a@b.c' },
-        lastActor: { email: 'a@b.c', canonical: 'a@b.c' },
-      }),
+      liveDocResult(makeSeat({ member_canonical: 'a@x.com', scope: 'GE', type: 'auto' })),
     );
     render(<ManagerQueuePage />);
     // The blocking error chip is shown verbatim, with its danger badge + copy.
@@ -763,6 +755,88 @@ describe('<ManagerQueuePage />', () => {
     // No action affordances regardless of the chip.
     expect(screen.queryByTestId('queue-complete-r1')).toBeNull();
     expect(screen.queryByTestId('queue-reject-r1')).toBeNull();
+    // And no remote apply — a provision known to collide.
+    expect(screen.queryByTestId('remote-apply-row-r1')).toBeNull();
+  });
+
+  // The one add-onto-existing-seat shape the desktop provisions:
+  // `markRequestComplete` → `planAddMerge` appends a cross-scope stake
+  // grant. The web's own "Give Access To Stake Buildings" button is its
+  // primary producer, so a phone that suppressed it would be hiding a
+  // request the same app generated.
+  it('offers remote apply for a stake-scope manual add onto a seat with no stake grant', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeSeat({
+          member_canonical: 'a@x.com',
+          scope: 'GE',
+          type: 'auto',
+          duplicate_grants: [],
+        }),
+      ),
+    );
+    render(<ManagerQueuePage />);
+    expect(screen.queryByTestId('queue-duplicate-error-r1')).toBeNull();
+    expect(screen.getByTestId('remote-apply-row-r1')).toBeInTheDocument();
+  });
+
+  it('still blocks a stake-scope manual add when the member already holds a stake grant', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'stake',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(
+      liveDocResult(
+        makeSeat({
+          member_canonical: 'a@x.com',
+          scope: 'GE',
+          type: 'auto',
+          // A stake grant already in place makes this a true stake
+          // duplicate — the merge would collide.
+          duplicate_grants: [
+            { scope: 'stake', type: 'manual', building_names: [], detected_at: NOW_TS },
+          ],
+        }),
+      ),
+    );
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-duplicate-error-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('remote-apply-row-r1')).toBeNull();
+  });
+
+  it('blocks a ward-scope manual add for a member who already has a seat', () => {
+    const requests = [
+      makeRequest({
+        request_id: 'r1',
+        type: 'add_manual',
+        scope: 'CO',
+        member_email: 'a@x.com',
+        member_canonical: 'a@x.com',
+      }),
+    ];
+    usePendingMock.mockReturnValue(liveResult(requests));
+    useSeatForMemberMock.mockReturnValue(
+      liveDocResult(makeSeat({ member_canonical: 'a@x.com', scope: 'GE', type: 'auto' })),
+    );
+    render(<ManagerQueuePage />);
+    expect(screen.getByTestId('queue-duplicate-error-r1')).toBeInTheDocument();
+    expect(screen.queryByTestId('remote-apply-row-r1')).toBeNull();
   });
 
   it('shows no duplicate chip on an add card when the member has no existing seat', () => {

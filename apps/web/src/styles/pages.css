@@ -400,6 +400,59 @@
   }
 }
 
+/* Result dialog body — the acknowledgement a finished remote apply
+   raises, mirroring the extension's ResultDialog. The modal title
+   carries the outcome; this block carries what the inline row has no
+   room for: what the desktop actually did in Kindoo, and any pool the
+   completion pushed over cap. */
+.kd-remote-apply-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.kd-remote-apply-result-note {
+  margin: 0;
+  color: var(--kd-fg-1);
+  line-height: 1.45;
+}
+
+.kd-remote-apply-result-detail {
+  margin: 0;
+  color: var(--kd-fg-2);
+  font-size: 0.95em;
+  line-height: 1.45;
+}
+
+.kd-remote-apply-result.is-error .kd-remote-apply-result-detail {
+  color: var(--kd-danger-fg);
+}
+.kd-remote-apply-result.is-warn .kd-remote-apply-result-detail {
+  color: var(--kd-warn-dark);
+}
+
+/* Cap breaches are the one thing here the manager may need to act on
+   later, so they get the warning palette rather than reading as more
+   body copy. */
+.kd-remote-apply-result-overcap {
+  padding: 10px 12px;
+  border-radius: 4px;
+  color: var(--kd-warn-dark);
+  background: var(--kd-warn-tint);
+  font-size: 0.95em;
+}
+
+.kd-remote-apply-result-overcap ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.kd-remote-apply-result-overcap li {
+  margin-top: 2px;
+}
+
 /* Prominent danger banner at the top of a dialog body (e.g. the
    license-consumption warning on the Give Access To Stake Buildings
    modal). Mirrors .kd-queue-card-warning with the danger palette. */

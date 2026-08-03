@@ -6,6 +6,39 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-81] Spec §4.4 / §15 / §16: the web queue's duplicate gate, and the phone's result dialog
+Status: open
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+Two behavioural changes on `feat/remote-apply-webfix2` that `spec.md` doesn't yet describe.
+
+**1. The web queue's add-onto-existing-seat gate now matches the extension's, carve-out included.** §230 (Requests Queue) says: "For an **add** request whose member already has a seat, the card shows a blocking **error** chip" — flatly, with no carve-out. That was true of the code and is no longer. `QueuePage`'s `blockedByDuplicate` was `isAdd && !!seat`, which is strictly broader than `RequestCard`'s `blockedByExistingSeat` (spec §589 documents that one, carve-out and all). The consequence was not a safe over-suppression: a stake-scope `add_manual` for a member with a seat but no stake grant — the shape the web's own "Give Access To Stake Buildings" button produces — got a red "this request can't be completed — reject it" chip and no **Apply via extension** button, for a request the desktop provisions cleanly via `planAddMerge`.
+
+Both surfaces now call `addBlockedByExistingSeat` from `@kindoo/shared` (`packages/shared/src/existingSeatGate.ts`) — the web already does; the extension's adoption is T-82. §230's sentence needs the carve-out clause, and §589's paragraph should point at the shared helper as the single definition rather than describing the extension's local expression.
+
+**2. A terminal remote-apply outcome now raises a dialog on the phone.** Operator feedback from a live smoke test: a remote apply that succeeded showed only the inline row, where the desktop's own flow ends in `ResultDialog`, a modal you have to acknowledge. §16 needs:
+
+- The dialog raises on the **transition** into a terminal status observed by that device — never on first sight of an already-terminal job, so a reload doesn't pop modals for finished work. The inline row is unchanged and remains the at-a-glance state.
+- It is not dismissable by Escape or an outside tap; Dismiss is the only exit.
+- `applied` shows the desktop's provisioning note, plus a **"Now over cap:"** block listing each pool the completion pushed over its cap (`RemoteApplyOutcome.over_caps`, new — these were dropped entirely on the remote path before). Pools are named with the page's scope labeller, so a ward reads as its name.
+- `partial` shows the note and the desktop-authored failure sentence, and **offers no retry**. The desktop's dialog has one; it replays a captured `MarkRequestCompleteInput` that the job doc doesn't record (only `provisioning_note` and `kindoo_uid`), so the phone would have to guess the completion note it writes into the permanent record. It is also a write path the web queue has never had — §230 still says the page's only action is remote apply, and that stays true. The request is still `pending`, so the desktop's own card finishes it with the tested path.
+- `failed` / `cancelled` raise the dialog too, worded exactly as the row is. A phone gets pocketed; a silent failure is worse than a silent success.
+
+## [T-82] Extension: adopt the shared add-onto-existing-seat gate
+Status: open
+Owner: @extension-engineer
+Phase: remote apply (D27)
+
+`packages/shared/src/existingSeatGate.ts` now holds the single definition of whether an `add_*` request is blocked by the member's existing seat — `seatHasStakeGrant`, `existingSeatFacts`, `addBlockedByExistingSeat`. The web queue consumes it (T-81); the extension still carries its own copy in two places:
+
+- `extension/src/panel/QueuePanel.tsx` — a local `seatHasStakeGrant`, used by `fetchSeatMap`.
+- `extension/src/panel/RequestCard.tsx` — `applyableStakeAdd` / `blockedByExistingSeat`, expressed inline.
+
+Swapping both for the shared helpers is mechanical and needs no prop-shape change: `addBlockedByExistingSeat(request, { hasSeat: memberHasSeat, hasStakeGrant: memberHasStakeGrant })` takes the booleans the card already receives. Left to the extension owner rather than done here because `extension/` isn't `web-engineer`'s, and several extension branches were in flight.
+
+The point of doing it is that these two gates drifting apart is what produced T-81: a divergence in a predicate neither surface can see the other's copy of. The long comment on `RequestCard`'s carve-out should move to the shared module (it's already there) rather than being maintained twice.
+
 ## [T-78] Spec §16 + §15: remote-apply presence is per Kindoo site, not per manager
 Status: done (2026-08-03 — `feat/remote-apply-docs3`, against `feat/remote-apply` at `31366f8`)
 Owner: @docs-keeper

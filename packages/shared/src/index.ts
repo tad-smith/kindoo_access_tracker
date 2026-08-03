@@ -19,6 +19,12 @@ export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js';
+export {
+  addBlockedByExistingSeat,
+  existingSeatFacts,
+  seatHasStakeGrant,
+  type ExistingSeatFacts,
+} from './existingSeatGate.js';
 export { REQUESTER_GUIDE_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
 export {
