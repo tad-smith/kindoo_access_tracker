@@ -29,6 +29,7 @@ function job(overrides: Partial<RemoteApplyJobRef> = {}): RemoteApplyJobRef {
     requestId: 'r1',
     stakeId: STAKE_ID,
     targetSiteKey: REMOTE_APPLY_HOME_SITE_KEY,
+    createdAtMs: 1_000,
     ...overrides,
   };
 }
@@ -76,6 +77,48 @@ describe('toJobResult — outcome serialisation', () => {
       kindoo_uid: 'uid-1',
       provisioning_note: 'Added Test User to Kindoo with access to Maple Building.',
     });
+  });
+
+  it('carries the over-cap warning through to the job outcome', () => {
+    // `applyRequest` has had this all along for the desktop's result
+    // dialog; without it on the wire a manager applying from their phone
+    // never learns a pool went over its seat cap.
+    const result = toJobResult({
+      status: 'applied',
+      note: 'Added Test User.',
+      kindooUid: 'uid-1',
+      overCaps: [{ pool: 'stake', count: 251, cap: 250, over_by: 1 }],
+    });
+    expect(result.outcome.over_caps).toEqual([{ pool: 'stake', count: 251, cap: 250, over_by: 1 }]);
+  });
+
+  it('omits over_caps when nothing is over cap', () => {
+    const result = toJobResult({
+      status: 'applied',
+      note: 'Added Test User.',
+      kindooUid: 'uid-1',
+      overCaps: [],
+    });
+    expect(result.outcome).not.toHaveProperty('over_caps');
+  });
+
+  it('never reports over_caps on a partial, where the SBA write never landed', () => {
+    // `markRequestComplete` is what reports over-caps and is precisely
+    // what failed here, so there is no answer to carry. An empty array
+    // would read as "all clear" rather than "never asked".
+    const result = toJobResult({
+      status: 'partial',
+      note: 'Added Test User.',
+      kindooUid: 'uid-1',
+      message: 'SBA is down.',
+      markCompleteInput: {
+        stakeId: STAKE_ID,
+        requestId: 'r1',
+        completionNote: 'n',
+        provisioningNote: 'n',
+      },
+    });
+    expect(result.outcome).not.toHaveProperty('over_caps');
   });
 
   it('omits kindoo_uid entirely on the no-op remove path (Firestore rejects undefined)', () => {

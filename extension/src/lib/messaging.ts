@@ -436,6 +436,19 @@ export interface RemoteApplyJobRef {
    * Fed to `canClaimRemoteApplyJob` — see `content/remoteApply/loop.ts`.
    */
   targetSiteKey: string;
+  /**
+   * `created_at` in epoch ms, or `null` when it hasn't resolved to a real
+   * timestamp.
+   *
+   * Carried so the poller can refuse a job older than
+   * `REMOTE_APPLY_PICKUP_TIMEOUT_MS`. The phone's timeout runs in a React
+   * effect in a browser tab, and on a phone that tab is suspended by a
+   * screen lock and killed by a close — so it cannot be the only thing
+   * that expires a `queued` job. Without an age on the wire the poller
+   * would claim and provision a job of any age, unattended. See
+   * `content/remoteApply/loop.ts`.
+   */
+  createdAtMs: number | null;
 }
 
 /**
@@ -454,7 +467,7 @@ export interface DataRemoteApplyRunningJobsRequest {
  * applies — see `content/remoteApply/loop.ts`. */
 export interface RemoteApplyRunningJobRef extends RemoteApplyJobRef {
   /**
-   * `claimed_at` in epoch ms, falling back to `created_at`. `null` when
+   * `claimed_at` in epoch ms, falling back to `createdAtMs`. `null` when
    * neither resolved to a real timestamp — an unaged job is never swept,
    * since the sweep's only safety argument is that it is too old to still
    * be in flight.
@@ -483,9 +496,18 @@ export interface DataRemoteApplyFinishJobRequest {
   type: 'data.remoteApplyFinishJob';
   jobId: string;
   payload: {
-    /** Terminal statuses the extension may write. `cancelled` belongs
-     * to the phone's no-pickup timeout, not to us. */
-    status: 'applied' | 'partial' | 'failed';
+    /**
+     * Terminal statuses the extension may write.
+     *
+     * The first three report on a job this tab RAN. `cancelled` is the
+     * one it never ran: the phone's no-pickup timeout owns that
+     * transition in the happy case, but that timeout is a React effect
+     * in a tab the manager can lock, background, or close, so the poller
+     * is its backstop for a job it finds already past
+     * `REMOTE_APPLY_PICKUP_TIMEOUT_MS`. Rules allow `queued → cancelled`
+     * from the mailbox owner, which both surfaces are.
+     */
+    status: 'applied' | 'partial' | 'failed' | 'cancelled';
     outcome: RemoteApplyOutcome;
   };
 }

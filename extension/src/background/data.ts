@@ -743,6 +743,11 @@ export async function writeRemotePresence(
  * returns nought or one document; document-id order is arbitrary but
  * deterministic, and the caller claims the first job it can serve rather
  * than insisting on the oldest.
+ *
+ * Unfiltered by age too, and for the same reason: the caller doesn't
+ * merely skip a job past the pickup window, it CANCELS it (see the
+ * poller in `content/remoteApply/loop.ts`), so a `created_at` bound here
+ * would hide exactly the documents that need finalising.
  */
 export async function findQueuedRemoteApplyJobs(actor: User): Promise<RemoteApplyJobRef[]> {
   const actorRef = await readActor(actor);
@@ -783,7 +788,7 @@ export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApp
       // they deny the claim — handing it over would buy a rejected
       // write every 60 seconds and no cleanup.
       if (!ref) return null;
-      return { ...ref, claimedAtMs: toMillis(data.claimed_at) ?? toMillis(data.created_at) };
+      return { ...ref, claimedAtMs: toMillis(data.claimed_at) ?? ref.createdAtMs };
     })
     .filter(isJobRef);
 }
@@ -829,6 +834,10 @@ function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef | null
     requestId: data.request_id,
     stakeId: data.stake_id,
     targetSiteKey: data.target_site_key,
+    // Epoch ms rather than a `Timestamp`, for the same reason
+    // `claimedAtMs` is: the class does not survive
+    // `chrome.runtime.sendMessage`'s structured serialisation.
+    createdAtMs: toMillis(data.created_at),
   };
 }
 
@@ -886,8 +895,14 @@ export async function claimRemoteApplyJob(
 }
 
 /**
- * Write a job's terminal status + outcome. `cancelled` is not writable
- * from here — that transition belongs to the phone's no-pickup timeout.
+ * Write a job's terminal status + outcome.
+ *
+ * Covers both `running → applied | partial | failed` (this tab reporting
+ * on work it ran) and `queued → cancelled` (this tab expiring a job the
+ * phone's own no-pickup timeout never got to). Rules allow both from the
+ * mailbox owner and pin the before-status on each, so a job that has
+ * moved on since the poller read it fails here with `permission-denied`
+ * rather than skipping a status.
  */
 export async function finishRemoteApplyJob(
   jobId: string,

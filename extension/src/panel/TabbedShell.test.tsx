@@ -137,6 +137,7 @@ describe('TabbedShell', () => {
       requestId: 'r1',
       stakeId: 'csnorth',
       targetSiteKey: 'home',
+      createdAtMs: 1_000,
     });
 
     await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(2));

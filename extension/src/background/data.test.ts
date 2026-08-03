@@ -1266,6 +1266,7 @@ describe('remote apply — SW-side mailbox operations', () => {
             stake_id: 'csnorth',
             target_site_key: 'east-stake',
             status: 'queued',
+            created_at: { toMillis: () => 1_000 },
           }),
         },
         {
@@ -1275,6 +1276,7 @@ describe('remote apply — SW-side mailbox operations', () => {
             stake_id: 'csnorth',
             target_site_key: 'home',
             status: 'queued',
+            created_at: { toMillis: () => 2_000 },
           }),
         },
       ],
@@ -1290,9 +1292,24 @@ describe('remote apply — SW-side mailbox operations', () => {
     );
     expect(whereMock).toHaveBeenCalledWith('status', '==', 'queued');
     expect(limitMock).toHaveBeenCalledWith(20);
+    // `createdAtMs` rides along so the poller can refuse a job older
+    // than the phone's pickup window — the phone's own timeout dies with
+    // its tab, so it cannot be the only thing that expires a job.
     expect(jobs).toEqual([
-      { jobId: 'job-1', requestId: 'r1', stakeId: 'csnorth', targetSiteKey: 'east-stake' },
-      { jobId: 'job-2', requestId: 'r2', stakeId: 'csnorth', targetSiteKey: 'home' },
+      {
+        jobId: 'job-1',
+        requestId: 'r1',
+        stakeId: 'csnorth',
+        targetSiteKey: 'east-stake',
+        createdAtMs: 1_000,
+      },
+      {
+        jobId: 'job-2',
+        requestId: 'r2',
+        stakeId: 'csnorth',
+        targetSiteKey: 'home',
+        createdAtMs: 2_000,
+      },
     ]);
   });
 
@@ -1377,6 +1394,7 @@ describe('remote apply — SW-side mailbox operations', () => {
         requestId: 'r1',
         stakeId: 'csnorth',
         targetSiteKey: 'east-stake',
+        createdAtMs: 1_000,
         claimedAtMs: 2_000,
       },
     ]);
