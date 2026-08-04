@@ -228,7 +228,7 @@ describe('RequestCard', () => {
     // isn't in Kindoo yet that is a second `inviteUser` — a licence spent
     // that `markRequestComplete` picking a winner cannot give back.
     const user = userEvent.setup();
-    await renderCard({ remoteApplyBusy: 'running' });
+    await renderCard({ remoteApplyBusy: 'this-tab' });
 
     const button = screen.getByTestId('sba-add-r1');
     expect(button).toBeDisabled();
@@ -239,15 +239,14 @@ describe('RequestCard', () => {
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
   });
 
-  it('disables the provision button while a phone-initiated job is still QUEUED', async () => {
-    // The expensive half of the gate. `running` only begins at the
-    // claim; before that the job sits `queued` for up to a poll period —
-    // 60s on the hidden tab a manager leaves behind when they tap on
-    // their phone and turn to their computer. Ungated, that is the
-    // window in which the desktop button starts a second `applyRequest`
-    // for a job a tab is about to run.
+  it('disables the provision button while a phone-initiated job is in ANOTHER hand', async () => {
+    // The expensive half of the gate, and the half `running` cannot
+    // see: a job still waiting in the mailbox, or one a sibling Kindoo
+    // tab claimed and is inside `applyRequest` for right now. Ungated,
+    // this is the window in which the desktop button starts a second
+    // run against a request some other tab is already provisioning.
     const user = userEvent.setup();
-    await renderCard({ remoteApplyBusy: 'queued' });
+    await renderCard({ remoteApplyBusy: 'elsewhere' });
 
     const button = screen.getByTestId('sba-add-r1');
     expect(button).toBeDisabled();
@@ -255,15 +254,15 @@ describe('RequestCard', () => {
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
   });
 
-  it('says "picking it up" for a queued job and "applying it now" for a running one', async () => {
-    // Nothing has claimed a queued job yet, and the tab that does may be
-    // a sibling on another Kindoo site — so the running copy would be
-    // twice wrong.
-    const queued = await renderCard({ remoteApplyBusy: 'queued' });
-    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/picking it up/);
-    queued.unmount();
+  it('says "handling it" for a job in another hand and "applying it now" for its own', async () => {
+    // "This tab is applying it now" is a claim only the tab running the
+    // job can make. For a job sitting in the mailbox, or one a sibling
+    // tab on another Kindoo site is running, it would be twice wrong.
+    const elsewhere = await renderCard({ remoteApplyBusy: 'elsewhere' });
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/handling it/);
+    elsewhere.unmount();
 
-    await renderCard({ remoteApplyBusy: 'running' });
+    await renderCard({ remoteApplyBusy: 'this-tab' });
     expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/applying it now/);
   });
 

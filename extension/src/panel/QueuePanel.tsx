@@ -149,22 +149,22 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
   // a consumed licence that `markRequestComplete` picking one winner does
   // nothing to undo.
   //
-  // `queued` counts as much as `running`. The job sits queued from the
-  // phone tap until a desktop tab claims it — up to a full poll period,
-  // 60s while the tab is hidden, which is exactly what a tab is while
-  // the manager is looking at their phone. Gating on `running` alone
-  // left the button live for the whole of that window, on the flow the
-  // feature is named for.
+  // `running` is only this tab's own claim, which is a fraction of the
+  // window. `busyRequestIds` carries the rest — a job still sitting in
+  // the mailbox, and one another of the manager's tabs is running — so
+  // the button is gated from the phone's tap through whichever tab
+  // finishes the work. Gating on `running` alone left it live for the
+  // whole of the flow the feature is named for.
   const remoteApplyBusy = useMemo(() => {
     const busy = new Map<string, RemoteApplyPhase>();
-    for (const requestId of remoteApply?.queuedRequestIds ?? EMPTY_IDS) {
-      busy.set(requestId, 'queued');
+    for (const requestId of remoteApply?.busyRequestIds ?? EMPTY_IDS) {
+      busy.set(requestId, 'elsewhere');
     }
-    // After the queued pass: this tab's own run is the stronger claim,
-    // and the two overlap for one poll period around the claim.
-    if (remoteApply?.running) busy.set(remoteApply.running.requestId, 'running');
+    // After the elsewhere pass: this tab's own run is the stronger
+    // claim, and the two overlap for one poll period around the claim.
+    if (remoteApply?.running) busy.set(remoteApply.running.requestId, 'this-tab');
     return busy;
-  }, [remoteApply?.queuedRequestIds, remoteApply?.running]);
+  }, [remoteApply?.busyRequestIds, remoteApply?.running]);
 
   const requests = state.status === 'ready' ? state.requests : EMPTY_REQUESTS;
   // Compute "now" once per render; the day-level section boundary is
@@ -183,15 +183,16 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
           <span>Applying a request you sent from your phone…</span>
         </div>
       ) : remoteApplyBusy.size > 0 ? (
-        // Nothing claimed yet, but a tap is in the mailbox. Says "your
-        // desktop" rather than "this tab" because a sibling tab on the
-        // right Kindoo site may be the one that takes it.
+        // Not this tab: the tap is either still in the mailbox or in a
+        // sibling tab's hands. "Your desktop" rather than "this tab"
+        // covers both, and "handling" covers both halves of it — a job
+        // waiting to be claimed and one already being applied next door.
         <div
           role="status"
           className="sba-banner sba-banner-info"
           data-testid="sba-remote-apply-queued"
         >
-          <span>Picking up a request you sent from your phone…</span>
+          <span>Your desktop is handling a request you sent from your phone…</span>
         </div>
       ) : null}
       <div className="sba-request-actions">

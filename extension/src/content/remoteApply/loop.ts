@@ -41,6 +41,11 @@
 // REMOTE_APPLY_PICKUP_TIMEOUT_MS instead of claiming it — see
 // `expireQueued`.
 //
+// The poll also feeds the gate on the desktop's OWN provision button,
+// which is why it makes two reads and why their order is fixed: the
+// `queued` page first, then the `running` one. See `onBusyRequestIds`
+// and `runningElsewhereRequestIds`.
+//
 // Cadence:
 //   - heartbeat every REMOTE_APPLY_HEARTBEAT_MS (60s)
 //   - poll every REMOTE_APPLY_POLL_VISIBLE_MS (10s) while the tab is
@@ -125,7 +130,8 @@ export const REMOTE_APPLY_STRANDED_OTHER_SITE_MS = REMOTE_APPLY_STRANDED_MS * 2;
  * minute per open Kindoo tab, against a collection of a few docs. */
 const SWEEP_INTERVAL_MS = 60_000;
 
-/** Shared empty publication, so "nothing queued" is a stable identity. */
+/** Shared empty publication, so "no job holds anything" is a stable
+ * identity. */
 const EMPTY_IDS: readonly string[] = [];
 
 /** Attempts for the terminal write, and the waits between them. A
@@ -174,25 +180,40 @@ export interface RemoteApplyLoopArgs {
   onJobStart?: (job: RemoteApplyJobRef) => void;
   onJobEnd?: (job: RemoteApplyJobRef) => void;
   /**
-   * The `request_id`s that had a job sitting `queued` as of this tick,
-   * emitted only when the set changes.
+   * The `request_id`s a phone-initiated job holds as of this tick that
+   * this tab is not itself running — still `queued` in the mailbox, or
+   * `running` on another of the manager's tabs. Emitted only when the
+   * set changes.
    *
-   * `onJobStart` is not enough to gate the desktop's own provision
-   * button. It fires AFTER the claim, and a job is queued for up to a
-   * full poll period first — 10s on a visible tab, 60s on a hidden one,
-   * which is the normal state while the manager is looking at their
-   * phone. That window is precisely the happy path (tap on the phone,
-   * turn to the computer to watch it work) and for the whole of it the
-   * button would be live. Two `applyRequest` runs for a member not yet
-   * in Kindoo is two `inviteUser` calls and a consumed licence.
+   * `onJobStart` gates only what THIS tab runs, which is a fraction of
+   * the window in which a second `applyRequest` would double-provision.
+   * Two runs for a member not yet in Kindoo is two `inviteUser` calls
+   * and a consumed licence. What this set buys, precisely:
    *
-   * Every job in the mailbox belongs to this manager, so the set is NOT
-   * filtered by what this tab could serve: a sibling tab on the right
-   * site may claim it moments later, and gating on "can I serve it?"
-   * would reopen the window for exactly the multi-site case the claim
-   * rule was shaped for.
+   *   - a queued job this tab CANNOT serve — wrong site or wrong stake.
+   *     `onJobStart` never fires for it here; the tab that claims it is
+   *     a different one, and it is covered from the tap right through
+   *     that tab's run.
+   *   - a queued job waiting behind the one this tab is running. One
+   *     claim per tick, so the rest sit out the run.
+   *   - a job another tab is running, for as long as it runs there. The
+   *     claim moves the job out of `queued`, so the queued page alone
+   *     drops it one poll after a sibling wins the race — mid-
+   *     `applyRequest`, which is the expensive moment. Hence the
+   *     `running` half; see `runningElsewhereRequestIds`.
+   *
+   * What it does NOT buy is the phone's tap → claim window for a job
+   * this tab CAN serve: the poll that first sees such a job claims it in
+   * the same tick, so the gate is held across one Firestore write rather
+   * than for a poll period. That window belongs to the phone, which
+   * withholds its own Apply button for a request with a live job.
+   *
+   * Not filtered by `canClaimRemoteApplyJob`: every job in the mailbox
+   * is this manager's, and gating on "can I serve it?" would reopen the
+   * window for exactly the multi-site case the claim rule was shaped
+   * for.
    */
-  onQueuedRequestIds?: (requestIds: readonly string[]) => void;
+  onBusyRequestIds?: (requestIds: readonly string[]) => void;
   /**
    * Called with the site key each time this tab successfully publishes a
    * desktop doc. The React host remembers it so opting out can DELETE
@@ -321,10 +342,22 @@ export function startRemoteApplyLoop(
   /** Set the first time the loop finds itself orphaned by an extension
    * reload, so the halt announces itself exactly once. */
   let contextInvalidated = false;
-  /** Last set handed to `onQueuedRequestIds`, so an unchanged poll
+  /** Last set handed to `onBusyRequestIds`, so an unchanged poll
    * result costs the React host nothing. Without this the host re-renders
    * every 10 seconds forever. */
-  let publishedQueuedIds: readonly string[] = [];
+  let publishedBusyIds: readonly string[] = [];
+  /**
+   * `request_id`s seen `running` on another tab at the last SUCCESSFUL
+   * read, reused when a read fails.
+   *
+   * A failed read is no evidence that a sibling stopped running the job,
+   * and this half of the set is a safety gate: the honest answer to "I
+   * couldn't look" is to hold what was true a moment ago. It self-
+   * corrects on the next successful read, and a Firestore outage long
+   * enough to matter takes the queued read down with it — that throws
+   * the tick, which already leaves the whole published set standing.
+   */
+  let lastRunningElsewhereIds: readonly string[] = EMPTY_IDS;
   /** Jobs this tab is executing right now. The sweep skips them: they
    * are the one set of `running` jobs it can positively attribute to a
    * live runner. */
@@ -381,7 +414,7 @@ export function startRemoteApplyLoop(
     );
 
   /**
-   * Hand the host the current queued set, if it moved.
+   * Hand the host the current busy set, if it moved.
    *
    * Called with `[]` from every path that ends a tick before the poll,
    * rather than leaving the last poll's answer standing. Those paths are
@@ -390,15 +423,15 @@ export function startRemoteApplyLoop(
    * gate is dead on arrival regardless, and a set nobody refreshes would
    * otherwise gate it forever on a job that has long since finished.
    */
-  const publishQueued = (requestIds: readonly string[]) => {
+  const publishBusy = (requestIds: readonly string[]) => {
     if (
-      publishedQueuedIds.length === requestIds.length &&
-      publishedQueuedIds.every((id, i) => id === requestIds[i])
+      publishedBusyIds.length === requestIds.length &&
+      publishedBusyIds.every((id, i) => id === requestIds[i])
     ) {
       return;
     }
-    publishedQueuedIds = requestIds;
-    args.onQueuedRequestIds?.(requestIds);
+    publishedBusyIds = requestIds;
+    args.onBusyRequestIds?.(requestIds);
   };
 
   const clear = () => {
@@ -493,16 +526,16 @@ export function startRemoteApplyLoop(
     // stranded a job, and finalising one is pure Firestore work that
     // needs no Kindoo session at all.
     await sweepStrandedIfDue();
-    if (!deps.isEnabled()) return publishQueued(EMPTY_IDS);
+    if (!deps.isEnabled()) return publishBusy(EMPTY_IDS);
     const sessionResult = deps.readSession();
     if (!sessionResult.ok) {
       // Deliberately silent and deliberately no presence write. See the
       // module header.
-      return publishQueued(EMPTY_IDS);
+      return publishBusy(EMPTY_IDS);
     }
     const session = sessionResult.session;
     const heartbeatOk = await heartbeatIfDue(session);
-    if (!heartbeatOk) return publishQueued(EMPTY_IDS);
+    if (!heartbeatOk) return publishBusy(EMPTY_IDS);
     await pollOnce(session);
   };
 
@@ -791,6 +824,63 @@ export function startRemoteApplyLoop(
   };
 
   /**
+   * `request_id`s of jobs another of this manager's tabs is running.
+   *
+   * The other half of the provision gate. `queued` alone expires in one
+   * poll period: the query filters `status == 'queued'`, so the instant
+   * a sibling's claim lands the job leaves that page and the next poll
+   * publishes a set without it — re-enabling this tab's button while the
+   * sibling is inside `applyRequest`, which is the expensive half of the
+   * window, not the cheap one.
+   *
+   * Its own read rather than the sweep's, for two reasons:
+   *
+   *   - The sweep is rate-limited to SWEEP_INTERVAL_MS (60s) and a
+   *     visible tab polls at 10s, so its list is up to six polls stale —
+   *     and a run measured in seconds can start and finish entirely
+   *     inside that gap.
+   *   - Order matters, and it is the opposite of the sweep's. A job
+   *     moves `queued → running`, so reading queued FIRST and running
+   *     SECOND catches it either way round; reading running first leaves
+   *     a hole exactly the width of the two reads for a claim landing
+   *     between them. The sweep runs ahead of the session gate (it must
+   *     work with Kindoo down), so its read is always the earlier one.
+   *
+   * The cost is one more `getDocs` per poll against a collection that is
+   * almost always empty — for opted-in tabs only, since the loop does not
+   * run otherwise.
+   *
+   * `inFlight` is excluded because this tab's own run is `running`'s job,
+   * not this set's: `onJobStart` / `onJobEnd` bracket it exactly, where a
+   * set refreshed once a poll would hold the gate closed past the end of
+   * the run. Today the exclusion is belt-and-braces — the run is awaited
+   * inside the tick that claims it, so nothing is ever in flight at a
+   * publish — but it keeps both readers of `runningJobs` agreeing on the
+   * one thing they can positively attribute. A job of ours left `running`
+   * by a terminal write that exhausted its retries is NOT excluded: it is
+   * out of `inFlight` by then, and holding the button until the sweep
+   * finalises it is the right answer for work whose outcome we don't know.
+   */
+  const runningElsewhereRequestIds = async (): Promise<readonly string[]> => {
+    try {
+      const jobs = await deps.runningJobs();
+      lastRunningElsewhereIds = jobs
+        .filter((job) => !inFlight.has(job.jobId))
+        .map((job) => job.requestId);
+    } catch (err) {
+      if (contextLost(err)) throw err;
+      // Holding the last answer rather than dropping the gate. See
+      // `lastRunningElsewhereIds`.
+      console.warn(
+        '[sba-ext] remote apply: could not read running jobs for the provision gate; ' +
+          'holding the previous answer',
+        err,
+      );
+    }
+    return lastRunningElsewhereIds;
+  };
+
+  /**
    * Claim and run the first queued job this tab's site can serve.
    *
    * A page of jobs rather than the single oldest one, because with two
@@ -805,12 +895,13 @@ export function startRemoteApplyLoop(
    * than left for the phone; the ordering is what makes it a gate on
    * provisioning rather than a report about it.
    *
-   * The page is also what the desktop's own provision button is gated
-   * on, via `onQueuedRequestIds` — see that callback for why the gate
-   * can't wait for `onJobStart`. An expired job is left OUT of that set
-   * even before its cancel lands: it will never be claimed, so it can
-   * cause no double provision, and blocking the button on it would be
-   * the same lockout `expireQueued` exists to lift.
+   * The page is half of what the desktop's own provision button is gated
+   * on, via `onBusyRequestIds` — see that callback for why the gate
+   * can't wait for `onJobStart`, and `runningElsewhereRequestIds` for the
+   * other half. An expired job is left OUT of that set even before its
+   * cancel lands: it will never be claimed, so it can cause no double
+   * provision, and blocking the button on it would be the same lockout
+   * `expireQueued` exists to lift.
    */
   const pollOnce = async (session: KindooSession): Promise<void> => {
     const jobs = await deps.queuedJobs();
@@ -838,20 +929,30 @@ export function startRemoteApplyLoop(
           `stake '${args.stakeId}' site '${activeSite?.siteKey ?? 'none'}'`,
       );
     }
-    publishQueued(queuedRequestIds);
+    // Read AFTER the queued page, never before — see
+    // `runningElsewhereRequestIds`.
+    const busyRequestIds = [...queuedRequestIds];
+    for (const requestId of await runningElsewhereRequestIds()) {
+      if (!busyRequestIds.includes(requestId)) busyRequestIds.push(requestId);
+    }
+    publishBusy(busyRequestIds);
     const job = claimable[0];
     if (!job) return;
     const claimed = await deps.claimJob(job.jobId, args.extVersion, session.eid);
     // A lost claim STAYS in the set: the job left `queued` because a
     // sibling tab took it, and that tab is now provisioning the very
-    // request this button would provision again.
+    // request this button would provision again. The queued page won't
+    // show it again — it is `running` now — so the next tick's
+    // `runningElsewhereRequestIds` is what keeps the gate closed for the
+    // rest of that tab's run.
     if (!claimed) return;
     // Won it, so it is `running` and `onJobStart` gates the button from
     // here. Dropping it now is what gives the button back the moment the
     // run ends rather than one poll period later — `onJobEnd` clears the
     // running flag, and a set still naming this request would hold the
-    // gate closed through the gap.
-    publishQueued(queuedRequestIds.filter((id) => id !== job.requestId));
+    // gate closed through the gap. Both state updates land in one React
+    // render, so the button never flickers live in between.
+    publishBusy(busyRequestIds.filter((id) => id !== job.requestId));
 
     console.info(`[sba-ext] remote apply: claimed job ${job.jobId} for request ${job.requestId}`);
     inFlight.add(job.jobId);

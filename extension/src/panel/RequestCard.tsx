@@ -39,11 +39,16 @@ import { ResultDialog, type ResultDialogState } from './ResultDialog';
 import { RejectDialog } from './RejectDialog';
 
 /**
- * How far a phone-initiated job has got with a request: written to the
- * mailbox and waiting for a desktop tab (`'queued'`), or claimed and
- * executing on this tab (`'running'`).
+ * Who has a phone-initiated job for this request: this tab, which is
+ * executing it now (`'this-tab'`), or anything else — the mailbox, with
+ * the job still waiting to be claimed, or another of the manager's
+ * Kindoo tabs already running it (`'elsewhere'`).
+ *
+ * The split is by which surface can report on it, not by job status:
+ * only this tab knows it is mid-`applyRequest`, and it is the only one
+ * that can say so.
  */
-export type RemoteApplyPhase = 'queued' | 'running';
+export type RemoteApplyPhase = 'elsewhere' | 'this-tab';
 
 interface RequestCardProps {
   /** Active stake — threaded from App's resolution step. */
@@ -98,11 +103,10 @@ interface RequestCardProps {
    * licence. `markRequestComplete` settling on one winner is no help:
    * the Kindoo writes already happened.
    *
-   * `'queued'` is the tap-to-claim window: the phone has written the job
-   * and no tab has picked it up yet, which lasts up to a full poll period
-   * (60s on a hidden tab). It gets its own copy because "this tab is
-   * applying it now" is not yet true, and the tab that ends up running it
-   * may be a sibling on another Kindoo site.
+   * `'elsewhere'` gets its own copy because "this tab is applying it
+   * now" is not a claim this tab can make about a job that is still
+   * waiting in the mailbox, or one a sibling tab on another Kindoo site
+   * has already claimed. Both read as "your desktop is handling it".
    *
    * Parent (`QueuePanel`) derives this; absent (standalone renders, no
    * loop) ⇒ not busy.
@@ -351,10 +355,10 @@ export function RequestCard({
           className="sba-muted"
           data-testid={`sba-remote-busy-${request.request_id}`}
         >
-          {remoteApplyBusy === 'running'
+          {remoteApplyBusy === 'this-tab'
             ? 'You sent this one from your phone — this tab is applying it now. Wait for it to ' +
               'finish rather than applying it twice.'
-            : 'You sent this one from your phone — your desktop is picking it up. Wait for it to ' +
+            : 'You sent this one from your phone — your desktop is handling it. Wait for it to ' +
               'finish rather than applying it twice.'}
         </p>
       ) : null}
