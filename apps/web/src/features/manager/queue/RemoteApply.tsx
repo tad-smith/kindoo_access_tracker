@@ -8,6 +8,12 @@
 // desktop claims it, runs the same provisioning code path as its own
 // button, and writes the outcome back, which the row renders live.
 //
+// The finished outcome is acknowledged separately, by
+// `RemoteApplyResults`, which the page mounts once. That split is not
+// cosmetic: a successful apply ends by marking the request complete, so
+// the card is gone by the time there is anything to announce. Anything
+// scoped to a card can only speak about a request that is still pending.
+//
 // Everything here is written for a phone first — a manager at the
 // building on their phone is the entire reason the feature exists.
 //
@@ -31,6 +37,7 @@ import { Dialog } from '../../../components/ui/Dialog';
 import { getDeviceId } from '../../notifications/lib';
 import { acknowledgeJob, isJobAcknowledged } from './acknowledgedJobs';
 import {
+  toMillis,
   useQueueRemoteApplyJob,
   useRemoteApplyPickupTimeout,
   type RemoteApplyJobWithId,
@@ -137,18 +144,17 @@ export interface RemoteApplyRowProps {
    * mailbox is how a request ends up with two jobs.
    */
   jobsLoading?: boolean | undefined;
-  /**
-   * Scope → display label, for naming an over-cap pool in the result
-   * dialog. Optional: without it the pool falls back to its stored
-   * value (`'stake'` or a ward code), which is still readable.
-   */
-  labelForScope?: ((scope: string) => string) | undefined;
 }
 
 /**
  * The per-card action + live job status. Renders nothing when no tab can
  * serve this request and there's no job to report, so a card looks
  * exactly as it did before this feature when remote apply is off.
+ *
+ * Everything here is scoped to a card that is on screen, and dies with
+ * it — which is correct for an at-a-glance status and wrong for an
+ * acknowledgement. The result dialog therefore lives at page level, in
+ * {@link RemoteApplyResults}; see the note there.
  */
 export function RemoteApplyRow({
   requestId,
@@ -158,7 +164,6 @@ export function RemoteApplyRow({
   requestSiteName,
   job,
   jobsLoading = false,
-  labelForScope,
 }: RemoteApplyRowProps) {
   // Local clock reading of the tap. `created_at` is an unresolved
   // `serverTimestamp()` in the first local snapshot, so the pickup
@@ -185,59 +190,6 @@ export function RemoteApplyRow({
   }, [job]);
 
   useRemoteApplyPickupTimeout(job?.job_id ?? null, job, queuedAtMs);
-
-  // The job whose outcome still needs acknowledging on this device.
-  //
-  // Deliberately NOT gated on having witnessed the transition. That was
-  // the first cut, and it argued a good case — a reload shouldn't pop
-  // modals for last week's work — but it fails for the exact device
-  // this feature exists for. The manager taps Apply, turns to their
-  // desktop to watch it work, and the phone locks; by the time they
-  // look back the page has re-mounted and the job is already terminal
-  // on first sight. Suppressing that is suppressing the commonest real
-  // flow. The desktop's `ResultDialog` never hits this because the
-  // desktop is the machine doing the work, with its panel open.
-  //
-  // "Not history, not someone else's" is carried by two narrower facts
-  // instead:
-  //
-  //   - `created_by_device` — the id this device wrote at tap time. A
-  //     job the manager queued from another phone belongs to that
-  //     phone's screen, and a job seeded by anything else stays silent.
-  //   - the persisted acknowledgement — dismissing is what makes an
-  //     outcome history, and it has to survive the reload that a locked
-  //     phone guarantees. See `acknowledgedJobs.ts`.
-  //
-  // A device id we can't read (storage locked down) matches nothing, so
-  // the dialog stays away rather than raising on jobs we can't attribute.
-  const deviceId = useMemo(() => {
-    try {
-      return getDeviceId();
-    } catch {
-      return null;
-    }
-  }, []);
-  // In-session half of the acknowledgement, so dismissing takes effect
-  // without re-reading storage; `acknowledgeJob` writes the half that
-  // survives the reload.
-  const [dismissedJobId, setDismissedJobId] = useState<string | null>(null);
-  const alreadyAcknowledged = useMemo(
-    () => (job ? isJobAcknowledged(job.job_id) : false),
-    [job?.job_id],
-  );
-  const ackJob =
-    job &&
-    isRemoteApplyTerminal(job.status) &&
-    deviceId !== null &&
-    job.created_by_device === deviceId &&
-    !alreadyAcknowledged &&
-    dismissedJobId !== job.job_id
-      ? job
-      : undefined;
-  const dismissResult = (jobId: string) => {
-    acknowledgeJob(jobId);
-    setDismissedJobId(jobId);
-  };
 
   const status = job?.status;
   const hasJob = job !== undefined;
@@ -310,21 +262,154 @@ export function RemoteApplyRow({
           {isRetryable(status) ? 'Try again' : 'Apply via extension'}
         </Button>
       ) : null}
-      {ackJob ? (
-        <RemoteApplyResultDialog
-          job={ackJob}
-          requestId={requestId}
-          labelForScope={labelForScope}
-          onDismiss={() => dismissResult(ackJob.job_id)}
-        />
-      ) : null}
     </div>
   );
 }
 
+export interface RemoteApplyResultsProps {
+  /**
+   * Every job in the manager's mailbox, one per request, as
+   * `useRemoteApplyJobsByRequest().resolved` gives them. Deliberately
+   * the whole mailbox and not the pending requests — see below.
+   */
+  jobs: readonly RemoteApplyJobWithId[];
+  /**
+   * Scope → display label, for naming an over-cap pool. Optional:
+   * without it the pool falls back to its stored value (`'stake'` or a
+   * ward code), which is still readable.
+   */
+  labelForScope?: ((scope: string) => string) | undefined;
+}
+
+/**
+ * The page's acknowledgement surface: one dialog for the whole queue,
+ * showing the outcome of a finished remote apply this device asked for.
+ *
+ * **Why this is at page level and not on the card.** It was on the card
+ * for two releases, and the feature simply did not work. A successful
+ * apply ends in `markRequestComplete`; the request stops being
+ * `pending`; `usePendingRequests` drops it from the next snapshot; the
+ * card unmounts and takes its children with it. The dialog was mounted
+ * inside the one component whose lifetime ends exactly when the event
+ * it exists to announce occurs. What the manager saw was a flash — two
+ * snapshots landing in order, the terminal job first (dialog paints),
+ * the request-status change a beat later (card gone). Mounted here it
+ * doesn't care whether the request is still pending, still rendered, or
+ * in the queue at all; it raises with an empty queue behind it, which is
+ * the state applying the last pending request actually produces.
+ *
+ * **Which outcome, when several are waiting.** One at a time, oldest
+ * completion first, each needing its own dismissal. Every outcome is a
+ * separate acknowledgement — a `failed` must not be buried under an
+ * `applied` that finished after it — so "newest wins" is not on the
+ * table if it means the rest are never seen. Between the two orders that
+ * do show all of them, completion order is chosen because it is
+ * *monotone*: the selection can only change by being dismissed. Newest
+ * first would let a job terminating a beat later replace the dialog's
+ * title and body while a tap is already travelling toward Dismiss, and
+ * the manager acknowledges something they never read. It also matches
+ * the order they tapped Apply in.
+ *
+ * **What makes an outcome ours, and history.** Unchanged from the
+ * per-card version, and both facts are still needed:
+ *
+ *   - `created_by_device` — the id this device wrote at tap time. A job
+ *     the manager queued from another phone belongs to that phone's
+ *     screen, and a job seeded by anything else stays silent. A device
+ *     id we can't read (storage locked down) matches nothing, so the
+ *     dialog stays away rather than raising on jobs we can't attribute.
+ *   - the persisted acknowledgement — dismissing is what makes an
+ *     outcome history, and it has to survive the reload a locked phone
+ *     guarantees. See `acknowledgedJobs.ts`.
+ *
+ * The raise is deliberately NOT gated on having witnessed the terminal
+ * transition. The manager taps Apply, turns to their desktop to watch it
+ * work, and the phone locks; by the time they look back the page has
+ * re-mounted and the job is already terminal on first sight.
+ */
+export function RemoteApplyResults({ jobs, labelForScope }: RemoteApplyResultsProps) {
+  const deviceId = useMemo(() => {
+    try {
+      return getDeviceId();
+    } catch {
+      return null;
+    }
+  }, []);
+  // In-session half of the acknowledgement, so dismissing takes effect
+  // without re-reading storage; `acknowledgeJob` writes the half that
+  // survives the reload. A set, not a single id, because outcomes are
+  // shown in sequence and each dismissal has to stick as the next one
+  // takes the stage.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const job = useMemo(
+    () => pickUnacknowledgedOutcome(jobs, deviceId, dismissed),
+    [jobs, deviceId, dismissed],
+  );
+  if (!job) return null;
+  return (
+    <RemoteApplyResultDialog
+      // Remount between consecutive outcomes: a fresh dialog rather than
+      // one whose contents changed under the manager.
+      key={job.job_id}
+      job={job}
+      labelForScope={labelForScope}
+      onDismiss={() => {
+        acknowledgeJob(job.job_id);
+        setDismissed((prev) => new Set(prev).add(job.job_id));
+      }}
+    />
+  );
+}
+
+/**
+ * The outcome this device still owes the manager an acknowledgement for,
+ * or `undefined`. Oldest completion first — see {@link RemoteApplyResults}
+ * for why order is completion and not recency.
+ *
+ * Exported for direct unit tests: the selection is the whole behaviour,
+ * and it is much easier to pin every branch here than through the page.
+ */
+export function pickUnacknowledgedOutcome(
+  jobs: readonly RemoteApplyJobWithId[],
+  deviceId: string | null,
+  dismissed: ReadonlySet<string>,
+): RemoteApplyJobWithId | undefined {
+  if (deviceId === null) return undefined;
+  let best: RemoteApplyJobWithId | undefined;
+  for (const job of jobs) {
+    if (!isRemoteApplyTerminal(job.status)) continue;
+    if (job.created_by_device !== deviceId) continue;
+    if (dismissed.has(job.job_id)) continue;
+    if (isJobAcknowledged(job.job_id)) continue;
+    if (best === undefined || finishedFirst(job, best)) best = job;
+  }
+  return best;
+}
+
+function finishedFirst(job: RemoteApplyJobWithId, incumbent: RemoteApplyJobWithId): boolean {
+  const a = outcomeOrderKey(job);
+  const b = outcomeOrderKey(incumbent);
+  if (a !== b) return a < b;
+  // Same reading (commonly: both unresolved). The mailbox query is
+  // unordered, so tie-break on the id rather than let the selection
+  // depend on the order the snapshot happened to arrive in.
+  return job.job_id < incumbent.job_id;
+}
+
+/**
+ * When an outcome landed. `finished_at` is the honest answer and the
+ * extension writes it on every terminal transition; `created_at`
+ * backstops the phone's own `queued → cancelled` write, whose
+ * `serverTimestamp()` reads as null in the local snapshot that follows
+ * it. Both unresolved means "this device wrote it a moment ago", which
+ * is the newest thing there is — hence last in an oldest-first order.
+ */
+function outcomeOrderKey(job: RemoteApplyJobWithId): number {
+  return toMillis(job.finished_at) ?? toMillis(job.created_at) ?? Number.POSITIVE_INFINITY;
+}
+
 export interface RemoteApplyResultDialogProps {
   job: RemoteApplyJob;
-  requestId: string;
   labelForScope?: ((scope: string) => string) | undefined;
   onDismiss: () => void;
 }
@@ -340,29 +425,42 @@ export interface RemoteApplyResultDialogProps {
  * Not dismissable by Escape or a tap outside: the point is that it gets
  * clicked. Same as the desktop's, which offers only its buttons.
  *
+ * Everything it renders comes off the job doc it is handed — including
+ * the request id its test ids are keyed by. It is mounted at page level,
+ * where there may be no card for this request at all; taking any of it
+ * from a card's derived props would put the coupling that broke this
+ * feature back, one level down.
+ *
  * The detail comes from {@link statusView}, the same function the
  * inline row renders from, so the two can't word an outcome
  * differently. What the dialog adds is what the row has no room for:
  * the desktop's provisioning note (what it actually did in Kindoo) and
  * the over-cap warning.
  *
- * **No retry button on `partial`.** The desktop's version has one, and
- * it is not an action this surface can reproduce. It replays the
- * captured `MarkRequestCompleteInput` — an SBA-only write, no Kindoo
- * call — and the job doc records only `provisioning_note` and
- * `kindoo_uid`, not that input; the completion note would have to be
- * guessed. The phone's own "Try again" is a different action again (a
- * fresh job, i.e. a full re-provision), which is why `partial` is
- * treated as settled and doesn't get it. The request is still
- * `pending`, so the desktop's own card can finish it with the tested
- * path — which is what the outcome message says to do.
+ * **Dismiss is the only exit — no retry, on any status.** For `partial`
+ * the desktop's version has a retry and it is not an action this surface
+ * can reproduce: it replays the captured `MarkRequestCompleteInput` (an
+ * SBA-only write, no Kindoo call), and the job doc records only
+ * `provisioning_note` and `kindoo_uid`, not that input. For `failed` the
+ * question is sharper, because the request may have left the queue and
+ * taken its "Try again" with it — but every shape that produces one says
+ * no. `request_not_pending` means the request is gone precisely because
+ * someone else resolved it, so there is nothing left to apply. A
+ * stranded tab that got as far as `markRequestComplete` before dying is
+ * finalised `failed` with a message that refuses to say whether Kindoo
+ * took the write — retrying that is how a licence gets consumed twice.
+ * And the failures that are genuinely worth another go (`site_mismatch`,
+ * `kindoo_session_lost`, `building_rule_missing`) leave the request
+ * `pending`, so its card is still on the page with the retry that
+ * belongs there. A retry here would be available exactly when it is
+ * unsafe and redundant exactly when it is safe.
  */
 export function RemoteApplyResultDialog({
   job,
-  requestId,
   labelForScope,
   onDismiss,
 }: RemoteApplyResultDialogProps) {
+  const requestId = job.request_id;
   const view = statusView(job);
   // `applied` writes the same string to both fields; fall back so an
   // outcome from an extension that only set `message` still says what

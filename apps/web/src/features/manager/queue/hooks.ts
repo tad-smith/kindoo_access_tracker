@@ -265,6 +265,18 @@ export interface RemoteApplyJobsResult {
   /** The job each request's card should render, by `request_id`. */
   byRequest: Map<string, RemoteApplyJobWithId>;
   /**
+   * The same jobs as a list — one per request, already reduced by
+   * {@link pickRemoteApplyJob}. This is what the page-level result
+   * dialog selects an outcome across, and it deliberately spans the
+   * whole mailbox rather than the pending list: a successful apply ends
+   * by marking its request complete, so by the time there is an outcome
+   * to announce the request is gone. Selecting over the reduced set
+   * rather than the raw jobs also inherits the duplicate rule — the
+   * `failed` orphan of a duplicate never raises a dialog claiming a
+   * request failed that in fact applied.
+   */
+  resolved: readonly RemoteApplyJobWithId[];
+  /**
    * The subscription hasn't resolved yet, so "no job for this request"
    * is not yet a fact. The card withholds the Apply button until it is —
    * tapping into an unresolved mailbox is one of the ways a request ends
@@ -303,7 +315,7 @@ export function useRemoteApplyJobsByRequest(): RemoteApplyJobsResult {
     return remoteApplyJobsCol(db, principal.canonical) as unknown as Query<RemoteApplyJobWithId>;
   }, [principal.canonical]);
   const jobs = useFirestoreCollection<RemoteApplyJobWithId>(q, { idField: 'job_id' });
-  const byRequest = useMemo(() => {
+  const byRequest = useMemo<Map<string, RemoteApplyJobWithId>>(() => {
     const grouped = new Map<string, RemoteApplyJobWithId[]>();
     for (const job of jobs.data ?? []) {
       const forRequest = grouped.get(job.request_id);
@@ -317,7 +329,10 @@ export function useRemoteApplyJobsByRequest(): RemoteApplyJobsResult {
     }
     return resolved;
   }, [jobs.data]);
-  return { byRequest, isLoading: jobs.isLoading };
+  // Memoised so the result dialog's selection doesn't recompute (and its
+  // localStorage reads don't re-run) on every unrelated page render.
+  const resolved = useMemo(() => [...byRequest.values()], [byRequest]);
+  return { byRequest, resolved, isLoading: jobs.isLoading };
 }
 
 /**

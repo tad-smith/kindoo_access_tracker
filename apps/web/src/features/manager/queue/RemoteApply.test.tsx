@@ -16,30 +16,44 @@
 // already consumed a licence.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {
   OverCapEntry,
   RemoteApplyDesktopWithId,
   RemoteApplyJobStatus,
   RemoteApplyOutcome,
+  TimestampLike,
 } from '@kindoo/shared';
 
 const queueMutateMock = vi.fn();
 const useQueueRemoteApplyJobMock = vi.fn();
 const pickupTimeoutMock = vi.fn();
 
-vi.mock('./hooks', () => ({
-  useQueueRemoteApplyJob: () => useQueueRemoteApplyJobMock(),
-  useRemoteApplyPickupTimeout: (...args: unknown[]) => pickupTimeoutMock(...args),
-}));
+vi.mock('./hooks', async () => {
+  const actual = await vi.importActual<typeof import('./hooks')>('./hooks');
+  return {
+    // `toMillis` is the real one: the selection's ordering is built on
+    // it, and a stub would make the ordering tests prove nothing.
+    toMillis: actual.toMillis,
+    useQueueRemoteApplyJob: () => useQueueRemoteApplyJobMock(),
+    useRemoteApplyPickupTimeout: (...args: unknown[]) => pickupTimeoutMock(...args),
+  };
+});
 
 // The result dialog only raises for a job THIS device queued, matched on
 // `created_by_device`. Pin the id so the fixture jobs below read as ours.
 vi.mock('../../notifications/lib', () => ({ getDeviceId: () => 'device-1' }));
 
-import { RemoteApplyPresenceNote, RemoteApplyRow, overCapLine, presenceCopy } from './RemoteApply';
-import { clearAcknowledgedJobs } from './acknowledgedJobs';
+import {
+  RemoteApplyPresenceNote,
+  RemoteApplyResults,
+  RemoteApplyRow,
+  overCapLine,
+  pickUnacknowledgedOutcome,
+  presenceCopy,
+} from './RemoteApply';
+import { acknowledgeJob, clearAcknowledgedJobs } from './acknowledgedJobs';
 import type { RemoteApplyJobWithId, RemoteApplyPresenceResult } from './hooks';
 
 function desktop(siteKey: string, siteName: string | null = null): RemoteApplyDesktopWithId {
@@ -67,6 +81,15 @@ function presence(
   };
 }
 
+function ts(ms: number): TimestampLike {
+  return {
+    seconds: Math.floor(ms / 1000),
+    nanoseconds: 0,
+    toDate: () => new Date(ms),
+    toMillis: () => ms,
+  };
+}
+
 function job(status: RemoteApplyJobStatus, outcome?: RemoteApplyOutcome): RemoteApplyJobWithId {
   return {
     job_id: 'job-1',
@@ -74,7 +97,7 @@ function job(status: RemoteApplyJobStatus, outcome?: RemoteApplyOutcome): Remote
     stake_id: 'csnorth',
     target_site_key: 'home',
     status,
-    created_at: { seconds: 0, nanoseconds: 0, toDate: () => new Date(0), toMillis: () => 0 },
+    created_at: ts(0),
     created_by_device: 'device-1',
     lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
     ...(outcome ? { outcome } : {}),
@@ -326,10 +349,6 @@ describe('<RemoteApplyRow />', () => {
         {...covered({ job: job('failed', { code: 'error', message: 'Kindoo said no.' }) })}
       />,
     );
-    // The failure raises its result dialog first — acknowledge, then act.
-    // The modal holds the card inert until it's dismissed, which is the
-    // sequence a manager actually walks: read what went wrong, retry.
-    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     await user.click(screen.getByTestId('remote-apply-button-req-1'));
     expect(queueMutateMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('remote-apply-button-req-1')).toBeNull();
@@ -484,7 +503,12 @@ describe('<RemoteApplyRow />', () => {
 // so a manager who tapped Apply and pocketed the phone came back to a
 // card that had quietly changed colour and no confirmation that anything
 // had been read.
-describe('<RemoteApplyRow /> — result dialog', () => {
+//
+// This surface is mounted by the page, not by a card, and takes the
+// mailbox rather than one card's job. `RemoteApplyResults.test.tsx`
+// covers why (a card cannot outlive the apply that completes its
+// request); what's asserted here is the wording and the mechanics.
+describe('<RemoteApplyResults />', () => {
   const applied = (over_caps?: OverCapEntry[]) =>
     job('applied', {
       code: 'applied',
@@ -495,11 +519,11 @@ describe('<RemoteApplyRow /> — result dialog', () => {
 
   const label = (scope: string) => (scope === 'stake' ? 'Stake' : 'Cottonwood');
 
-  it('raises a dialog when the desktop finishes a job this device was watching', () => {
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+  it('raises a dialog when the desktop finishes a job this device queued', () => {
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
     expect(screen.queryByRole('dialog')).toBeNull();
 
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    rerender(<RemoteApplyResults jobs={[applied()]} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByTestId('remote-apply-result-req-1')).toHaveAttribute(
       'data-status',
@@ -515,35 +539,41 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     // desktop to watch, phone locks. On wake the page has re-mounted and
     // the job is terminal on first sight. Requiring a witnessed
     // transition suppressed the dialog in exactly that case.
-    render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    render(<RemoteApplyResults jobs={[applied()]} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByTestId('remote-apply-result-note-req-1')).toHaveTextContent(
       'Added Jane Doe to Maple Building.',
     );
   });
 
+  it('keys its test ids off the job, not off a card that may be gone', () => {
+    // The dialog outlives the request's card by design, so everything it
+    // renders has to come off the job doc it was handed.
+    render(<RemoteApplyResults jobs={[{ ...applied(), request_id: 'req-elsewhere' }]} />);
+    expect(screen.getByTestId('remote-apply-result-req-elsewhere')).toBeInTheDocument();
+  });
+
   it('stays silent for a terminal job another device queued', () => {
     // The manager's other phone owns that outcome's screen.
-    render(
-      <RemoteApplyRow
-        {...covered({ job: { ...applied(), created_by_device: 'some-other-phone' } })}
-      />,
-    );
+    render(<RemoteApplyResults jobs={[{ ...applied(), created_by_device: 'some-other-phone' }]} />);
     expect(screen.queryByRole('dialog')).toBeNull();
-    // The row still reports it — this is about whose screen interrupts.
-    expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent('Applied ✓');
+  });
+
+  it('stays silent for a job still in flight', () => {
+    render(<RemoteApplyResults jobs={[job('queued'), job('running')]} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('does not raise again after a remount once the outcome was dismissed', async () => {
     // A locked phone guarantees the reload, so the acknowledgement has
     // to outlive the component — otherwise the dialog re-pops every time
-    // the queue mounts until the request leaves it.
+    // the queue mounts.
     const user = userEvent.setup();
-    const { unmount } = render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    const { unmount } = render(<RemoteApplyResults jobs={[applied()]} />);
     await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     unmount();
 
-    render(<RemoteApplyRow {...covered({ job: applied() })} />);
+    render(<RemoteApplyResults jobs={[applied()]} />);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -552,38 +582,55 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     // it must not swallow the retry's own outcome.
     const user = userEvent.setup();
     const { unmount } = render(
-      <RemoteApplyRow
-        {...covered({ job: job('failed', { code: 'error', message: 'Kindoo said no.' }) })}
-      />,
+      <RemoteApplyResults jobs={[job('failed', { code: 'error', message: 'Kindoo said no.' })]} />,
     );
     await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     unmount();
 
-    render(<RemoteApplyRow {...covered({ job: { ...applied(), job_id: 'job-2' } })} />);
+    render(<RemoteApplyResults jobs={[{ ...applied(), job_id: 'job-2' }]} />);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('keeps the inline row status alongside the dialog', () => {
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
-    expect(screen.getByTestId('remote-apply-status-req-1')).toHaveTextContent('Applied ✓');
-  });
-
   it('does not close on Escape — the point is that it gets acknowledged', () => {
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
+    rerender(<RemoteApplyResults jobs={[applied()]} />);
     fireEvent.keyDown(document.body, { key: 'Escape', code: 'Escape' });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('closes once the manager taps Dismiss', async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
+    rerender(<RemoteApplyResults jobs={[applied()]} />);
     await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     expect(screen.queryByRole('dialog')).toBeNull();
     // …and stays closed while the same terminal job keeps arriving.
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    rerender(<RemoteApplyResults jobs={[applied()]} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('offers Dismiss and nothing else — a retry here would misfire on every failure shape', async () => {
+    // `partial`: the desktop's retry replays a captured
+    // `MarkRequestCompleteInput` this surface does not hold. `failed`:
+    // the shapes worth retrying leave the request pending, so its card
+    // still carries Try again; the shapes that don't (`request_not_pending`,
+    // a stranded tab) must not be retried at all.
+    const user = userEvent.setup();
+    render(
+      <RemoteApplyResults
+        jobs={[
+          job('partial', {
+            code: 'sba_incomplete',
+            message: 'Applied in Kindoo, but SBA could not be marked complete.',
+          }),
+        ]}
+      />,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByText(/Try again/i)).toBeNull();
+    expect(screen.queryByText(/Mark Complete/i)).toBeNull();
+    await user.click(screen.getByTestId('remote-apply-result-dismiss-req-1'));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -592,17 +639,17 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     // them — a manager applying from their phone never learned a cap
     // had been breached.
     const { rerender } = render(
-      <RemoteApplyRow {...covered({ job: job('running'), labelForScope: label })} />,
+      <RemoteApplyResults jobs={[job('running')]} labelForScope={label} />,
     );
     rerender(
-      <RemoteApplyRow
-        {...covered({
-          job: applied([
+      <RemoteApplyResults
+        jobs={[
+          applied([
             { pool: 'stake', count: 12, cap: 10, over_by: 2 },
             { pool: 'CO', count: 5, cap: 4, over_by: 1 },
           ]),
-          labelForScope: label,
-        })}
+        ]}
+        labelForScope={label}
       />,
     );
     const overcap = screen.getByTestId('remote-apply-result-overcap-req-1');
@@ -611,28 +658,24 @@ describe('<RemoteApplyRow /> — result dialog', () => {
   });
 
   it('shows no over-cap block when the outcome carries none', () => {
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
-    rerender(<RemoteApplyRow {...covered({ job: applied() })} />);
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
+    rerender(<RemoteApplyResults jobs={[applied()]} />);
     expect(screen.queryByTestId('remote-apply-result-overcap-req-1')).toBeNull();
   });
 
   it('sends a partial outcome to the desktop instead of offering a retry that would misfire', () => {
-    // The desktop's dialog retries the SBA side only, replaying a
-    // captured input this surface does not hold. The phone's own retry
-    // is a different action (a whole fresh provision), so neither
-    // button belongs here — only the instruction.
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
     rerender(
-      <RemoteApplyRow
-        {...covered({
-          job: job('partial', {
+      <RemoteApplyResults
+        jobs={[
+          job('partial', {
             code: 'sba_incomplete',
             message:
               'Applied in Kindoo, but Stake Building Access could not be marked complete: ' +
               'network error. Finish it on your desktop.',
             provisioning_note: 'Added Jane Doe to Maple Building.',
           }),
-        })}
+        ]}
       />,
     );
     const body = screen.getByTestId('remote-apply-result-req-1');
@@ -647,26 +690,118 @@ describe('<RemoteApplyRow /> — result dialog', () => {
     expect(screen.getByTestId('remote-apply-result-detail-req-1')).toHaveTextContent(
       /Finish it on your desktop/i,
     );
-    expect(screen.queryByText(/Mark Complete/i)).toBeNull();
-    expect(screen.getByTestId('remote-apply-result-dismiss-req-1')).toBeInTheDocument();
   });
 
   it('raises the dialog on a failure too, wording it exactly as the row does', () => {
-    const { rerender } = render(<RemoteApplyRow {...covered({ job: job('running') })} />);
+    const { rerender } = render(<RemoteApplyResults jobs={[job('running')]} />);
     rerender(
-      <RemoteApplyRow
-        {...covered({
-          job: job('failed', {
+      <RemoteApplyResults
+        jobs={[
+          job('failed', {
             code: 'site_mismatch',
             message: 'Your desktop is on Site A; this request needs Site B.',
           }),
-        })}
+        ]}
       />,
     );
     expect(screen.getByRole('dialog')).toHaveTextContent(/didn't finish this/i);
     expect(screen.getByTestId('remote-apply-result-detail-req-1')).toHaveTextContent(
       'Your desktop is on Site A; this request needs Site B.',
     );
+  });
+});
+
+// The selection is the whole behaviour of the page-level dialog, so it
+// is pinned directly rather than only through the rendered component.
+describe('pickUnacknowledgedOutcome', () => {
+  const terminal = (jobId: string, requestId: string, finishedAtMs: number) => ({
+    ...job('applied', { code: 'applied', message: 'ok' }),
+    job_id: jobId,
+    request_id: requestId,
+    finished_at: ts(finishedAtMs),
+  });
+
+  it('picks the outcome that finished first, so the newest cannot bury the rest', () => {
+    const picked = pickUnacknowledgedOutcome(
+      [terminal('job-late', 'req-b', 9_000), terminal('job-early', 'req-a', 3_000)],
+      'device-1',
+      new Set(),
+    );
+    expect(picked?.job_id).toBe('job-early');
+  });
+
+  it('moves on to the next outcome once the earlier one is dismissed', () => {
+    const jobs = [terminal('job-late', 'req-b', 9_000), terminal('job-early', 'req-a', 3_000)];
+    expect(pickUnacknowledgedOutcome(jobs, 'device-1', new Set(['job-early']))?.job_id).toBe(
+      'job-late',
+    );
+    expect(
+      pickUnacknowledgedOutcome(jobs, 'device-1', new Set(['job-early', 'job-late'])),
+    ).toBeUndefined();
+  });
+
+  it('falls back to created_at when the terminal write has not resolved yet', () => {
+    // The phone's own `queued → cancelled` write: `finished_at` is an
+    // unresolved `serverTimestamp()` in the snapshot that follows it.
+    const cancelled = { ...job('cancelled'), job_id: 'job-cancelled', created_at: ts(1_000) };
+    const picked = pickUnacknowledgedOutcome(
+      [terminal('job-later', 'req-b', 5_000), cancelled],
+      'device-1',
+      new Set(),
+    );
+    expect(picked?.job_id).toBe('job-cancelled');
+  });
+
+  it('orders a job with no readable timestamps last — it was written a moment ago', () => {
+    // Both fields unresolved `serverTimestamp()`s, which read locally as
+    // a bare `{seconds, nanoseconds}` with no `toMillis`.
+    const justNow = {
+      ...job('applied', { code: 'applied', message: 'ok' }),
+      job_id: 'job-now',
+      created_at: { seconds: 0, nanoseconds: 0 } as unknown as TimestampLike,
+    };
+    const picked = pickUnacknowledgedOutcome(
+      [justNow, terminal('job-older', 'req-b', 5_000)],
+      'device-1',
+      new Set(),
+    );
+    expect(picked?.job_id).toBe('job-older');
+  });
+
+  it('breaks a tie on job id rather than on snapshot arrival order', () => {
+    // The mailbox query is unordered; the selection must not be.
+    const a = terminal('job-a', 'req-a', 4_000);
+    const b = terminal('job-b', 'req-b', 4_000);
+    expect(pickUnacknowledgedOutcome([a, b], 'device-1', new Set())?.job_id).toBe('job-a');
+    expect(pickUnacknowledgedOutcome([b, a], 'device-1', new Set())?.job_id).toBe('job-a');
+  });
+
+  it('skips jobs another device queued and jobs still in flight', () => {
+    expect(
+      pickUnacknowledgedOutcome(
+        [
+          { ...terminal('job-theirs', 'req-a', 1_000), created_by_device: 'other-phone' },
+          job('running'),
+        ],
+        'device-1',
+        new Set(),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('raises nothing at all when this device has no readable id', () => {
+    // Storage locked down: we cannot attribute anything, so we interrupt
+    // for nothing rather than for everything.
+    expect(
+      pickUnacknowledgedOutcome([terminal('job-1', 'req-a', 1_000)], null, new Set()),
+    ).toBeUndefined();
+  });
+
+  it('skips an outcome already acknowledged on this device', () => {
+    acknowledgeJob('job-1');
+    expect(
+      pickUnacknowledgedOutcome([terminal('job-1', 'req-a', 1_000)], 'device-1', new Set()),
+    ).toBeUndefined();
   });
 });
 

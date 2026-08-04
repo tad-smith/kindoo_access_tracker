@@ -24,7 +24,7 @@ const useRemoteApplyPresenceMock = vi.fn();
 vi.mock('./hooks', () => ({
   usePendingRequests: () => usePendingMock(),
   useRemoteApplyPresence: () => useRemoteApplyPresenceMock(),
-  useRemoteApplyJobsByRequest: () => ({ byRequest: new Map(), isLoading: false }),
+  useRemoteApplyJobsByRequest: () => ({ byRequest: new Map(), resolved: [], isLoading: false }),
   // The catalogues remote apply derives a request's target Kindoo site
   // from. Empty here — the surface that reads them is stubbed below.
   useKindooSites: () => ({ data: [], isLoading: false }),
@@ -44,6 +44,10 @@ vi.mock('./RemoteApply', () => ({
   RemoteApplyRow: ({ requestId }: { requestId: string }) => (
     <div data-testid={`remote-apply-row-${requestId}`} />
   ),
+  // The page-level result dialog. Its lifetime — which is the whole
+  // point of it being here rather than on a card — is covered in
+  // `RemoteApplyResults.test.tsx`, which renders this page for real.
+  RemoteApplyResults: () => null,
 }));
 
 vi.mock('../../requests/hooks', () => ({
