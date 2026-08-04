@@ -14,7 +14,7 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import type { AccessRequest, AuditLog, Stake } from '@kindoo/shared';
+import type { AccessRequest, AuditLog, Stake, Ward } from '@kindoo/shared';
 import { notifyOnRequestWrite } from '../src/triggers/notifyOnRequestWrite.js';
 import {
   _setResendSender,
@@ -85,6 +85,22 @@ async function seedStake(overrides: Partial<Stake> = {}): Promise<void> {
     ...overrides,
   };
   await db.doc(`stakes/${STAKE_ID}`).set(stake);
+}
+
+// Emails render the ward NAME. Seeding is per-test so the unseeded
+// fallback (raw code) stays covered too.
+async function seedWard(wardCode: string, wardName: string): Promise<void> {
+  const { db } = requireEmulators();
+  const ward: Ward = {
+    ward_code: wardCode,
+    ward_name: wardName,
+    building_name: 'Greenwood',
+    seat_cap: 20,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+  };
+  await db.doc(`stakes/${STAKE_ID}/wards/${wardCode}`).set(ward);
 }
 
 async function seedManager(
@@ -177,6 +193,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
   it('on create (pending) sends a new-request email naming the requester by name + calling', async () => {
     await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
     await seedRequesterAccess();
     await seedManager('alice@gmail.com', true);
     await seedManager('bob@gmail.com', false); // inactive — excluded
@@ -191,13 +208,52 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(c.from).toContain('CSNorth Stake');
     expect(c.from).toContain('<noreply@mail.stakebuildingaccess.org>');
     expect(c.to.sort()).toEqual(['alice@gmail.com', 'carol@gmail.com']);
-    expect(c.subject).toContain('New request from John Smith (Bishop) (GE)');
+    expect(c.subject).toContain('New request from John Smith (Bishop) — Greenwood Ward');
     expect(c.text).toContain('John Smith (Bishop) submitted a new manual-add request');
+    expect(c.text).toContain('Ward:      Greenwood Ward');
+    expect(c.text).toContain('Request:   Manual access');
     expect(c.text).toContain('https://stakebuildingaccess.org/manager/queue');
+    // Both parts ship, and the HTML says the same thing.
+    expect(c.html).toContain('John Smith (Bishop) submitted a new manual-add request');
+    expect(c.html).toContain('>Greenwood Ward</td>');
+    expect(c.html).toContain('>Manual access</td>');
+    expect(c.html).toContain('>Review the queue</a>');
+  });
+
+  // The raw code is the fallback when the wards collection has no match.
+  it('falls back to the raw scope code when the ward is not seeded', async () => {
+    await seedStake();
+    await seedRequesterAccess();
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1-noward' }]);
+    restoreSender = _setResendSender(sender);
+
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
+
+    expect(calls[0]!.subject).toContain('New request from John Smith (Bishop) — GE');
+    expect(calls[0]!.text).toContain('Ward:      GE');
+    expect(calls[0]!.html).toContain('>GE</td>');
+  });
+
+  it('renders a stake-scoped request as Scope: Stake', async () => {
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1-stake' }]);
+    restoreSender = _setResendSender(sender);
+
+    const req: AccessRequest = { ...baseRequest, scope: 'stake' };
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: req }));
+
+    expect(calls[0]!.subject).toContain('— Stake');
+    expect(calls[0]!.text).toContain('Scope:     Stake');
+    expect(calls[0]!.html).toContain('>Scope</th>');
+    expect(calls[0]!.html).toContain('>Stake</td>');
   });
 
   it('on create (pending) falls back to the raw email when no requester access doc exists', async () => {
     await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
     await seedManager('alice@gmail.com', true);
     const { sender, calls } = mockSender([{ ok: true, id: 'mid-1b' }]);
     restoreSender = _setResendSender(sender);
@@ -205,7 +261,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com (GE)');
+    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com — Greenwood Ward');
     expect(calls[0]!.text).toContain('Bish@gmail.com submitted a new manual-add request');
   });
 
@@ -225,7 +281,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('New request from Manager Mary (Kindoo Manager) (GE)');
+    expect(calls[0]!.subject).toContain('New request from Manager Mary (Kindoo Manager) — GE');
     expect(calls[0]!.text).toContain(
       'Manager Mary (Kindoo Manager) submitted a new manual-add request',
     );
@@ -247,7 +303,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('New request from John Smith (Bishop) (GE)');
+    expect(calls[0]!.subject).toContain('New request from John Smith (Bishop) — GE');
   });
 
   // An inactive manager doc contributes nothing — same output as before
@@ -267,7 +323,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     await notifyOnRequestWrite.run(makeEvent({ before: null, after: baseRequest }));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com (GE)');
+    expect(calls[0]!.subject).toContain('New request from Bish@gmail.com — GE');
   });
 
   it('on pending → complete sends a completed email to the requester only', async () => {
@@ -288,9 +344,12 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to).toEqual(['Bish@gmail.com']);
-    expect(calls[0]!.subject).toContain('has been completed');
-    expect(calls[0]!.text).toContain('Your request for manual access');
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] Your request for Subject Person has been completed',
+    );
+    expect(calls[0]!.text).toContain('Your manual access request for Subject Person');
     expect(calls[0]!.text).toContain('https://stakebuildingaccess.org/my-requests');
+    expect(calls[0]!.html).toContain('>View your requests</a>');
   });
 
   it('R-1 race: completed email surfaces the completion_note', async () => {
@@ -308,7 +367,10 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     await notifyOnRequestWrite.run(makeEvent({ before, after }));
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.text).toContain('Note: Seat already removed at completion time (no-op).');
+    expect(calls[0]!.text).toContain(
+      'Note from the manager: Seat already removed at completion time (no-op).',
+    );
+    expect(calls[0]!.html).toContain('>Note from the manager</th>');
   });
 
   it('on pending → rejected sends a rejected email surfacing the reason', async () => {
@@ -327,8 +389,13 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to).toEqual(['Bish@gmail.com']);
-    expect(calls[0]!.subject).toContain('Your request was rejected');
-    expect(calls[0]!.text).toContain('Reason:    Already has access.');
+    expect(calls[0]!.subject).toBe(
+      '[Stake Building Access] Your request for Subject Person was rejected',
+    );
+    expect(calls[0]!.text).toContain('Reason given: Already has access.');
+    expect(calls[0]!.html).toContain(
+      'was <span style="color:#9b2c1c;font-weight:600">rejected</span>.',
+    );
   });
 
   it('on pending → cancelled sends a cancelled email naming the requester by name + calling', async () => {
@@ -345,8 +412,10 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.to.sort()).toEqual(['alice@gmail.com', 'carol@gmail.com']);
-    expect(calls[0]!.subject).toContain('Request cancelled by John Smith (Bishop)');
-    expect(calls[0]!.text).toContain('John Smith (Bishop) cancelled their request');
+    expect(calls[0]!.subject).toContain('Request cancelled by John Smith (Bishop) — GE');
+    expect(calls[0]!.text).toContain('John Smith (Bishop) cancelled their manual access request');
+    expect(calls[0]!.html).toContain('John Smith (Bishop) cancelled their manual access request');
+    expect(calls[0]!.html).toContain('>Open the queue</a>');
   });
 
   // Same `kindooManagers` backstop as the new-request path, pinned at the
@@ -370,7 +439,9 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.subject).toContain('Request cancelled by Manager Mary (Kindoo Manager)');
-    expect(calls[0]!.text).toContain('Manager Mary (Kindoo Manager) cancelled their request');
+    expect(calls[0]!.text).toContain(
+      'Manager Mary (Kindoo Manager) cancelled their manual access request',
+    );
   });
 
   it('on pending → cancelled falls back to the raw email when neither an access nor a manager doc names the requester', async () => {
@@ -385,7 +456,7 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.subject).toContain('Request cancelled by Bish@gmail.com');
-    expect(calls[0]!.text).toContain('Bish@gmail.com cancelled their request');
+    expect(calls[0]!.text).toContain('Bish@gmail.com cancelled their manual access request');
   });
 
   it('non-status update on a pending request does not send anything', async () => {
