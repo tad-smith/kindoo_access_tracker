@@ -7,9 +7,20 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-84] Spec §16: the result dialog belongs to the page, not to the request's card
-Status: open
+Status: done (2026-08-03 — `feat/remote-apply-docs5`, against `feat/remote-apply` at `263af23`)
 Owner: @docs-keeper
 Phase: remote apply (D27)
+
+**Done.** All of it, plus the end-user guide — which had never mentioned remote apply at all, and in two places actively contradicted it.
+
+- `docs/user-guide/kindoo-managers.html` — new **Section 6, "Applying a request from your phone"**: what it does, the opt-in checkbox and its per-Chrome-profile scope, the three desktop preconditions, the four presence lines, the button and the names-a-site card, the result dialog with its over-cap block and its one-at-a-time ordering, a five-row failure table, and why nothing on the dialog re-runs the work. The guide called the Requests Queue **read-only** in §1 and §4; both corrected. Sections 6–14 renumbered 7–15, Fig 6.1 → 7.1 and Fig 11.1 → 12.1 with them; two troubleshooting entries, one glossary row, version 1.3 → 1.4. `creating-requests.html` checked and deliberately unchanged — nothing about submitting a request changed. PDFs regenerated (gitignored, so not committed — see below).
+- `spec.md` §16 "Acknowledging the result" — the raise-on-transition paragraph replaced by four: the page-level mount and why the card was the wrong owner, raise-on-sight with the two narrower facts, the acknowledgement cap as a storage backstop, and the oldest-completion-first queueing with its ordering keys. The `partial` retry paragraph generalised to "no retry on any status" with the `failed` case spelled out.
+- `architecture.md` D27 **(v)** amended in place, no new letter: both corrections, the tests-were-green tell, and the three consequences (ordering, the 50 → 500 inversion, no retry). The (v)–(z) closing sentence gained a line on why both corrections have the same root.
+- `docs/changelog/remote-apply.md` — new section "Three fixes from the phone, and why the tests were green throughout"; a "what didn't change" entry on the row staying with the card; two known issues (the unidentifiable `cancelled` dialog, the 500-cap residual); the fifth-pass doc summary. Also records the orphaned-content-script fix (`c1d9d66`), which was on this PR and in no doc.
+
+The `cancelled`-dialog gap is a known issue in the changelog rather than a spec change, as this entry proposed.
+
+Original entry:
 
 Follows T-83, and supersedes two of its details. Shipped on `feat/remote-apply-webfix3`.
 
@@ -26,9 +37,15 @@ Fixed by hoisting the dialog to page level (`RemoteApplyResults` in `apps/web/sr
 One thing the hoist did not solve, worth a known-issue line rather than a spec change: with no card behind it, a `cancelled` dialog carries nothing that identifies which request it is about (`applied` has the provisioning note, `failed` the desktop's message). Bounded in practice — a never-picked-up job never touched its request, so that card is still in the queue.
 
 ## [T-83] Spec §16: the result dialog raises on sight of an own-device outcome, not on a witnessed transition
-Status: open
+Status: done (2026-08-03 — `feat/remote-apply-docs5`, with T-84)
 Owner: @docs-keeper
 Phase: remote apply (D27)
+
+**Done**, folded into T-84's pass because the two corrections land in the same paragraphs. §16's raise rule now reads on-sight-plus-acknowledgement with both narrower facts named, and `architecture.md` D27 (v) records it alongside the hoist.
+
+Its two superseded details needed no unwinding: neither the Try-again knock-on sentence nor the 50-id cap justification had been written into `spec.md` — this entry was filed before the pass that would have added them. The cap is documented at 500, as a storage backstop, per T-84.
+
+Original entry:
 
 `spec.md` §16 "Acknowledging the result" currently carries this paragraph, written against the first cut and now wrong:
 
