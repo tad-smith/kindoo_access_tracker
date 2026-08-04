@@ -41,6 +41,18 @@
 // REMOTE_APPLY_PICKUP_TIMEOUT_MS instead of claiming it — see
 // `expireQueued`.
 //
+// The poll also feeds the gate on the desktop's OWN provision button,
+// which is why it makes two reads and why their order is fixed: the
+// `queued` page first, then the `running` one. See `onBusyRequestIds`
+// and `runningElsewhereRequestIds`.
+//
+// Every tick that can't make those two reads — one that ends early, one
+// whose `running` read fails, one that throws — answers the gate from a
+// single clock instead: whatever the last completed poll published
+// stands for REMOTE_APPLY_BUSY_HOLD_MS and then lapses to `[]`. See that
+// constant for why "I couldn't look" must never publish as "nobody is
+// working".
+//
 // Cadence:
 //   - heartbeat every REMOTE_APPLY_HEARTBEAT_MS (60s)
 //   - poll every REMOTE_APPLY_POLL_VISIBLE_MS (10s) while the tab is
@@ -121,9 +133,53 @@ export const REMOTE_APPLY_STRANDED_MS = 300_000;
  */
 export const REMOTE_APPLY_STRANDED_OTHER_SITE_MS = REMOTE_APPLY_STRANDED_MS * 2;
 
+/**
+ * How long the provision gate goes on answering from the last poll it
+ * completed, once a tick can no longer read the mailbox for itself.
+ *
+ * A tick that ends before the poll and a poll whose `running` read fails
+ * are the same question — "I couldn't look; is a sibling still working?"
+ * — and publishing `[]` answers "no" on no evidence at all. The
+ * reachable failures are transient ones: `getEnvironments` now gives up
+ * after KINDOO_REQUEST_TIMEOUT_MS instead of hanging, and `no-eid` comes
+ * from a DOM scrape that returns null on zero OR several header matches
+ * (`kindoo/auth.ts`). The tick's failure and the click that follows it
+ * are independent samples, so the button can go live and succeed
+ * precisely because the condition was transient — with a sibling tab
+ * mid-`applyRequest`, that is the second `inviteUser` and the consumed
+ * licence this gate exists to prevent.
+ *
+ * Bounded, because a hold nothing can refresh is a gate nothing can
+ * lift, and a manager whose own button is dead while no sibling is
+ * serving them has nowhere to go. The window is sandwiched:
+ *
+ *   - Floor. A hidden tab polls at REMOTE_APPLY_POLL_HIDDEN_MS (60s), so
+ *     under two of those the hold is useless to the tab likeliest to
+ *     have blipped. And ONE failed `getEnvironments` blinds a tab for
+ *     ~90s by itself: 30s to abort, then `lastResolveAt` withholds the
+ *     retry until 60s past the attempt that failed, then up to 30s more
+ *     for the retry. A shorter bound drops the gate on exactly the
+ *     single blip it exists to survive.
+ *   - Ceiling. REMOTE_APPLY_STRANDED_MS (5 min) is where this same loop
+ *     gives up on a `running` job and writes it `failed`. A gate held
+ *     past that refuses on evidence the sweep has already disowned.
+ *
+ * 150s sits between them with a poll period of margin over the floor and
+ * half the ceiling — two consecutive Kindoo failures lift it, one does
+ * not. It lands on the same number as REMOTE_APPLY_STALE_MS, which is
+ * the phone answering "how long does an unrefreshed observation of this
+ * desktop stay true?" from the other side, but stays its own constant:
+ * that one is keyed to the heartbeat period, this one to the poll.
+ */
+export const REMOTE_APPLY_BUSY_HOLD_MS = 150_000;
+
 /** How often a tab looks for stranded jobs. One extra `getDocs` a
  * minute per open Kindoo tab, against a collection of a few docs. */
 const SWEEP_INTERVAL_MS = 60_000;
+
+/** Shared empty publication, so "no job holds anything" is a stable
+ * identity. */
+const EMPTY_IDS: readonly string[] = [];
 
 /** Attempts for the terminal write, and the waits between them. A
  * single Firestore blip must not be what strands a job. */
@@ -170,6 +226,51 @@ export interface RemoteApplyLoopArgs {
    * Drives the desktop's "running" banner + post-run queue refresh. */
   onJobStart?: (job: RemoteApplyJobRef) => void;
   onJobEnd?: (job: RemoteApplyJobRef) => void;
+  /**
+   * The `request_id`s a phone-initiated job holds as of this tick —
+   * still `queued` in the mailbox, `running` on another of the manager's
+   * tabs, or claimed by THIS tab and not yet written terminal. Emitted
+   * only when the set changes.
+   *
+   * `onJobStart` gates only what THIS tab runs, which is a fraction of
+   * the window in which a second `applyRequest` would double-provision.
+   * Two runs for a member not yet in Kindoo is two `inviteUser` calls
+   * and a consumed licence. What this set buys, precisely:
+   *
+   *   - a queued job this tab CANNOT serve — wrong site or wrong stake.
+   *     `onJobStart` never fires for it here; the tab that claims it is
+   *     a different one, and it is covered from the tap right through
+   *     that tab's run.
+   *   - a queued job waiting behind the one this tab is running. One
+   *     claim per tick, so the rest sit out the run.
+   *   - a job another tab is running, for as long as it runs there. The
+   *     claim moves the job out of `queued`, so the queued page alone
+   *     drops it one poll after a sibling wins the race — mid-
+   *     `applyRequest`, which is the expensive moment. Hence the
+   *     `running` half; see `runningElsewhereRequestIds`.
+   *   - this tab's OWN claim, from the claim until its terminal write
+   *     lands. Redundant with `onJobStart` while the run is going well
+   *     and load-bearing when it isn't: `onJobEnd` fires whether or not
+   *     the job reached a terminal status, so dropping the id at claim
+   *     time left the button live from a failed terminal write until the
+   *     next successful poll re-read the job as `running`. See `pollOnce`.
+   *
+   * What it does NOT buy is the phone's tap → claim window for a job
+   * this tab CAN serve: the poll that first sees such a job claims it in
+   * the same tick, so the gate is held across one Firestore write rather
+   * than for a poll period. That window belongs to the phone, which
+   * withholds its own Apply button for a request with a live job.
+   *
+   * Not filtered by `canClaimRemoteApplyJob`: every job in the mailbox
+   * is this manager's, and gating on "can I serve it?" would reopen the
+   * window for exactly the multi-site case the claim rule was shaped
+   * for.
+   *
+   * A tick that can't read the mailbox at all re-emits nothing and
+   * leaves the last set standing, for up to REMOTE_APPLY_BUSY_HOLD_MS
+   * past the poll that produced it; after that the set lapses to `[]`.
+   */
+  onBusyRequestIds?: (requestIds: readonly string[]) => void;
   /**
    * Called with the site key each time this tab successfully publishes a
    * desktop doc. The React host remembers it so opting out can DELETE
@@ -291,9 +392,6 @@ export function startRemoteApplyLoop(
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running = false;
-  /** Epoch ms of the last presence write. `0` forces one on the first
-   * tick so the phone sees the desktop as soon as the toggle flips. */
-  let lastHeartbeatAt = 0;
   /** Epoch ms of the last stranded-job sweep. `0` forces one on the
    * first tick — a job stranded by the previous page load is exactly
    * what a fresh loop should clean up. */
@@ -301,6 +399,45 @@ export function startRemoteApplyLoop(
   /** Set the first time the loop finds itself orphaned by an extension
    * reload, so the halt announces itself exactly once. */
   let contextInvalidated = false;
+  /**
+   * Last set handed to `onBusyRequestIds`, so an unchanged poll result
+   * costs the React host nothing. Without this the host re-renders every
+   * 10 seconds forever.
+   *
+   * `null` rather than `[]` before the first publication, because this is
+   * loop-local state and the host's is not. A restarted loop (the effect
+   * re-runs on a `stakeId` change) starts here at nothing published while
+   * the host still holds the previous loop's set — and seeded with `[]`,
+   * the new loop's first empty publication deduped away, leaving that set
+   * standing with nothing left to age it out. A gate nothing can lift is
+   * exactly what REMOTE_APPLY_BUSY_HOLD_MS exists to prevent.
+   */
+  let publishedBusyIds: readonly string[] | null = null;
+  /**
+   * `request_id`s seen `running` on another tab at the last SUCCESSFUL
+   * read, reused when a read fails.
+   *
+   * A failed read is no evidence that a sibling stopped running the job,
+   * and this half of the set is a safety gate: the honest answer to "I
+   * couldn't look" is to hold what was true a moment ago. It self-
+   * corrects on the next successful read.
+   */
+  let lastRunningElsewhereIds: readonly string[] = EMPTY_IDS;
+  /**
+   * When both of the poll's reads last landed — the moment this tab last
+   * knew the answer the gate is asking for.
+   *
+   * Written in one place, the success branch of
+   * `runningElsewhereRequestIds`, and that is enough to time the whole
+   * gate: the `running` read runs after the queued page, so its success
+   * implies the queued page's. Every path that can't establish a fresh
+   * answer — a failed `running` read, a tick that ends before the poll,
+   * a tick that throws — measures against this one timestamp and either
+   * republishes what it published last or drops to `[]`. One clock, one
+   * bound, so the two sides of "I couldn't look" can't give opposite
+   * answers. See REMOTE_APPLY_BUSY_HOLD_MS.
+   */
+  let lastBusyReadAt = 0;
   /** Jobs this tab is executing right now. The sweep skips them: they
    * are the one set of `running` jobs it can positively attribute to a
    * live runner. */
@@ -314,20 +451,34 @@ export function startRemoteApplyLoop(
    */
   let activeSite: ResolvedTabSite | null = null;
   /**
-   * Epoch ms of the last `getEnvironments` ATTEMPT, and the EID it was
-   * made for — recorded whether or not it produced a site.
+   * Epoch ms of the last heartbeat ATTEMPT, and the EID it was made for
+   * — recorded whether or not it produced a site, and whether or not the
+   * presence write that follows it landed.
    *
-   * These exist because `activeSite === null` is not a usable "re-resolve
-   * me" signal on its own. It is the resting state of two ordinary
-   * situations that persist indefinitely — a Kindoo session that expired
-   * while the tab stayed open, and an EID this stake hasn't configured —
-   * and deriving the question from it alone put a Kindoo API POST on
-   * every 10s poll tick, forever, against a third party's server.
+   * The budget being spent is one `getEnvironments` POST per 60s per open
+   * tab, against a third party's server, and it is a budget on CALLS. So
+   * every path out of `heartbeatIfDue` past this point has to consume the
+   * slot, including the failing ones:
    *
-   * Gating on the attempt instead holds an unresolvable tab to the same
-   * one-call-per-heartbeat budget a healthy one keeps. The EID is stored
-   * alongside so the operator navigating to a different Kindoo site
-   * still re-resolves immediately: that is new information, not a retry.
+   *   - `activeSite === null` is the resting state of two ordinary
+   *     situations that persist indefinitely — a Kindoo session that
+   *     expired while the tab stayed open, and an EID this stake hasn't
+   *     configured — so "re-resolve while unresolved" is an unbounded
+   *     retry at the poll cadence, 10s apart, for as long as the tab is
+   *     open.
+   *   - A tab whose site resolves fine but whose presence write keeps
+   *     failing is the same shape with a different cause. `permission-
+   *     denied` from the `desktops` doc is reachable: deactivate a
+   *     manager while a Kindoo tab stays open and the next token refresh
+   *     starts denying, while `App` only flips to NotAuthorized off a
+   *     queue-fetch denial — nothing on a timer — so this loop keeps
+   *     ticking. Gating the resolved branch on the last SUCCESSFUL write
+   *     put a Kindoo POST on every tick for as long as that lasted.
+   *
+   * Hence one gate, ahead of the resolved / unresolved split, keyed on
+   * the attempt. The EID is stored alongside so the operator navigating
+   * to a different Kindoo site still re-resolves immediately: that is new
+   * information, not a retry.
    */
   let lastResolveAt = 0;
   let lastResolveEid: number | null = null;
@@ -341,6 +492,39 @@ export function startRemoteApplyLoop(
       args.stakeId,
       activeSite?.siteKey ?? null,
     );
+
+  /** Whether the last completed poll is still recent enough to answer
+   * for a tick that couldn't read the mailbox itself. */
+  const busyReadHolds = (): boolean => deps.now() - lastBusyReadAt < REMOTE_APPLY_BUSY_HOLD_MS;
+
+  /**
+   * What a tick that can't poll should publish: what it published last
+   * while the hold stands, `[]` once that has aged out.
+   *
+   * Republishing is free — the same array identity, so `publishBusy`'s
+   * dedupe emits nothing and the React host doesn't re-render.
+   */
+  const heldBusyIds = (): readonly string[] =>
+    busyReadHolds() && publishedBusyIds !== null ? publishedBusyIds : EMPTY_IDS;
+
+  /**
+   * Hand the host the current busy set, if it moved.
+   *
+   * Fed either a set both of the poll's reads produced, or — from every
+   * path that couldn't make them — `heldBusyIds()`. The one caller that
+   * clears outright rather than holding is the opt-in check; see `tick`.
+   */
+  const publishBusy = (requestIds: readonly string[]) => {
+    if (
+      publishedBusyIds !== null &&
+      publishedBusyIds.length === requestIds.length &&
+      publishedBusyIds.every((id, i) => id === requestIds[i])
+    ) {
+      return;
+    }
+    publishedBusyIds = requestIds;
+    args.onBusyRequestIds?.(requestIds);
+  };
 
   const clear = () => {
     if (timer !== undefined) {
@@ -434,17 +618,38 @@ export function startRemoteApplyLoop(
     // stranded a job, and finalising one is pure Firestore work that
     // needs no Kindoo session at all.
     await sweepStrandedIfDue();
-    if (!deps.isEnabled()) return;
+    // The one path that clears outright instead of holding, and the only
+    // one where clearing is honest. Opting out stops the loop, so a held
+    // set published here would have no later tick to age it out; and the
+    // flag is profile-wide, so no sibling tab is polling either.
+    // `useRemoteApply` clears the set on the same transition for the same
+    // reason — this branch covers the tick already in flight when it
+    // lands.
+    if (!deps.isEnabled()) return publishBusy(EMPTY_IDS);
     const sessionResult = deps.readSession();
     if (!sessionResult.ok) {
       // Deliberately silent and deliberately no presence write. See the
-      // module header.
-      return;
+      // module header. The gate HOLDS rather than clearing: `no-eid`
+      // comes from a DOM scrape that fails on zero or several matches,
+      // and the button this would otherwise re-enable takes its own
+      // reading at click time. See REMOTE_APPLY_BUSY_HOLD_MS.
+      return publishBusy(heldBusyIds());
     }
     const session = sessionResult.session;
     const heartbeatOk = await heartbeatIfDue(session);
-    if (!heartbeatOk) return;
-    await pollOnce(session);
+    // Same reasoning: a Kindoo call that failed or timed out is not
+    // evidence that a sibling stopped provisioning.
+    if (!heartbeatOk) return publishBusy(heldBusyIds());
+    try {
+      await pollOnce(session);
+    } catch (err) {
+      // The third way a tick ends without an answer, and the one the
+      // queued read reaches first. Ages against the same bound instead
+      // of leaving the last set standing indefinitely; still thrown, so
+      // `drive` logs it and an orphaned context still halts the loop.
+      if (!contextLost(err)) publishBusy(heldBusyIds());
+      throw err;
+    }
   };
 
   /**
@@ -582,34 +787,39 @@ export function startRemoteApplyLoop(
    *     nothing. Not an error — a manager legitimately visits Kindoo
    *     sites SBA doesn't manage.
    *
+   * A failed presence WRITE is deliberately not a third: it is caught,
+   * not thrown, and the tick goes on to poll. Both of the above are
+   * Kindoo refusing, which is total; a denied `desktops` doc leaves a tab
+   * that can still do the work invisible while it does it.
+   *
    * Re-resolution is NOT purely time-driven: Kindoo is an SPA, so the
    * operator can switch sites with no page load and no remount, and a
    * resolution cached against the previous EID would leave this tab
    * claiming the site it just left for up to a full heartbeat period.
    *
-   * Nor is it driven by `activeSite === null`. Both failure modes above
-   * LEAVE it null, and neither clears on its own, so re-resolving
-   * whenever it is null means a Kindoo API POST every poll tick for as
-   * long as the tab stays open — 10 seconds apart on a visible tab,
-   * indefinitely, against someone else's server. `lastResolveAt` /
-   * `lastResolveEid` cap that at the heartbeat period, which is the
-   * documented budget of one Kindoo call per 60s per open tab, while
-   * still re-resolving the instant the EID changes. The periodic retry
-   * is what lets a tab recover on its own once the operator signs back
-   * into Kindoo, or configures the site the tab is sitting in.
+   * Nor is it driven by `activeSite === null`, nor by the last SUCCESSFUL
+   * presence write. One gate covers both branches and it is keyed on the
+   * last ATTEMPT — see `lastResolveAt` for the two indefinite failure
+   * states that a success-keyed gate turns into a Kindoo POST every 10s.
+   * The window is a cap, not a shutdown: the periodic retry is what lets
+   * a tab recover on its own once the operator signs back into Kindoo, or
+   * configures the site the tab is sitting in, and a changed EID skips
+   * the wait entirely.
+   *
+   * Returning early therefore says nothing about whether the presence
+   * write is current — only that this tab has already spent its Kindoo
+   * call for the period. Whether to go on and poll is a separate
+   * question, answered by whether a site is resolved: a tab that knows
+   * its site can work the queue whether or not the phone can currently
+   * see it.
    */
   const heartbeatIfDue = async (session: KindooSession): Promise<boolean> => {
     const resolvedForThisSite = activeSite !== null && activeSite.kindooEid === session.eid;
-    if (resolvedForThisSite) {
-      if (deps.now() - lastHeartbeatAt < REMOTE_APPLY_HEARTBEAT_MS) return true;
-    } else if (
-      session.eid === lastResolveEid &&
-      deps.now() - lastResolveAt < REMOTE_APPLY_HEARTBEAT_MS
-    ) {
-      // Same EID that just failed to resolve, and the retry window
-      // hasn't elapsed. Silent: the attempt that set these already said
-      // why, and repeating it every 10s would bury everything else.
-      return false;
+    if (session.eid === lastResolveEid && deps.now() - lastResolveAt < REMOTE_APPLY_HEARTBEAT_MS) {
+      // Same EID as the last attempt, and the window hasn't elapsed.
+      // Silent: that attempt already logged whatever went wrong, and
+      // repeating it every 10s would bury everything else.
+      return resolvedForThisSite;
     }
     lastResolveAt = deps.now();
     lastResolveEid = session.eid;
@@ -645,16 +855,43 @@ export function startRemoteApplyLoop(
       console.info('[sba-ext] remote apply: opt-in cleared mid-tick; skipping presence write');
       return false;
     }
-    await deps.writeRemotePresence({
-      enabled: true,
-      siteKey: site.siteKey,
-      kindooSiteId: site.kindooSiteId,
-      stakeId: args.stakeId,
-      kindooEid: session.eid,
-      kindooSiteName: activeKindooSiteName(envs, session),
-      extVersion: args.extVersion,
-    });
-    lastHeartbeatAt = deps.now();
+    try {
+      await deps.writeRemotePresence({
+        enabled: true,
+        siteKey: site.siteKey,
+        kindooSiteId: site.kindooSiteId,
+        stakeId: args.stakeId,
+        kindooEid: session.eid,
+        kindooSiteName: activeKindooSiteName(envs, session),
+        extVersion: args.extVersion,
+      });
+    } catch (err) {
+      // Caught rather than thrown, because throwing here takes the poll
+      // with it — and the two answer different questions. Presence
+      // answers "can the phone see me"; the poll answers "can I do
+      // work". This tab reached Kindoo and knows its site, so it can
+      // still claim, run and finalise a job already in the mailbox.
+      //
+      // A denied `desktops` write is reachable and INDEFINITE — deactivate
+      // a manager with a Kindoo tab open and every write is denied from
+      // the next token refresh on, with nothing on a timer to unmount the
+      // loop. Letting it throw was total for a hidden tab: the poll period
+      // and REMOTE_APPLY_HEARTBEAT_MS are both 60s, so the resolve gate
+      // has always elapsed, the write is always attempted, and the tab
+      // never reached `pollOnce` at all for as long as the denial lasted.
+      //
+      // It was also the one exit from `tick` that published nothing, so
+      // `heldBusyIds()` was never consulted and the busy set never aged
+      // against REMOTE_APPLY_BUSY_HOLD_MS — a bound that only holds
+      // because every tick answers the gate.
+      if (contextLost(err)) throw err;
+      console.warn(
+        '[sba-ext] remote apply: presence write failed; the phone cannot see this tab, but it ' +
+          'goes on working the queue',
+        err,
+      );
+      return true;
+    }
     // After the write, not before: the React host uses this to decide
     // which desktop doc to delete on opt-out, and there is nothing to
     // delete for a heartbeat that never landed.
@@ -733,6 +970,82 @@ export function startRemoteApplyLoop(
   };
 
   /**
+   * `request_id`s of jobs another of this manager's tabs is running.
+   *
+   * The other half of the provision gate. `queued` alone expires in one
+   * poll period: the query filters `status == 'queued'`, so the instant
+   * a sibling's claim lands the job leaves that page and the next poll
+   * publishes a set without it — re-enabling this tab's button while the
+   * sibling is inside `applyRequest`, which is the expensive half of the
+   * window, not the cheap one.
+   *
+   * Its own read rather than the sweep's, for two reasons:
+   *
+   *   - The sweep is rate-limited to SWEEP_INTERVAL_MS (60s) and a
+   *     visible tab polls at 10s, so its list is up to six polls stale —
+   *     and a run measured in seconds can start and finish entirely
+   *     inside that gap.
+   *   - Order matters, and it is the opposite of the sweep's. A job
+   *     moves `queued → running`, so reading queued FIRST and running
+   *     SECOND catches it either way round; reading running first leaves
+   *     a hole exactly the width of the two reads for a claim landing
+   *     between them. The sweep runs ahead of the session gate (it must
+   *     work with Kindoo down), so its read is always the earlier one.
+   *
+   * The cost is one more `getDocs` per poll against a collection that is
+   * almost always empty — for opted-in tabs only, since the loop does not
+   * run otherwise.
+   *
+   * `inFlight` is excluded because this tab's own run is bracketed
+   * exactly by `onJobStart` / `onJobEnd` and by `pollOnce`'s own hold on
+   * the claimed `request_id`, where a set refreshed once a poll would
+   * keep the gate closed past the end of the run. Today the exclusion is
+   * belt-and-braces — the run is awaited inside the tick that claims it,
+   * so nothing is ever in flight at a `running` read — but it keeps both
+   * readers of `runningJobs` agreeing on the one thing they can
+   * positively attribute. A job of ours left `running` by a terminal
+   * write that exhausted its retries is NOT excluded: it is out of
+   * `inFlight` by then, and holding the button until the sweep finalises
+   * it is the right answer for work whose outcome we don't know. Nothing
+   * may reopen the gate in the gap either — which is why `pollOnce` drops
+   * the id only once that write has landed.
+   */
+  const runningElsewhereRequestIds = async (): Promise<readonly string[]> => {
+    try {
+      const jobs = await deps.runningJobs();
+      lastRunningElsewhereIds = jobs
+        .filter((job) => !inFlight.has(job.jobId))
+        .map((job) => job.requestId);
+      // Both of the poll's reads have landed, so this is the moment the
+      // gate last knew the answer. See `lastBusyReadAt`.
+      lastBusyReadAt = deps.now();
+    } catch (err) {
+      if (contextLost(err)) throw err;
+      if (!busyReadHolds()) {
+        // Long enough that "a sibling is still inside `applyRequest`" is
+        // no longer a credible reading — the sweep would have finalised
+        // such a job by twice this. Keeping the manager's own button shut
+        // past here helps nobody. See REMOTE_APPLY_BUSY_HOLD_MS.
+        console.warn(
+          '[sba-ext] remote apply: still cannot read running jobs for the provision gate and ' +
+            'the last answer has aged out; dropping it',
+          err,
+        );
+        lastRunningElsewhereIds = EMPTY_IDS;
+        return EMPTY_IDS;
+      }
+      // Holding the last answer rather than dropping the gate. See
+      // `lastRunningElsewhereIds`.
+      console.warn(
+        '[sba-ext] remote apply: could not read running jobs for the provision gate; ' +
+          'holding the previous answer',
+        err,
+      );
+    }
+    return lastRunningElsewhereIds;
+  };
+
+  /**
    * Claim and run the first queued job this tab's site can serve.
    *
    * A page of jobs rather than the single oldest one, because with two
@@ -746,14 +1059,26 @@ export function startRemoteApplyLoop(
    * `expireQueued` explains why an expired job is finalised here rather
    * than left for the phone; the ordering is what makes it a gate on
    * provisioning rather than a report about it.
+   *
+   * The page is half of what the desktop's own provision button is gated
+   * on, via `onBusyRequestIds` — see that callback for why the gate
+   * can't wait for `onJobStart`, and `runningElsewhereRequestIds` for the
+   * other half. An expired job is left OUT of that set even before its
+   * cancel lands: it will never be claimed, so it can cause no double
+   * provision, and blocking the button on it would be the same lockout
+   * `expireQueued` exists to lift.
    */
   const pollOnce = async (session: KindooSession): Promise<void> => {
     const jobs = await deps.queuedJobs();
     const claimable: RemoteApplyJobRef[] = [];
+    const queuedRequestIds: string[] = [];
     for (const candidate of jobs) {
       if (isPastPickup(candidate)) {
         await expireQueued(candidate);
         continue;
+      }
+      if (!queuedRequestIds.includes(candidate.requestId)) {
+        queuedRequestIds.push(candidate.requestId);
       }
       if (canServe(candidate)) {
         claimable.push(candidate);
@@ -769,17 +1094,49 @@ export function startRemoteApplyLoop(
           `stake '${args.stakeId}' site '${activeSite?.siteKey ?? 'none'}'`,
       );
     }
+    // Read AFTER the queued page, never before — see
+    // `runningElsewhereRequestIds`.
+    const busyRequestIds = [...queuedRequestIds];
+    for (const requestId of await runningElsewhereRequestIds()) {
+      if (!busyRequestIds.includes(requestId)) busyRequestIds.push(requestId);
+    }
+    publishBusy(busyRequestIds);
     const job = claimable[0];
     if (!job) return;
     const claimed = await deps.claimJob(job.jobId, args.extVersion, session.eid);
+    // A lost claim STAYS in the set: the job left `queued` because a
+    // sibling tab took it, and that tab is now provisioning the very
+    // request this button would provision again. The queued page won't
+    // show it again — it is `running` now — so the next tick's
+    // `runningElsewhereRequestIds` is what keeps the gate closed for the
+    // rest of that tab's run.
     if (!claimed) return;
-
+    // Won it. The request STAYS in the published set through the run.
+    // `onJobStart` gates the button too and the two overlap harmlessly:
+    // `QueuePanel` lets `running` name the phase, so the card still reads
+    // "this tab is applying it now" rather than "your desktop".
+    //
+    // Dropping it here instead reopened the gate for up to one poll.
+    // `onJobEnd` fires from the `finally` below whether or not the job
+    // reached a terminal status, so a run whose terminal write exhausted
+    // its retries — a `partial` leaves the request `pending` and its card
+    // on screen — cleared `running` against a set this line had already
+    // filtered, and the button went live for a job still `running` in
+    // Firestore with an unknown Kindoo outcome. A click there is the
+    // second `inviteUser`. That is also what
+    // `runningElsewhereRequestIds` says it does NOT allow.
     console.info(`[sba-ext] remote apply: claimed job ${job.jobId} for request ${job.requestId}`);
     inFlight.add(job.jobId);
     args.onJobStart?.(job);
     try {
       const result = await deps.runJob({ stakeId: args.stakeId, bundle: args.bundle, job });
       await finishWithRetry(job.jobId, { status: result.status, outcome: result.outcome });
+      // Terminal, so nothing holds this request any more — and dropping
+      // it HERE rather than one poll later is what gives the button back
+      // the moment the run ends. No await between this and `onJobEnd`
+      // below, so both state updates land in one React render and the
+      // button never flickers.
+      publishBusy(busyRequestIds.filter((id) => id !== job.requestId));
       console.info(`[sba-ext] remote apply: job ${job.jobId} finished as ${result.status}`);
     } finally {
       inFlight.delete(job.jobId);

@@ -2,8 +2,8 @@
 // the function-arg boundary (the helper takes a fetchImpl) so we can
 // inspect the constructed Request without touching the network.
 
-import { describe, expect, it, vi } from 'vitest';
-import { postKindoo, KindooApiError } from './client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { postKindoo, KindooApiError, KINDOO_REQUEST_TIMEOUT_MS } from './client';
 
 const SESSION = { token: 'sess-123', eid: 27994 };
 
@@ -23,7 +23,23 @@ function lastCall(
   return calls[calls.length - 1]!;
 }
 
+/** A fetch that never answers, and rejects the way the platform does
+ * when the passed signal aborts. */
+function hangingFetch() {
+  return vi.fn(
+    (_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted.', 'AbortError')),
+        );
+      }),
+  ) as unknown as typeof fetch;
+}
+
 describe('postKindoo', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
   it('builds the standard envelope with SessionTokenID + EID + AppVersion + PlatformOS', async () => {
     const fetchImpl = vi.fn(async () => okResponse([]));
     await postKindoo('KindooGetEnvironments', SESSION, {}, fetchImpl);
@@ -84,5 +100,67 @@ describe('postKindoo', () => {
     await expect(postKindoo('KindooGetEnvironments', SESSION, {}, fetchImpl)).rejects.toMatchObject(
       { code: 'network-error' },
     );
+  });
+
+  // ---- Timeout --------------------------------------------------------
+  //
+  // `fetch` waits forever by default, and a hung Kindoo call is not a
+  // local stall: the remote-apply tick is serialised, so an outstanding
+  // call means no heartbeat, no stranded sweep, and — for a manager with
+  // one Kindoo tab — a claimed job left `running` with nothing alive to
+  // finalise it. That is the one hole the sweep cannot close.
+
+  it('gives up on a call Kindoo never answers, as a clearly-worded network-error', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = hangingFetch();
+    const promise = postKindoo('KindooInviteUser', SESSION, {}, fetchImpl);
+    // Attach the rejection handler before the clock moves.
+    const assertion = expect(promise).rejects.toMatchObject({
+      code: 'network-error',
+      // The code is shared with a dropped connection deliberately — both
+      // leave "did this reach Kindoo?" unanswerable — so the message is
+      // what has to distinguish them for the operator.
+      message: expect.stringContaining('timed out'),
+    });
+    await vi.advanceTimersByTimeAsync(KINDOO_REQUEST_TIMEOUT_MS);
+    await assertion;
+    await expect(promise).rejects.toBeInstanceOf(KindooApiError);
+  });
+
+  it('leaves a call that answers inside the bound untouched', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, KINDOO_REQUEST_TIMEOUT_MS - 1));
+      return okResponse([{ EID: 27994 }]);
+    });
+    const promise = postKindoo('KindooGetEnvironments', SESSION, {}, fetchImpl);
+    await vi.advanceTimersByTimeAsync(KINDOO_REQUEST_TIMEOUT_MS);
+    await expect(promise).resolves.toEqual([{ EID: 27994 }]);
+  });
+
+  it('bounds the body read too, not just the response headers', async () => {
+    // A response whose stream stalls mid-body hangs the caller exactly as
+    // hard as one whose headers never arrive.
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('The operation was aborted.', 'AbortError')),
+              );
+            }),
+        }) as unknown as Response,
+    ) as unknown as typeof fetch;
+    const promise = postKindoo('KindooGetEnvironments', SESSION, {}, fetchImpl);
+    const assertion = expect(promise).rejects.toMatchObject({
+      code: 'network-error',
+      message: expect.stringContaining('timed out'),
+    });
+    await vi.advanceTimersByTimeAsync(KINDOO_REQUEST_TIMEOUT_MS);
+    await assertion;
   });
 });

@@ -65,6 +65,7 @@ vi.mock('../lib/extensionApi', async () => {
 
 import type { Access, AccessRequest, KindooManager } from '@kindoo/shared';
 import type { StakeConfigBundle } from '../lib/extensionApi';
+import type { RemoteApplyPhase } from './RequestCard';
 
 /**
  * Minimal `access` doc — only the fields `deriveRequesterDisplay` reads
@@ -159,7 +160,7 @@ async function renderCard(
     memberHasSeat?: boolean;
     memberHasStakeGrant?: boolean;
     memberSeatAbsent?: boolean;
-    remoteApplyRunning?: boolean;
+    remoteApplyBusy?: RemoteApplyPhase;
   } = {},
 ) {
   const { RequestCard } = await import('./RequestCard');
@@ -171,7 +172,7 @@ async function renderCard(
       memberHasSeat={opts.memberHasSeat ?? false}
       memberHasStakeGrant={opts.memberHasStakeGrant ?? false}
       memberSeatAbsent={opts.memberSeatAbsent ?? false}
-      remoteApplyRunning={opts.remoteApplyRunning ?? false}
+      remoteApplyBusy={opts.remoteApplyBusy}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
@@ -227,7 +228,7 @@ describe('RequestCard', () => {
     // isn't in Kindoo yet that is a second `inviteUser` — a licence spent
     // that `markRequestComplete` picking a winner cannot give back.
     const user = userEvent.setup();
-    await renderCard({ remoteApplyRunning: true });
+    await renderCard({ remoteApplyBusy: 'this-tab' });
 
     const button = screen.getByTestId('sba-add-r1');
     expect(button).toBeDisabled();
@@ -238,8 +239,35 @@ describe('RequestCard', () => {
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
   });
 
-  it('leaves the provision button alone when the running job is another request', async () => {
-    await renderCard({ remoteApplyRunning: false });
+  it('disables the provision button while a phone-initiated job is in ANOTHER hand', async () => {
+    // The expensive half of the gate, and the half `running` cannot
+    // see: a job still waiting in the mailbox, or one a sibling Kindoo
+    // tab claimed and is inside `applyRequest` for right now. Ungated,
+    // this is the window in which the desktop button starts a second
+    // run against a request some other tab is already provisioning.
+    const user = userEvent.setup();
+    await renderCard({ remoteApplyBusy: 'elsewhere' });
+
+    const button = screen.getByTestId('sba-add-r1');
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+  });
+
+  it('says "handling it" for a job in another hand and "applying it now" for its own', async () => {
+    // "This tab is applying it now" is a claim only the tab running the
+    // job can make. For a job sitting in the mailbox, or one a sibling
+    // tab on another Kindoo site is running, it would be twice wrong.
+    const elsewhere = await renderCard({ remoteApplyBusy: 'elsewhere' });
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/handling it/);
+    elsewhere.unmount();
+
+    await renderCard({ remoteApplyBusy: 'this-tab' });
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/applying it now/);
+  });
+
+  it('leaves the provision button alone when no phone-initiated job holds this request', async () => {
+    await renderCard();
     expect(screen.getByTestId('sba-add-r1')).toBeEnabled();
     expect(screen.queryByTestId('sba-remote-busy-r1')).not.toBeInTheDocument();
   });

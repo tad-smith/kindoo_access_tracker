@@ -39,14 +39,14 @@ vi.mock('./RequestCard', () => ({
     memberHasSeat: boolean;
     memberSeatAbsent: boolean;
     memberHasStakeGrant: boolean;
-    remoteApplyRunning?: boolean;
+    remoteApplyBusy?: 'elsewhere' | 'this-tab';
   }) => (
     <div
       data-testid={`card-${props.request.request_id}`}
       data-has-seat={props.memberHasSeat ? 'true' : 'false'}
       data-seat-absent={props.memberSeatAbsent ? 'true' : 'false'}
       data-has-stake-grant={props.memberHasStakeGrant ? 'true' : 'false'}
-      data-remote-running={props.remoteApplyRunning ? 'true' : 'false'}
+      data-remote-busy={props.remoteApplyBusy ?? 'none'}
     />
   ),
 }));
@@ -62,6 +62,12 @@ function bundle(): StakeConfigBundle {
     wards: [],
     kindooSites: [],
   };
+}
+
+/** A `RemoteApplyState` with everything the test isn't asserting on
+ * left at its resting value. */
+function remoteState(overrides: Partial<RemoteApplyState> = {}): RemoteApplyState {
+  return { running: null, busyRequestIds: [], finishedCount: 0, ...overrides };
 }
 
 function wireTs(iso: string): AccessRequest['requested_at'] {
@@ -366,8 +372,24 @@ describe('QueuePanel', () => {
     await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
     expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument();
 
-    setRemoteApply({ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 });
+    setRemoteApply(remoteState({ running: { jobId: 'j1', requestId: 'r1' } }));
     expect(screen.getByTestId('sba-remote-apply-running')).toBeInTheDocument();
+  });
+
+  it('shows the handling banner while a job is in another hand', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
+
+    setRemoteApply(remoteState({ busyRequestIds: ['r1'] }));
+    expect(screen.getByTestId('sba-remote-apply-queued')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument();
+
+    // The claim replaces it rather than stacking a second banner — the
+    // two overlap for a poll period around the claim.
+    setRemoteApply(remoteState({ running: { jobId: 'j1', requestId: 'r1' } }));
+    expect(screen.getByTestId('sba-remote-apply-running')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-remote-apply-queued')).not.toBeInTheDocument();
   });
 
   it('flags only the card whose request a phone-initiated job is applying', async () => {
@@ -384,11 +406,75 @@ describe('QueuePanel', () => {
     });
     const { setRemoteApply } = await renderPanel();
     await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
-    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'false');
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'none');
 
-    setRemoteApply({ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 });
-    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'true');
-    expect(screen.getByTestId('card-r2')).toHaveAttribute('data-remote-running', 'false');
+    setRemoteApply(remoteState({ running: { jobId: 'j1', requestId: 'r1' } }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'this-tab');
+    expect(screen.getByTestId('card-r2')).toHaveAttribute('data-remote-busy', 'none');
+  });
+
+  // ---- Jobs this tab is not running -----------------------------------
+  //
+  // `running` is this tab's own claim and nothing else. Everything the
+  // manager's other tabs and the mailbox itself are holding arrives as
+  // `busyRequestIds`, and gating on `running` alone left the desktop
+  // button fully live for a job queued behind another tab's, one this
+  // tab cannot serve at all, and one a sibling tab is mid-run on.
+
+  it('flags a card whose job is in the mailbox or in a sibling tab', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [
+        req({ request_id: 'r1', requested_at: wireTs('2026-01-01T00:00:00Z') }),
+        req({ request_id: 'r2', requested_at: wireTs('2026-01-02T00:00:00Z') }),
+      ],
+    });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
+
+    // No `running` — this tab isn't the one on it. That covers the whole
+    // pickup window and any sibling tab's run after it.
+    setRemoteApply(remoteState({ busyRequestIds: ['r1'] }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'elsewhere');
+    expect(screen.getByTestId('card-r2')).toHaveAttribute('data-remote-busy', 'none');
+  });
+
+  it('keeps the gate closed across the elsewhere → this-tab handover', async () => {
+    // The two states overlap by design: the loop drops a job from the
+    // busy set as it claims it and `running` picks it up in the same
+    // breath. Neither transition may leave a frame with the button live.
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [req({ request_id: 'r1', requested_at: wireTs('2026-01-01T00:00:00Z') })],
+    });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
+
+    setRemoteApply(remoteState({ busyRequestIds: ['r1'] }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'elsewhere');
+
+    setRemoteApply(
+      remoteState({ busyRequestIds: ['r1'], running: { jobId: 'j1', requestId: 'r1' } }),
+    );
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'this-tab');
+
+    setRemoteApply(remoteState({ running: { jobId: 'j1', requestId: 'r1' } }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'this-tab');
+  });
+
+  it('gives the button back once no job anywhere holds the request', async () => {
+    // A job that terminates between polls must not leave the card gated
+    // on the last poll's snapshot: a failed run leaves the request
+    // pending, and the manager's next move is the desktop button.
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [req({ request_id: 'r1', requested_at: wireTs('2026-01-01T00:00:00Z') })],
+    });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
+
+    setRemoteApply(remoteState({ running: { jobId: 'j1', requestId: 'r1' } }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'this-tab');
+
+    setRemoteApply(remoteState({ finishedCount: 1 }));
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-busy', 'none');
   });
 
   // The post-job refetch itself is TabbedShell's — it has to fire with
@@ -401,7 +487,7 @@ describe('QueuePanel', () => {
     const { setRemoteApply } = await renderPanel();
     await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(1));
 
-    setRemoteApply({ running: null, finishedCount: 1 });
+    setRemoteApply(remoteState({ finishedCount: 1 }));
     await waitFor(() =>
       expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument(),
     );
