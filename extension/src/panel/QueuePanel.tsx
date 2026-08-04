@@ -15,10 +15,12 @@
 // `pending` prop.
 //
 // Remote apply (D27) is likewise hosted by TabbedShell. This file owns
-// only its two visible surfaces: the opt-in row and the running banner,
-// plus gating the provision button on whichever card a phone-initiated
-// job is already working. The post-job queue refresh stays in
-// TabbedShell — it has to fire with this component unmounted.
+// only its visible surfaces: the opt-in row, the banner, and gating the
+// provision button on whichever card a phone-initiated job has in hand —
+// queued or running, since the queued window is where a manager who taps
+// on their phone and turns to their computer actually finds the card.
+// The post-job queue refresh stays in TabbedShell — it has to fire with
+// this component unmounted.
 //
 // Seat-existence: whenever the request list resolves we fetch
 // `getSeatByEmail` for every non-`remove` request and build a
@@ -46,7 +48,7 @@ import {
 import { getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
 import { useRemoteApplyEnabled } from '../lib/remoteApplyPrefs';
 import type { RemoteApplyState } from '../content/remoteApply/useRemoteApply';
-import { RequestCard } from './RequestCard';
+import { RequestCard, type RemoteApplyPhase } from './RequestCard';
 import type { PendingRequests } from './usePendingRequests';
 
 interface QueuePanelProps {
@@ -139,14 +141,30 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
     };
   }, [stakeId, state]);
 
-  // The request a phone-initiated job is provisioning right now, if any.
-  // Threaded down to gate that card's own provision button: both paths
+  // Requests a phone-initiated job has in hand, and how far along.
+  // Threaded down to gate those cards' own provision buttons: both paths
   // run `applyRequest`, so two of them against one request can reach
   // `provisionAddOrChange` concurrently and write Kindoo twice. For a
   // member not yet in Kindoo the second write is a second `inviteUser` —
   // a consumed licence that `markRequestComplete` picking one winner does
   // nothing to undo.
-  const remoteApplyingRequestId = remoteApply?.running?.requestId ?? null;
+  //
+  // `queued` counts as much as `running`. The job sits queued from the
+  // phone tap until a desktop tab claims it — up to a full poll period,
+  // 60s while the tab is hidden, which is exactly what a tab is while
+  // the manager is looking at their phone. Gating on `running` alone
+  // left the button live for the whole of that window, on the flow the
+  // feature is named for.
+  const remoteApplyBusy = useMemo(() => {
+    const busy = new Map<string, RemoteApplyPhase>();
+    for (const requestId of remoteApply?.queuedRequestIds ?? EMPTY_IDS) {
+      busy.set(requestId, 'queued');
+    }
+    // After the queued pass: this tab's own run is the stronger claim,
+    // and the two overlap for one poll period around the claim.
+    if (remoteApply?.running) busy.set(remoteApply.running.requestId, 'running');
+    return busy;
+  }, [remoteApply?.queuedRequestIds, remoteApply?.running]);
 
   const requests = state.status === 'ready' ? state.requests : EMPTY_REQUESTS;
   // Compute "now" once per render; the day-level section boundary is
@@ -163,6 +181,17 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
           data-testid="sba-remote-apply-running"
         >
           <span>Applying a request you sent from your phone…</span>
+        </div>
+      ) : remoteApplyBusy.size > 0 ? (
+        // Nothing claimed yet, but a tap is in the mailbox. Says "your
+        // desktop" rather than "this tab" because a sibling tab on the
+        // right Kindoo site may be the one that takes it.
+        <div
+          role="status"
+          className="sba-banner sba-banner-info"
+          data-testid="sba-remote-apply-queued"
+        >
+          <span>Picking up a request you sent from your phone…</span>
         </div>
       ) : null}
       <div className="sba-request-actions">
@@ -196,7 +225,7 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            remoteApplyingRequestId={remoteApplyingRequestId}
+            remoteApplyBusy={remoteApplyBusy}
             onDismissed={dismiss}
           />
           <QueueSection
@@ -206,7 +235,7 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            remoteApplyingRequestId={remoteApplyingRequestId}
+            remoteApplyBusy={remoteApplyBusy}
             onDismissed={dismiss}
           />
           <QueueSection
@@ -216,7 +245,7 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
-            remoteApplyingRequestId={remoteApplyingRequestId}
+            remoteApplyBusy={remoteApplyBusy}
             onDismissed={dismiss}
           />
         </div>
@@ -226,6 +255,7 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
 }
 
 const EMPTY_REQUESTS: readonly AccessRequest[] = [];
+const EMPTY_IDS: readonly string[] = [];
 
 /**
  * The remote-apply opt-in. Off by default and off for every profile
@@ -281,8 +311,9 @@ interface QueueSectionProps {
   stakeId: string;
   bundle: StakeConfigBundle;
   seatMap: SeatMap;
-  /** `request_id` a phone-initiated job is provisioning, or null. */
-  remoteApplyingRequestId: string | null;
+  /** `request_id` → how far a phone-initiated job has got with it.
+   * Absent from the map ⇒ no phone-initiated work on that request. */
+  remoteApplyBusy: ReadonlyMap<string, RemoteApplyPhase>;
   onDismissed: (requestId: string) => void;
 }
 
@@ -293,7 +324,7 @@ function QueueSection({
   stakeId,
   bundle,
   seatMap,
-  remoteApplyingRequestId,
+  remoteApplyBusy,
   onDismissed,
 }: QueueSectionProps) {
   // Hide the whole section (header + body) when empty.
@@ -313,7 +344,7 @@ function QueueSection({
               memberHasSeat={seatMap[req.request_id]?.existence === 'present'}
               memberSeatAbsent={seatMap[req.request_id]?.existence === 'absent'}
               memberHasStakeGrant={seatMap[req.request_id]?.hasStakeGrant ?? false}
-              remoteApplyRunning={remoteApplyingRequestId === req.request_id}
+              remoteApplyBusy={remoteApplyBusy.get(req.request_id)}
               onDismissed={onDismissed}
             />
           </li>

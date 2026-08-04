@@ -38,6 +38,13 @@ import { applyRequest } from '../content/kindoo/applyRequest';
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
 import { RejectDialog } from './RejectDialog';
 
+/**
+ * How far a phone-initiated job has got with a request: written to the
+ * mailbox and waiting for a desktop tab (`'queued'`), or claimed and
+ * executing on this tab (`'running'`).
+ */
+export type RemoteApplyPhase = 'queued' | 'running';
+
 interface RequestCardProps {
   /** Active stake — threaded from App's resolution step. */
   stakeId: string;
@@ -80,17 +87,27 @@ interface RequestCardProps {
    */
   memberSeatAbsent: boolean;
   /**
-   * True while a phone-initiated remote-apply job is provisioning THIS
-   * request. The button is the desktop's entry into the same
-   * `applyRequest` flow the remote runner is already inside, so letting
-   * both run means two concurrent seat reads, two `provisionAddOrChange`
-   * calls and — for a member who isn't in Kindoo yet — two `inviteUser`
-   * writes, the second of which consumes a licence. `markRequestComplete`
-   * settling on one winner is no help: the Kindoo writes already
-   * happened. Parent (`QueuePanel`) derives this by matching the running
-   * job's `request_id`; absent (standalone renders, no loop) ⇒ false.
+   * How far a phone-initiated remote-apply job has got with THIS
+   * request, or undefined when there is none.
+   *
+   * Either phase disables the button. It is the desktop's entry into the
+   * same `applyRequest` flow the remote runner is in (or is about to
+   * be), so letting both run means two concurrent seat reads, two
+   * `provisionAddOrChange` calls and — for a member who isn't in Kindoo
+   * yet — two `inviteUser` writes, the second of which consumes a
+   * licence. `markRequestComplete` settling on one winner is no help:
+   * the Kindoo writes already happened.
+   *
+   * `'queued'` is the tap-to-claim window: the phone has written the job
+   * and no tab has picked it up yet, which lasts up to a full poll period
+   * (60s on a hidden tab). It gets its own copy because "this tab is
+   * applying it now" is not yet true, and the tab that ends up running it
+   * may be a sibling on another Kindoo site.
+   *
+   * Parent (`QueuePanel`) derives this; absent (standalone renders, no
+   * loop) ⇒ not busy.
    */
-  remoteApplyRunning?: boolean;
+  remoteApplyBusy?: RemoteApplyPhase | undefined;
   /** Called after the operator dismisses the result dialog OR after a
    * successful reject; parent drops the card from the queue list and
    * refetches. */
@@ -110,7 +127,7 @@ export function RequestCard({
   memberHasSeat,
   memberHasStakeGrant,
   memberSeatAbsent,
-  remoteApplyRunning = false,
+  remoteApplyBusy,
   onDismissed,
 }: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
@@ -328,14 +345,17 @@ export function RequestCard({
           This request edits a seat that no longer exists — reject it.
         </p>
       ) : null}
-      {remoteApplyRunning ? (
+      {remoteApplyBusy ? (
         <p
           role="status"
           className="sba-muted"
           data-testid={`sba-remote-busy-${request.request_id}`}
         >
-          You sent this one from your phone — this tab is applying it now. Wait for it to finish
-          rather than applying it twice.
+          {remoteApplyBusy === 'running'
+            ? 'You sent this one from your phone — this tab is applying it now. Wait for it to ' +
+              'finish rather than applying it twice.'
+            : 'You sent this one from your phone — your desktop is picking it up. Wait for it to ' +
+              'finish rather than applying it twice.'}
         </p>
       ) : null}
       <div className="sba-request-actions">
@@ -344,7 +364,7 @@ export function RequestCard({
             type="button"
             className={buttonClass}
             onClick={() => void provision()}
-            disabled={isBusy || remoteApplyRunning}
+            disabled={isBusy || remoteApplyBusy !== undefined}
             data-testid={buttonTestId}
           >
             {isBusy ? `${buttonLabel}…` : buttonLabel}

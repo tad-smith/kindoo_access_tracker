@@ -372,6 +372,39 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps to one Kindoo call per heartbeat period when the presence write keeps failing', async () => {
+    // The budget is on CALLS to a third party, so a failing tick has to
+    // consume its slot too. Gating the resolved branch on the last
+    // SUCCESSFUL presence write did the opposite: a tab whose site
+    // resolves fine but whose `desktops` write is denied re-ran the whole
+    // block every tick — a `getEnvironments` POST to Kindoo every 10s,
+    // per open tab, indefinitely. Reachable by deactivating a manager
+    // with a Kindoo tab open: the next token refresh starts denying, and
+    // nothing on a timer unmounts the loop.
+    const deps = makeDeps({
+      writeRemotePresence: vi.fn(async () => {
+        throw Object.assign(new Error('denied'), { code: 'permission-denied' });
+      }),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await expect(handle.tick()).rejects.toThrow('denied');
+    for (let i = 0; i < 5; i += 1) {
+      deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+      await handle.tick();
+    }
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(1);
+    expect(deps.writeRemotePresence).toHaveBeenCalledTimes(1);
+    // And the tab goes on working the queue meanwhile: it knows its site,
+    // so it can run a job whether or not the phone can currently see it.
+    expect(deps.queuedJobs).toHaveBeenCalledTimes(5);
+
+    deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
+    await expect(handle.tick()).rejects.toThrow('denied');
+    handle.stop();
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+  });
+
   it('re-resolves at once when the operator leaves a site that could not be resolved', async () => {
     // The retry window must not swallow a genuine change of site — that
     // is new information, not a retry, and waiting on it would leave the
@@ -522,6 +555,152 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.claimJob).not.toHaveBeenCalled();
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.info).toHaveBeenCalledWith(expect.stringContaining('leaving job east'));
+  });
+
+  // ---- Publishing the queued set -------------------------------------
+  //
+  // `onJobStart` fires AFTER the claim, so gating the desktop's own
+  // Provision & Complete button on it alone leaves the button live for
+  // every request sitting `queued` — a job this tab can't serve, a job it
+  // lost the race for, a second job waiting behind the one being run.
+  // Two `applyRequest` runs against one request is two `inviteUser`
+  // calls for a member not yet in Kindoo, and a consumed licence.
+
+  it('publishes queued request ids, including for jobs this tab cannot serve', async () => {
+    // Not filtered by `canServe`: the mailbox is this manager's own, so
+    // a job for the east site is one a sibling tab may claim moments
+    // later — the very case the site-scoped claim rule was shaped for.
+    const onQueuedRequestIds = vi.fn();
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [
+        job({ jobId: 'east', requestId: 'r-east', targetSiteKey: EAST_SITE_ID }),
+        job({ jobId: 'other', requestId: 'r-other', stakeId: 'other-stake' }),
+      ]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).not.toHaveBeenCalled();
+    expect(onQueuedRequestIds).toHaveBeenCalledWith(['r-east', 'r-other']);
+  });
+
+  it('drops a job from the queued set the moment it claims it', async () => {
+    // The handover: `running` takes over the gate here, and a set still
+    // naming the request would hold the button disabled for a poll
+    // period after the run ended.
+    const onQueuedRequestIds = vi.fn();
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]) });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(onQueuedRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
+  });
+
+  it('keeps a job it lost the claim race for in the queued set', async () => {
+    // A sibling tab took it and is provisioning it now. This tab's
+    // button would start a second run against the same request.
+    const onQueuedRequestIds = vi.fn();
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job()]),
+      claimJob: vi.fn(async () => false),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(onQueuedRequestIds.mock.calls).toEqual([[['r1']]]);
+  });
+
+  it('leaves an expired job out of the queued set', async () => {
+    // It is being cancelled, not claimed, so it can cause no double
+    // provision — and gating the button on it would be the same lockout
+    // `expireQueued` exists to lift.
+    const onQueuedRequestIds = vi.fn();
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job({ createdAtMs: NOW - REMOTE_APPLY_PICKUP_TIMEOUT_MS })]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(onQueuedRequestIds).not.toHaveBeenCalled();
+  });
+
+  it('publishes only when the set moves, not once per poll', async () => {
+    // The host is a React hook. Emitting per tick re-renders the whole
+    // panel every 10 seconds for as long as a tab is open.
+    const onQueuedRequestIds = vi.fn();
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job({ targetSiteKey: EAST_SITE_ID })]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.queuedJobs).toHaveBeenCalledTimes(3);
+    expect(onQueuedRequestIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the queued set when the tick stops short of the poll', async () => {
+    // A set nobody refreshes gates the button forever. Every path that
+    // ends a tick early is one where this tab can't provision either, so
+    // clearing costs nothing and stops a dead job holding the gate.
+    const onQueuedRequestIds = vi.fn();
+    let sessionOk = true;
+    const deps = makeDeps({
+      readSession: vi.fn(() =>
+        sessionOk
+          ? ({ ok: true as const, session: { token: 'tok', eid: HOME_EID } } as const)
+          : ({ ok: false as const, error: 'no-token' as const } as const),
+      ),
+      queuedJobs: vi.fn(async () => [job({ targetSiteKey: EAST_SITE_ID })]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onQueuedRequestIds,
+    });
+    await handle.tick();
+    expect(onQueuedRequestIds).toHaveBeenLastCalledWith(['r1']);
+
+    sessionOk = false;
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    handle.stop();
+
+    expect(onQueuedRequestIds).toHaveBeenLastCalledWith([]);
   });
 
   // ---- Pickup expiry: the unattended-provision regression -------------

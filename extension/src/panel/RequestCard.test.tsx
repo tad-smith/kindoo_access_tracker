@@ -65,6 +65,7 @@ vi.mock('../lib/extensionApi', async () => {
 
 import type { Access, AccessRequest, KindooManager } from '@kindoo/shared';
 import type { StakeConfigBundle } from '../lib/extensionApi';
+import type { RemoteApplyPhase } from './RequestCard';
 
 /**
  * Minimal `access` doc — only the fields `deriveRequesterDisplay` reads
@@ -159,7 +160,7 @@ async function renderCard(
     memberHasSeat?: boolean;
     memberHasStakeGrant?: boolean;
     memberSeatAbsent?: boolean;
-    remoteApplyRunning?: boolean;
+    remoteApplyBusy?: RemoteApplyPhase;
   } = {},
 ) {
   const { RequestCard } = await import('./RequestCard');
@@ -171,7 +172,7 @@ async function renderCard(
       memberHasSeat={opts.memberHasSeat ?? false}
       memberHasStakeGrant={opts.memberHasStakeGrant ?? false}
       memberSeatAbsent={opts.memberSeatAbsent ?? false}
-      remoteApplyRunning={opts.remoteApplyRunning ?? false}
+      remoteApplyBusy={opts.remoteApplyBusy}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
@@ -227,7 +228,7 @@ describe('RequestCard', () => {
     // isn't in Kindoo yet that is a second `inviteUser` — a licence spent
     // that `markRequestComplete` picking a winner cannot give back.
     const user = userEvent.setup();
-    await renderCard({ remoteApplyRunning: true });
+    await renderCard({ remoteApplyBusy: 'running' });
 
     const button = screen.getByTestId('sba-add-r1');
     expect(button).toBeDisabled();
@@ -238,8 +239,36 @@ describe('RequestCard', () => {
     expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
   });
 
-  it('leaves the provision button alone when the running job is another request', async () => {
-    await renderCard({ remoteApplyRunning: false });
+  it('disables the provision button while a phone-initiated job is still QUEUED', async () => {
+    // The expensive half of the gate. `running` only begins at the
+    // claim; before that the job sits `queued` for up to a poll period —
+    // 60s on the hidden tab a manager leaves behind when they tap on
+    // their phone and turn to their computer. Ungated, that is the
+    // window in which the desktop button starts a second `applyRequest`
+    // for a job a tab is about to run.
+    const user = userEvent.setup();
+    await renderCard({ remoteApplyBusy: 'queued' });
+
+    const button = screen.getByTestId('sba-add-r1');
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+  });
+
+  it('says "picking it up" for a queued job and "applying it now" for a running one', async () => {
+    // Nothing has claimed a queued job yet, and the tab that does may be
+    // a sibling on another Kindoo site — so the running copy would be
+    // twice wrong.
+    const queued = await renderCard({ remoteApplyBusy: 'queued' });
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/picking it up/);
+    queued.unmount();
+
+    await renderCard({ remoteApplyBusy: 'running' });
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/applying it now/);
+  });
+
+  it('leaves the provision button alone when no phone-initiated job holds this request', async () => {
+    await renderCard();
     expect(screen.getByTestId('sba-add-r1')).toBeEnabled();
     expect(screen.queryByTestId('sba-remote-busy-r1')).not.toBeInTheDocument();
   });

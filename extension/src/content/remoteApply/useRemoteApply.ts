@@ -20,11 +20,24 @@ import { startRemoteApplyLoop } from './loop';
 export interface RemoteApplyState {
   /** The phone-initiated job this tab is executing right now, or null. */
   running: { jobId: string; requestId: string } | null;
+  /**
+   * `request_id`s with a job sitting `queued` in this manager's mailbox
+   * as of the last poll — the tap-to-claim window, which `running` does
+   * not cover because it opens at the tap and closes at the claim.
+   * Up to 60s wide on a hidden tab, which is the normal state while the
+   * manager is looking at their phone. Gate the provision button on this
+   * as well as on `running`; see the loop's `onQueuedRequestIds`.
+   */
+  queuedRequestIds: readonly string[];
   /** Bumped every time a job reaches a terminal status on this tab.
    * The queue watches it to refetch, so the desktop never sits showing
    * a request the phone just completed. */
   finishedCount: number;
 }
+
+/** Stable identity for "nothing queued", so the common case never
+ * re-renders the host on a fresh array. */
+const NO_QUEUED_IDS: readonly string[] = [];
 
 export interface UseRemoteApplyArgs {
   stakeId: string;
@@ -40,6 +53,7 @@ function extensionVersion(): string {
 export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteApplyState {
   const { enabled, loaded } = useRemoteApplyEnabled();
   const [running, setRunning] = useState<RemoteApplyState['running']>(null);
+  const [queuedRequestIds, setQueuedRequestIds] = useState<readonly string[]>(NO_QUEUED_IDS);
   const [finishedCount, setFinishedCount] = useState(0);
   /** Whether the opt-in was on the last time this effect ran. Only a
    * true → false transition warrants the disable write; publishing
@@ -101,6 +115,10 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
   useEffect(() => {
     if (!loaded) return;
     if (!enabled) {
+      // No loop means nothing left to refresh the queued set, and a set
+      // that stands after the loop dies gates the provision button on a
+      // job nothing is going to run.
+      setQueuedRequestIds(NO_QUEUED_IDS);
       if (wasEnabled.current) {
         wasEnabled.current = false;
         void publishDisabled();
@@ -122,6 +140,9 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
         setRunning(null);
         setFinishedCount((n) => n + 1);
       },
+      // Already de-duplicated by the loop, which only calls this when
+      // the set moves — so this is not a per-tick re-render.
+      onQueuedRequestIds: setQueuedRequestIds,
       // Sticky on purpose. A tab that moves to a second Kindoo site
       // publishes the new site and leaves the old doc to go stale — a
       // sibling tab may still be serving it, so deleting on a site
@@ -140,5 +161,5 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
     // `bundle` is deliberately absent — see `bundleRef`.
   }, [enabled, loaded, stakeId, publishDisabled]);
 
-  return { running, finishedCount };
+  return { running, queuedRequestIds, finishedCount };
 }
