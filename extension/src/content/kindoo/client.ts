@@ -34,15 +34,29 @@ const PLATFORM_OS = 'web';
  *   - Inside the phone's `REMOTE_APPLY_STALE_MS` (150s), so ONE hung
  *     call is absorbed by the staleness window rather than dropping the
  *     desktop off the phone.
- *   - Small enough that a wholly-degraded RUN still finishes inside
- *     `REMOTE_APPLY_STRANDED_MS` (5 min). This is a per-CALL bound and a
- *     provision is sequential: the worst shape we issue is a stake-scope
- *     add — environments, user lookup, one call per building rule (four
- *     at csnorth), the user's doors, the invite / edit, the access rule —
- *     around nine. Nine × 30s ≈ 4.5 min, so the run still reaches its own
- *     terminal write before a sibling tab could rule it stranded. At 60s
- *     the same run would overshoot to nine minutes and a sibling would
- *     finalise live work out from under it.
+ *   - Small enough to keep a wholly-degraded RUN near
+ *     `REMOTE_APPLY_STRANDED_MS` (5 min) rather than far past it. This is
+ *     a per-CALL bound and a provision is sequential: the worst shape we
+ *     issue is a stake-scope add — environments, user lookup, one call
+ *     per building rule (four at csnorth), the user's doors, the invite /
+ *     edit, the access rule — around nine, so ~270s of Kindoo. Kindoo is
+ *     not the whole run, though: the same job also makes two SBA
+ *     callables, `getMyPendingRequests` (the runner's re-resolve) and
+ *     `markRequestComplete`, and neither passes a `timeout` option, so
+ *     each carries the Functions SDK's own 70s default. Worst case is
+ *     therefore ~410s — PAST five minutes, not inside it, so a sibling
+ *     tab on the same site could sweep a run that is still live. That is
+ *     the residual D27(k) already accepts, and reaching it needs every
+ *     term maximal at once.
+ *
+ *     Don't "fix" it by cutting this constant. The 140s of callable is
+ *     fixed, so getting back inside five minutes means under ~17s a
+ *     call, which starts aborting Kindoo calls that would have returned
+ *     — failing live provisions to spare a sweep that only misfires when
+ *     a second tab is open on the same site. Raising it is the move that
+ *     actually costs: at 60s the Kindoo half alone is 540s and the worst
+ *     case reaches ~680s, more than twice the threshold, turning an
+ *     accepted worst case into the ordinary shape of a degraded run.
  */
 export const KINDOO_REQUEST_TIMEOUT_MS = 30_000;
 
