@@ -8,7 +8,7 @@ authoritative description of runtime behaviour, see [`../spec.md`](../spec.md).
 | File | Audience | Covers |
 |---|---|---|
 | `creating-requests.html` / `.pdf` | Bishoprics, stake presidency, other ward & stake leaders | Signing in, the roster, submitting add / temp requests, removing & editing seats, tracking requests |
-| `kindoo-managers.html` / `.pdf` | Kindoo Managers | First-time stake setup, installing the extension, the web app, processing requests, Sync, Kindoo Sites, app access, caps, notifications, audit, troubleshooting |
+| `kindoo-managers.html` / `.pdf` | Kindoo Managers | First-time stake setup, installing the extension, the web app, processing requests, applying from a phone, Sync, Kindoo Sites, app access, caps, notifications, audit, troubleshooting |
 
 ## Regenerating the PDFs
 
@@ -71,5 +71,10 @@ captured manually.
 - Fig 2.1 — Bootstrap setup wizard (buildings/wards step)
 - Fig 3.1 — Extension panel open over Kindoo (Queue tab)
 - Fig 5.1 — A request card with Provision & Complete / Reject
-- Fig 6.1 — The Sync drift report
-- Fig 11.1 — Audit log with an expanded before/after row
+- Fig 7.1 — The Sync drift report
+- Fig 12.1 — Audit log with an expanded before/after row
+
+Section 6 (applying from a phone) has no figure yet. It needs a phone-viewport capture of the
+Requests Queue with a live presence line and an **Apply via extension** button, which
+`e2e/tests/screenshots.capture.ts` does not currently produce. The audit-log capture in that file is
+still named `Fig 11.1`; the figure is now 12.1.
