@@ -1,14 +1,16 @@
-// E2E: the manager Request Queue is a read-only visibility surface.
+// E2E: the manager Request Queue with no desktop extension in play.
 //
-// The actionable complete / reject workflow moved entirely to the
-// Chrome extension. The app queue now only displays pending requests —
-// sectioned by urgency, with no per-card action buttons — and shows a
-// muted note pointing the manager to the extension.
+// The actionable complete / reject workflow lives in the Chrome
+// extension. Remote apply (D27) can start an apply from this page, but
+// only when the manager's own desktop has published presence — which no
+// test here does, so the queue renders as the pure visibility surface it
+// was: pending cards sectioned by urgency, no per-card action buttons,
+// and a muted note pointing at the extension.
 //
 // We seed pending request docs straight into Firestore (the emulator
 // REST write bypasses rules) and load the queue as a manager, then
 // assert: cards render in their sections, no complete / reject button
-// exists anywhere, and the read-only note links to the Web Store.
+// exists anywhere, and the extension note links to the Web Store.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -142,10 +144,10 @@ test.describe('manager Request Queue — read-only', () => {
 
     // The muted note points the manager to the Chrome extension and
     // links to the Web Store listing.
-    const note = page.getByTestId('queue-readonly-note');
+    const note = page.getByTestId('queue-extension-note');
     await expect(note).toBeVisible();
-    await expect(note).toContainText(/completed or rejected from the Chrome extension/i);
-    const link = page.getByTestId('queue-readonly-note-link');
+    await expect(note).toContainText(/completed and rejected in the Chrome extension/i);
+    const link = page.getByTestId('queue-extension-note-link');
     await expect(link).toHaveAttribute('href', /chromewebstore\.google\.com/);
     await expect(link).toHaveAttribute('target', '_blank');
   });
@@ -158,7 +160,7 @@ test.describe('manager Request Queue — read-only', () => {
     await expect(page.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
     await expect(page.getByText(/no pending requests/i)).toBeVisible();
     // The note renders regardless of whether the queue has any requests.
-    await expect(page.getByTestId('queue-readonly-note')).toBeVisible();
+    await expect(page.getByTestId('queue-extension-note')).toBeVisible();
   });
 
   test('is usable at a 375px mobile viewport', async ({ page }) => {
@@ -172,6 +174,6 @@ test.describe('manager Request Queue — read-only', () => {
     await drawer.getByRole('link', { name: /^Request Queue$/ }).click();
     await expect(page.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
     await expect(page.getByTestId('queue-card-req-mobile')).toBeVisible();
-    await expect(page.getByTestId('queue-readonly-note')).toBeVisible();
+    await expect(page.getByTestId('queue-extension-note')).toBeVisible();
   });
 });

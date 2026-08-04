@@ -39,18 +39,21 @@ vi.mock('./RequestCard', () => ({
     memberHasSeat: boolean;
     memberSeatAbsent: boolean;
     memberHasStakeGrant: boolean;
+    remoteApplyRunning?: boolean;
   }) => (
     <div
       data-testid={`card-${props.request.request_id}`}
       data-has-seat={props.memberHasSeat ? 'true' : 'false'}
       data-seat-absent={props.memberSeatAbsent ? 'true' : 'false'}
       data-has-stake-grant={props.memberHasStakeGrant ? 'true' : 'false'}
+      data-remote-running={props.remoteApplyRunning ? 'true' : 'false'}
     />
   ),
 }));
 
 import type { AccessRequest } from '@kindoo/shared';
 import type { StakeConfigBundle } from '../lib/extensionApi';
+import type { RemoteApplyState } from '../content/remoteApply/useRemoteApply';
 
 function bundle(): StakeConfigBundle {
   return {
@@ -89,18 +92,35 @@ function req(overrides: Partial<AccessRequest> = {}): AccessRequest {
   } as AccessRequest;
 }
 
-// QueuePanel no longer owns the queue fetch — TabbedShell hosts it via
-// `usePendingRequests` so it survives tab switches. Mirror that wiring
-// here so the fetch-driven assertions below keep exercising the real
-// hook rather than a hand-rolled stub.
+// QueuePanel owns neither the queue fetch nor the remote-apply loop —
+// TabbedShell hosts both (`usePendingRequests` / `useRemoteApply`) so
+// they survive tab switches. Mirror that wiring here so the fetch-driven
+// assertions below keep exercising the real hook rather than a
+// hand-rolled stub, and so `remoteApply` arrives the way it does in
+// production: as a prop that changes without disturbing the queue.
 async function renderPanel(onPermissionDenied = vi.fn()) {
   const { QueuePanel } = await import('./QueuePanel');
   const { usePendingRequests } = await import('./usePendingRequests');
-  function Harness() {
+  const stableBundle = bundle();
+  function Harness({ remoteApply }: { remoteApply?: RemoteApplyState }) {
     const pending = usePendingRequests('csnorth', onPermissionDenied);
-    return <QueuePanel stakeId="csnorth" bundle={bundle()} pending={pending} />;
+    return (
+      <QueuePanel
+        stakeId="csnorth"
+        bundle={stableBundle}
+        pending={pending}
+        remoteApply={remoteApply}
+      />
+    );
   }
-  return render(<Harness />);
+  const view = render(<Harness />);
+  return {
+    ...view,
+    /** Push a new remote-apply snapshot without remounting — the queue
+     * keeps its state and does not refetch, exactly as in TabbedShell. */
+    setRemoteApply: (remoteApply: RemoteApplyState) =>
+      view.rerender(<Harness remoteApply={remoteApply} />),
+  };
 }
 
 describe('QueuePanel', () => {
@@ -311,5 +331,80 @@ describe('QueuePanel', () => {
     expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(1);
     await user.click(screen.getByTestId('sba-refresh'));
     await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(2));
+  });
+
+  // ---- Remote apply --------------------------------------------------
+
+  it('renders the remote-apply opt-in above the queue, off by default', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
+    const toggle = screen.getByTestId('sba-remote-apply-toggle');
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByTestId('sba-remote-apply-row')).toHaveTextContent(
+      'Allow requests from my phone',
+    );
+  });
+
+  it('persists the opt-in to chrome.storage.local when switched on', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const user = userEvent.setup();
+    await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-remote-apply-toggle')).toBeEnabled());
+
+    await user.click(screen.getByTestId('sba-remote-apply-toggle'));
+
+    await waitFor(() =>
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ 'sba.remoteApplyEnabled': true }),
+    );
+    expect(screen.getByTestId('sba-remote-apply-toggle')).toBeChecked();
+  });
+
+  it('shows a banner only while a phone-initiated job is running', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('sba-queue-empty')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument();
+
+    setRemoteApply({ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 });
+    expect(screen.getByTestId('sba-remote-apply-running')).toBeInTheDocument();
+  });
+
+  it('flags only the card whose request a phone-initiated job is applying', async () => {
+    // The banner alone is informational — the card's own provision
+    // button has to be gated too, or the manager can tap Apply on their
+    // phone and click the desktop button on the same request and get two
+    // concurrent `applyRequest` runs. Two `inviteUser` writes to Kindoo
+    // costs a licence, and no amount of SBA-side settling undoes it.
+    getMyPendingRequestsMock.mockResolvedValue({
+      requests: [
+        req({ request_id: 'r1', requested_at: wireTs('2026-01-01T00:00:00Z') }),
+        req({ request_id: 'r2', requested_at: wireTs('2026-01-02T00:00:00Z') }),
+      ],
+    });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(screen.getByTestId('card-r1')).toBeInTheDocument());
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'false');
+
+    setRemoteApply({ running: { jobId: 'j1', requestId: 'r1' }, finishedCount: 0 });
+    expect(screen.getByTestId('card-r1')).toHaveAttribute('data-remote-running', 'true');
+    expect(screen.getByTestId('card-r2')).toHaveAttribute('data-remote-running', 'false');
+  });
+
+  // The post-job refetch itself is TabbedShell's — it has to fire with
+  // this component unmounted. See TabbedShell.test.tsx. What QueuePanel
+  // owes is the negative: a finished job must not trigger a second fetch
+  // from here as well, or every phone-initiated completion costs two
+  // reads and the two refetches race to set the list.
+  it('does not refetch on its own when a phone-initiated job finishes', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { setRemoteApply } = await renderPanel();
+    await waitFor(() => expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(1));
+
+    setRemoteApply({ running: null, finishedCount: 1 });
+    await waitFor(() =>
+      expect(screen.queryByTestId('sba-remote-apply-running')).not.toBeInTheDocument(),
+    );
+    expect(getMyPendingRequestsMock).toHaveBeenCalledTimes(1);
   });
 });

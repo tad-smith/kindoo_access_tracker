@@ -19,8 +19,30 @@ export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js';
+export {
+  addBlockedByExistingSeat,
+  existingSeatFacts,
+  seatHasStakeGrant,
+  type ExistingSeatFacts,
+} from './existingSeatGate.js';
 export { REQUESTER_GUIDE_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
+export {
+  REMOTE_APPLY_HEARTBEAT_MS,
+  REMOTE_APPLY_HOME_SITE_KEY,
+  REMOTE_APPLY_PICKUP_TIMEOUT_MS,
+  REMOTE_APPLY_POLL_HIDDEN_MS,
+  REMOTE_APPLY_POLL_VISIBLE_MS,
+  REMOTE_APPLY_STALE_MS,
+  REMOTE_APPLY_TERMINAL_STATUSES,
+  canClaimRemoteApplyJob,
+  freshRemoteApplyDesktops,
+  isRemoteApplyEnabled,
+  isRemoteApplyTerminal,
+  remoteApplyDesktopForRequest,
+  remoteApplySiteKey,
+  remoteApplyTargetSiteKey,
+} from './remoteApply.js';
 export {
   deriveRequesterDisplay,
   formatRequesterLabel,
@@ -86,6 +108,13 @@ export type {
   PlatformAuditLog,
   PlatformSuperadmin,
   Principal,
+  RemoteApplyDesktop,
+  RemoteApplyDesktopWithId,
+  RemoteApplyJob,
+  RemoteApplyJobStatus,
+  RemoteApplyOutcome,
+  RemoteApplyOutcomeCode,
+  RemoteApplyPresence,
   RequestStatus,
   RequestType,
   SbaOnlyRemovePayload,

@@ -6,6 +6,167 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-84] Spec §16: the result dialog belongs to the page, not to the request's card
+Status: done (2026-08-03 — `feat/remote-apply-docs5`, against `feat/remote-apply` at `263af23`)
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+**Done.** All of it, plus the end-user guide — which had never mentioned remote apply at all, and in two places actively contradicted it.
+
+- `docs/user-guide/kindoo-managers.html` — new **Section 6, "Applying a request from your phone"**: what it does, the opt-in checkbox and its per-Chrome-profile scope, the three desktop preconditions, the four presence lines, the button and the names-a-site card, the result dialog with its over-cap block and its one-at-a-time ordering, a five-row failure table, and why nothing on the dialog re-runs the work. The guide called the Requests Queue **read-only** in §1 and §4; both corrected. Sections 6–14 renumbered 7–15, Fig 6.1 → 7.1 and Fig 11.1 → 12.1 with them; two troubleshooting entries, one glossary row, version 1.3 → 1.4. `creating-requests.html` checked and deliberately unchanged — nothing about submitting a request changed. PDFs regenerated (gitignored, so not committed — see below).
+- `spec.md` §16 "Acknowledging the result" — the raise-on-transition paragraph replaced by four: the page-level mount and why the card was the wrong owner, raise-on-sight with the two narrower facts, the acknowledgement cap as a storage backstop, and the oldest-completion-first queueing with its ordering keys. The `partial` retry paragraph generalised to "no retry on any status" with the `failed` case spelled out.
+- `architecture.md` D27 **(v)** amended in place, no new letter: both corrections, the tests-were-green tell, and the three consequences (ordering, the 50 → 500 inversion, no retry). The (v)–(z) closing sentence gained a line on why both corrections have the same root.
+- `docs/changelog/remote-apply.md` — new section "Three fixes from the phone, and why the tests were green throughout"; a "what didn't change" entry on the row staying with the card; two known issues (the unidentifiable `cancelled` dialog, the 500-cap residual); the fifth-pass doc summary. Also records the orphaned-content-script fix (`c1d9d66`), which was on this PR and in no doc.
+
+The `cancelled`-dialog gap is a known issue in the changelog rather than a spec change, as this entry proposed.
+
+Original entry:
+
+Follows T-83, and supersedes two of its details. Shipped on `feat/remote-apply-webfix3`.
+
+Operator's third live prod test still had no dialog: *"I applied a request that did work, I think I saw the dialog for a few milliseconds, but it went away."* The cause was structural, and neither of the first two fixes touched it. The dialog was rendered by `RemoteApplyRow`, inside the pending request's card. A successful remote apply ends in `markRequestComplete`, which flips the request to `complete`; `usePendingRequests` drops it from the next snapshot; the card unmounts and takes the dialog with it. The dialog was mounted inside the one component whose lifetime ends exactly when the event it exists to announce occurs, and the "few milliseconds" is the two snapshots landing in order — terminal job first (dialog paints), request-status change second (card gone). It is also why the tests passed while the feature was broken: they transitioned the job but left the request in the pending list, the one sequence in which the bug does not occur.
+
+Fixed by hoisting the dialog to page level (`RemoteApplyResults` in `apps/web/src/features/manager/queue/RemoteApply.tsx`, mounted once by `ManagerQueuePage`). Spec changes needed in §16 "Acknowledging the result":
+
+- **The dialog does not belong to a card.** It is the page's, selected across the manager's whole mailbox, and its lifetime is independent of whether the request is still pending, still rendered, or in the queue at all. It raises with an empty queue behind it — which is the state applying the last pending request actually produces. The inline row is unchanged and still per-card; that vanishing with the card is correct, since it is the at-a-glance state of a request that is on screen.
+- **Several outcomes finishing close together are shown one at a time, oldest completion first**, each needing its own **Dismiss**. Every outcome is a separate acknowledgement — a `failed` must not be buried under an `applied` that finished after it. Completion order rather than newest-first because it is monotone: the open dialog can only change by being dismissed, so a job terminating a beat later cannot swap the title and body out from under a tap already travelling toward Dismiss. Ordering is on `finished_at`, falling back to `created_at` for the phone's own `queued → cancelled` write (whose `serverTimestamp()` is unresolved in the snapshot that follows it), then on job id to break ties, since the mailbox query is unordered.
+- **No retry on the dialog, on any status** — §16's `partial` paragraph now generalises. The sharper case is `failed` with the request already out of the queue, where there is no card left to retry from, and every shape that produces one says no anyway: `request_not_pending` means the request is gone precisely because someone else resolved it, so there is nothing to apply; a stranded tab that reached `markRequestComplete` before dying is finalised `failed` with a message that refuses to say whether Kindoo took the write, and retrying that is how a licence gets consumed twice. The failures genuinely worth another go (`site_mismatch`, `kindoo_session_lost`, `building_rule_missing`) leave the request `pending`, so its card is still on the page with the **Try again** that belongs there. A retry on the dialog would be available exactly when it is unsafe and redundant exactly when it is safe.
+- **T-83's knock-on sentence is void.** "A `failed` or `cancelled` card now shows its dialog before **Try again** is reachable" was a consequence of the dialog being the card's child. It no longer is, though the modal still holds the page inert while open.
+- **T-83's justification for the acknowledgement cap is void, and the cap moved 50 → 500.** T-83 says an evicted id "belongs to a request that left the queue long ago" and so cannot re-raise anything — true only while the dialog needed a rendered card. Selecting across the whole mailbox makes eviction re-raise the outcome it acknowledged, and dismissing that re-raise evicts the next-oldest, which raises in turn: a modal loop through the manager's own history. The cap is now a storage-quota backstop sized to be unreachable (decades at 1–2 requests/week, ~20KB against a 5MB quota) rather than a working limit. Residual, not fixed: a device that somehow exceeds 500 dismissals still re-raises one old outcome per new dismissal. A hard fix would need an acknowledgement watermark rather than an id list.
+
+One thing the hoist did not solve, worth a known-issue line rather than a spec change: with no card behind it, a `cancelled` dialog carries nothing that identifies which request it is about (`applied` has the provisioning note, `failed` the desktop's message). Bounded in practice — a never-picked-up job never touched its request, so that card is still in the queue.
+
+## [T-83] Spec §16: the result dialog raises on sight of an own-device outcome, not on a witnessed transition
+Status: done (2026-08-03 — `feat/remote-apply-docs5`, with T-84)
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+**Done**, folded into T-84's pass because the two corrections land in the same paragraphs. §16's raise rule now reads on-sight-plus-acknowledgement with both narrower facts named, and `architecture.md` D27 (v) records it alongside the hoist.
+
+Its two superseded details needed no unwinding: neither the Try-again knock-on sentence nor the 50-id cap justification had been written into `spec.md` — this entry was filed before the pass that would have added them. The cap is documented at 500, as a storage backstop, per T-84.
+
+Original entry:
+
+`spec.md` §16 "Acknowledging the result" currently carries this paragraph, written against the first cut and now wrong:
+
+> **It raises on the transition into a terminal status, never on first sight of one.** […] Only a status change this device watched happen counts, which means the dialog belongs to the tap that is still open on screen, and a reload after the work finished gets the row alone.
+
+Operator hit the consequence live on `b3f05c6`: applied from their phone, it succeeded, no dialog. The transition rule fails for the device the feature exists for — the manager taps Apply, turns to the desktop to watch it work, and the phone locks. On wake the page has re-mounted and the job is already terminal on first sight, so the dialog was suppressed in the commonest real flow. (The desktop's `ResultDialog` never hits this: the desktop is the machine doing the work, with its panel open.)
+
+The rule is now: **a terminal job raises the dialog on sight when this device queued it and this device hasn't already acknowledged it.** The two properties the transition rule was protecting are carried by narrower facts instead:
+
+- *Not someone else's* — `RemoteApplyJob.created_by_device` is matched against `getDeviceId()`. A job the manager queued from another phone belongs to that phone's screen; the row still reports it either way. A device id that can't be read (storage locked down) matches nothing, so the dialog stays away rather than raising on an unattributable job.
+- *Not history* — dismissing is what makes an outcome history, and the acknowledgement is persisted in `localStorage` (`kindoo:remoteApplyAckedJobs`, `apps/web/src/features/manager/queue/acknowledgedJobs.ts`), not component state, because a locked phone guarantees the reload. Bounded at the 50 most recent ids, oldest evicted first: jobs are never deleted, and an id old enough to be evicted belongs to a request that left the queue long ago.
+
+One knock-on worth a sentence: a `failed` or `cancelled` card now shows its dialog before **Try again** is reachable, since the modal holds the card inert until dismissed. Read what went wrong, then retry — that ordering is intended, not incidental.
+
+## [T-81] Spec §4.4 / §15 / §16: the web queue's duplicate gate, and the phone's result dialog
+Status: done (2026-08-03 — `feat/remote-apply-docs4`, against `feat/remote-apply-shared2` at `60c1297`)
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+**Done.** Both changes documented, plus the three other review fixes that landed alongside them and one correction to the desktop-side expiry paragraph `extension-engineer` had added to §16.
+
+- `spec.md` §5.3 — the duplicate-chip sentence gained the carve-out and names `addBlockedByExistingSeat` as the single definition, stating outright that the chip and the withheld Apply button are one boolean; the per-card-control sentence now mentions the dialog.
+- `spec.md` §15 — the extension queue bullet re-pointed at the shared predicate, with the drift that produced it recorded (`isAdd && !!seat` did not fail safe) and T-82 named as the extension's adoption.
+- `spec.md` §16 — new **"Acknowledging the result"** subsection: raise-on-transition, undismissable, all four terminal statuses, the `applied` note + "Now over cap:" block, and why `partial` has no retry. Plus a new paragraph under "Opting in" for the unresolved-tab retry budget, and the desktop-side expiry passage split into two paragraphs with the job-trail distinction added.
+- `firebase-schema.md` §3.4 — `over_caps` on the outcome shape with its writer rules; the `cancelled` lifecycle bullet rewritten around two writers; the lifecycle diagram, written-by, and read-by corrected; the terminal-write gaps section is now three gaps, with the CEL-cannot-iterate and render-bound reasoning. §6 rules paste and §6.1 notes updated.
+- `architecture.md` D27 — extended with **(v)–(z)**; (b)'s one-call-per-60s claim amended in place.
+- `docs/changelog/remote-apply.md` — new "The second review round, and the smoke test that produced a dialog" section, the deliberate no-`partial`-retry note, two "what didn't change" entries, two new known issues (T-82, the unvalidated `over_caps` entry shape), and the fourth-pass doc summary.
+- `packages/shared/CLAUDE.md` — new convention: a predicate two surfaces must agree on lives in `shared`, take facts as arguments not prop shapes. Consumers line corrected (`extension/` was missing) and the file layout given `existingSeatGate.ts` / `remoteApply.ts`.
+- `extension/CLAUDE.md` — verified against the merged code, not rewritten. The eight remote-apply bullets are accurate.
+
+Original entry:
+
+Two behavioural changes on `feat/remote-apply-webfix2` that `spec.md` doesn't yet describe.
+
+**1. The web queue's add-onto-existing-seat gate now matches the extension's, carve-out included.** §230 (Requests Queue) says: "For an **add** request whose member already has a seat, the card shows a blocking **error** chip" — flatly, with no carve-out. That was true of the code and is no longer. `QueuePage`'s `blockedByDuplicate` was `isAdd && !!seat`, which is strictly broader than `RequestCard`'s `blockedByExistingSeat` (spec §589 documents that one, carve-out and all). The consequence was not a safe over-suppression: a stake-scope `add_manual` for a member with a seat but no stake grant — the shape the web's own "Give Access To Stake Buildings" button produces — got a red "this request can't be completed — reject it" chip and no **Apply via extension** button, for a request the desktop provisions cleanly via `planAddMerge`.
+
+Both surfaces now call `addBlockedByExistingSeat` from `@kindoo/shared` (`packages/shared/src/existingSeatGate.ts`) — the web already does; the extension's adoption is T-82. §230's sentence needs the carve-out clause, and §589's paragraph should point at the shared helper as the single definition rather than describing the extension's local expression.
+
+**2. A terminal remote-apply outcome now raises a dialog on the phone.** Operator feedback from a live smoke test: a remote apply that succeeded showed only the inline row, where the desktop's own flow ends in `ResultDialog`, a modal you have to acknowledge. §16 needs:
+
+- The dialog raises on the **transition** into a terminal status observed by that device — never on first sight of an already-terminal job, so a reload doesn't pop modals for finished work. The inline row is unchanged and remains the at-a-glance state.
+- It is not dismissable by Escape or an outside tap; Dismiss is the only exit.
+- `applied` shows the desktop's provisioning note, plus a **"Now over cap:"** block listing each pool the completion pushed over its cap (`RemoteApplyOutcome.over_caps`, new — these were dropped entirely on the remote path before). Pools are named with the page's scope labeller, so a ward reads as its name.
+- `partial` shows the note and the desktop-authored failure sentence, and **offers no retry**. The desktop's dialog has one; it replays a captured `MarkRequestCompleteInput` that the job doc doesn't record (only `provisioning_note` and `kindoo_uid`), so the phone would have to guess the completion note it writes into the permanent record. It is also a write path the web queue has never had — §230 still says the page's only action is remote apply, and that stays true. The request is still `pending`, so the desktop's own card finishes it with the tested path.
+- `failed` / `cancelled` raise the dialog too, worded exactly as the row is. A phone gets pocketed; a silent failure is worse than a silent success.
+
+## [T-82] Extension: adopt the shared add-onto-existing-seat gate
+Status: open
+Owner: @extension-engineer
+Phase: remote apply (D27)
+
+`packages/shared/src/existingSeatGate.ts` now holds the single definition of whether an `add_*` request is blocked by the member's existing seat — `seatHasStakeGrant`, `existingSeatFacts`, `addBlockedByExistingSeat`. The web queue consumes it (T-81); the extension still carries its own copy in two places:
+
+- `extension/src/panel/QueuePanel.tsx` — a local `seatHasStakeGrant`, used by `fetchSeatMap`.
+- `extension/src/panel/RequestCard.tsx` — `applyableStakeAdd` / `blockedByExistingSeat`, expressed inline.
+
+Swapping both for the shared helpers is mechanical and needs no prop-shape change: `addBlockedByExistingSeat(request, { hasSeat: memberHasSeat, hasStakeGrant: memberHasStakeGrant })` takes the booleans the card already receives. Left to the extension owner rather than done here because `extension/` isn't `web-engineer`'s, and several extension branches were in flight.
+
+The point of doing it is that these two gates drifting apart is what produced T-81: a divergence in a predicate neither surface can see the other's copy of. The long comment on `RequestCard`'s carve-out should move to the shared module (it's already there) rather than being maintained twice.
+
+## [T-78] Spec §16 + §15: remote-apply presence is per Kindoo site, not per manager
+Status: done (2026-08-03 — `feat/remote-apply-docs3`, against `feat/remote-apply` at `31366f8`)
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+**Done.** All four drifts closed, plus three the walk of the merged code turned up.
+
+- `spec.md` §16 — new "Coverage is per Kindoo site, not per manager" paragraph; the opt-in section split into the profile-wide flag and the per-site heartbeat, with the opt-out delete and the move-doesn't-delete rule; the presence table rewritten around the four real states and their verbatim copy; a new **"Which Kindoo site a request needs"** subsection carrying the derivation, the `AccessRequest.kindoo_site_id` warning, the no-catalogue-no-button rule, and the not-covered card copy; the claim now described as filter-then-claim over a page; the sweep's two thresholds and the sweep-before-session-check ordering; the site-mismatch paragraph rewritten as "the phone routes, the desktop refuses".
+- `spec.md` §5.3 — per-card gating, and the extension note's quoted sentence updated to the new wording. §3.1's `remoteApply` bullet updated for the three-level shape and the split `isManager` gating.
+- `firebase-schema.md` §3.4 — restructured around the three levels; new `desktops/{siteKey}` section (site keys, the reserved `'home'`, whole-doc `setDoc`, owner-delete); `target_site_key` added to the job shape with its derivation and the `kindoo_site_id` warning stated outright; the frozen-job note with the **clear-staging-before-deploy** warning; the parent doc's missing `isManager` gate and why `ext_version.size() <= 32` is load-bearing. §5.1's no-composite-index note confirmed and corrected (`limit(20)`, and why site routing added no index). §6 rules paste and §6.1 notes updated.
+- `architecture.md` D27 — extended with **(p)–(u)** rather than a new D-number; (g) and (k) amended in place.
+- `docs/changelog/remote-apply.md` — new "The multi-site reshape, and the question that caused it" section, including the deploy warning; stale bullets in "What shipped", "What didn't change", and "Known issues" corrected.
+- `extension/CLAUDE.md` — bullet count corrected (said five, lists seven). Its remote-apply content was already accurate against the merged code.
+
+Original drifts:
+
+1. **Presence is two docs, not one.** `remoteApply/{canonical}` carries only the profile-wide opt-in; liveness lives in `remoteApply/{canonical}/desktops/{siteKey}`, one doc per Kindoo site with a live tab. Two tabs on two sites coexist instead of overwriting each other.
+2. **The Apply button is gated per request, not per manager.** A request's target Kindoo site is *derived* (scope → ward → building; stake scope is home), and the button appears only when a live tab is on that site. `AccessRequest.kindoo_site_id` is NOT that site — it is the site of the grant a `remove` targets — so nothing reads it here. A request whose target site can't be resolved (orphaned ward/building reference, catalogues not loaded) gets no button: an unknown target can't be routed.
+3. **Jobs carry `target_site_key`** (required; `'home'` is the reserved key for the home site, which has no `kindooSites` doc). Only a tab inside that site may claim it. Also needs a `firebase-schema.md` §3.4 field entry.
+4. **The copy changed.** The queue-header line now names *every* covered site ("You can apply requests for Colorado Springs North and East Stake from here."), a not-covered card names the site to open ("Open East Stake in Kindoo on your computer to apply this one."), and the nothing-live line reads "Open Kindoo in Chrome on your computer to apply requests from here." The top-of-queue extension note lost its "When your desktop is online" clause — spec.md §15 quotes that sentence verbatim; it now reads "Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open there, you can apply them from here."
+
+## [T-79] A server-side remote-apply job writer must stamp `target_site_key` itself
+Status: open
+Owner: @backend-engineer
+Phase: remote apply (D27)
+
+Pre-emptive. Nothing to do today — this exists so the assumption is written down before someone unknowingly invalidates it.
+
+A `remoteApply/{canonicalEmail}/jobs/{jobId}` doc with no `target_site_key` is **permanently stuck**, not merely malformed. The rules' `jobCoreUnchanged` reads `before.target_site_key` bare; a missing-key read errors, and an erroring condition denies — and that helper gates `allow update` ahead of all three transition branches. So such a doc can't be claimed by a desktop, can't be cancelled by the phone's no-pickup timeout, and can't be reported on. `allow delete: if false` means no client can clear it either: Console or Admin SDK only.
+
+This is unreachable today, and only for one reason: **every writer of that collection is a client**, gated by a create rule requiring `target_site_key is string && .size() > 0`. Nothing in `functions/src` writes it.
+
+If a Cloud Function ever queues remote-apply jobs server-side — an auto-provision trigger, a retry sweep, a backfill — it **bypasses rules entirely** and can mint fieldless docs for real. Such a writer must derive and stamp `target_site_key` at the write. The derivation is settled and already implemented twice (`extension/src/content/kindoo/siteCheck.ts` → `checkRequestSite`, and the phone's queue-job writer): `request.scope === 'stake'` → the home site unconditionally; a ward scope → `resolveWardSite(ward, buildings)`, where `null` also means home. Run the result through `remoteApplySiteKey` (`@kindoo/shared`).
+
+**Call `resolveWardSite`; do not hand-roll the lookup.** It delegates to `resolveWardBuilding`, which is id-first with a **name fallback on an id MISS** — a ward whose `building_id` points at a deleted or un-migrated building still resolves via its `building_name` snapshot. An id-only reimplementation (`buildings.find(b => b.building_id === ward.building_id)?.kindoo_site_id ?? null`) returns `undefined` for that ward, which collapses to `null`, which means home. A foreign-site ward would then be silently stamped as home work, claimed by a home tab, and refused by that tab's own `checkRequestSite` — which resolves the expected site through the correct helper — with "switch Kindoo sites and try again". That is precisely the bad-advice failure the multi-site work removed, reintroduced one layer up. Same discipline as routing keys through `remoteApplySiteKey`.
+
+The extension defends by dropping such docs from both its queued and running queries with a warning rather than guessing a site — guessing would buy a doomed claim every poll that `claimRemoteApplyJob` misreports as "already claimed elsewhere", and would provision real Kindoo access against a guessed site if the freeze were ever lifted. That defence is deliberately inert; don't treat its existence as licence to write fieldless docs.
+
+Noted in `extension/CLAUDE.md` (remote apply bullets) and on the create rule in `firestore/firestore.rules`. Surfaced during PR #250 by `extension-engineer` and `backend-engineer` working the rules.
+
+## [T-77] Spec §16: what a card shows when one request holds several remote-apply jobs
+Status: done (2026-08-03 — `feat/remote-apply-docs2`, ahead of PR #250 merging)
+Owner: @docs-keeper
+Phase: remote apply (D27)
+
+**Done.** `spec.md` §16 now carries the precedence rule and the reason for it (the duplicate's loser is claimed after the job that succeeded, so recency reports a failure on a request that applied), the withheld-until-resolved button, the two-phone duplicate as an accepted limitation, and the reworded `failed` row. Landed with the rest of the review follow-ups: the stranded-job sweep (§16 "When the desktop stops partway"), the desktop button gate, and the opt-out re-check — `architecture.md` D27 (k)–(o), `firebase-schema.md` §3.4 / §5.1, `docs/changelog/remote-apply.md`.
+
+`spec.md` §16 already claims "one job per request at a time"; the queue now holds that claim properly (the tap latch is synchronous, so two taps in one task can't both write). What §16 doesn't say is what the card does when a request ends up with several jobs anyway — the create rule permits it, so the display has to be defined:
+
+> The card resolves to the most conclusive job, not the newest: `applied` and `partial` outrank `running` / `queued`, which outrank `failed` / `cancelled`; newest wins within a rank. A duplicate's loser is claimed *after* the job that succeeded and comes back `failed` (`request_not_pending`), so ranking on recency alone would report a failure on a request that in fact applied.
+
+Also worth a line: the Apply button is withheld until the job subscription has resolved, so it can't be tapped against a mailbox whose contents are still unknown.
+
+And one string change in the §16 status table (line ~753). The `failed` row currently reads:
+
+> | `failed` | "Your desktop couldn't apply this." plus the desktop's message. |
+
+The headline is now **"Your desktop didn't finish this."** The extension finalises a job stranded mid-run as `failed`, with a message that explicitly refuses to say whether Kindoo took the write ("It may or may not have gone through in Kindoo — check this request on your desktop before applying again."). The old headline contradicted that line, and a manager reading only the headline would go redo a provision that may already have consumed a licence.
+
+Behaviour lives in `pickRemoteApplyJob` / `useRemoteApplyJobsByRequest` and `statusView` (`apps/web/src/features/manager/queue/hooks.ts`, `RemoteApply.tsx`).
+
 ## [T-76] Wire the deploy-lock drift check into CI and cover it with tests
 Status: open
 Owner: @infra-engineer

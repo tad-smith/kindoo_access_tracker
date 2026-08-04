@@ -37,6 +37,14 @@ import type {
   DataGetSyncDataResponse,
   DataRejectRequestRequest,
   DataRejectRequestResponse,
+  DataRemoteApplyClaimJobRequest,
+  DataRemoteApplyClaimJobResponse,
+  DataRemoteApplyFinishJobRequest,
+  DataRemoteApplyFinishJobResponse,
+  DataRemoteApplyQueuedJobsRequest,
+  DataRemoteApplyQueuedJobsResponse,
+  DataRemoteApplyRunningJobsRequest,
+  DataRemoteApplyRunningJobsResponse,
   DataResolveEidStakesRequest,
   DataResolveEidStakesResponse,
   DataSyncApplyFixRequest,
@@ -45,9 +53,14 @@ import type {
   DataWriteKindooConfigResponse,
   DataWriteKindooSiteEidRequest,
   DataWriteKindooSiteEidResponse,
+  DataWriteRemotePresenceRequest,
+  DataWriteRemotePresenceResponse,
   EidStakeCandidate,
   EidStakeChoiceMap,
   ExtensionRequest,
+  RemoteApplyJobRef,
+  RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
   ResolveEidStakesPayload,
   ResponseFor,
   SyncDataBundle,
@@ -58,6 +71,11 @@ import { STORAGE_KEYS } from './messaging';
 
 export type { SyncDataBundle } from './messaging';
 export type { EidStakeCandidate, ResolveEidStakesPayload } from './messaging';
+export type {
+  RemoteApplyJobRef,
+  RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
+} from './messaging';
 
 /** Public alias for the stake-config bundle the panel passes between
  * components. */
@@ -357,6 +375,77 @@ export async function resolveEidStakes(eid: number): Promise<ResolveEidStakesPay
   const req: DataResolveEidStakesRequest = { type: 'data.resolveEidStakes', eid };
   const res: DataResolveEidStakesResponse = await sendMessage(req);
   return unwrap(res);
+}
+
+// ---- Remote apply (phone → desktop mailbox) --------------------------
+//
+// The mailbox is addressed by the SW from its own auth token; none of
+// these wrappers takes a canonical email.
+
+/**
+ * Publish (or revoke) this desktop's presence. Called on the heartbeat
+ * while the opt-in is on, the Kindoo session is usable, and the active
+ * EID resolves to a configured site; and once with `enabled: false`
+ * when the operator switches the opt-in off.
+ */
+export async function writeRemotePresence(payload: RemoteApplyPresenceInput): Promise<void> {
+  const req: DataWriteRemotePresenceRequest = { type: 'data.writeRemotePresence', payload };
+  const res: DataWriteRemotePresenceResponse = await sendMessage(req);
+  unwrap(res);
+}
+
+/**
+ * A page of queued jobs; empty when the mailbox has none. The caller
+ * claims the first one its Kindoo site can serve — see
+ * `content/remoteApply/loop.ts`.
+ */
+export async function remoteApplyQueuedJobs(): Promise<RemoteApplyJobRef[]> {
+  const req: DataRemoteApplyQueuedJobsRequest = { type: 'data.remoteApplyQueuedJobs' };
+  const res: DataRemoteApplyQueuedJobsResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Every `running` job in this manager's mailbox, with its claim age.
+ * Feeds the stranded-job sweep in `content/remoteApply/loop.ts`.
+ */
+export async function remoteApplyRunningJobs(): Promise<RemoteApplyRunningJobRef[]> {
+  const req: DataRemoteApplyRunningJobsRequest = { type: 'data.remoteApplyRunningJobs' };
+  const res: DataRemoteApplyRunningJobsResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Attempt the `queued → running` claim. `false` means another Kindoo
+ * tab won the race — the caller must drop the job silently, not report
+ * a failure the operator can do nothing about.
+ */
+export async function remoteApplyClaimJob(
+  jobId: string,
+  extVersion: string,
+  kindooEid: number | null,
+): Promise<boolean> {
+  const req: DataRemoteApplyClaimJobRequest = {
+    type: 'data.remoteApplyClaimJob',
+    jobId,
+    payload: { extVersion, kindooEid },
+  };
+  const res: DataRemoteApplyClaimJobResponse = await sendMessage(req);
+  return unwrap(res).claimed;
+}
+
+/** Write a job's terminal status + outcome. */
+export async function remoteApplyFinishJob(
+  jobId: string,
+  payload: DataRemoteApplyFinishJobRequest['payload'],
+): Promise<void> {
+  const req: DataRemoteApplyFinishJobRequest = {
+    type: 'data.remoteApplyFinishJob',
+    jobId,
+    payload,
+  };
+  const res: DataRemoteApplyFinishJobResponse = await sendMessage(req);
+  unwrap(res);
 }
 
 // ---- Per-EID stake choice (chrome.storage.local) ----------------------

@@ -1,0 +1,649 @@
+// Remote apply — the phone-facing half of D27.
+//
+// The manager's desktop extension publishes one presence doc per Kindoo
+// site it has a live tab on; this surface turns that into (a) one plain
+// line at the top of the queue naming the sites that are covered, and
+// (b) an **Apply via extension** button on each pending card whose site
+// one of those tabs can actually serve. Tapping writes a job doc; the
+// desktop claims it, runs the same provisioning code path as its own
+// button, and writes the outcome back, which the row renders live.
+//
+// The finished outcome is acknowledged separately, by
+// `RemoteApplyResults`, which the page mounts once. That split is not
+// cosmetic: a successful apply ends by marking the request complete, so
+// the card is gone by the time there is anything to announce. Anything
+// scoped to a card can only speak about a request that is still pending.
+//
+// Everything here is written for a phone first — a manager at the
+// building on their phone is the entire reason the feature exists.
+//
+// Coverage is per request, not per manager, because a Kindoo tab can
+// only provision for the site it is inside. The card that can't be
+// applied says which site to open rather than leaving a manager to
+// discover it from a failed job — the old `site_mismatch` message told
+// them to switch sites in Kindoo, advice that is actively wrong when
+// they already have that site open in the next tab.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  isRemoteApplyTerminal,
+  type OverCapEntry,
+  type RemoteApplyDesktopWithId,
+  type RemoteApplyJob,
+  type RemoteApplyJobStatus,
+} from '@kindoo/shared';
+import { Button } from '../../../components/ui/Button';
+import { Dialog } from '../../../components/ui/Dialog';
+import { getDeviceId } from '../../notifications/lib';
+import { acknowledgeJob, isJobAcknowledged } from './acknowledgedJobs';
+import {
+  toMillis,
+  useQueueRemoteApplyJob,
+  useRemoteApplyPickupTimeout,
+  type RemoteApplyJobWithId,
+  type RemoteApplyPresenceResult,
+} from './hooks';
+
+/**
+ * One line under the queue header: which Kindoo sites the manager can
+ * apply for right now, or what to go do about it when the answer is
+ * none. Renders nothing until presence resolves so the page doesn't
+ * flash advice at someone whose desktop is fine.
+ */
+export function RemoteApplyPresenceNote({
+  presence,
+  siteNames,
+}: {
+  presence: RemoteApplyPresenceResult;
+  /** Display names of the covered sites, in the order they should read. */
+  siteNames: readonly string[];
+}) {
+  if (presence.state === 'loading') return null;
+  return (
+    <p
+      className="kd-remote-apply-presence"
+      data-testid="remote-apply-presence"
+      data-state={presence.state}
+      role="status"
+    >
+      <span className="kd-remote-apply-dot" aria-hidden="true" />
+      {presenceCopy(presence.state, siteNames)}
+    </p>
+  );
+}
+
+/**
+ * The queue-header sentence. Exported for direct unit tests — this copy
+ * is the deliverable of the per-site change, and it has to read right
+ * at zero, one, and several live tabs.
+ */
+export function presenceCopy(
+  state: RemoteApplyPresenceResult['state'],
+  siteNames: readonly string[],
+): string {
+  switch (state) {
+    case 'live':
+      // Naming every covered site is the point: with two tabs open,
+      // naming one would read as a promise about the other.
+      return siteNames.length > 0
+        ? `You can apply requests for ${joinNames(siteNames)} from here.`
+        : 'Kindoo is open on your computer — you can apply requests from here.';
+    case 'stale':
+      return 'Open Kindoo in Chrome on your computer to apply requests from here.';
+    case 'other-stake':
+      return 'Your computer has a different stake open in Kindoo. Switch it to this stake to apply requests from here.';
+    case 'off':
+    case 'loading':
+      return 'Turn on “Allow requests from my phone” in the extension on your computer.';
+  }
+}
+
+/**
+ * `A`, `A and B`, `A, B and C`. Serial comma omitted deliberately — at
+ * 390px the list is read at a glance, and the shorter form wraps less.
+ */
+export function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+export interface RemoteApplyRowProps {
+  requestId: string;
+  /**
+   * The site key this request must be provisioned on, from
+   * `remoteApplyTargetSiteKey`. `null` means the wards / buildings
+   * catalogues haven't landed, so the derivation isn't trustworthy yet
+   * — the row offers nothing rather than route a request to whichever
+   * site an empty catalogue implies.
+   */
+  targetSiteKey: string | null;
+  /**
+   * The live tab that can run THIS request, or null when none can.
+   * Resolved by `remoteApplyDesktopForRequest` against the request's own
+   * site — a fresh tab on a different site cannot help here.
+   */
+  desktop: RemoteApplyDesktopWithId | null;
+  /**
+   * At least one tab is live in this stake. Gates the "open <site>"
+   * line: with nothing live at all the header already says to open
+   * Kindoo, and repeating that on every card is noise.
+   */
+  anyDesktopLive: boolean;
+  /** Display name of the site this request needs, when it resolves. */
+  requestSiteName?: string | null;
+  /**
+   * The job this request's card speaks for, resolved by
+   * `pickRemoteApplyJob` from every job in the mailbox — from a reload
+   * mid-apply, from a tap on the manager's other device, or from the tap
+   * just made here.
+   */
+  job?: RemoteApplyJobWithId | undefined;
+  /**
+   * The jobs subscription hasn't resolved. Withholds the button: an
+   * absent job isn't yet a fact, and offering Apply against an unknown
+   * mailbox is how a request ends up with two jobs.
+   */
+  jobsLoading?: boolean | undefined;
+}
+
+/**
+ * The per-card action + live job status. Renders nothing when no tab can
+ * serve this request and there's no job to report, so a card looks
+ * exactly as it did before this feature when remote apply is off.
+ *
+ * Everything here is scoped to a card that is on screen, and dies with
+ * it — which is correct for an at-a-glance status and wrong for an
+ * acknowledgement. The result dialog therefore lives at page level, in
+ * {@link RemoteApplyResults}; see the note there.
+ */
+export function RemoteApplyRow({
+  requestId,
+  targetSiteKey,
+  desktop,
+  anyDesktopLive,
+  requestSiteName,
+  job,
+  jobsLoading = false,
+}: RemoteApplyRowProps) {
+  // Local clock reading of the tap. `created_at` is an unresolved
+  // `serverTimestamp()` in the first local snapshot, so the pickup
+  // timeout needs something to count from until the server ack lands.
+  const [queuedAtMs, setQueuedAtMs] = useState<number | null>(null);
+  // The tap latch, held twice on purpose. The ref is the half that
+  // works: it flips *before* `mutate` is called, so a second tap
+  // arriving in the same task — a phone's synthesised click after a
+  // touch, a double-tap — returns early instead of reading the pre-tap
+  // render's state and queueing a second job. `queue.isPending` and the
+  // job snapshot both land a microtask later and can't guard that
+  // window. The state mirrors it so the row renders the same fact.
+  const createStartedRef = useRef(false);
+  const [createStarted, setCreateStarted] = useState(false);
+  const queue = useQueueRemoteApplyJob();
+
+  // Once a job for this request is visible, it owns the guard and the
+  // latch stands down — including for a legitimate retry, where the
+  // failed job is displaced by the new one.
+  useEffect(() => {
+    if (!job) return;
+    createStartedRef.current = false;
+    setCreateStarted(false);
+  }, [job]);
+
+  useRemoteApplyPickupTimeout(job?.job_id ?? null, job, queuedAtMs);
+
+  const status = job?.status;
+  const hasJob = job !== undefined;
+  // Any non-terminal job blocks a second tap — this is the duplicate
+  // guard. Two jobs for one request would provision twice in Kindoo,
+  // and phones generate double-taps for free.
+  const inFlight =
+    queue.isPending || createStarted || (status !== undefined && !isRemoteApplyTerminal(status));
+
+  const apply = () => {
+    if (inFlight || createStartedRef.current || targetSiteKey === null) return;
+    createStartedRef.current = true;
+    setCreateStarted(true);
+    const tappedAt = Date.now();
+    queue.mutate(
+      { requestId, targetSiteKey },
+      {
+        onSuccess: () => {
+          setQueuedAtMs(tappedAt);
+        },
+        onError: () => {
+          // Nothing was written, so nothing is in flight — let them retry.
+          createStartedRef.current = false;
+          setCreateStarted(false);
+        },
+      },
+    );
+  };
+
+  const covered = desktop !== null;
+  const showButton = covered && !inFlight && !jobsLoading && !isSettled(status);
+  // The new not-covered state. Only worth saying while something IS
+  // live — it is the difference between the sites they have open and
+  // the one this request needs, and with nothing open there is no
+  // difference to explain. Suppressed too when the target site didn't
+  // resolve: there is no site to name and no claim we can honestly make
+  // about whether a tab could serve it.
+  const showNeedsSite =
+    !covered && anyDesktopLive && targetSiteKey !== null && !inFlight && !isSettled(status);
+  if (!showButton && !showNeedsSite && !hasJob && !inFlight && !queue.isError) return null;
+
+  return (
+    <div className="kd-remote-apply" data-testid={`remote-apply-${requestId}`}>
+      {hasJob ? <JobStatus job={job} requestId={requestId} /> : null}
+      {!hasJob && inFlight ? (
+        <div className="kd-remote-apply-state is-progress" role="status">
+          <span className="kd-remote-apply-state-headline">Sending to your desktop…</span>
+        </div>
+      ) : null}
+      {queue.isError ? (
+        <div className="kd-remote-apply-state is-error" role="alert">
+          Couldn&apos;t send this to your desktop. Try again.
+        </div>
+      ) : null}
+      {showNeedsSite ? (
+        <p
+          className="kd-remote-apply-needs-site"
+          data-testid={`remote-apply-needs-site-${requestId}`}
+        >
+          {needsSiteCopy(requestSiteName)}
+        </p>
+      ) : null}
+      {showButton ? (
+        <Button
+          variant="secondary"
+          className="kd-remote-apply-button"
+          data-testid={`remote-apply-button-${requestId}`}
+          onClick={apply}
+        >
+          {isRetryable(status) ? 'Try again' : 'Apply via extension'}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export interface RemoteApplyResultsProps {
+  /**
+   * Every job in the manager's mailbox, one per request, as
+   * `useRemoteApplyJobsByRequest().resolved` gives them. Deliberately
+   * the whole mailbox and not the pending requests — see below.
+   */
+  jobs: readonly RemoteApplyJobWithId[];
+  /**
+   * Scope → display label, for naming an over-cap pool. Optional:
+   * without it the pool falls back to its stored value (`'stake'` or a
+   * ward code), which is still readable.
+   */
+  labelForScope?: ((scope: string) => string) | undefined;
+}
+
+/**
+ * The page's acknowledgement surface: one dialog for the whole queue,
+ * showing the outcome of a finished remote apply this device asked for.
+ *
+ * **Why this is at page level and not on the card.** It was on the card
+ * for two releases, and the feature simply did not work. A successful
+ * apply ends in `markRequestComplete`; the request stops being
+ * `pending`; `usePendingRequests` drops it from the next snapshot; the
+ * card unmounts and takes its children with it. The dialog was mounted
+ * inside the one component whose lifetime ends exactly when the event
+ * it exists to announce occurs. What the manager saw was a flash — two
+ * snapshots landing in order, the terminal job first (dialog paints),
+ * the request-status change a beat later (card gone). Mounted here it
+ * doesn't care whether the request is still pending, still rendered, or
+ * in the queue at all; it raises with an empty queue behind it, which is
+ * the state applying the last pending request actually produces.
+ *
+ * **Which outcome, when several are waiting.** One at a time, oldest
+ * completion first, each needing its own dismissal. Every outcome is a
+ * separate acknowledgement — a `failed` must not be buried under an
+ * `applied` that finished after it — so "newest wins" is not on the
+ * table if it means the rest are never seen. Between the two orders that
+ * do show all of them, completion order is chosen because it is
+ * *monotone*: the selection can only change by being dismissed. Newest
+ * first would let a job terminating a beat later replace the dialog's
+ * title and body while a tap is already travelling toward Dismiss, and
+ * the manager acknowledges something they never read. It also matches
+ * the order they tapped Apply in.
+ *
+ * **What makes an outcome ours, and history.** Unchanged from the
+ * per-card version, and both facts are still needed:
+ *
+ *   - `created_by_device` — the id this device wrote at tap time. A job
+ *     the manager queued from another phone belongs to that phone's
+ *     screen, and a job seeded by anything else stays silent. A device
+ *     id we can't read (storage locked down) matches nothing, so the
+ *     dialog stays away rather than raising on jobs we can't attribute.
+ *   - the persisted acknowledgement — dismissing is what makes an
+ *     outcome history, and it has to survive the reload a locked phone
+ *     guarantees. See `acknowledgedJobs.ts`.
+ *
+ * The raise is deliberately NOT gated on having witnessed the terminal
+ * transition. The manager taps Apply, turns to their desktop to watch it
+ * work, and the phone locks; by the time they look back the page has
+ * re-mounted and the job is already terminal on first sight.
+ */
+export function RemoteApplyResults({ jobs, labelForScope }: RemoteApplyResultsProps) {
+  const deviceId = useMemo(() => {
+    try {
+      return getDeviceId();
+    } catch {
+      return null;
+    }
+  }, []);
+  // In-session half of the acknowledgement, so dismissing takes effect
+  // without re-reading storage; `acknowledgeJob` writes the half that
+  // survives the reload. A set, not a single id, because outcomes are
+  // shown in sequence and each dismissal has to stick as the next one
+  // takes the stage.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const job = useMemo(
+    () => pickUnacknowledgedOutcome(jobs, deviceId, dismissed),
+    [jobs, deviceId, dismissed],
+  );
+  if (!job) return null;
+  return (
+    <RemoteApplyResultDialog
+      // Remount between consecutive outcomes: a fresh dialog rather than
+      // one whose contents changed under the manager.
+      key={job.job_id}
+      job={job}
+      labelForScope={labelForScope}
+      onDismiss={() => {
+        acknowledgeJob(job.job_id);
+        setDismissed((prev) => new Set(prev).add(job.job_id));
+      }}
+    />
+  );
+}
+
+/**
+ * The outcome this device still owes the manager an acknowledgement for,
+ * or `undefined`. Oldest completion first — see {@link RemoteApplyResults}
+ * for why order is completion and not recency.
+ *
+ * Exported for direct unit tests: the selection is the whole behaviour,
+ * and it is much easier to pin every branch here than through the page.
+ */
+export function pickUnacknowledgedOutcome(
+  jobs: readonly RemoteApplyJobWithId[],
+  deviceId: string | null,
+  dismissed: ReadonlySet<string>,
+): RemoteApplyJobWithId | undefined {
+  if (deviceId === null) return undefined;
+  let best: RemoteApplyJobWithId | undefined;
+  for (const job of jobs) {
+    if (!isRemoteApplyTerminal(job.status)) continue;
+    if (job.created_by_device !== deviceId) continue;
+    if (dismissed.has(job.job_id)) continue;
+    if (isJobAcknowledged(job.job_id)) continue;
+    if (best === undefined || finishedFirst(job, best)) best = job;
+  }
+  return best;
+}
+
+function finishedFirst(job: RemoteApplyJobWithId, incumbent: RemoteApplyJobWithId): boolean {
+  const a = outcomeOrderKey(job);
+  const b = outcomeOrderKey(incumbent);
+  if (a !== b) return a < b;
+  // Same reading (commonly: both unresolved). The mailbox query is
+  // unordered, so tie-break on the id rather than let the selection
+  // depend on the order the snapshot happened to arrive in.
+  return job.job_id < incumbent.job_id;
+}
+
+/**
+ * When an outcome landed. `finished_at` is the honest answer and the
+ * extension writes it on every terminal transition; `created_at`
+ * backstops the phone's own `queued → cancelled` write, whose
+ * `serverTimestamp()` reads as null in the local snapshot that follows
+ * it. Both unresolved means "this device wrote it a moment ago", which
+ * is the newest thing there is — hence last in an oldest-first order.
+ */
+function outcomeOrderKey(job: RemoteApplyJobWithId): number {
+  return toMillis(job.finished_at) ?? toMillis(job.created_at) ?? Number.POSITIVE_INFINITY;
+}
+
+export interface RemoteApplyResultDialogProps {
+  job: RemoteApplyJob;
+  labelForScope?: ((scope: string) => string) | undefined;
+  onDismiss: () => void;
+}
+
+/**
+ * The acknowledgement for a finished remote apply, mirroring the
+ * desktop's `ResultDialog`. The desktop ends every Provision & Complete
+ * in a modal the manager has to dismiss; the phone showed only the
+ * inline row, so a manager who pocketed their phone came back to a card
+ * that had quietly changed colour. The row stays — it is the
+ * at-a-glance state — and this is the acknowledgement.
+ *
+ * Not dismissable by Escape or a tap outside: the point is that it gets
+ * clicked. Same as the desktop's, which offers only its buttons.
+ *
+ * Everything it renders comes off the job doc it is handed — including
+ * the request id its test ids are keyed by. It is mounted at page level,
+ * where there may be no card for this request at all; taking any of it
+ * from a card's derived props would put the coupling that broke this
+ * feature back, one level down.
+ *
+ * The detail comes from {@link statusView}, the same function the
+ * inline row renders from, so the two can't word an outcome
+ * differently. What the dialog adds is what the row has no room for:
+ * the desktop's provisioning note (what it actually did in Kindoo) and
+ * the over-cap warning.
+ *
+ * **Dismiss is the only exit — no retry, on any status.** For `partial`
+ * the desktop's version has a retry and it is not an action this surface
+ * can reproduce: it replays the captured `MarkRequestCompleteInput` (an
+ * SBA-only write, no Kindoo call), and the job doc records only
+ * `provisioning_note` and `kindoo_uid`, not that input. For `failed` the
+ * question is sharper, because the request may have left the queue and
+ * taken its "Try again" with it — but every shape that produces one says
+ * no. `request_not_pending` means the request is gone precisely because
+ * someone else resolved it, so there is nothing left to apply. A
+ * stranded tab that got as far as `markRequestComplete` before dying is
+ * finalised `failed` with a message that refuses to say whether Kindoo
+ * took the write — retrying that is how a licence gets consumed twice.
+ * And the failures that are genuinely worth another go (`site_mismatch`,
+ * `kindoo_session_lost`, `building_rule_missing`) leave the request
+ * `pending`, so its card is still on the page with the retry that
+ * belongs there. A retry here would be available exactly when it is
+ * unsafe and redundant exactly when it is safe.
+ */
+export function RemoteApplyResultDialog({
+  job,
+  labelForScope,
+  onDismiss,
+}: RemoteApplyResultDialogProps) {
+  const requestId = job.request_id;
+  const view = statusView(job);
+  // `applied` writes the same string to both fields; fall back so an
+  // outcome from an extension that only set `message` still says what
+  // the desktop did.
+  const note =
+    job.outcome?.provisioning_note ?? (job.status === 'applied' ? job.outcome?.message : undefined);
+  // Only ever populated on `applied` (the `partial` path never landed
+  // the SBA write, so the server had nothing to report) — rendered on
+  // presence rather than on status so a missing field is simply a
+  // dialog without the warning, which is what an older extension
+  // writes.
+  const overCaps = job.outcome?.over_caps ?? [];
+
+  return (
+    <Dialog
+      open
+      dismissable={false}
+      onOpenChange={(next) => {
+        if (!next) onDismiss();
+      }}
+      title={resultDialogTitle(job.status, view)}
+    >
+      <div
+        className={`kd-remote-apply-result is-${view.tone}`}
+        data-testid={`remote-apply-result-${requestId}`}
+        data-status={job.status}
+      >
+        {note ? (
+          <p
+            className="kd-remote-apply-result-note"
+            data-testid={`remote-apply-result-note-${requestId}`}
+          >
+            {note}
+          </p>
+        ) : null}
+        {view.detail ? (
+          <p
+            className="kd-remote-apply-result-detail"
+            data-testid={`remote-apply-result-detail-${requestId}`}
+          >
+            {view.detail}
+          </p>
+        ) : null}
+        {overCaps.length > 0 ? (
+          <div
+            className="kd-remote-apply-result-overcap"
+            data-testid={`remote-apply-result-overcap-${requestId}`}
+          >
+            <strong>Now over cap:</strong>
+            <ul>
+              {overCaps.map((entry) => (
+                <li key={entry.pool}>{overCapLine(entry, labelForScope)}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+      <Dialog.Footer>
+        <Dialog.CancelButton data-testid={`remote-apply-result-dismiss-${requestId}`}>
+          Dismiss
+        </Dialog.CancelButton>
+      </Dialog.Footer>
+    </Dialog>
+  );
+}
+
+/**
+ * The dialog's heading. It is the inline row's headline for every
+ * status but `partial`, so the two surfaces can't say different things
+ * about the same outcome.
+ *
+ * `partial` is the exception because its detail line — authored on the
+ * desktop, deliberately, so both surfaces word failures identically —
+ * opens with "Applied in Kindoo, but …", exactly as the row's headline
+ * does. Stacked in one small modal the repetition reads as a stutter.
+ * The short form here mirrors the desktop dialog's own title
+ * ("Kindoo done — SBA still pending"), spelled without the acronym.
+ */
+export function resultDialogTitle(status: RemoteApplyJobStatus, view: StatusView): string {
+  return status === 'partial' ? 'Kindoo done — still open here' : view.headline;
+}
+
+/**
+ * One over-cap pool as a line. `pool` is `'stake'` or a ward_code; the
+ * page's scope labeller turns both into what the rest of the card says
+ * ("Stake", "Cottonwood"), so a manager doesn't have to translate a
+ * ward code on a phone.
+ */
+export function overCapLine(
+  entry: OverCapEntry,
+  labelForScope?: ((scope: string) => string) | undefined,
+): string {
+  const pool = labelForScope ? labelForScope(entry.pool) : entry.pool;
+  return `${pool}: ${entry.count} / ${entry.cap} (over by ${entry.over_by})`;
+}
+
+/**
+ * What a card says when the manager's live tabs are on other sites.
+ * Names the site so they can go open the right one — the whole reason
+ * presence is keyed by site.
+ */
+export function needsSiteCopy(requestSiteName: string | null | undefined): string {
+  return requestSiteName
+    ? `Open ${requestSiteName} in Kindoo on your computer to apply this one.`
+    : "Open this request's Kindoo site in Chrome on your computer to apply it.";
+}
+
+/**
+ * States where the work is done (or done enough that re-running would
+ * double-provision), so the button stays away. `failed` and `cancelled`
+ * are NOT settled — those get the retry button back.
+ */
+function isSettled(status: RemoteApplyJob['status'] | undefined): boolean {
+  return status === 'applied' || status === 'partial';
+}
+
+/** Terminal failures worth another go from the phone. */
+function isRetryable(status: RemoteApplyJob['status'] | undefined): boolean {
+  return status === 'failed' || status === 'cancelled';
+}
+
+function JobStatus({ job, requestId }: { job: RemoteApplyJob | undefined; requestId: string }) {
+  if (!job) return null;
+  const view = statusView(job);
+  return (
+    <div
+      className={`kd-remote-apply-state is-${view.tone}`}
+      data-testid={`remote-apply-status-${requestId}`}
+      data-status={job.status}
+      role={view.tone === 'error' ? 'alert' : 'status'}
+    >
+      <span className="kd-remote-apply-state-headline">{view.headline}</span>
+      {view.detail ? <span className="kd-remote-apply-state-detail">{view.detail}</span> : null}
+    </div>
+  );
+}
+
+export interface StatusView {
+  tone: 'progress' | 'success' | 'warn' | 'error';
+  headline: string;
+  detail?: string | undefined;
+}
+
+function statusView(job: RemoteApplyJob): StatusView {
+  const message = job.outcome?.message;
+  switch (job.status) {
+    case 'queued':
+      return { tone: 'progress', headline: 'Sent to your desktop — waiting for it to start…' };
+    case 'running':
+      // Short enough to hold one line at 390px — the long form wrapped
+      // right at the card edge and read as truncated.
+      return { tone: 'progress', headline: 'Your desktop is applying this…' };
+    case 'applied':
+      return { tone: 'success', headline: 'Applied ✓' };
+    case 'partial':
+      // Kindoo took the change; SBA didn't get marked complete. Saying
+      // "failed" here would send the manager to redo a provision that
+      // already happened — the one wording mistake that costs a licence.
+      return {
+        tone: 'warn',
+        headline: 'Applied in Kindoo, but this request is still open here.',
+        detail: message ?? 'Finish it on your desktop to close it out.',
+      };
+    case 'failed':
+      // Deliberately NOT "couldn't apply this". A job whose tab died
+      // mid-run is finalised `failed` too, and the desktop's message for
+      // that case explicitly refuses to say whether Kindoo took the
+      // write. A headline that asserts it didn't would contradict the
+      // line under it, and a manager reading only the headline would go
+      // redo a provision that may already have consumed a licence — the
+      // same mistake `partial` is worded around. "Didn't finish" is true
+      // of every `failed` job without claiming anything about Kindoo;
+      // the detail carries the specifics.
+      return {
+        tone: 'error',
+        headline: "Your desktop didn't finish this.",
+        detail: message,
+      };
+    case 'cancelled':
+      return {
+        tone: 'warn',
+        headline: "Your desktop didn't pick this up.",
+        detail: 'Open Kindoo in Chrome on your computer, then try again.',
+      };
+  }
+}

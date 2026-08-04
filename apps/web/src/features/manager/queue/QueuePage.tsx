@@ -1,11 +1,14 @@
-// Manager Requests Queue page (live, read-only). Pending-only; rendered
-// as three ordered sections (Emergency / Outstanding / Future) using the
+// Manager Requests Queue page (live). Pending-only; rendered as three
+// ordered sections (Emergency / Outstanding / Future) using the
 // `comparison_date` rule in `@kindoo/shared`'s `partitionPendingRequests`.
 //
-// The queue is a visibility-only surface: completion and rejection
-// happen in the Chrome extension, not here. A muted top-of-queue note
-// links to the extension. The cards are display-only — no action
-// affordances.
+// The hands-on workflow lives in the Chrome extension: completing a
+// request needs a signed-in Kindoo tab, and rejection is desktop-only.
+// The one thing this page can do is ask the manager's OWN desktop
+// extension to run an apply on their behalf — remote apply (D27), the
+// `RemoteApply*` components below. When that desktop isn't online the
+// page is exactly what it was before: read-only cards plus a note
+// pointing at the extension.
 //
 // `focus` prop carries a request_id from a tapped push notification's
 // deep-link (typed search param at the route level). On first render
@@ -19,11 +22,31 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
   type AccessRequest,
+  type Building,
+  type KindooSite,
+  type RemoteApplyDesktopWithId,
+  type Ward,
+  addBlockedByExistingSeat,
   deriveRequesterDisplay,
+  existingSeatFacts,
   formatRequesterLabel,
   partitionPendingRequests,
+  remoteApplyTargetSiteKey,
 } from '@kindoo/shared';
-import { usePendingRequests } from './hooks';
+import {
+  useKindooSites,
+  usePendingRequests,
+  useQueueBuildings,
+  useQueueStakeDoc,
+  useQueueWards,
+  useRemoteApplyJobsByRequest,
+  useRemoteApplyPresence,
+  type RemoteApplyJobsResult,
+  type RemoteApplyJobWithId,
+  type RemoteApplyPresenceResult,
+} from './hooks';
+import { RemoteApplyPresenceNote, RemoteApplyResults, RemoteApplyRow } from './RemoteApply';
+import { homeSiteName, siteKeyLabel } from '../../../lib/kindooSites';
 import {
   useAccessForMember,
   useKindooManagerForMember,
@@ -52,6 +75,35 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   const pending = usePendingRequests();
   const navigate = useNavigate();
   const labelForScope = useScopeLabel();
+  // Remote apply: presence + the manager's job mailbox. Resolved once
+  // here and passed down rather than called per card — one listener
+  // each, not one per pending request. The three catalogues are what a
+  // request's target Kindoo site is derived from (scope → ward →
+  // building) and named with.
+  const remoteApply = useRemoteApplyPresence();
+  const remoteApplyJobs = useRemoteApplyJobsByRequest();
+  const kindooSites = useKindooSites();
+  const queueWards = useQueueWards();
+  const queueBuildings = useQueueBuildings();
+  const stakeDoc = useQueueStakeDoc();
+  const sites = kindooSites.data ?? [];
+  const wards = queueWards.data ?? [];
+  const buildings = queueBuildings.data ?? [];
+  const homeName = homeSiteName(stakeDoc.data);
+  // A ward missing from the catalogue derives to home, which is the
+  // right answer for genuinely-unknown wards and the wrong one for
+  // "the subscription hasn't arrived yet". Withhold the button until
+  // both catalogues have landed rather than let that window queue a
+  // home job for a foreign-site request.
+  const siteCatalogueReady = !queueWards.isLoading && !queueBuildings.isLoading;
+  // The covered sites, named — every one of them. With two tabs live,
+  // naming one would read as a promise about the other. A foreign site
+  // missing from the catalogue falls back to the name its own tab
+  // reported, which is at least the string Kindoo shows.
+  const coveredSiteNames = remoteApply.desktops
+    .map((d) => siteKeyLabel(d.site_key, sites, homeName) ?? d.kindoo_site_name)
+    .filter((name): name is string => !!name)
+    .sort((a, b) => a.localeCompare(b));
 
   // Compute "now" once per render. Time advancement during a session
   // shifts the Outstanding/Future boundary by at most a tick — well
@@ -111,11 +163,23 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
     };
   }, [focus, pending.data, navigate]);
 
+  // The acknowledgement for a finished remote apply, mounted once for
+  // the page and rendered in both branches below — including the loading
+  // one. Its whole point is that it does not depend on the pending list:
+  // a successful apply marks its request complete, so by the time there
+  // is an outcome to show, the request is out of `pending` and its card
+  // is gone. It used to live inside that card, and the manager saw the
+  // dialog for the few milliseconds between the two snapshots landing.
+  const results = (
+    <RemoteApplyResults jobs={remoteApplyJobs.resolved} labelForScope={labelForScope} />
+  );
+
   if (pending.isLoading || pending.data === undefined) {
     return (
       <section className="kd-page-medium">
         <h1>Request Queue</h1>
         <LoadingSpinner />
+        {results}
       </section>
     );
   }
@@ -125,7 +189,9 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   return (
     <section className="kd-page-medium">
       <h1>Request Queue</h1>
-      <ReadOnlyNote />
+      <ExtensionNote />
+      <RemoteApplyPresenceNote presence={remoteApply} siteNames={coveredSiteNames} />
+      {results}
 
       {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
@@ -137,6 +203,13 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.urgent}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
           <QueueSection
             title="Outstanding Requests"
@@ -144,6 +217,13 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.outstanding}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
           <QueueSection
             title="Future Requests"
@@ -151,6 +231,13 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
             requests={sections.future}
             focusedId={focusedId}
             labelForScope={labelForScope}
+            remoteApply={remoteApply}
+            remoteApplyJobs={remoteApplyJobs}
+            kindooSites={sites}
+            wards={wards}
+            buildings={buildings}
+            homeSiteName={homeName}
+            siteCatalogueReady={siteCatalogueReady}
           />
         </div>
       )}
@@ -158,17 +245,21 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
   );
 }
 
-// Muted note pointing managers to the Chrome extension for the
-// actionable (complete / reject) workflow, which no longer lives here.
-function ReadOnlyNote() {
+// Muted note pointing managers at the Chrome extension. Completing by
+// hand and rejecting still live there; remote apply (below the note) is
+// the one thing that can be started from this page. Deliberately vague
+// about *which* requests — that is per Kindoo site now, and the presence
+// line directly underneath answers it precisely.
+function ExtensionNote() {
   return (
-    <p className="kd-queue-readonly-note font-bold" data-testid="queue-readonly-note" role="note">
-      Requests can only be completed or rejected from the Chrome extension.{' '}
+    <p className="kd-queue-readonly-note font-bold" data-testid="queue-extension-note" role="note">
+      Requests are completed and rejected in the Chrome extension on your computer. With Kindoo open
+      there, you can apply them from here.{' '}
       <a
         href={CHROME_WEB_STORE_URL}
         target="_blank"
         rel="noopener noreferrer"
-        data-testid="queue-readonly-note-link"
+        data-testid="queue-extension-note-link"
       >
         Install the extension
       </a>
@@ -182,9 +273,29 @@ interface QueueSectionProps {
   requests: readonly AccessRequest[];
   focusedId: string | undefined;
   labelForScope: (scope: string) => string;
+  remoteApply: RemoteApplyPresenceResult;
+  remoteApplyJobs: RemoteApplyJobsResult;
+  kindooSites: readonly KindooSite[];
+  wards: readonly Ward[];
+  buildings: readonly Building[];
+  homeSiteName: string | null;
+  siteCatalogueReady: boolean;
 }
 
-function QueueSection({ title, testid, requests, focusedId, labelForScope }: QueueSectionProps) {
+function QueueSection({
+  title,
+  testid,
+  requests,
+  focusedId,
+  labelForScope,
+  remoteApply,
+  remoteApplyJobs,
+  kindooSites,
+  wards,
+  buildings,
+  homeSiteName,
+  siteCatalogueReady,
+}: QueueSectionProps) {
   // Hide the entire section (header + body) when empty — the operator
   // brief is unambiguous on this.
   if (requests.length === 0) return null;
@@ -194,14 +305,33 @@ function QueueSection({ title, testid, requests, focusedId, labelForScope }: Que
         {title} ({requests.length})
       </h2>
       <div className="kd-queue-cards">
-        {requests.map((request) => (
-          <QueueCard
-            key={request.request_id}
-            request={request}
-            isFocused={focusedId === request.request_id}
-            labelForScope={labelForScope}
-          />
-        ))}
+        {requests.map((request) => {
+          // Derived, not read off the request: `AccessRequest`'s own
+          // `kindoo_site_id` is the site of the grant a `remove` targets,
+          // not the site the request provisions on. The derivation lives
+          // in `@kindoo/shared` because it must give the same answer as
+          // the extension's `checkRequestSite`, which is what actually
+          // refuses a provision on the wrong site.
+          const targetSiteKey = siteCatalogueReady
+            ? remoteApplyTargetSiteKey(request, wards, buildings)
+            : null;
+          return (
+            <QueueCard
+              key={request.request_id}
+              request={request}
+              isFocused={focusedId === request.request_id}
+              labelForScope={labelForScope}
+              remoteApplyTargetSiteKey={targetSiteKey}
+              remoteApplyDesktop={remoteApply.desktopForSite(targetSiteKey)}
+              remoteApplyAnyLive={remoteApply.state === 'live'}
+              remoteApplySiteName={
+                targetSiteKey ? siteKeyLabel(targetSiteKey, kindooSites, homeSiteName) : null
+              }
+              remoteApplyJob={remoteApplyJobs.byRequest.get(request.request_id)}
+              remoteApplyJobsLoading={remoteApplyJobs.isLoading}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -211,22 +341,43 @@ interface QueueCardProps {
   request: AccessRequest;
   isFocused: boolean;
   labelForScope: (scope: string) => string;
+  /** Site key this request provisions on; null until the catalogues land. */
+  remoteApplyTargetSiteKey: string | null;
+  /** The live tab that can apply THIS request's site, or null. */
+  remoteApplyDesktop: RemoteApplyDesktopWithId | null;
+  /** Any tab live in this stake — gates the per-card "open <site>" line. */
+  remoteApplyAnyLive: boolean;
+  /** Name of the site this request needs, when it resolves. */
+  remoteApplySiteName: string | null;
+  remoteApplyJob: RemoteApplyJobWithId | undefined;
+  remoteApplyJobsLoading: boolean;
 }
 
-function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
+function QueueCard({
+  request,
+  isFocused,
+  labelForScope,
+  remoteApplyTargetSiteKey,
+  remoteApplyDesktop,
+  remoteApplyAnyLive,
+  remoteApplySiteName,
+  remoteApplyJob,
+  remoteApplyJobsLoading,
+}: QueueCardProps) {
   // Live duplicate check: surface inside the queue card so the manager
   // sees, at a glance, that an add request collides with an existing
-  // seat. The completion path now lives in the extension; the chip is
-  // kept exactly as-is as an informational signal (operator decision:
-  // "same message, same error display, no changes").
+  // seat, and withhold remote apply for it.
   //
-  // For an add request, completion creates a brand-new one-per-member
-  // seat doc keyed by canonical email, so ANY existing seat (regardless
-  // of scope) guarantees the create throws. Edit / remove completions
-  // expect an existing seat, so the chip renders ONLY for add types.
+  // The predicate is `@kindoo/shared`'s, not a local copy, because the
+  // extension card gates its own Provision & Complete button on the
+  // same question — and a broader gate here does NOT fail safe. It
+  // hides Apply and prints "reject it" for a stake-scope `add_manual`
+  // onto a seat with no stake grant, which is precisely the shape the
+  // web's own "Give Access To Stake Buildings" button produces and
+  // which `planAddMerge` provisions cleanly. See the module for the
+  // full rule.
   const dup = useSeatForMember(request.member_canonical);
-  const blockedByDuplicate =
-    (request.type === 'add_manual' || request.type === 'add_temp') && !!dup.data;
+  const blockedByDuplicate = addBlockedByExistingSeat(request, existingSeatFacts(dup.data));
 
   // Informational edit-side analog of the duplicate-add chip: an
   // `edit_*` completion modifies the member's existing seat, so a
@@ -358,6 +509,20 @@ function QueueCard({ request, isFocused, labelForScope }: QueueCardProps) {
           <Badge variant="danger">Error</Badge> This request edits a seat that no longer exists.
         </div>
       ) : null}
+      {/* Remote apply. Suppressed on the two cards that already say
+          "this can't be completed" — offering to run a provision that
+          is known to fail would be worse than offering nothing. */}
+      {blockedByDuplicate || editTargetMissing ? null : (
+        <RemoteApplyRow
+          requestId={request.request_id}
+          targetSiteKey={remoteApplyTargetSiteKey}
+          desktop={remoteApplyDesktop}
+          anyDesktopLive={remoteApplyAnyLive}
+          requestSiteName={remoteApplySiteName}
+          job={remoteApplyJob}
+          jobsLoading={remoteApplyJobsLoading}
+        />
+      )}
     </div>
   );
 }

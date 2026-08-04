@@ -5,6 +5,10 @@
 // the loop: the same button runs the full Kindoo provision flow first
 // (add / change / remove) and only then marks the SBA request complete.
 //
+// The orchestration itself lives in `content/kindoo/applyRequest` —
+// shared with the phone-initiated remote runner so the two surfaces
+// can't drift apart on what happened or how it is worded.
+//
 // State transitions:
 //   - idle           → button rendered; click → provisioning
 //   - provisioning   → button disabled, inline spinner; orchestrator runs
@@ -27,30 +31,10 @@ import {
 import {
   getAccessByEmail,
   getKindooManagerByEmail,
-  getSeatByEmail,
   markRequestComplete,
-  writeKindooSiteEid,
   type StakeConfigBundle,
 } from '../lib/extensionApi';
-import { readKindooSession, type KindooSession } from '../content/kindoo/auth';
-import { KindooApiError } from '../content/kindoo/client';
-import { getEnvironments, type KindooEnvironment } from '../content/kindoo/endpoints';
-import {
-  provisionAddOrChange,
-  provisionEdit,
-  provisionRemove,
-  ProvisionBuildingsMissingRuleError,
-  ProvisionEditUserMissingError,
-  ProvisionEnvironmentNotFoundError,
-  ProvisionStakeAutoEditError,
-  type ProvisionResult,
-} from '../content/kindoo/provision';
-import {
-  checkRequestSite,
-  ProvisionForeignSiteMissingError,
-  ProvisionHomeSiteNotConfiguredError,
-  ProvisionSiteMismatchError,
-} from '../content/kindoo/siteCheck';
+import { applyRequest } from '../content/kindoo/applyRequest';
 import { ResultDialog, type ResultDialogState } from './ResultDialog';
 import { RejectDialog } from './RejectDialog';
 
@@ -95,6 +79,18 @@ interface RequestCardProps {
    * miss — the server-side precondition is the backstop.
    */
   memberSeatAbsent: boolean;
+  /**
+   * True while a phone-initiated remote-apply job is provisioning THIS
+   * request. The button is the desktop's entry into the same
+   * `applyRequest` flow the remote runner is already inside, so letting
+   * both run means two concurrent seat reads, two `provisionAddOrChange`
+   * calls and — for a member who isn't in Kindoo yet — two `inviteUser`
+   * writes, the second of which consumes a licence. `markRequestComplete`
+   * settling on one winner is no help: the Kindoo writes already
+   * happened. Parent (`QueuePanel`) derives this by matching the running
+   * job's `request_id`; absent (standalone renders, no loop) ⇒ false.
+   */
+  remoteApplyRunning?: boolean;
   /** Called after the operator dismisses the result dialog OR after a
    * successful reject; parent drops the card from the queue list and
    * refetches. */
@@ -114,6 +110,7 @@ export function RequestCard({
   memberHasSeat,
   memberHasStakeGrant,
   memberSeatAbsent,
+  remoteApplyRunning = false,
   onDismissed,
 }: RequestCardProps) {
   const [state, setState] = useState<CardState>({ kind: 'idle' });
@@ -157,127 +154,41 @@ export function RequestCard({
   const isUrgent = request.urgent === true;
   const submittedAt = formatTimestamp(request.requested_at);
 
+  // The orchestration itself lives in `content/kindoo/applyRequest` so
+  // the phone-initiated remote runner executes byte-identical steps and
+  // reports byte-identical wording. This callback only renders the
+  // outcome.
   const provision = useCallback(async () => {
     setState({ kind: 'provisioning' });
-
-    // 1. Resolve Kindoo session from localStorage (panel is mounted on
-    //    web.kindoo.tech — same-origin).
-    const sessionResult = readKindooSession();
-    if (!sessionResult.ok) {
+    const outcome = await applyRequest({ stakeId, request, bundle });
+    if (outcome.status === 'failed') {
+      setState({ kind: 'error', message: outcome.message });
+      return;
+    }
+    if (outcome.status === 'applied') {
       setState({
-        kind: 'error',
-        message:
-          sessionResult.error === 'no-token'
-            ? 'Sign into Kindoo first, then retry.'
-            : "Open a specific Kindoo site (click into one from the My Sites list) and retry. The extension can't tell which site you're working on otherwise.",
+        kind: 'result',
+        dialog: { kind: 'ok', note: outcome.note, over_caps: outcome.overCaps },
       });
       return;
     }
-    const session: KindooSession = sessionResult.session;
-
-    // 2. Run the orchestrator. Both add and remove paths need the SBA
-    //    seat (read-first merged-state — remove computes the
-    //    post-removal seat shape to drive scope-specific Kindoo
-    //    reconciliation) + envs (for TimeZone on editUser).
-    let seat: Awaited<ReturnType<typeof getSeatByEmail>>;
-    try {
-      seat = await getSeatByEmail(stakeId, request.member_canonical);
-    } catch (err) {
-      setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-    let envs: KindooEnvironment[];
-    try {
-      envs = await getEnvironments(session);
-    } catch (err) {
-      setState({ kind: 'error', message: describeKindooError(err) });
-      return;
-    }
-
-    // Kindoo Sites Phase 3 — refuse to provision when the active
-    // Kindoo session points at the wrong site for this request. Foreign
-    // sites with no recorded EID get auto-populated here on a site-name
-    // match; the EID write must complete BEFORE any Kindoo write so a
-    // subsequent provision against this site short-circuits.
-    let siteCheck: ReturnType<typeof checkRequestSite>;
-    try {
-      siteCheck = checkRequestSite({
-        request,
-        session,
-        envs,
-        stake: bundle.stake,
-        wards: bundle.wards,
-        buildings: bundle.buildings,
-        kindooSites: bundle.kindooSites,
-      });
-    } catch (err) {
-      setState({ kind: 'error', message: describeProvisionError(err) });
-      return;
-    }
-    if (!siteCheck.ok) {
-      setState({ kind: 'error', message: siteCheck.error.message });
-      return;
-    }
-    if (siteCheck.populate) {
-      try {
-        await writeKindooSiteEid(
-          stakeId,
-          siteCheck.populate.kindooSiteId,
-          siteCheck.populate.kindooEid,
-        );
-      } catch (err) {
-        setState({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-        return;
-      }
-    }
-
-    let result: ProvisionResult;
-    try {
-      if (request.type === 'remove') {
-        result = await provisionRemove({
-          request,
-          seat,
-          stake: bundle.stake,
-          buildings: bundle.buildings,
-          wards: bundle.wards,
-          envs,
-          session,
-        });
-      } else if (
-        request.type === 'edit_auto' ||
-        request.type === 'edit_manual' ||
-        request.type === 'edit_temp'
-      ) {
-        result = await provisionEdit({
-          request,
-          seat,
-          stake: bundle.stake,
-          buildings: bundle.buildings,
-          wards: bundle.wards,
-          envs,
-          session,
-        });
-      } else {
-        result = await provisionAddOrChange({
-          request,
-          seat,
-          stake: bundle.stake,
-          buildings: bundle.buildings,
-          wards: bundle.wards,
-          envs,
-          session,
-        });
-      }
-    } catch (err) {
-      setState({ kind: 'error', message: describeProvisionError(err) });
-      return;
-    }
-
-    // 3. Kindoo done — now mark the SBA request complete. If this
-    //    fails, surface a partial-success dialog with a retry button.
-    await sendMarkComplete(stakeId, request.request_id, result, (dialog) =>
-      setState({ kind: 'result', dialog }),
-    );
+    // Kindoo landed, SBA didn't. Retry re-runs ONLY the SBA half using
+    // the captured payload — no second Kindoo write.
+    setState({
+      kind: 'result',
+      dialog: {
+        kind: 'partial',
+        note: outcome.note,
+        errorMessage: outcome.message,
+        onRetrySba: async () => {
+          const completed = await markRequestComplete(outcome.markCompleteInput);
+          setState({
+            kind: 'result',
+            dialog: { kind: 'ok', note: outcome.note, over_caps: completed.over_caps },
+          });
+        },
+      },
+    });
   }, [stakeId, request, bundle]);
 
   const dismiss = useCallback(() => {
@@ -417,13 +328,23 @@ export function RequestCard({
           This request edits a seat that no longer exists — reject it.
         </p>
       ) : null}
+      {remoteApplyRunning ? (
+        <p
+          role="status"
+          className="sba-muted"
+          data-testid={`sba-remote-busy-${request.request_id}`}
+        >
+          You sent this one from your phone — this tab is applying it now. Wait for it to finish
+          rather than applying it twice.
+        </p>
+      ) : null}
       <div className="sba-request-actions">
         {provisionBlocked ? null : (
           <button
             type="button"
             className={buttonClass}
             onClick={() => void provision()}
-            disabled={isBusy}
+            disabled={isBusy || remoteApplyRunning}
             data-testid={buttonTestId}
           >
             {isBusy ? `${buttonLabel}…` : buttonLabel}
@@ -464,78 +385,6 @@ export function RequestCard({
       ) : null}
     </div>
   );
-}
-
-/**
- * Run markRequestComplete with the captured Kindoo metadata. On
- * success, surface an `ok` dialog. On failure, surface a `partial`
- * dialog that re-tries only the SBA side on user request.
- */
-async function sendMarkComplete(
-  stakeId: string,
-  requestId: string,
-  provision: ProvisionResult,
-  setDialog: (dialog: ResultDialogState) => void,
-): Promise<void> {
-  const note = provision.note;
-  const payload: Parameters<typeof markRequestComplete>[0] = {
-    stakeId,
-    requestId,
-    completionNote: note,
-    provisioningNote: note,
-  };
-  if (provision.kindoo_uid) {
-    payload.kindooUid = provision.kindoo_uid;
-  }
-
-  try {
-    const result = await markRequestComplete(payload);
-    setDialog({ kind: 'ok', note, over_caps: result.over_caps });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    setDialog({
-      kind: 'partial',
-      note,
-      errorMessage: message,
-      onRetrySba: async () => {
-        const result = await markRequestComplete(payload);
-        setDialog({ kind: 'ok', note, over_caps: result.over_caps });
-      },
-    });
-  }
-}
-
-function describeKindooError(err: unknown): string {
-  if (err instanceof KindooApiError) {
-    return `Kindoo API error (${err.code}): ${err.message}`;
-  }
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
-function describeProvisionError(err: unknown): string {
-  if (err instanceof ProvisionBuildingsMissingRuleError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionEnvironmentNotFoundError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionEditUserMissingError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionStakeAutoEditError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionSiteMismatchError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionHomeSiteNotConfiguredError) {
-    return err.message;
-  }
-  if (err instanceof ProvisionForeignSiteMissingError) {
-    return err.message;
-  }
-  return describeKindooError(err);
 }
 
 function labelForType(t: AccessRequest['type']): string {

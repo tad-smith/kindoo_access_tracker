@@ -24,11 +24,16 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  limit,
+  query,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import type {
@@ -36,6 +41,7 @@ import type {
   Building,
   KindooManager,
   KindooSite,
+  RemoteApplyJob,
   Seat,
   Stake,
   Ward,
@@ -43,7 +49,14 @@ import type {
 import { canonicalEmail } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
-import type { EidStakeCandidate, WriteKindooConfigPayload } from '../lib/messaging';
+import type {
+  DataRemoteApplyFinishJobRequest,
+  EidStakeCandidate,
+  RemoteApplyJobRef,
+  RemoteApplyPresenceInput,
+  RemoteApplyRunningJobRef,
+  WriteKindooConfigPayload,
+} from '../lib/messaging';
 
 /** Actor reference written onto every client-originated doc write. */
 interface ActorRef {
@@ -620,4 +633,297 @@ export async function resolveEidStakes(
     .map((o) => o.failedStakeId)
     .filter((id): id is string => id !== null);
   return { candidates, failedStakes };
+}
+
+// ---------------------------------------------------------------------------
+// Remote apply — the per-manager mailbox (`docs/architecture.md` D27).
+//
+// Every operation below addresses `remoteApply/{canonical}` where
+// `canonical` comes from the SW's OWN auth token, never from the
+// message. The content script cannot name a mailbox, so a compromised
+// page context can't reach another manager's queue even if it could
+// forge messages; the rules' `authedCanonical()` check is the second
+// lock on the same door.
+//
+// All one-shot ops (`setDoc` / `getDocs` / `updateDoc`) — `onSnapshot`
+// and `runTransaction` ride WebChannel, which needs `XMLHttpRequest`,
+// which an MV3 service worker does not have.
+// ---------------------------------------------------------------------------
+
+/**
+ * Bound on both job queries. Not a page size in the paging sense —
+ * nothing pages past it — but a ceiling on how much one poll can read.
+ *
+ * The queued query needs the headroom because it is now a filter-then-
+ * claim: jobs this tab cannot serve sit ahead of ones it can, and a
+ * limit that only covered the unservable ones would deadlock the tab
+ * that could do the work. The backlog is bounded anyway — the phone
+ * cancels any job nobody claims within `REMOTE_APPLY_PICKUP_TIMEOUT_MS`
+ * (90s), so what accumulates is at most what a manager can tap in 90
+ * seconds, against a stake seeing 1–2 requests a week.
+ */
+const REMOTE_APPLY_JOB_QUERY_LIMIT = 20;
+
+/**
+ * Publish or revoke this desktop's presence.
+ *
+ * Two docs, because the two facts have different lifetimes:
+ *
+ *   - `remoteApply/{canonical}` carries the profile-wide opt-in. Ticking
+ *     the box in one Kindoo tab enables every tab in that Chrome
+ *     profile, so this level knows nothing about sites.
+ *   - `remoteApply/{canonical}/desktops/{siteId}` carries liveness for
+ *     ONE Kindoo site. A tab can only provision for the site it is
+ *     currently inside, so a second tab on a second site writes a second
+ *     doc instead of overwriting the first — which is what made
+ *     `kindoo_eid` flap between sites every 60 seconds.
+ *
+ * The caller only sends the heartbeat form while the Kindoo session is
+ * usable AND its EID resolves to a configured site. The revoke form
+ * fires regardless: clearing consent must never be blocked by a dead
+ * Kindoo tab.
+ *
+ * Both writes are whole-document `setDoc`s, NOT `{ merge: true }`. Rules
+ * enforce an exact key set on each, and rules see the MERGED result — so
+ * merging onto a parent doc that a previous extension version left
+ * carrying `stake_id` / `last_seen_at` / `kindoo_eid` / `kindoo_site_name`
+ * produces a seven-key document and a `permission-denied`. Overwriting is
+ * also what migrates those profiles: the first heartbeat from this
+ * version drops the fields that moved down to `desktops`.
+ */
+export async function writeRemotePresence(
+  payload: RemoteApplyPresenceInput,
+  actor: User,
+): Promise<void> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical);
+  await setDoc(ref, {
+    remote_apply_enabled: payload.enabled,
+    ext_version: payload.extVersion,
+    lastActor: actorRef,
+  });
+  if (payload.siteKey === null) return;
+  const desktopRef = doc(db, 'remoteApply', actorRef.canonical, 'desktops', payload.siteKey);
+  if (!payload.enabled) {
+    // Delete rather than backdate: a stale-but-present doc still names a
+    // site on the phone, and the parent flag having gone false means no
+    // sibling tab is serving that site either. Best effort — the flag is
+    // what actually gates the button, so a failed delete costs the
+    // manager a lingering site label for one staleness window, not a
+    // working button they revoked.
+    try {
+      await deleteDoc(desktopRef);
+    } catch (err) {
+      console.warn('[sba-ext] remote apply: could not clear the desktop doc', err);
+    }
+    return;
+  }
+  await setDoc(desktopRef, {
+    stake_id: payload.stakeId,
+    // Doc id and this field encode the same site two ways because a doc
+    // id cannot be null. Rules deliberately don't check that they agree,
+    // so keeping them consistent is this function's job — both derive
+    // from one `resolveTabSite` result, never independently.
+    kindoo_site_id: payload.kindooSiteId,
+    last_seen_at: serverTimestamp(),
+    kindoo_eid: payload.kindooEid,
+    kindoo_site_name: payload.kindooSiteName,
+    ext_version: payload.extVersion,
+    lastActor: actorRef,
+  });
+}
+
+/**
+ * A page of `queued` jobs from the operator's mailbox — the input to the
+ * poller's site-aware claim.
+ *
+ * Deliberately unordered. Ordering by `created_at` alongside the status
+ * equality would need a composite index for a query that, at this scale,
+ * returns nought or one document; document-id order is arbitrary but
+ * deterministic, and the caller claims the first job it can serve rather
+ * than insisting on the oldest.
+ *
+ * Unfiltered by age too, and for the same reason: the caller doesn't
+ * merely skip a job past the pickup window, it CANCELS it (see the
+ * poller in `content/remoteApply/loop.ts`), so a `created_at` bound here
+ * would hide exactly the documents that need finalising.
+ */
+export async function findQueuedRemoteApplyJobs(actor: User): Promise<RemoteApplyJobRef[]> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
+  const snap = await getDocs(
+    query(jobs, where('status', '==', 'queued'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
+  );
+  return snap.docs.map((d) => toJobRef(d.id, d.data() as RemoteApplyJob)).filter(isJobRef);
+}
+
+/**
+ * Every `running` job in the operator's mailbox — the input to the
+ * content script's stranded-job sweep.
+ *
+ * Same single-equality shape as the queued query, so no composite index.
+ * At 1–2 requests/week a mailbox with even two concurrent `running` jobs
+ * already means something went wrong.
+ *
+ * `claimed_at` is returned as epoch ms rather than a `Timestamp` — the
+ * value has to survive `chrome.runtime.sendMessage`'s structured
+ * serialisation, which strips the class. `created_at` backs it up because
+ * rules make `claimed_at` optional on the claim.
+ */
+export async function findRunningRemoteApplyJobs(actor: User): Promise<RemoteApplyRunningJobRef[]> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const jobs = collection(db, 'remoteApply', actorRef.canonical, 'jobs');
+  const snap = await getDocs(
+    query(jobs, where('status', '==', 'running'), limit(REMOTE_APPLY_JOB_QUERY_LIMIT)),
+  );
+  return snap.docs
+    .map((d) => {
+      const data = d.data() as RemoteApplyJob;
+      const ref = toJobRef(d.id, data);
+      // A frozen doc is dropped here too. The sweep's only move is a
+      // terminal write, and rules deny that one for the same reason
+      // they deny the claim — handing it over would buy a rejected
+      // write every 60 seconds and no cleanup.
+      if (!ref) return null;
+      return { ...ref, claimedAtMs: toMillis(data.claimed_at) ?? ref.createdAtMs };
+    })
+    .filter(isJobRef);
+}
+
+/**
+ * Job doc → the wire shape, or `null` for a doc the extension must not
+ * touch.
+ *
+ * `target_site_key` is required by the rules' create allowlist, so no
+ * client can write a job without one. Docs that PREDATE that rule can
+ * still exist — earlier builds of this branch queued jobs with no site
+ * field — and those are frozen, not merely unlabelled: the rules'
+ * `jobCoreUnchanged` reads `before.target_site_key` bare, a missing-key
+ * read errors, and an erroring condition denies. That gates every
+ * transition, so such a job can't be claimed, can't be cancelled by the
+ * phone's pickup timeout, and can't be reported on. It is stuck.
+ *
+ * Dropping it here rather than guessing a site is the difference between
+ * one honest warning and a doomed claim every ten seconds — and
+ * `claimRemoteApplyJob` reads the resulting `permission-denied` as a
+ * lost race, so the guess would also log "already claimed elsewhere"
+ * forever, which is the wrong diagnosis entirely. Guessing `home` would
+ * be actively unsafe if the freeze were ever lifted: the target site of
+ * such a doc is unknowable, and a wrong guess provisions real Kindoo
+ * access against the wrong site.
+ *
+ * The warning repeats on every poll deliberately. This state needs an
+ * operator to clear the doc with admin credentials (`allow delete: if
+ * false` blocks the client), and it is self-limiting — it stops the
+ * moment they do.
+ */
+function toJobRef(jobId: string, data: RemoteApplyJob): RemoteApplyJobRef | null {
+  if (typeof data.target_site_key !== 'string' || data.target_site_key.length === 0) {
+    console.warn(
+      `[sba-ext] remote apply: job ${jobId} has no target_site_key; it predates the current ` +
+        `contract and rules freeze every transition on it — no tab can claim, cancel, or ` +
+        `complete it. Clear it from the mailbox with admin credentials.`,
+    );
+    return null;
+  }
+  return {
+    jobId,
+    requestId: data.request_id,
+    stakeId: data.stake_id,
+    targetSiteKey: data.target_site_key,
+    // Epoch ms rather than a `Timestamp`, for the same reason
+    // `claimedAtMs` is: the class does not survive
+    // `chrome.runtime.sendMessage`'s structured serialisation.
+    createdAtMs: toMillis(data.created_at),
+  };
+}
+
+/** Drop the `null`s `toJobRef` returns for frozen docs. */
+function isJobRef<T>(value: T | null): value is T {
+  return value !== null;
+}
+
+/** `TimestampLike` → epoch ms, or null for anything that isn't one
+ * (an unresolved `serverTimestamp()` reads as null in a local snapshot). */
+function toMillis(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const ts = value as { toMillis?: () => number };
+  return typeof ts.toMillis === 'function' ? ts.toMillis() : null;
+}
+
+/**
+ * Claim a queued job: `queued → running`. The rules enforce the
+ * transition, which gives us a lock without a transaction — two Kindoo
+ * tabs polling the same mailbox both attempt the update, the first
+ * wins, and the loser is rejected server-side.
+ *
+ * Returns `false` on that rejection rather than throwing. Losing the
+ * race is the normal, correct outcome for the second tab; surfacing it
+ * as an error would put a scary message in the console every time the
+ * operator has two Kindoo tabs open. Any OTHER failure still throws —
+ * a network outage or a rules regression must not masquerade as a lost
+ * race, or the job would sit `queued` until the phone times it out with
+ * no diagnostic anywhere.
+ */
+export async function claimRemoteApplyJob(
+  jobId: string,
+  extVersion: string,
+  kindooEid: number | null,
+  actor: User,
+): Promise<boolean> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical, 'jobs', jobId);
+  try {
+    await updateDoc(ref, {
+      status: 'running',
+      claimed_at: serverTimestamp(),
+      claimed_by: { ext_version: extVersion, kindoo_eid: kindooEid },
+      lastActor: actorRef,
+    });
+    return true;
+  } catch (err) {
+    if (isPermissionDenied(err)) {
+      console.info(`[sba-ext] remote apply: job ${jobId} already claimed elsewhere; skipping`);
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Write a job's terminal status + outcome.
+ *
+ * Covers both `running → applied | partial | failed` (this tab reporting
+ * on work it ran) and `queued → cancelled` (this tab expiring a job the
+ * phone's own no-pickup timeout never got to). Rules allow both from the
+ * mailbox owner and pin the before-status on each, so a job that has
+ * moved on since the poller read it fails here with `permission-denied`
+ * rather than skipping a status.
+ */
+export async function finishRemoteApplyJob(
+  jobId: string,
+  payload: DataRemoteApplyFinishJobRequest['payload'],
+  actor: User,
+): Promise<void> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  const ref = doc(db, 'remoteApply', actorRef.canonical, 'jobs', jobId);
+  await updateDoc(ref, {
+    status: payload.status,
+    finished_at: serverTimestamp(),
+    outcome: payload.outcome,
+    lastActor: actorRef,
+  });
+}
+
+/** Firestore surfaces rules rejections as an error with
+ * `code: 'permission-denied'`. Narrow defensively — plain `Error`
+ * instances don't carry the field. */
+function isPermissionDenied(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  return (err as { code?: unknown }).code === 'permission-denied';
 }

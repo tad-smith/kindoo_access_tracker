@@ -29,6 +29,15 @@ export type { KindooManager } from './kindooManager.js';
 export type { KindooSite } from './kindooSite.js';
 export type { Organization } from './organization.js';
 export type { PlatformSuperadmin } from './platformSuperadmin.js';
+export type {
+  RemoteApplyDesktop,
+  RemoteApplyDesktopWithId,
+  RemoteApplyJob,
+  RemoteApplyJobStatus,
+  RemoteApplyOutcome,
+  RemoteApplyOutcomeCode,
+  RemoteApplyPresence,
+} from './remoteApply.js';
 export type { AccessRequest, CompletionStatus, RequestStatus, RequestType } from './request.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
 export type { KindooConfig, OverCapEntry, Stake } from './stake.js';

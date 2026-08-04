@@ -159,6 +159,7 @@ async function renderCard(
     memberHasSeat?: boolean;
     memberHasStakeGrant?: boolean;
     memberSeatAbsent?: boolean;
+    remoteApplyRunning?: boolean;
   } = {},
 ) {
   const { RequestCard } = await import('./RequestCard');
@@ -170,6 +171,7 @@ async function renderCard(
       memberHasSeat={opts.memberHasSeat ?? false}
       memberHasStakeGrant={opts.memberHasStakeGrant ?? false}
       memberSeatAbsent={opts.memberSeatAbsent ?? false}
+      remoteApplyRunning={opts.remoteApplyRunning ?? false}
       onDismissed={opts.onDismissed ?? vi.fn()}
     />,
   );
@@ -217,6 +219,29 @@ describe('RequestCard', () => {
   it('labels add_manual cards "Add Kindoo Access"', async () => {
     await renderCard();
     expect(screen.getByTestId('sba-add-r1')).toHaveTextContent('Add Kindoo Access');
+  });
+
+  it('disables the provision button while a phone-initiated job is applying this request', async () => {
+    // Both surfaces enter the same `applyRequest` flow. Two concurrent
+    // runs mean two `provisionAddOrChange` calls, and for a member who
+    // isn't in Kindoo yet that is a second `inviteUser` — a licence spent
+    // that `markRequestComplete` picking a winner cannot give back.
+    const user = userEvent.setup();
+    await renderCard({ remoteApplyRunning: true });
+
+    const button = screen.getByTestId('sba-add-r1');
+    expect(button).toBeDisabled();
+    // And the card says why, so the dead click isn't a mystery.
+    expect(screen.getByTestId('sba-remote-busy-r1')).toHaveTextContent(/from your phone/);
+
+    await user.click(button);
+    expect(provisionAddOrChangeMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves the provision button alone when the running job is another request', async () => {
+    await renderCard({ remoteApplyRunning: false });
+    expect(screen.getByTestId('sba-add-r1')).toBeEnabled();
+    expect(screen.queryByTestId('sba-remote-busy-r1')).not.toBeInTheDocument();
   });
 
   it('labels add_temp cards "Add Kindoo Access" (same flow as manual)', async () => {

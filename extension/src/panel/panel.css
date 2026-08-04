@@ -168,6 +168,40 @@ main.sba-panel {
   border-bottom-color: #fcd34d;
 }
 
+/* In-progress notice for a job the manager queued from their phone.
+ * Informational, not a warning — nothing is wrong, the desktop is just
+ * busy on their behalf. */
+.sba-banner-info {
+  background: #e0f2fe;
+  color: #075985;
+  border-bottom-color: #7dd3fc;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+/* Remote-apply opt-in row, pinned above the queue. */
+.sba-remote-apply {
+  padding: 0.4rem 0.5rem 0.5rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 6px;
+}
+
+.sba-remote-apply-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sba-remote-apply-hint {
+  margin: 0.25rem 0 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .sba-btn-sm {
   padding: 0.2rem 0.5rem;
   font-size: 12px;

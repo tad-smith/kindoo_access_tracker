@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import type { Building, KindooSite, Ward } from '@kindoo/shared';
 import {
   filterBuildingsBySite,
+  homeSiteName,
   siteIdForScope,
+  siteKeyLabel,
   siteLabelForGrant,
   siteLabelForSeat,
 } from './kindooSites';
@@ -202,5 +204,50 @@ describe('siteLabelForGrant', () => {
         [site('foreign-1', 'East'), site('foreign-2', 'West')],
       ),
     ).toBe('West');
+  });
+});
+
+describe('siteKeyLabel', () => {
+  it('names the home site from the stake, which has no catalogue doc', () => {
+    expect(siteKeyLabel('home', [], 'Colorado Springs North')).toBe('Colorado Springs North');
+  });
+
+  it('names a foreign site from the catalogue', () => {
+    expect(siteKeyLabel('foreign-1', [site('foreign-1', 'East Stake')], 'Home')).toBe('East Stake');
+  });
+
+  it('has no name for a site the catalogue does not carry', () => {
+    expect(siteKeyLabel('ghost', [], 'Home')).toBeNull();
+  });
+});
+
+describe('homeSiteName', () => {
+  it("prefers the name Kindoo itself shows for the stake's site", () => {
+    expect(
+      homeSiteName({
+        stake_name: 'CS North Stake',
+        kindoo_expected_site_name: 'Expected Name',
+        kindoo_config: {
+          site_id: 42,
+          site_name: 'Colorado Springs North',
+          configured_at: stamp,
+          configured_by: actor,
+        },
+      }),
+    ).toBe('Colorado Springs North');
+  });
+
+  it('falls back to the expected-name override before the stake name', () => {
+    expect(
+      homeSiteName({ stake_name: 'STAGING - CS North', kindoo_expected_site_name: 'CS North' }),
+    ).toBe('CS North');
+  });
+
+  it('falls back to the stake name when Kindoo was never configured', () => {
+    expect(homeSiteName({ stake_name: 'CS North Stake' })).toBe('CS North Stake');
+  });
+
+  it('has no name before the stake doc has loaded', () => {
+    expect(homeSiteName(undefined)).toBeNull();
   });
 });

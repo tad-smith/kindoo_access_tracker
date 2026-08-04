@@ -14,6 +14,12 @@
 // component unmounting on every tab switch. We consume it as the
 // `pending` prop.
 //
+// Remote apply (D27) is likewise hosted by TabbedShell. This file owns
+// only its two visible surfaces: the opt-in row and the running banner,
+// plus gating the provision button on whichever card a phone-initiated
+// job is already working. The post-job queue refresh stays in
+// TabbedShell — it has to fire with this component unmounted.
+//
 // Seat-existence: whenever the request list resolves we fetch
 // `getSeatByEmail` for every non-`remove` request and build a
 // `request_id → 'present' | 'absent'` map. A handful of extra reads is fine at this scale. The
@@ -38,6 +44,8 @@ import {
   type Seat,
 } from '@kindoo/shared';
 import { getSeatByEmail, type StakeConfigBundle } from '../lib/extensionApi';
+import { useRemoteApplyEnabled } from '../lib/remoteApplyPrefs';
+import type { RemoteApplyState } from '../content/remoteApply/useRemoteApply';
 import { RequestCard } from './RequestCard';
 import type { PendingRequests } from './usePendingRequests';
 
@@ -51,6 +59,16 @@ interface QueuePanelProps {
    * component's per-tab-switch unmount. Owns the permission-denied
    * escalation too. */
   pending: PendingRequests;
+  /**
+   * Live state of the remote-apply loop, also hosted by `TabbedShell`.
+   * Read-only here: this component renders the running banner and gates
+   * the matching card's provision button. The post-job queue refresh is
+   * TabbedShell's, since it has to fire with this component unmounted.
+   * Optional so the queue can be rendered standalone (tests, and any
+   * future host that doesn't run the loop) — absent simply means no
+   * banner and no gating.
+   */
+  remoteApply?: RemoteApplyState | undefined;
 }
 
 /**
@@ -102,7 +120,7 @@ async function fetchSeatMap(stakeId: string, requests: readonly AccessRequest[])
   return Object.fromEntries(entries.filter((e): e is [string, SeatInfo] => e !== null));
 }
 
-export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
+export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanelProps) {
   const { state, refreshing, refresh, dismiss } = pending;
   const [seatMap, setSeatMap] = useState<SeatMap>({});
 
@@ -121,6 +139,15 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
     };
   }, [stakeId, state]);
 
+  // The request a phone-initiated job is provisioning right now, if any.
+  // Threaded down to gate that card's own provision button: both paths
+  // run `applyRequest`, so two of them against one request can reach
+  // `provisionAddOrChange` concurrently and write Kindoo twice. For a
+  // member not yet in Kindoo the second write is a second `inviteUser` —
+  // a consumed licence that `markRequestComplete` picking one winner does
+  // nothing to undo.
+  const remoteApplyingRequestId = remoteApply?.running?.requestId ?? null;
+
   const requests = state.status === 'ready' ? state.requests : EMPTY_REQUESTS;
   // Compute "now" once per render; the day-level section boundary is
   // insensitive to sub-day drift within a session.
@@ -128,6 +155,16 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
 
   return (
     <div className="sba-body" data-testid="sba-queue">
+      <RemoteApplyToggleRow />
+      {remoteApply?.running ? (
+        <div
+          role="status"
+          className="sba-banner sba-banner-info"
+          data-testid="sba-remote-apply-running"
+        >
+          <span>Applying a request you sent from your phone…</span>
+        </div>
+      ) : null}
       <div className="sba-request-actions">
         <button
           type="button"
@@ -159,6 +196,7 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={dismiss}
           />
           <QueueSection
@@ -168,6 +206,7 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={dismiss}
           />
           <QueueSection
@@ -177,6 +216,7 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
             stakeId={stakeId}
             bundle={bundle}
             seatMap={seatMap}
+            remoteApplyingRequestId={remoteApplyingRequestId}
             onDismissed={dismiss}
           />
         </div>
@@ -187,6 +227,53 @@ export function QueuePanel({ stakeId, bundle, pending }: QueuePanelProps) {
 
 const EMPTY_REQUESTS: readonly AccessRequest[] = [];
 
+/**
+ * The remote-apply opt-in. Off by default and off for every profile
+ * that predates the feature — it hands a second device the authority to
+ * provision building access, so it has to be an explicit act.
+ *
+ * The checkbox only writes `chrome.storage.local`; the loop in
+ * `TabbedShell` observes the same value and starts / stops itself,
+ * clearing `remote_apply_enabled` on the presence doc as it goes so the
+ * phone's button disappears at once rather than after the staleness
+ * window.
+ */
+function RemoteApplyToggleRow() {
+  const { enabled, loaded, setEnabled } = useRemoteApplyEnabled();
+  const [error, setError] = useState<string | null>(null);
+
+  const handleChange = (next: boolean) => {
+    setError(null);
+    void setEnabled(next).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
+  };
+
+  return (
+    <div className="sba-remote-apply" data-testid="sba-remote-apply-row">
+      <label className="sba-remote-apply-label">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={!loaded}
+          onChange={(e) => handleChange(e.target.checked)}
+          data-testid="sba-remote-apply-toggle"
+        />
+        <span>Allow requests from my phone</span>
+      </label>
+      <p className="sba-muted sba-remote-apply-hint">
+        Lets you tap <strong>Apply via extension</strong> in the SBA queue on your phone and have
+        this Chrome tab do the Kindoo work. Only while this Kindoo tab is open and signed in.
+      </p>
+      {error ? (
+        <p role="alert" className="sba-error" data-testid="sba-remote-apply-error">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 interface QueueSectionProps {
   title: string;
   testid: string;
@@ -194,6 +281,8 @@ interface QueueSectionProps {
   stakeId: string;
   bundle: StakeConfigBundle;
   seatMap: SeatMap;
+  /** `request_id` a phone-initiated job is provisioning, or null. */
+  remoteApplyingRequestId: string | null;
   onDismissed: (requestId: string) => void;
 }
 
@@ -204,6 +293,7 @@ function QueueSection({
   stakeId,
   bundle,
   seatMap,
+  remoteApplyingRequestId,
   onDismissed,
 }: QueueSectionProps) {
   // Hide the whole section (header + body) when empty.
@@ -223,6 +313,7 @@ function QueueSection({
               memberHasSeat={seatMap[req.request_id]?.existence === 'present'}
               memberSeatAbsent={seatMap[req.request_id]?.existence === 'absent'}
               memberHasStakeGrant={seatMap[req.request_id]?.hasStakeGrant ?? false}
+              remoteApplyRunning={remoteApplyingRequestId === req.request_id}
               onDismissed={onDismissed}
             />
           </li>

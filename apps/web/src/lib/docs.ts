@@ -41,6 +41,9 @@ import type {
   Organization,
   PlatformAuditLog,
   PlatformSuperadmin,
+  RemoteApplyDesktop,
+  RemoteApplyJob,
+  RemoteApplyPresence,
   Seat,
   Stake,
   UserIndexEntry,
@@ -105,6 +108,57 @@ export function platformAuditLogRef(
 
 export function platformAuditLogCol(db: Firestore): CollectionReference<PlatformAuditLog> {
   return collection(db, 'platformAuditLog').withConverter(passthroughConverter<PlatformAuditLog>());
+}
+
+/**
+ * `remoteApply/{canonicalEmail}` — the manager's own remote-apply
+ * mailbox parent: the profile-wide opt-in and nothing else. Top-level
+ * (not per-stake) because the key is the manager's canonical email and
+ * the extension resolves the stake from whichever Kindoo site its tab
+ * is in — stake is a field on the child docs, not a path segment.
+ */
+export function remoteApplyRef(
+  db: Firestore,
+  canonicalEmail: string,
+): DocumentReference<RemoteApplyPresence> {
+  return doc(db, 'remoteApply', canonicalEmail).withConverter(
+    passthroughConverter<RemoteApplyPresence>(),
+  );
+}
+
+/**
+ * `remoteApply/{canonicalEmail}/desktops` — one doc per Kindoo site the
+ * manager has a live tab on, keyed by the SBA site id. A stake can run
+ * more than one Kindoo site and a tab can only provision for the site
+ * it is inside, so liveness is per site rather than per manager.
+ */
+export function remoteApplyDesktopsCol(
+  db: Firestore,
+  canonicalEmail: string,
+): CollectionReference<RemoteApplyDesktop> {
+  return collection(db, 'remoteApply', canonicalEmail, 'desktops').withConverter(
+    passthroughConverter<RemoteApplyDesktop>(),
+  );
+}
+
+/** `remoteApply/{canonicalEmail}/jobs` — one doc per phone-initiated apply. */
+export function remoteApplyJobsCol(
+  db: Firestore,
+  canonicalEmail: string,
+): CollectionReference<RemoteApplyJob> {
+  return collection(db, 'remoteApply', canonicalEmail, 'jobs').withConverter(
+    passthroughConverter<RemoteApplyJob>(),
+  );
+}
+
+export function remoteApplyJobRef(
+  db: Firestore,
+  canonicalEmail: string,
+  jobId: string,
+): DocumentReference<RemoteApplyJob> {
+  return doc(db, 'remoteApply', canonicalEmail, 'jobs', jobId).withConverter(
+    passthroughConverter<RemoteApplyJob>(),
+  );
 }
 
 // ---- Per-stake collections ------------------------------------------

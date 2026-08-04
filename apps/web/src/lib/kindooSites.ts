@@ -14,9 +14,15 @@
 //     foreign KindooSite's `display_name` to render as a small badge on
 //     ward-scope seats, or `null` for home-site / stake-scope / when the
 //     catalogues haven't loaded.
+//   - `siteKeyLabel(siteKey, sites, homeName)` / `homeSiteName(stake)` —
+//     naming, in remote apply's site-KEY vocabulary, where home is a site
+//     like any other rather than a `null`. The key itself is derived by
+//     `@kindoo/shared`'s `remoteApplyTargetSiteKey`, which must stay in
+//     step with the extension's `checkRequestSite` — don't re-derive it
+//     here.
 
-import { resolveWardSite } from '@kindoo/shared';
-import type { Building, KindooSite, Seat, Ward } from '@kindoo/shared';
+import { REMOTE_APPLY_HOME_SITE_KEY, resolveWardSite } from '@kindoo/shared';
+import type { Building, KindooSite, Seat, Stake, Ward } from '@kindoo/shared';
 
 /**
  * Normalise a building's `kindoo_site_id`. Legacy docs may have the
@@ -80,6 +86,41 @@ export function siteLabelForSeat(
   const site = sites.find((s) => s.id === siteId);
   if (!site) return null;
   return site.display_name;
+}
+
+/**
+ * Human label for a Kindoo site key. Home has no catalogue doc — its
+ * name lives on the stake parent — so the caller passes it in.
+ *
+ * Returns `null` when the key names a site the catalogue doesn't carry,
+ * which callers render as "no name to show" rather than as an empty
+ * string.
+ */
+export function siteKeyLabel(
+  siteKey: string,
+  sites: readonly KindooSite[],
+  homeName: string | null,
+): string | null {
+  if (siteKey === REMOTE_APPLY_HOME_SITE_KEY) return homeName;
+  return sites.find((s) => s.id === siteKey)?.display_name ?? null;
+}
+
+/**
+ * The name to show for the stake's home Kindoo site. `kindoo_config`
+ * captures what Kindoo itself calls the site, which is what a manager
+ * sees in the tab they're being asked to open; the expected-name
+ * override and the stake name are progressively weaker stand-ins.
+ */
+export function homeSiteName(
+  stake:
+    | Pick<Stake, 'stake_name' | 'kindoo_expected_site_name' | 'kindoo_config'>
+    | null
+    | undefined,
+): string | null {
+  if (!stake) return null;
+  return (
+    stake.kindoo_config?.site_name || stake.kindoo_expected_site_name || stake.stake_name || null
+  );
 }
 
 /**

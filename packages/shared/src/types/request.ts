@@ -128,6 +128,11 @@ export type AccessRequest = {
   seat_member_canonical?: string;
 
   /**
+   * NOT the site this request must be provisioned on. That site is
+   * never stored — it is derived from scope + ward → building → site
+   * (`resolveWardSite`, where null means home). Reading this field as
+   * the target would resolve to "no site" on every add/edit.
+   *
    * For `type='remove'`, the Kindoo site the grant being removed
    * lives on. Optional: present on remove requests generated from a
    * duplicate row (Phase B), absent / null on remove requests
