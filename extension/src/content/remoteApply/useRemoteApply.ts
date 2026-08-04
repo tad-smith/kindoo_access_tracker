@@ -75,8 +75,12 @@ export function useRemoteApply({ stakeId, bundle }: UseRemoteApplyArgs): RemoteA
    * rebuilds the object tears the loop down and starts a fresh one.
    * TabbedShell re-renders on every queue fetch, and a restart cadence
    * faster than the loop's first (0ms macrotask) tick means no tick ever
-   * completes — `drive()` returns early, `lastHeartbeatAt` resets to 0
-   * with each construction, and the heartbeat silently never publishes.
+   * completes: `startRemoteApplyLoop` defers that first tick with
+   * `setTimeout(…, 0)` and `teardown` clears the timer, so a loop torn
+   * down before the macrotask runs does no work at all. Nor does the
+   * next one start any further along — every gate the loop times against
+   * is closure state (`lastResolveAt`, `lastSweepAt`, `lastBusyReadAt`,
+   * `publishedBusyIds`), so each construction begins from nothing.
    * No error, no log; the manager's phone just never sees a desktop.
    * Reading through a ref also means a reconfigure reaches the next tick
    * without a teardown.

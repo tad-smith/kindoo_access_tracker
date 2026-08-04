@@ -2,14 +2,18 @@
 
 Deferred work items surfaced in session but not yet scheduled into a phase. These are smaller follow-ups and design questions the user has flagged. Check this file at the start of a session along with the other "start each session by reading" docs so ongoing work isn't dropped.
 
-Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` lines, then a body. Status: `pending` / `open` / `in progress` / `done (YYYY-MM-DD)` / `done (YYYY-MM-DD — context)`. Done entries stay in place as trail.
+Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` lines, then a body. Status: `pending` / `open` / `in progress` / `done (YYYY-MM-DD)` / `done (YYYY-MM-DD — context)` / `obsolete (YYYY-MM-DD — why)` for a task closed without being done. Done and obsolete entries stay in place as trail — an obsolete one keeps its original body, since the premise that turned out not to hold is the part worth reading.
 
 ---
 
 ## [T-85] Remote apply: tick as soon as a Kindoo tab comes forward
-Status: pending
+Status: obsolete (2026-08-04 — optimises a moment that mostly does not occur; see the closing note)
 Owner: @extension-engineer
 Phase: remote apply (D27)
+
+**Obsolete. The premise is the useful part, so the original body stands below.** The improvement is real but it lands on a moment the feature is designed around not needing: a manager who is tapping Apply on their phone is, by construction, away from their desk — that is the entire reason remote apply exists. The tap-then-turn-to-the-computer sequence this optimises is how the feature gets *tested*, not how it gets used, so the window it closes is mostly a window nobody is watching. Against that, the cost is two Firestore reads per focus event plus the rate limiter needed to stop alt-tabbing becoming a read burst — real complexity for latency in the case where the manager could simply have used the desktop button.
+
+Recorded rather than deleted because the "the manager is at the desktop" assumption is easy to re-derive from the gate work in isolation. Anyone who reaches this idea again should reach this entry with it.
 
 `onVisibilityChange` reschedules the timer when a tab's visibility flips, so a tab coming forward stops waiting out the remainder of a 60s hidden delay — but it does not tick *now*. The residual is the window between the manager's tap on their phone and the desktop tab's next poll: up to a visible poll period (10s) after the switch, during which the desktop's own **Provision & Complete** for that request is still ungated and the phone-queued job unclaimed.
 
@@ -20,7 +24,7 @@ Status: pending
 Owner: @extension-engineer
 Phase: remote apply (D27)
 
-On the record before more managers opt in. Since PR #253 the poll makes **two** reads (`queued`, then `running`) at 10s while a Kindoo tab is visible — ~17k a day per always-open, always-visible tab, plus ~1.4k from the 60s sweep — against collections that are almost always empty, which is the minimum-one-read case. Comfortably inside the free tier today at one opted-in manager.
+On the record before more managers opt in. Since PR #253 the poll makes **two** reads (`queued`, then `running`) at 10s while a Kindoo tab is visible — ~17k a day per always-open, always-visible tab, plus ~1.4k from the 60s sweep — against collections that are almost always empty, which is the minimum-one-read case. The sweep is a **third** read of `running` on the tick it happens to fall on (it rides the same tick, ahead of the poll, and does not reuse the poll's page), so one tick in six peaks at three reads rather than two. Comfortably inside the free tier today at one opted-in manager.
 
 What makes it worth a note rather than nothing: the volume scales with **open tabs**, not with request volume, so it does not shrink at 1–2 requests/week and it grows with every manager who opts in and every second Kindoo window they leave open. Nothing needs doing yet. If it ever does, the cheap moves in order are a longer visible poll period; then folding the two reads into one `status in ['queued','running']` query, which also removes the hazard the fixed read order exists to dodge (one snapshot cannot miss a job mid-transition) but needs the gate's and the claim's differing uses of the two pages untangled first; and only then anything push-shaped, which D27 rejected for reasons that have not changed.
 

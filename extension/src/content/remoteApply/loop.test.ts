@@ -683,10 +683,13 @@ describe('startRemoteApplyLoop', () => {
     expect(onBusyRequestIds).toHaveBeenCalledWith(['r-east', 'r-other']);
   });
 
-  it('drops a job from the busy set the moment it claims it', async () => {
-    // The handover: `running` takes over the gate here, and a set still
-    // naming the request would hold the button disabled for a poll
-    // period after the run ended.
+  it('drops a job from the busy set once its terminal write lands', async () => {
+    // The happy path end to end in one tick: published on the queued
+    // read, then withdrawn — but only after `finishJob` resolves, not at
+    // the claim. Both publications land here because the default
+    // `finishJob` mock succeeds; the two tests below drive the halves
+    // apart. Holding past the terminal write would keep the button
+    // disabled for a poll period after the run ended.
     const onBusyRequestIds = vi.fn();
     const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]) });
     const handle = start(deps, {
@@ -832,10 +835,13 @@ describe('startRemoteApplyLoop', () => {
     expect(onBusyRequestIds.mock.calls).toEqual([[['r1']]]);
   });
 
-  it('leaves the job it is running itself to `running`, not the busy set', async () => {
-    // The two channels must not double-count: `onJobStart` / `onJobEnd`
-    // bracket this tab's own run exactly, where a set refreshed once a
-    // poll would hold the gate closed past the end of it.
+  it('hands its own job over to `running` once the terminal write lands', async () => {
+    // The same request seen on both of the poll's pages — queued, and
+    // already `running` by the time the second read went out — publishes
+    // once, not twice. It is then withdrawn only after `finishJob`
+    // resolves, never at the claim, and from there `onJobStart` /
+    // `onJobEnd` own the gate: a set refreshed once a poll would hold it
+    // closed past the end of the run.
     const onBusyRequestIds = vi.fn();
     const deps = makeDeps({
       queuedJobs: vi.fn(async () => [job()]),
@@ -853,8 +859,9 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
 
     expect(deps.claimJob).toHaveBeenCalledTimes(1);
-    // Published with the request, then without it the moment the claim
-    // won — `running` owns the gate from there.
+    // Published with the request across the run, then without it once the
+    // terminal write reported the outcome — `running` owns the gate from
+    // there.
     expect(onBusyRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
   });
 

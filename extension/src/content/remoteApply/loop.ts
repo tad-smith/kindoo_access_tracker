@@ -872,10 +872,26 @@ export function startRemoteApplyLoop(
       // work". This tab reached Kindoo and knows its site, so it can
       // still claim, run and finalise a job already in the mailbox.
       //
-      // A denied `desktops` write is reachable and INDEFINITE — deactivate
-      // a manager with a Kindoo tab open and every write is denied from
-      // the next token refresh on, with nothing on a timer to unmount the
-      // loop. Letting it throw was total for a hidden tab: the poll period
+      // What reaches here is `desktops`-shaped, never mailbox-shaped: a
+      // transient network error or Firestore blip on this one write, a
+      // doc the rules reject on shape (`validDesktop` matches an exact
+      // key set against the merged result, so a stray field or a
+      // `{ merge: true }` regression is denied), or `permission-denied`
+      // on its `isManager(stake_id)` gate. None of them is evidence about
+      // the poll: the mailbox carries no `isManager` gate on the surfaces
+      // the poll uses — `jobs` gates it on CREATE, which is the phone's
+      // tap, while the reads and the claim / cancel / terminal writes are
+      // `ownsMailbox` plus the status compare-and-set. So a tab that
+      // cannot register itself can still claim, run and report on work
+      // already queued, and the phone gets a real outcome instead of
+      // waiting out the stranded sweep.
+      //
+      // The `isManager` case is the one worth spelling out, because it is
+      // reachable and INDEFINITE: deactivate a manager with a Kindoo tab
+      // open and every `desktops` write is denied from the next token
+      // refresh on, with nothing on a timer to unmount the loop (`App`
+      // flips to NotAuthorized off a queue fetch, which is not on one).
+      // Letting it throw was total for a hidden tab: the poll period
       // and REMOTE_APPLY_HEARTBEAT_MS are both 60s, so the resolve gate
       // has always elapsed, the write is always attempted, and the tab
       // never reached `pollOnce` at all for as long as the denial lasted.
