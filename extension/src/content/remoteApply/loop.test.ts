@@ -28,6 +28,7 @@ import type {
   StakeConfigBundle,
 } from '../../lib/extensionApi';
 import {
+  REMOTE_APPLY_BUSY_HOLD_MS,
   REMOTE_APPLY_STRANDED_MS,
   REMOTE_APPLY_STRANDED_OTHER_SITE_MS,
   startRemoteApplyLoop,
@@ -846,19 +847,31 @@ describe('startRemoteApplyLoop', () => {
     expect(onBusyRequestIds).toHaveBeenCalledTimes(1);
   });
 
-  it('clears the busy set when the tick stops short of the poll', async () => {
-    // A set nobody refreshes gates the button forever. Every path that
-    // ends a tick early is one where this tab can't provision either, so
-    // clearing costs nothing and stops a dead job holding the gate.
+  // ---- The gate's hold: a tick that couldn't look --------------------
+  //
+  // A tick that ends before the poll and a poll whose `running` read
+  // fails are the same question — "I couldn't look; is a sibling still
+  // working?" — so they must not answer it opposite ways. Both hold, and
+  // both are bounded: the tick's failure and the manager's click are
+  // independent samples, so a transient failure that ends the tick can be
+  // over by the time the button they re-enabled is pressed, with a
+  // sibling still inside `applyRequest`.
+
+  it('holds the gate through a tick whose Kindoo session read fails', async () => {
+    // `no-eid` is a DOM scrape that returns null on zero OR SEVERAL
+    // `[dir="auto"]` matches, so a Kindoo re-render is enough to produce
+    // one — and `checkRequestSite` may resolve fine a second later.
     const onBusyRequestIds = vi.fn();
     let sessionOk = true;
     const deps = makeDeps({
       readSession: vi.fn(() =>
         sessionOk
           ? ({ ok: true as const, session: { token: 'tok', eid: HOME_EID } } as const)
-          : ({ ok: false as const, error: 'no-token' as const } as const),
+          : ({ ok: false as const, error: 'no-eid' as const } as const),
       ),
-      queuedJobs: vi.fn(async () => [job({ targetSiteKey: EAST_SITE_ID })]),
+      queuedJobs: vi.fn(async () => []),
+      // A sibling tab's run, which is the expensive half of the window.
+      runningJobs: vi.fn(async () => [runningJob(NOW)]),
     });
     const handle = start(deps, {
       stakeId: STAKE_ID,
@@ -870,6 +883,138 @@ describe('startRemoteApplyLoop', () => {
     expect(onBusyRequestIds).toHaveBeenLastCalledWith(['r1']);
 
     sessionOk = false;
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    handle.stop();
+
+    // One publication, never withdrawn.
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']]]);
+  });
+
+  it('holds the gate through a tick whose heartbeat call fails', async () => {
+    // The path the 30s Kindoo timeout made reachable in 30 seconds rather
+    // than never: `getEnvironments` gives up, `heartbeatIfDue` returns
+    // false, and the tick ends before the poll.
+    const onBusyRequestIds = vi.fn();
+    let kindooOk = true;
+    const deps = makeDeps({
+      getEnvironments: vi.fn(async () => {
+        if (!kindooOk) throw new Error('kindoo request timed out');
+        return [{ EID: HOME_EID, Name: 'CS North', TimeZone: 'Mountain Standard Time' }];
+      }),
+      queuedJobs: vi.fn(async () => []),
+      runningJobs: vi.fn(async () => [runningJob(NOW)]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await handle.tick();
+    expect(onBusyRequestIds).toHaveBeenLastCalledWith(['r1']);
+
+    kindooOk = false;
+    // Far enough for the resolve gate to allow a second Kindoo call.
+    deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']]]);
+  });
+
+  it('lifts the gate once the held answer ages past the hold', async () => {
+    // The other side of the bound. A hold nothing can refresh is a gate
+    // nothing can lift, and a manager whose own button is dead while no
+    // sibling is serving them has nowhere to go.
+    const onBusyRequestIds = vi.fn();
+    let sessionOk = true;
+    const deps = makeDeps({
+      readSession: vi.fn(() =>
+        sessionOk
+          ? ({ ok: true as const, session: { token: 'tok', eid: HOME_EID } } as const)
+          : ({ ok: false as const, error: 'no-eid' as const } as const),
+      ),
+      queuedJobs: vi.fn(async () => []),
+      runningJobs: vi.fn(async () => [runningJob(NOW)]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await handle.tick();
+
+    sessionOk = false;
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await handle.tick();
+    // Inside the hold: still the one publication.
+    expect(onBusyRequestIds).toHaveBeenCalledTimes(1);
+
+    deps.advance(REMOTE_APPLY_BUSY_HOLD_MS);
+    await handle.tick();
+    handle.stop();
+
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
+  });
+
+  it('ages the gate out when the poll itself keeps throwing', async () => {
+    // The queued read is the first thing a Firestore outage takes down,
+    // and it throws the tick rather than ending it early — the same
+    // question again, and it gets the same bounded answer rather than
+    // leaving the last set standing for as long as the outage lasts.
+    const onBusyRequestIds = vi.fn();
+    let queuedOk = true;
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => {
+        if (!queuedOk) throw new Error('firestore unavailable');
+        return [];
+      }),
+      runningJobs: vi.fn(async () => [runningJob(NOW)]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await handle.tick();
+
+    queuedOk = false;
+    deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
+    await expect(handle.tick()).rejects.toThrow('firestore unavailable');
+    expect(onBusyRequestIds).toHaveBeenCalledTimes(1);
+
+    deps.advance(REMOTE_APPLY_BUSY_HOLD_MS);
+    await expect(handle.tick()).rejects.toThrow('firestore unavailable');
+    handle.stop();
+
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
+  });
+
+  it('clears the gate outright when the opt-in goes away', async () => {
+    // The one path that does not hold, and the only one where clearing is
+    // honest: opting out stops the loop, so a held set would have no
+    // later tick to age it out, and the flag is profile-wide, so no
+    // sibling tab is polling either.
+    const onBusyRequestIds = vi.fn();
+    let optedIn = true;
+    const deps = makeDeps({
+      isEnabled: vi.fn(() => optedIn),
+      queuedJobs: vi.fn(async () => [job({ targetSiteKey: EAST_SITE_ID })]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await handle.tick();
+    expect(onBusyRequestIds).toHaveBeenLastCalledWith(['r1']);
+
+    optedIn = false;
     deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
     await handle.tick();
     handle.stop();
