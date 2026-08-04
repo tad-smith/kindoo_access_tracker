@@ -410,6 +410,7 @@ describe('EmailService — pure builders', () => {
         'Ward:      Greenwood Ward',
         'Member:    Subject Person',
         '           Subject@gmail.com',
+        'Reason:    Bishop',
         '',
         'View your requests: https://stakebuildingaccess.org/my-requests',
       ].join('\n'),
@@ -447,6 +448,35 @@ describe('EmailService — pure builders', () => {
     const o = requestOpts({ req: { ...baseRequest, status: 'complete' } });
     expect(buildCompletedTextBody(o)).not.toContain('Note from the manager');
     expect(buildCompletedHtmlBody(o)).not.toContain('Note from the manager');
+  });
+
+  // `reason` is where the requester's calling lives — request detail, so it
+  // sits with the other detail rows and ahead of the manager's note.
+  it('completed body carries the reason row after Member and before the note', () => {
+    const o = requestOpts({
+      req: {
+        ...baseRequest,
+        status: 'complete',
+        reason: 'Elders Quorum President',
+        completion_note: 'Granted for the new calling.',
+      },
+    });
+    const text = buildCompletedTextBody(o);
+    expect(text).toContain('Reason:    Elders Quorum President');
+    expect(text.indexOf('Reason:')).toBeGreaterThan(text.indexOf('Member:'));
+    expect(text.indexOf('Reason:')).toBeLessThan(text.indexOf('Note from the manager:'));
+
+    const html = buildCompletedHtmlBody(o);
+    expect(html).toContain('>Reason</th>');
+    expect(html).toContain('>Elders Quorum President</td>');
+    expect(html.indexOf('>Reason</th>')).toBeGreaterThan(html.indexOf('>Member</th>'));
+    expect(html.indexOf('>Reason</th>')).toBeLessThan(html.indexOf('>Note from the manager</th>'));
+  });
+
+  it('completed body omits the reason row when no reason is set', () => {
+    const o = requestOpts({ req: { ...baseRequest, status: 'complete', reason: '' } });
+    expect(buildCompletedTextBody(o)).not.toContain('Reason');
+    expect(buildCompletedHtmlBody(o)).not.toContain('Reason');
   });
 
   // ---- rejected ------------------------------------------------------------
@@ -528,6 +558,7 @@ describe('EmailService — pure builders', () => {
         'Ward:      Greenwood Ward',
         'Member:    Subject Person',
         '           Subject@gmail.com',
+        'Reason:    Bishop',
         '',
         'Open the queue: https://stakebuildingaccess.org/manager/queue',
       ].join('\n'),
@@ -548,6 +579,44 @@ describe('EmailService — pure builders', () => {
     );
     expect(buildCancelledTextBody(o)).toContain('Bish@gmail.com cancelled their manual access');
     expect(buildCancelledHtmlBody(o)).toContain('Bish@gmail.com cancelled their manual access');
+  });
+
+  it('cancelled body carries the reason row directly after Member', () => {
+    const o = managerOpts({
+      req: { ...baseRequest, status: 'cancelled', reason: 'Elders Quorum President' },
+    });
+    const text = buildCancelledTextBody(o);
+    expect(text).toContain('Reason:    Elders Quorum President');
+    expect(text.indexOf('Reason:')).toBeGreaterThan(text.indexOf('Member:'));
+
+    const html = buildCancelledHtmlBody(o);
+    expect(html).toContain('>Reason</th>');
+    expect(html).toContain('>Elders Quorum President</td>');
+    expect(html.indexOf('>Reason</th>')).toBeGreaterThan(html.indexOf('>Member</th>'));
+  });
+
+  it('cancelled body omits the reason row when no reason is set', () => {
+    const o = managerOpts({ req: { ...baseRequest, status: 'cancelled', reason: '' } });
+    expect(buildCancelledTextBody(o)).not.toContain('Reason');
+    expect(buildCancelledHtmlBody(o)).not.toContain('Reason');
+  });
+
+  // ---- the rejected email's `Reason given` is a different field -------------
+
+  // `rejection_reason` (the manager's) is not `reason` (the requester's
+  // calling). The rejected email carries only the former — deliberately, so
+  // the two never sit side by side.
+  it('rejected body keeps Reason given and gains no bare Reason row', () => {
+    const o = requestOpts({ req: rejected });
+    const text = buildRejectedTextBody(o);
+    expect(text).toContain('Reason given: Already has access through a stake calling.');
+    expect(text).not.toContain('Reason:');
+    expect(text).not.toContain(rejected.reason);
+
+    const html = buildRejectedHtmlBody(o);
+    expect(html).toContain('>Reason given</th>');
+    expect(html).not.toContain('>Reason</th>');
+    expect(html).not.toContain(`>${rejected.reason}</td>`);
   });
 
   // ---- over-cap ------------------------------------------------------------
@@ -667,6 +736,13 @@ describe('EmailService — pure builders', () => {
     expect(buildCompletedHtmlBody(nastyRequest)).toContain(
       'Seat &quot;already&quot; gone &amp; &lt;noop&gt;',
     );
+    // The reason row is user free-text on these two as well.
+    for (const body of [
+      buildCompletedHtmlBody(nastyRequest),
+      buildCancelledHtmlBody(nastyManager),
+    ]) {
+      expect(body).toContain('Ward &quot;Clerk&quot; &amp; &lt;helper&gt;');
+    }
   });
 
   // The text part carries the same content, unescaped.
@@ -681,6 +757,12 @@ describe('EmailService — pure builders', () => {
       expect(text).toContain('Green"wood" & <Ward>');
       expect(text).not.toContain('&quot;');
       expect(text).not.toContain('&amp;');
+    }
+    for (const text of [
+      buildCompletedTextBody(nastyRequest),
+      buildCancelledTextBody(nastyManager),
+    ]) {
+      expect(text).toContain('Reason:    Ward "Clerk" & <helper>');
     }
   });
 

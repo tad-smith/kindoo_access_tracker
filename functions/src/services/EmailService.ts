@@ -303,6 +303,7 @@ export function buildCompletedTextBody(o: RequestEmailOpts): string {
     textRow(scopeRowLabel(req.scope), o.scope),
     textRow('Member', ...memberLines(req)),
   ];
+  if (req.reason) lines.push(textRow('Reason', req.reason));
   if (req.completion_note) lines.push(textRow('Note from the manager', req.completion_note));
   lines.push('', `View your requests: ${o.link}`);
   return lines.join('\n');
@@ -315,6 +316,7 @@ export function buildCompletedHtmlBody(o: RequestEmailOpts): string {
     htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
     htmlRow('Member', memberCell(req)),
   ];
+  if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
   if (req.completion_note) {
     rows.push(htmlRow('Note from the manager', escapeHtml(req.completion_note)));
   }
@@ -369,26 +371,29 @@ export function buildCancelledSubject(o: RequesterNamedEmailOpts): string {
 
 export function buildCancelledTextBody(o: RequesterNamedEmailOpts): string {
   const { req } = o;
-  return [
+  const lines: string[] = [
     cancelledLead(o),
     '',
     textRow('Request', TYPE_LABEL[req.type]),
     textRow(scopeRowLabel(req.scope), o.scope),
     textRow('Member', ...memberLines(req)),
-    '',
-    `Open the queue: ${o.link}`,
-  ].join('\n');
+  ];
+  if (req.reason) lines.push(textRow('Reason', req.reason));
+  lines.push('', `Open the queue: ${o.link}`);
+  return lines.join('\n');
 }
 
 export function buildCancelledHtmlBody(o: RequesterNamedEmailOpts): string {
   const { req } = o;
+  const rows: string[] = [
+    htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
+    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow('Member', memberCell(req)),
+  ];
+  if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
   return htmlDocument({
     lead: escapeHtml(cancelledLead(o)),
-    rows: [
-      htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
-      htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
-      htmlRow('Member', memberCell(req)),
-    ],
+    rows,
     link: o.link,
     cta: 'Open the queue',
   });
