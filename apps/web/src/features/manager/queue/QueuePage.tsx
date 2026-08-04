@@ -45,7 +45,7 @@ import {
   type RemoteApplyJobWithId,
   type RemoteApplyPresenceResult,
 } from './hooks';
-import { RemoteApplyPresenceNote, RemoteApplyRow } from './RemoteApply';
+import { RemoteApplyPresenceNote, RemoteApplyResults, RemoteApplyRow } from './RemoteApply';
 import { homeSiteName, siteKeyLabel } from '../../../lib/kindooSites';
 import {
   useAccessForMember,
@@ -163,11 +163,23 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
     };
   }, [focus, pending.data, navigate]);
 
+  // The acknowledgement for a finished remote apply, mounted once for
+  // the page and rendered in both branches below — including the loading
+  // one. Its whole point is that it does not depend on the pending list:
+  // a successful apply marks its request complete, so by the time there
+  // is an outcome to show, the request is out of `pending` and its card
+  // is gone. It used to live inside that card, and the manager saw the
+  // dialog for the few milliseconds between the two snapshots landing.
+  const results = (
+    <RemoteApplyResults jobs={remoteApplyJobs.resolved} labelForScope={labelForScope} />
+  );
+
   if (pending.isLoading || pending.data === undefined) {
     return (
       <section className="kd-page-medium">
         <h1>Request Queue</h1>
         <LoadingSpinner />
+        {results}
       </section>
     );
   }
@@ -179,6 +191,7 @@ export function ManagerQueuePage({ focus }: ManagerQueuePageProps = {}) {
       <h1>Request Queue</h1>
       <ExtensionNote />
       <RemoteApplyPresenceNote presence={remoteApply} siteNames={coveredSiteNames} />
+      {results}
 
       {total === 0 ? (
         <EmptyState message="No pending requests. Nice." />
@@ -508,7 +521,6 @@ function QueueCard({
           requestSiteName={remoteApplySiteName}
           job={remoteApplyJob}
           jobsLoading={remoteApplyJobsLoading}
-          labelForScope={labelForScope}
         />
       )}
     </div>

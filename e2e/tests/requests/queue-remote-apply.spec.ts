@@ -42,6 +42,8 @@ const FOREIGN_SITE_ID = 'east';
 const HOME_SITE_KEY = 'home';
 const HOME_SITE_NAME = 'Colorado Springs North';
 const FOREIGN_SITE_NAME = 'East Stake (Pine)';
+/** `created_by_device` on every seeded job. See `pinDeviceId`. */
+const SEEDED_DEVICE_ID = 'device-1';
 
 async function signInViaTestHatch(page: Page, email: string, password: string): Promise<void> {
   await page.waitForFunction(() =>
@@ -62,7 +64,13 @@ async function signInViaTestHatch(page: Page, email: string, password: string): 
   );
 }
 
-async function openQueueAsManager(page: Page): Promise<void> {
+/**
+ * Sign in and land on the queue, without asserting anything about it.
+ * The heading is a role query, and a modal over the page takes the whole
+ * background out of the accessibility tree — so the one test that
+ * expects a dialog on arrival cannot use it as its readiness signal.
+ */
+async function signInAndGoToQueue(page: Page): Promise<void> {
   const { uid } = await createAuthUser({ email: MANAGER_EMAIL });
   await setCustomClaims(uid, {
     canonical: MANAGER_EMAIL,
@@ -71,9 +79,50 @@ async function openQueueAsManager(page: Page): Promise<void> {
   await page.goto('/');
   await signInViaTestHatch(page, MANAGER_EMAIL, TEST_PASSWORD);
   await page.goto('/manager/queue');
+}
+
+async function signInAndOpenQueue(page: Page): Promise<void> {
+  await signInAndGoToQueue(page);
   await expect(page.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
+}
+
+async function openQueueAsManager(page: Page): Promise<void> {
+  await signInAndOpenQueue(page);
   await expect(page.getByTestId(`queue-card-${HOME_REQUEST_ID}`)).toBeVisible();
   await expect(page.getByTestId(`queue-card-${FOREIGN_REQUEST_ID}`)).toBeVisible();
+}
+
+/**
+ * Pin the browser's `getDeviceId()` before the app boots. The result
+ * dialog only raises for a job THIS device queued, and the seeded jobs
+ * below are stamped `device-1`; without this they read as another
+ * phone's work and stay silent — which is why every other test in this
+ * file can seed a terminal job without a modal appearing over it.
+ */
+async function pinDeviceId(page: Page, deviceId = SEEDED_DEVICE_ID): Promise<void> {
+  await page.addInitScript((id: string) => {
+    localStorage.setItem('kindoo:fcmDeviceId', id);
+  }, deviceId);
+}
+
+/** Take a request out of the queue, the way a completed apply does. */
+async function completeRequest(requestId: string, scope: string): Promise<void> {
+  await writeDoc(`stakes/csnorth/requests/${requestId}`, {
+    request_id: requestId,
+    type: 'add_manual',
+    scope,
+    member_email: 'newseat@example.com',
+    member_canonical: 'newseat@example.com',
+    member_name: 'New Seat Person',
+    reason: 'Primary teacher',
+    comment: '',
+    building_names: ['Maple Building'],
+    status: 'complete',
+    requester_email: 'bishop@example.com',
+    requester_canonical: 'bishop@example.com',
+    requested_at: new Date('2026-04-20T08:00:00Z'),
+    lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
+  });
 }
 
 async function seedBaseStake(): Promise<void> {
@@ -196,7 +245,7 @@ async function seedJob(
     target_site_key: HOME_SITE_KEY,
     status,
     created_at: createdAt,
-    created_by_device: 'device-1',
+    created_by_device: SEEDED_DEVICE_ID,
     finished_at: createdAt,
     lastActor: { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL },
     ...(outcome ? { outcome } : {}),
@@ -365,6 +414,73 @@ test.describe('manager Request Queue — remote apply', () => {
       /Allow requests from my phone/i,
     );
     await expect(page.getByTestId(`remote-apply-button-${HOME_REQUEST_ID}`)).toHaveCount(0);
+  });
+
+  test('raises the result dialog over an empty queue, after the apply took the last request', async ({
+    page,
+  }) => {
+    // The prod failure this test exists for. A successful remote apply
+    // ends in `markRequestComplete`, so the request stops being pending
+    // and its card unmounts — and the dialog used to be that card's
+    // child, so it flashed for the few milliseconds between the two
+    // snapshots landing. Here BOTH requests are already complete, so
+    // there is no card at all: nothing but the page could be holding
+    // the dialog up.
+    await pinDeviceId(page);
+    await seedOptIn();
+    await seedDesktop(HOME_SITE_KEY);
+    await completeRequest(HOME_REQUEST_ID, 'CO');
+    await completeRequest(FOREIGN_REQUEST_ID, 'PI');
+    await seedJob('job-applied', HOME_REQUEST_ID, 'applied', new Date('2026-04-20T09:00:00Z'), {
+      code: 'applied',
+      message: 'Added New Seat Person to Maple Building.',
+      provisioning_note: 'Added New Seat Person to Maple Building.',
+    });
+    await signInAndGoToQueue(page);
+
+    // The dialog is the arrival signal — with it open the page behind is
+    // out of the accessibility tree, so the usual heading check can't be.
+    const result = page.getByTestId(`remote-apply-result-${HOME_REQUEST_ID}`);
+    await expect(result).toBeVisible();
+    await expect(result).toHaveAttribute('data-status', 'applied');
+    await expect(page.getByRole('dialog')).toContainText('Applied ✓');
+    await expect(page.getByTestId(`remote-apply-result-note-${HOME_REQUEST_ID}`)).toContainText(
+      'Added New Seat Person to Maple Building.',
+    );
+    // Nothing behind it but the empty state.
+    await expect(page.getByText(/No pending requests/i)).toBeVisible();
+    await expect(page.getByTestId('queue-cards')).toHaveCount(0);
+
+    // Dismiss is the only exit, and it has to stick across a reload —
+    // the phone that was locked through the apply is the phone that
+    // re-mounts this page.
+    await page.getByTestId(`remote-apply-result-dismiss-${HOME_REQUEST_ID}`).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    // …and the page comes back into the accessibility tree with it gone.
+    await expect(page.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole('heading', { name: /^Request Queue$/ })).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+
+  test('stays silent when the finished job belongs to the manager’s other phone', async ({
+    page,
+  }) => {
+    // Same seed as above but this browser is a different device, so the
+    // outcome belongs to the screen that asked for it.
+    await pinDeviceId(page, 'some-other-phone');
+    await seedOptIn();
+    await seedDesktop(HOME_SITE_KEY);
+    await completeRequest(HOME_REQUEST_ID, 'CO');
+    await seedJob('job-applied', HOME_REQUEST_ID, 'applied', new Date('2026-04-20T09:00:00Z'), {
+      code: 'applied',
+      message: 'Added New Seat Person to Maple Building.',
+    });
+    await signInAndOpenQueue(page);
+
+    await expect(page.getByTestId(`queue-card-${FOREIGN_REQUEST_ID}`)).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
   test('points at the extension toggle when no desktop has ever checked in', async ({ page }) => {

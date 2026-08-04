@@ -12,9 +12,28 @@
 //
 // Bounded, because jobs are never deleted: a manager who applies for
 // years would otherwise carry every job id they ever dismissed. Oldest
-// acknowledgements fall off first — an id old enough to be evicted
-// belongs to a job whose request left the queue long ago, so its card
-// no longer renders and it can't re-raise anything.
+// acknowledgements fall off first.
+//
+// **Eviction is not free, and the cap is sized so it never happens.**
+// The original bound was justified by the dialog being mounted inside a
+// pending request's card: an id old enough to be evicted belonged to a
+// job whose request had long since left the queue, so nothing rendered
+// to re-raise it. That is no longer true — the dialog is mounted at page
+// level and selects across the entire mailbox, precisely so that an
+// outcome survives its request leaving `pending`. Evicting an id now
+// means the outcome it acknowledged raises again; worse, dismissing that
+// re-raise evicts the next-oldest, which raises in turn, and the manager
+// is in a modal loop with a year of their own history.
+//
+// So the cap is a storage-quota backstop, not a working limit, and it
+// has to sit well beyond the number of remote applies one device can
+// accumulate in the life of the install. At 1–2 requests a week — the
+// whole stake's volume, of which only some are applied from a phone —
+// 500 is decades, and costs about 20KB against a 5MB quota. A device
+// that somehow exceeds it re-raises one old outcome per new dismissal,
+// which is bad; a device that clears its storage loses its
+// `getDeviceId()` at the same moment, so those jobs stop matching and
+// nothing raises at all, which is fine.
 //
 // Every access is wrapped: Safari in Lockdown Mode and a full quota
 // both throw on plain `localStorage` calls. A failed read reports "not
@@ -25,11 +44,11 @@
 const STORAGE_KEY = 'kindoo:remoteApplyAckedJobs';
 
 /**
- * How many acknowledgements to keep. At 1–2 requests a week this is
- * years of history; the cap exists so an unbounded list can't be the
- * thing that fills a phone's storage quota.
+ * How many acknowledgements to keep. Sized to be unreachable rather than
+ * to be a working limit — see the module note on why eviction now
+ * re-raises an outcome instead of being harmless.
  */
-const MAX_REMEMBERED = 50;
+const MAX_REMEMBERED = 500;
 
 function read(): string[] {
   try {

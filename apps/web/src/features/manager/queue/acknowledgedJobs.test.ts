@@ -31,13 +31,23 @@ describe('acknowledgedJobs', () => {
   });
 
   it('keeps the list from growing without bound, evicting oldest first', () => {
-    for (let i = 0; i < 60; i += 1) acknowledgeJob(`job-${i}`);
+    for (let i = 0; i < 510; i += 1) acknowledgeJob(`job-${i}`);
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as string[];
-    expect(stored).toHaveLength(50);
-    // The 10 oldest fell off; the newest are what could still re-raise.
+    expect(stored).toHaveLength(500);
+    // The 10 oldest fell off.
     expect(isJobAcknowledged('job-9')).toBe(false);
     expect(isJobAcknowledged('job-10')).toBe(true);
-    expect(isJobAcknowledged('job-59')).toBe(true);
+    expect(isJobAcknowledged('job-509')).toBe(true);
+  });
+
+  it('holds a decade of dismissals without evicting any', () => {
+    // The cap is a quota backstop, not a working limit. Eviction stopped
+    // being harmless when the result dialog moved to page level: it no
+    // longer needs a rendered card to re-raise on, so a dropped id means
+    // an old outcome pops again — and dismissing that pops the next.
+    // 1–2 requests a week across the whole stake puts 500 decades out.
+    for (let i = 0; i < 400; i += 1) acknowledgeJob(`job-${i}`);
+    expect(isJobAcknowledged('job-0')).toBe(true);
   });
 
   it('does not re-add a job already acknowledged', () => {

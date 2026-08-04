@@ -421,6 +421,42 @@ describe('useRemoteApplyJobsByRequest', () => {
     expect(result.current.byRequest.get('req-8')?.job_id).toBe('job-b');
   });
 
+  it('lists the same reduced jobs for the page-level result dialog to select across', () => {
+    // The dialog outlives the card, so it reads this list rather than
+    // one card's job — and it reads the reduced one, which inherits the
+    // duplicate rule below.
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([jobDoc('job-a', 'req-7', 'applied'), jobDoc('job-b', 'req-8', 'queued')]),
+    );
+    const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    expect(result.current.resolved.map((j) => j.job_id).sort()).toEqual(['job-a', 'job-b']);
+  });
+
+  it('never lists the failed duplicate of a request that applied', () => {
+    // Reporting that failure would send the manager to redo a provision
+    // that already consumed a licence.
+    useFirestoreCollectionMock.mockReturnValue(
+      docResult([
+        jobDoc('job-a', 'req-7', 'applied', T0),
+        jobDoc('job-b', 'req-7', 'failed', T0 + 30_000),
+      ]),
+    );
+    const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
+    expect(result.current.resolved.map((j) => j.job_id)).toEqual(['job-a']);
+  });
+
+  it('keeps the resolved list referentially stable across re-renders', () => {
+    // The dialog's selection reads localStorage; a fresh array each
+    // render would re-run it on every unrelated page update.
+    useFirestoreCollectionMock.mockReturnValue(docResult([jobDoc('job-a', 'req-7', 'applied')]));
+    const { result, rerender } = renderHook(() => useRemoteApplyJobsByRequest(), {
+      wrapper: Wrapper,
+    });
+    const first = result.current.resolved;
+    rerender();
+    expect(result.current.resolved).toBe(first);
+  });
+
   it('reports itself unresolved so the card withholds the button', () => {
     useFirestoreCollectionMock.mockReturnValue(docResult(undefined, true));
     const { result } = renderHook(() => useRemoteApplyJobsByRequest(), { wrapper: Wrapper });
