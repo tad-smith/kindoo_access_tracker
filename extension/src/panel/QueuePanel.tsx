@@ -149,19 +149,24 @@ export function QueuePanel({ stakeId, bundle, pending, remoteApply }: QueuePanel
   // a consumed licence that `markRequestComplete` picking one winner does
   // nothing to undo.
   //
-  // `running` is only this tab's own claim, which is a fraction of the
-  // window. `busyRequestIds` carries the rest — a job still sitting in
-  // the mailbox, and one another of the manager's tabs is running — so
-  // the button is gated from the phone's tap through whichever tab
-  // finishes the work. Gating on `running` alone left it live for the
-  // whole of the flow the feature is named for.
+  // `running` is only this tab's own claim, and only for as long as that
+  // claim ends cleanly — which is a fraction of the window.
+  // `busyRequestIds` carries the rest: a job still sitting in the
+  // mailbox, one another of the manager's tabs is running, and this tab's
+  // own job whose terminal write never landed. So the button is gated
+  // from the phone's tap through whichever tab finishes the work, and
+  // past a run that finished without saying so. Gating on `running` alone
+  // left it live for the whole of the flow the feature is named for.
   const remoteApplyBusy = useMemo(() => {
     const busy = new Map<string, RemoteApplyPhase>();
     for (const requestId of remoteApply?.busyRequestIds ?? EMPTY_IDS) {
       busy.set(requestId, 'elsewhere');
     }
     // After the elsewhere pass: this tab's own run is the stronger
-    // claim, and the two overlap for one poll period around the claim.
+    // claim, and the two overlap for the whole of it — the loop holds the
+    // claimed `request_id` in the busy set until the terminal write
+    // lands, so the card must not read "your desktop is handling it"
+    // while this very tab is the desktop.
     if (remoteApply?.running) busy.set(remoteApply.running.requestId, 'this-tab');
     return busy;
   }, [remoteApply?.busyRequestIds, remoteApply?.running]);

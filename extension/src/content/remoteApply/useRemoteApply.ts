@@ -21,12 +21,13 @@ export interface RemoteApplyState {
   /** The phone-initiated job this tab is executing right now, or null. */
   running: { jobId: string; requestId: string } | null;
   /**
-   * `request_id`s a phone-initiated job holds as of the last poll that
-   * this tab is not itself running — still `queued` in the mailbox, or
-   * `running` on another of the manager's Kindoo tabs. `running` below
-   * covers only this tab's own claim, which is a fraction of the window
-   * in which a second provision would double-write Kindoo. Gate the
-   * provision button on both; see the loop's `onBusyRequestIds`.
+   * `request_id`s a phone-initiated job holds as of the last poll —
+   * still `queued` in the mailbox, `running` on another of the manager's
+   * Kindoo tabs, or claimed by this tab and not yet written terminal.
+   * `running` below covers only this tab's own claim and only while it
+   * ends cleanly, which is a fraction of the window in which a second
+   * provision would double-write Kindoo. Gate the provision button on
+   * both; see the loop's `onBusyRequestIds`.
    */
   busyRequestIds: readonly string[];
   /** Bumped every time a job reaches a terminal status on this tab.

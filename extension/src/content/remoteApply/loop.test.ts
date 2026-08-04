@@ -249,7 +249,7 @@ describe('startRemoteApplyLoop', () => {
       extVersion: EXT_VERSION,
       onSitePublished,
     });
-    await expect(handle.tick()).rejects.toThrow('offline');
+    await handle.tick();
     handle.stop();
 
     expect(onSitePublished).not.toHaveBeenCalled();
@@ -389,7 +389,7 @@ describe('startRemoteApplyLoop', () => {
     });
     const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
 
-    await expect(handle.tick()).rejects.toThrow('denied');
+    await handle.tick();
     for (let i = 0; i < 5; i += 1) {
       deps.advance(REMOTE_APPLY_POLL_VISIBLE_MS);
       await handle.tick();
@@ -398,12 +398,99 @@ describe('startRemoteApplyLoop', () => {
     expect(deps.writeRemotePresence).toHaveBeenCalledTimes(1);
     // And the tab goes on working the queue meanwhile: it knows its site,
     // so it can run a job whether or not the phone can currently see it.
-    expect(deps.queuedJobs).toHaveBeenCalledTimes(5);
+    // Six, not five — the tick whose write was denied polls too.
+    expect(deps.queuedJobs).toHaveBeenCalledTimes(6);
 
     deps.advance(REMOTE_APPLY_HEARTBEAT_MS);
-    await expect(handle.tick()).rejects.toThrow('denied');
+    await handle.tick();
     handle.stop();
     expect(deps.getEnvironments).toHaveBeenCalledTimes(2);
+  });
+
+  it('polls on the very tick whose presence write was denied', async () => {
+    // The regression the previous test's `rejects.toThrow` was hiding.
+    // `writeRemotePresence` goes through `unwrap()`, so a rules denial on
+    // the `desktops` doc REJECTS — and the throw exited `tick` ahead of
+    // `pollOnce`, defeating the invariant the test above states.
+    //
+    // A HIDDEN tab is the total case, and it is the tab a manager
+    // watching their phone actually has: the poll period and the
+    // heartbeat period are both 60s, so the resolve gate has always
+    // elapsed, the write is attempted every tick, and the tab never
+    // polled at all for as long as the denial lasted. It also never
+    // reached a `publishBusy`, so the gate's own hold never aged.
+    const onBusyRequestIds = vi.fn();
+    const deps = makeDeps({
+      isHidden: vi.fn(() => true),
+      writeRemotePresence: vi.fn(async () => {
+        throw Object.assign(new Error('denied'), { code: 'permission-denied' });
+      }),
+      queuedJobs: vi.fn(async () => []),
+      // A sibling tab mid-`applyRequest` — the answer this tab has to go
+      // on publishing, and cannot publish without polling.
+      runningJobs: vi.fn(async () => [runningJob(NOW)]),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+
+    // Not `rejects`: the tick completes.
+    await handle.tick();
+    deps.advance(REMOTE_APPLY_POLL_HIDDEN_MS);
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.writeRemotePresence).toHaveBeenCalledTimes(2);
+    // Polled on both — the tick is not lost, it is only invisible.
+    // (`runningJobs` is not counted here: the sweep reads it too.)
+    expect(deps.queuedJobs).toHaveBeenCalledTimes(2);
+    // And the gate is answered from a read these ticks made, not from a
+    // held set — `r1` reaches the set only via the poll's `running` read,
+    // and nothing had ever been published for a hold to republish.
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']]]);
+  });
+
+  it('goes on claiming and running jobs while its presence write is denied', async () => {
+    // The other half of the invariant: presence answers "can the phone
+    // see me", the poll answers "can I do work". A job already in the
+    // mailbox gets finished and reported rather than left to expire as
+    // though nobody was there.
+    const deps = makeDeps({
+      writeRemotePresence: vi.fn(async () => {
+        throw Object.assign(new Error('denied'), { code: 'permission-denied' });
+      }),
+      queuedJobs: vi.fn(async () => [job()]),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.claimJob).toHaveBeenCalledTimes(1);
+    expect(deps.runJob).toHaveBeenCalledTimes(1);
+    expect(deps.finishJob).toHaveBeenCalledWith('j1', {
+      status: 'applied',
+      outcome: { code: 'applied', message: 'done' },
+    });
+  });
+
+  it('propagates an orphaned context out of the presence write', async () => {
+    // The one presence-write failure that must still reach `drive`:
+    // catching it here would put back the warning-every-tick-forever that
+    // the halt exists to end.
+    const deps = makeDeps({
+      isContextAlive: vi.fn(() => true),
+      writeRemotePresence: vi.fn(async () => {
+        throw new Error('Extension context invalidated.');
+      }),
+    });
+    const handle = start(deps, { stakeId: STAKE_ID, bundle: bundle(), extVersion: EXT_VERSION });
+
+    await expect(handle.tick()).rejects.toThrow('Extension context invalidated');
+    handle.stop();
+    expect(deps.queuedJobs).not.toHaveBeenCalled();
   });
 
   it('re-resolves at once when the operator leaves a site that could not be resolved', async () => {
@@ -771,6 +858,76 @@ describe('startRemoteApplyLoop', () => {
     expect(onBusyRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
   });
 
+  it('holds its own claim in the busy set until the terminal write lands', async () => {
+    // The window the claim-time filter opened. `onJobEnd` fires from the
+    // `finally` whether or not the job reached a terminal status, so a
+    // run whose terminal write exhausts its retries clears `running`
+    // against a set the claim had already filtered — and from there until
+    // the next successful poll the card is ungated for a job still
+    // `running` in Firestore with an unknown Kindoo outcome. A click
+    // there is the second `inviteUser`.
+    //
+    // `partial` is the shape that makes it reachable: the Kindoo write
+    // landed, `markRequestComplete` didn't, so the request stays pending
+    // and its card stays on screen.
+    let busy: readonly string[] = [];
+    let busyAtJobEnd: readonly string[] | null = null;
+    const deps = makeDeps({
+      queuedJobs: vi.fn(async () => [job()]),
+      runJob: vi.fn(async () => ({
+        status: 'partial' as const,
+        outcome: { code: 'sba_incomplete' as const, message: 'Kindoo done, SBA not' },
+      })),
+      finishJob: vi.fn(async () => {
+        throw new Error('offline');
+      }),
+    });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds: (ids) => {
+        busy = ids;
+      },
+      onJobEnd: () => {
+        busyAtJobEnd = [...busy];
+      },
+    });
+    await expect(handle.tick()).rejects.toThrow('offline');
+    handle.stop();
+
+    // Three attempts, then it gives up and the job is left `running`.
+    expect(deps.finishJob).toHaveBeenCalledTimes(3);
+    // The moment the running flag drops, this is the whole gate.
+    expect(busyAtJobEnd).toEqual(['r1']);
+  });
+
+  it('gives the button back the moment its own run reports its outcome', async () => {
+    // The other side of it: holding past a job that DID report would be
+    // the lockout the claim-time filter was added to avoid. Both state
+    // updates land in one React render, so the card goes from "this tab
+    // is applying it" straight to enabled with nothing in between.
+    let busy: readonly string[] = [];
+    let busyAtJobEnd: readonly string[] | null = null;
+    const deps = makeDeps({ queuedJobs: vi.fn(async () => [job()]) });
+    const handle = start(deps, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds: (ids) => {
+        busy = ids;
+      },
+      onJobEnd: () => {
+        busyAtJobEnd = [...busy];
+      },
+    });
+    await handle.tick();
+    handle.stop();
+
+    expect(deps.finishJob).toHaveBeenCalledTimes(1);
+    expect(busyAtJobEnd).toEqual([]);
+  });
+
   it('keeps the gate closed on its own job when the terminal write never landed', async () => {
     // `inFlight` is gone by then, so the job reads as anybody's — which
     // is the right answer. Nothing knows whether that run reached
@@ -820,7 +977,10 @@ describe('startRemoteApplyLoop', () => {
     await handle.tick();
     handle.stop();
 
-    expect(onBusyRequestIds).not.toHaveBeenCalled();
+    // The first publication of a loop always emits, even empty — see
+    // "publishes its first empty set even after a previous loop published
+    // one". What matters is that `r1` is not in it.
+    expect(onBusyRequestIds.mock.calls).toEqual([[[]]]);
   });
 
   it('publishes only when the set moves, not once per poll', async () => {
@@ -992,6 +1152,43 @@ describe('startRemoteApplyLoop', () => {
     handle.stop();
 
     expect(onBusyRequestIds.mock.calls).toEqual([[['r1']], [[]]]);
+  });
+
+  it('publishes its first empty set even after a previous loop published one', async () => {
+    // The dedupe's memory is loop-local; the React host's state is not.
+    // The effect re-runs on a `stakeId` change, so a manager of two
+    // stakes can restart the loop with a non-empty set standing — and
+    // seeded with `[]`, the new loop's first empty publication is deduped
+    // away and the host holds that set INDEFINITELY. Nothing ages it:
+    // REMOTE_APPLY_BUSY_HOLD_MS bounds the old loop's hold, and the old
+    // loop is gone.
+    const onBusyRequestIds = vi.fn();
+    // A job for the sibling site, so the first loop publishes without
+    // claiming anything.
+    const first = makeDeps({
+      queuedJobs: vi.fn(async () => [job({ targetSiteKey: EAST_SITE_ID })]),
+    });
+    const firstLoop = start(first, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await firstLoop.tick();
+    firstLoop.stop();
+    expect(onBusyRequestIds.mock.calls).toEqual([[['r1']]]);
+
+    const second = makeDeps();
+    const secondLoop = start(second, {
+      stakeId: STAKE_ID,
+      bundle: bundle(),
+      extVersion: EXT_VERSION,
+      onBusyRequestIds,
+    });
+    await secondLoop.tick();
+    secondLoop.stop();
+
+    expect(onBusyRequestIds).toHaveBeenLastCalledWith([]);
   });
 
   it('clears the gate outright when the opt-in goes away', async () => {

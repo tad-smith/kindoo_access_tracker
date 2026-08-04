@@ -6,6 +6,24 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-85] Remote apply: tick as soon as a Kindoo tab comes forward
+Status: pending
+Owner: @extension-engineer
+Phase: remote apply (D27)
+
+`onVisibilityChange` reschedules the timer when a tab's visibility flips, so a tab coming forward stops waiting out the remainder of a 60s hidden delay — but it does not tick *now*. The residual is the window between the manager's tap on their phone and the desktop tab's next poll: up to a visible poll period (10s) after the switch, during which the desktop's own **Provision & Complete** for that request is still ungated and the phone-queued job unclaimed.
+
+Running one tick immediately on the transition to visible would collapse most of it. Deliberately **not** taken in PR #253's follow-up round: it is a latency improvement rather than a defect — the gate's remaining hole is the tap → claim window that the phone already covers from its own side (`architecture.md` D27 (l)) — and that branch had iterated three times already. Costs to weigh when it is picked up: an alt-tab burst becomes a burst of Firestore reads, so it wants the same rate limit the resolve gate has rather than a bare call.
+
+## [T-86] Remote apply: steady-state read volume per open Kindoo tab
+Status: pending
+Owner: @extension-engineer
+Phase: remote apply (D27)
+
+On the record before more managers opt in. Since PR #253 the poll makes **two** reads (`queued`, then `running`) at 10s while a Kindoo tab is visible — ~17k a day per always-open, always-visible tab, plus ~1.4k from the 60s sweep — against collections that are almost always empty, which is the minimum-one-read case. Comfortably inside the free tier today at one opted-in manager.
+
+What makes it worth a note rather than nothing: the volume scales with **open tabs**, not with request volume, so it does not shrink at 1–2 requests/week and it grows with every manager who opts in and every second Kindoo window they leave open. Nothing needs doing yet. If it ever does, the cheap moves in order are a longer visible poll period; then folding the two reads into one `status in ['queued','running']` query, which also removes the hazard the fixed read order exists to dodge (one snapshot cannot miss a job mid-transition) but needs the gate's and the claim's differing uses of the two pages untangled first; and only then anything push-shaped, which D27 rejected for reasons that have not changed.
+
 ## [T-84] Spec §16: the result dialog belongs to the page, not to the request's card
 Status: done (2026-08-03 — `feat/remote-apply-docs5`, against `feat/remote-apply` at `263af23`)
 Owner: @docs-keeper

@@ -227,10 +227,10 @@ export interface RemoteApplyLoopArgs {
   onJobStart?: (job: RemoteApplyJobRef) => void;
   onJobEnd?: (job: RemoteApplyJobRef) => void;
   /**
-   * The `request_id`s a phone-initiated job holds as of this tick that
-   * this tab is not itself running — still `queued` in the mailbox, or
-   * `running` on another of the manager's tabs. Emitted only when the
-   * set changes.
+   * The `request_id`s a phone-initiated job holds as of this tick —
+   * still `queued` in the mailbox, `running` on another of the manager's
+   * tabs, or claimed by THIS tab and not yet written terminal. Emitted
+   * only when the set changes.
    *
    * `onJobStart` gates only what THIS tab runs, which is a fraction of
    * the window in which a second `applyRequest` would double-provision.
@@ -248,6 +248,12 @@ export interface RemoteApplyLoopArgs {
    *     drops it one poll after a sibling wins the race — mid-
    *     `applyRequest`, which is the expensive moment. Hence the
    *     `running` half; see `runningElsewhereRequestIds`.
+   *   - this tab's OWN claim, from the claim until its terminal write
+   *     lands. Redundant with `onJobStart` while the run is going well
+   *     and load-bearing when it isn't: `onJobEnd` fires whether or not
+   *     the job reached a terminal status, so dropping the id at claim
+   *     time left the button live from a failed terminal write until the
+   *     next successful poll re-read the job as `running`. See `pollOnce`.
    *
    * What it does NOT buy is the phone's tap → claim window for a job
    * this tab CAN serve: the poll that first sees such a job claims it in
@@ -393,10 +399,20 @@ export function startRemoteApplyLoop(
   /** Set the first time the loop finds itself orphaned by an extension
    * reload, so the halt announces itself exactly once. */
   let contextInvalidated = false;
-  /** Last set handed to `onBusyRequestIds`, so an unchanged poll
-   * result costs the React host nothing. Without this the host re-renders
-   * every 10 seconds forever. */
-  let publishedBusyIds: readonly string[] = [];
+  /**
+   * Last set handed to `onBusyRequestIds`, so an unchanged poll result
+   * costs the React host nothing. Without this the host re-renders every
+   * 10 seconds forever.
+   *
+   * `null` rather than `[]` before the first publication, because this is
+   * loop-local state and the host's is not. A restarted loop (the effect
+   * re-runs on a `stakeId` change) starts here at nothing published while
+   * the host still holds the previous loop's set — and seeded with `[]`,
+   * the new loop's first empty publication deduped away, leaving that set
+   * standing with nothing left to age it out. A gate nothing can lift is
+   * exactly what REMOTE_APPLY_BUSY_HOLD_MS exists to prevent.
+   */
+  let publishedBusyIds: readonly string[] | null = null;
   /**
    * `request_id`s seen `running` on another tab at the last SUCCESSFUL
    * read, reused when a read fails.
@@ -488,7 +504,8 @@ export function startRemoteApplyLoop(
    * Republishing is free — the same array identity, so `publishBusy`'s
    * dedupe emits nothing and the React host doesn't re-render.
    */
-  const heldBusyIds = (): readonly string[] => (busyReadHolds() ? publishedBusyIds : EMPTY_IDS);
+  const heldBusyIds = (): readonly string[] =>
+    busyReadHolds() && publishedBusyIds !== null ? publishedBusyIds : EMPTY_IDS;
 
   /**
    * Hand the host the current busy set, if it moved.
@@ -499,6 +516,7 @@ export function startRemoteApplyLoop(
    */
   const publishBusy = (requestIds: readonly string[]) => {
     if (
+      publishedBusyIds !== null &&
       publishedBusyIds.length === requestIds.length &&
       publishedBusyIds.every((id, i) => id === requestIds[i])
     ) {
@@ -769,6 +787,11 @@ export function startRemoteApplyLoop(
    *     nothing. Not an error — a manager legitimately visits Kindoo
    *     sites SBA doesn't manage.
    *
+   * A failed presence WRITE is deliberately not a third: it is caught,
+   * not thrown, and the tick goes on to poll. Both of the above are
+   * Kindoo refusing, which is total; a denied `desktops` doc leaves a tab
+   * that can still do the work invisible while it does it.
+   *
    * Re-resolution is NOT purely time-driven: Kindoo is an SPA, so the
    * operator can switch sites with no page load and no remount, and a
    * resolution cached against the previous EID would leave this tab
@@ -832,15 +855,43 @@ export function startRemoteApplyLoop(
       console.info('[sba-ext] remote apply: opt-in cleared mid-tick; skipping presence write');
       return false;
     }
-    await deps.writeRemotePresence({
-      enabled: true,
-      siteKey: site.siteKey,
-      kindooSiteId: site.kindooSiteId,
-      stakeId: args.stakeId,
-      kindooEid: session.eid,
-      kindooSiteName: activeKindooSiteName(envs, session),
-      extVersion: args.extVersion,
-    });
+    try {
+      await deps.writeRemotePresence({
+        enabled: true,
+        siteKey: site.siteKey,
+        kindooSiteId: site.kindooSiteId,
+        stakeId: args.stakeId,
+        kindooEid: session.eid,
+        kindooSiteName: activeKindooSiteName(envs, session),
+        extVersion: args.extVersion,
+      });
+    } catch (err) {
+      // Caught rather than thrown, because throwing here takes the poll
+      // with it — and the two answer different questions. Presence
+      // answers "can the phone see me"; the poll answers "can I do
+      // work". This tab reached Kindoo and knows its site, so it can
+      // still claim, run and finalise a job already in the mailbox.
+      //
+      // A denied `desktops` write is reachable and INDEFINITE — deactivate
+      // a manager with a Kindoo tab open and every write is denied from
+      // the next token refresh on, with nothing on a timer to unmount the
+      // loop. Letting it throw was total for a hidden tab: the poll period
+      // and REMOTE_APPLY_HEARTBEAT_MS are both 60s, so the resolve gate
+      // has always elapsed, the write is always attempted, and the tab
+      // never reached `pollOnce` at all for as long as the denial lasted.
+      //
+      // It was also the one exit from `tick` that published nothing, so
+      // `heldBusyIds()` was never consulted and the busy set never aged
+      // against REMOTE_APPLY_BUSY_HOLD_MS — a bound that only holds
+      // because every tick answers the gate.
+      if (contextLost(err)) throw err;
+      console.warn(
+        '[sba-ext] remote apply: presence write failed; the phone cannot see this tab, but it ' +
+          'goes on working the queue',
+        err,
+      );
+      return true;
+    }
     // After the write, not before: the React host uses this to decide
     // which desktop doc to delete on opt-out, and there is nothing to
     // delete for a heartbeat that never landed.
@@ -945,16 +996,19 @@ export function startRemoteApplyLoop(
    * almost always empty — for opted-in tabs only, since the loop does not
    * run otherwise.
    *
-   * `inFlight` is excluded because this tab's own run is `running`'s job,
-   * not this set's: `onJobStart` / `onJobEnd` bracket it exactly, where a
-   * set refreshed once a poll would hold the gate closed past the end of
-   * the run. Today the exclusion is belt-and-braces — the run is awaited
-   * inside the tick that claims it, so nothing is ever in flight at a
-   * publish — but it keeps both readers of `runningJobs` agreeing on the
-   * one thing they can positively attribute. A job of ours left `running`
-   * by a terminal write that exhausted its retries is NOT excluded: it is
-   * out of `inFlight` by then, and holding the button until the sweep
-   * finalises it is the right answer for work whose outcome we don't know.
+   * `inFlight` is excluded because this tab's own run is bracketed
+   * exactly by `onJobStart` / `onJobEnd` and by `pollOnce`'s own hold on
+   * the claimed `request_id`, where a set refreshed once a poll would
+   * keep the gate closed past the end of the run. Today the exclusion is
+   * belt-and-braces — the run is awaited inside the tick that claims it,
+   * so nothing is ever in flight at a `running` read — but it keeps both
+   * readers of `runningJobs` agreeing on the one thing they can
+   * positively attribute. A job of ours left `running` by a terminal
+   * write that exhausted its retries is NOT excluded: it is out of
+   * `inFlight` by then, and holding the button until the sweep finalises
+   * it is the right answer for work whose outcome we don't know. Nothing
+   * may reopen the gate in the gap either — which is why `pollOnce` drops
+   * the id only once that write has landed.
    */
   const runningElsewhereRequestIds = async (): Promise<readonly string[]> => {
     try {
@@ -1057,20 +1111,32 @@ export function startRemoteApplyLoop(
     // `runningElsewhereRequestIds` is what keeps the gate closed for the
     // rest of that tab's run.
     if (!claimed) return;
-    // Won it, so it is `running` and `onJobStart` gates the button from
-    // here. Dropping it now is what gives the button back the moment the
-    // run ends rather than one poll period later — `onJobEnd` clears the
-    // running flag, and a set still naming this request would hold the
-    // gate closed through the gap. Both state updates land in one React
-    // render, so the button never flickers live in between.
-    publishBusy(busyRequestIds.filter((id) => id !== job.requestId));
-
+    // Won it. The request STAYS in the published set through the run.
+    // `onJobStart` gates the button too and the two overlap harmlessly:
+    // `QueuePanel` lets `running` name the phase, so the card still reads
+    // "this tab is applying it now" rather than "your desktop".
+    //
+    // Dropping it here instead reopened the gate for up to one poll.
+    // `onJobEnd` fires from the `finally` below whether or not the job
+    // reached a terminal status, so a run whose terminal write exhausted
+    // its retries — a `partial` leaves the request `pending` and its card
+    // on screen — cleared `running` against a set this line had already
+    // filtered, and the button went live for a job still `running` in
+    // Firestore with an unknown Kindoo outcome. A click there is the
+    // second `inviteUser`. That is also what
+    // `runningElsewhereRequestIds` says it does NOT allow.
     console.info(`[sba-ext] remote apply: claimed job ${job.jobId} for request ${job.requestId}`);
     inFlight.add(job.jobId);
     args.onJobStart?.(job);
     try {
       const result = await deps.runJob({ stakeId: args.stakeId, bundle: args.bundle, job });
       await finishWithRetry(job.jobId, { status: result.status, outcome: result.outcome });
+      // Terminal, so nothing holds this request any more — and dropping
+      // it HERE rather than one poll later is what gives the button back
+      // the moment the run ends. No await between this and `onJobEnd`
+      // below, so both state updates land in one React render and the
+      // button never flickers.
+      publishBusy(busyRequestIds.filter((id) => id !== job.requestId));
       console.info(`[sba-ext] remote apply: job ${job.jobId} finished as ${result.status}`);
     } finally {
       inFlight.delete(job.jobId);
