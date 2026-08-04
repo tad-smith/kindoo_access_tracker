@@ -67,3 +67,18 @@ The `[Stake Building Access]` prefix is unchanged on all six and is the only sta
 - **No dark-mode handling.** The palette is fixed light — `#1a202c` on the client's default background. A client rendering in dark mode inverts the background but not the inline colours; the result is legible but not designed. Not addressed here.
 - **No rendering matrix.** The layout follows the mail-client-safe rules (inline styles, table markup, no `<style>` block) but has not been checked against a client matrix. Gmail web and Apple Mail are what it was built against.
 - **The text part's `Label:    value` alignment assumes a monospace client.** `textRow` pads to a fixed 10-column label field, which lines up in a monospace renderer and merely reads as extra spaces in a proportional one. Acceptable for a fallback part.
+
+## Follow-on — the request `Reason` on completed and cancelled
+
+**Shipped:** 2026-08-03
+**Commits:** PR #254 (`feat/email-reason-row`).
+
+Recorded here rather than in its own entry: it is one row added to the body shape this PR established, hours later, and splitting it out would put the email-body history in two files.
+
+`AccessRequest.reason` carries the calling a manual or temp seat was asked for. Only the new-request email printed it. A requester reading a completion and a manager reading a cancellation both lost the one field that says why the seat existed — on the cancellation that matters most, because the manager is deciding whether the withdrawal makes sense and the calling is the context for that judgement.
+
+Both emails now carry the same conditional `Reason` row as new-request, in the HTML and text parts alike, directly after `Member` so the row order is identical across the three. Nothing was renamed and no new field was read: `reason` was already on the request document every one of these builders receives. `AccessRequest.reason` is typed required (`reason: z.string()`), so the `if (req.reason)` guard is against an empty string, not an absent key.
+
+**Rejected was excluded on purpose.** It carries `Reason given`, which holds the manager's `rejection_reason` — a different field with a confusingly similar label. Giving it a bare `Reason` row too would put the requester's calling and the manager's justification adjacent in one table, where a reader has to work out that the near-identical labels mean unrelated things. The operator drew that line explicitly. Anyone later noticing the asymmetry and "completing" it should read this paragraph first.
+
+Non-changes worth stating: no new Firestore read, no schema or rules change, no subject-line change, no `architecture.md` D-number (same reasoning as the no-D-number decision above — this opens no axis to cite). `docs/spec.md` §9's per-email row inventory was the only doc statement the change falsified.
