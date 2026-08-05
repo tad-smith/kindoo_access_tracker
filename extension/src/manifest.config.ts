@@ -77,7 +77,11 @@ export default defineManifest(({ mode }) => {
       // the active tab; the CS opens / closes the slide-over.
       default_title: 'Toggle SBA helper panel',
     },
-    permissions: ['identity', 'identity.email', 'storage'],
+    // SPIKE — `offscreen` is here for the offscreen realtime-listener
+    // probe on this branch only. It is a Chrome Web Store review surface
+    // and must not reach a published build without a decision on the
+    // `reasons` enum mismatch documented in `src/lib/spike.ts`.
+    permissions: ['identity', 'identity.email', 'storage', 'offscreen'],
     host_permissions: [KINDOO_UI_ORIGIN, KINDOO_API_ORIGIN],
     background: {
       // Entry filenames are distinct (service-worker.ts vs
