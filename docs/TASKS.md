@@ -6,6 +6,15 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-88] E2E coverage for Complete Setup against real emulators + rules
+Status: pending
+Owner: @web-engineer
+Phase: cross-cutting
+
+No E2E exercises the Complete Setup button at all. `e2e/tests/manager-admin/bootstrap-wizard.spec.ts` covers the setup-complete gate's routing decision (bootstrap admin sees the wizard, non-admin sees SetupInProgress, all four step tabs render) but never clicks Complete Setup or asserts on `stake.setup_complete` flipping. `apps/web/src/features/bootstrap/hooks.test.tsx` mocks `firebase/firestore` and `../../lib/firebase` (which wraps `auth`) wholesale, so `useCompleteSetupMutation`'s claim-verification gate — `canAdministerStakePostFlip` / `waitForPostFlipAdminAccess` — never runs against real custom claims or real `firestore.rules`; the unit tests can only assert what the mocked claims object says, not whether that predicate actually matches what the rules require.
+
+This is why the gate's predicate was wrong in both directions on PR #260: first narrower than the rule (`manager` claim alone, correct as it turned out, but justified at the time only by a hand-reading of the rules), then widened to mirror the post-flip stake-doc read rule exactly (`isAnyMember || isPlatformSuperadmin`) on the reasoning that anything narrower would block a principal the read rule admits — also argued from a hand-reading, and wrong, because the read rule isn't the invariant that matters (see `architecture.md` D30). Both times, nothing in CI actually exercised the gate against emulated rules to catch the error; both times a reviewer caught it by re-reading `firestore.rules` a third time. An E2E that signs in as the bootstrap admin, drives the wizard through all four steps, clicks Complete Setup, and asserts `setup_complete` flips true — plus a case that starts with no qualifying claim on the token and asserts the retry-toast path fires and `setup_complete` stays `false` — would verify the gate's actual behavior against the emulator's real rule evaluation instead of resting on argument.
+
 ## [T-85] Remote apply: tick as soon as a Kindoo tab comes forward
 Status: obsolete (2026-08-04 — optimises a moment that mostly does not occur; see the closing note)
 Owner: @extension-engineer
