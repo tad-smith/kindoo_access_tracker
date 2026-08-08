@@ -29,7 +29,9 @@
 //     matching field — the slug codes landing on Stake ID when the
 //     payload carried one and on the name when it didn't.
 //   - A server error on Stake ID clears once the operator edits the
-//     field, the same way a normally registered field's would.
+//     field, the same way a normally registered field's would — and on
+//     the other route out of a collision, renaming the stake while the
+//     ID still follows the name.
 //   - A mid-string edit that rewrites the value keeps the caret where
 //     the operator was typing.
 //   - `{success:true}` fires a success toast + calls `onClose`. The
@@ -564,6 +566,25 @@ describe('<CreateStakeForm />', () => {
     await user.click(screen.getByTestId('create-stake-email'));
     expect(screen.getByTestId('create-stake-id')).toHaveValue('cs-north-two');
     expect(screen.queryByTestId('create-stake-id-error')).toBeNull();
+  });
+
+  it('clears a server error on the stake ID when the operator renames the stake instead', async () => {
+    // Renaming is the other natural answer to a collision, and while the
+    // ID still follows the name it changes underneath the operator when
+    // they do — so the error has to clear on that path too.
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'slug_collision' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'CS North');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+    await screen.findByTestId('create-stake-id-error');
+
+    await user.type(screen.getByTestId('create-stake-name'), ' Two');
+    expect(screen.getByTestId('create-stake-id')).toHaveValue('cs-north-two');
+    await vi.waitFor(() => {
+      expect(screen.queryByTestId('create-stake-id-error')).toBeNull();
+    });
   });
 
   it('leaves the caret where the operator typed when a mid-string edit rewrites the value', async () => {

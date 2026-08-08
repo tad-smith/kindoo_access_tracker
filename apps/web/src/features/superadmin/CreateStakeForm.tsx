@@ -153,6 +153,20 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
   // the handlers below read it, and flipping it never needs a re-render.
   const stakeIdDetached = useRef(false);
 
+  // Post-submit re-validation switch for the two paths that edit
+  // `stake_id` — typing in it, and the name auto-fill. RHF's
+  // `reValidateMode: 'onChange'` reaches neither, so both ask for it by
+  // hand. (Blur doesn't: `reValidateMode: 'onChange'` skips blur for a
+  // normally registered field too.) Read during render, which is what
+  // registers the `formState` proxy subscription. The ref copy is for
+  // the autofill effect below, which must NOT take it as a dependency —
+  // it would re-run the instant the flag flips, which is the instant
+  // `onSubmit`'s `setError` lands, and validate the server error away
+  // before the operator ever saw it.
+  const { isSubmitted } = formState;
+  const isSubmittedRef = useRef(isSubmitted);
+  isSubmittedRef.current = isSubmitted;
+
   // Reset on every open transition so a re-opened dialog starts empty
   // (after a successful create, or after a Cancel mid-edit). Mirrors
   // the pattern used by `CallingTemplateFormDialog`. The detach flag is
@@ -166,17 +180,17 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
   const watchedName = watch('stake_name') ?? '';
 
   // Stake ID follows the name until the operator takes it over, so they
-  // can see the doc ID they're about to get without typing it.
+  // can see the doc ID they're about to get without typing it. Renaming
+  // is the other natural answer to a collision, so the ID it writes has
+  // to clear the last submit's error the same way typing one does.
   useEffect(() => {
     if (stakeIdDetached.current) return;
-    setValue('stake_id', buildingSlug(watchedName));
+    setValue('stake_id', buildingSlug(watchedName), {
+      shouldValidate: isSubmittedRef.current,
+    });
   }, [watchedName, setValue]);
 
   const stakeIdField = register('stake_id');
-
-  // Read during render, not inside the handler — that's what registers
-  // the `formState` proxy subscription that keeps this value fresh.
-  const { isSubmitted } = formState;
 
   const onStakeIdChange = (event: ChangeEvent<HTMLInputElement>) => {
     const el = event.currentTarget;
@@ -189,10 +203,9 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
     // they type next — and `onStakeIdBlur` restores the default if they
     // walk away without entering one.
     stakeIdDetached.current = next.length > 0;
-    // Validating once the form has been submitted is the re-validation
-    // pass this handler would otherwise skip: it replaces the registered
-    // `onChange`, so RHF's `reValidateMode: 'onChange'` never runs for
-    // this field. Without it a `setError` from the last submit — a slug
+    // This handler replaces the registered `onChange`, so RHF's
+    // post-submit re-validation never runs for the field. Without
+    // `shouldValidate` a `setError` from the last submit — a slug
     // collision, the field's whole reason to exist — sits there telling
     // the operator a freshly typed ID is taken until they submit again.
     setValue('stake_id', next, { shouldDirty: true, shouldValidate: isSubmitted });
