@@ -15,10 +15,10 @@ import { deleteDoc, runTransaction, serverTimestamp, setDoc, updateDoc } from 'f
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
-import type { Building, KindooManager, Stake, Ward } from '@kindoo/shared';
+import type { Building, CustomClaims, KindooManager, Stake, Ward } from '@kindoo/shared';
 import { refreshIdToken } from '../auth/useTokenRefresh';
 import { useFirestoreCollection, useFirestoreDoc } from '../../lib/data';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
 import {
   buildingRef,
   buildingsCol,
@@ -431,48 +431,82 @@ export function useEnsureBootstrapAdmin() {
   });
 }
 
+// Same bound as `pollForCanonicalClaim` (`features/auth/signIn.ts`,
+// added for B-4): 10 iterations at 500ms apart caps the wait at ~5s.
+const CLAIM_POLL_ITERATIONS = 10;
+const CLAIM_POLL_INTERVAL_MS = 500;
+
+/**
+ * Bounded wait for the `manager` claim on `stakeId` to land on the
+ * signed-in admin's cached ID token. Same shape as
+ * `pollForCanonicalClaim`: force-refresh, check the decoded claims, and
+ * if the wanted claim is still missing, sleep and refresh again — up to
+ * `CLAIM_POLL_ITERATIONS` times.
+ *
+ * Diverges from `pollForCanonicalClaim` in outcome, not shape: that
+ * helper always resolves — a downstream page handles a permanently
+ * missing claim. This one backs a fail-closed gate ahead of an
+ * irreversible write (see `useCompleteSetupMutation` below), so it
+ * reports whether the claim actually landed rather than silently
+ * carrying on either way.
+ */
+async function waitForManagerClaim(stakeId: string): Promise<boolean> {
+  await refreshIdToken();
+  for (let i = 0; i < CLAIM_POLL_ITERATIONS; i++) {
+    const result = await auth.currentUser?.getIdTokenResult();
+    const claims = result?.claims as CustomClaims | undefined;
+    if (claims?.stakes?.[stakeId]?.manager === true) return true;
+    await new Promise((resolve) => setTimeout(resolve, CLAIM_POLL_INTERVAL_MS));
+    await refreshIdToken();
+  }
+  return false;
+}
+
 /**
  * Final step — flips `setup_complete=true`. The same updateDoc carries
  * the `lastActor` integrity field; this Firestore flip is the entire
  * Complete-Setup action (the routing gate redirects once it lands, and
  * the `auditTrigger` fans the audit row).
  *
- * Forces an ID-token refresh FIRST, before issuing the flip — not in
- * `onSuccess`. The instant `setup_complete` becomes `true`,
- * `isSetupInProgressReadable` and `isBootstrapAdmin` (firestore.rules)
- * both stop applying — they're gated on `setup_complete == false` — so
- * the stake-doc read falls back to plain `isAnyMember`, which needs the
- * `manager` claim `useEnsureBootstrapAdmin`'s auto-add minted earlier in
- * the wizard. If the client's cached token doesn't carry that claim yet
- * when the post-flip snapshot arrives, the read permission-denies,
- * `gateDecision` hits its `status === 'error'` branch, and the admin
- * bounces to NotAuthorized instead of their manager default page.
- * Refreshing in `onSuccess` (after the flip) leaves that exact window
- * open — the live listener can re-evaluate against the new doc before
- * an `onSuccess` refresh call has resolved. Refreshing first closes it:
- * the client already holds the `manager` claim before the flip is even
- * issued, so there is nothing left to race once the doc changes.
+ * Verifies the `manager` claim is actually ON THE TOKEN before issuing
+ * the flip — not just that a refresh happened. The instant
+ * `setup_complete` becomes `true`, `isSetupInProgressReadable` and
+ * `isBootstrapAdmin` (firestore.rules) both stop applying — they're
+ * gated on `setup_complete == false` — so the stake-doc read falls back
+ * to plain `isAnyMember`, which needs the `manager` claim
+ * `useEnsureBootstrapAdmin`'s auto-add minted earlier in the wizard. A
+ * refresh alone doesn't guarantee that claim actually arrived: the
+ * auto-add write is fire-and-forget from `BootstrapWizardPage.tsx` (only
+ * retried when `managers.data` changes) and `syncManagersClaims` can
+ * silently miss on a `uidForCanonical` lookup. Flipping anyway on a
+ * claimless token strands the admin worse than before the flip — the
+ * wizard is unreachable once `setup_complete=true`, the token was just
+ * refreshed so a reload doesn't recover, and the auto-add effect can't
+ * re-mint the claim because it early-returns once the manager doc
+ * exists.
+ *
+ * So `waitForManagerClaim` is a gate, not a courtesy: if the claim never
+ * lands within its bound, `mutationFn` throws and the `updateDoc` below
+ * never runs — `setup_complete` stays `false` and the wizard is exactly
+ * where it was. The admin sees the error via the caller's toast and can
+ * retry, which gives the auto-add effect and `syncManagersClaims`
+ * another chance. Under no circumstances does a failed verification
+ * still issue the write.
  *
  * This is deliberately NOT the pattern `architecture.md` D28(d)
  * reverted, even though both are a forced refresh next to `stakes`
- * writes — don't delete this call on the assumption it repeats that
- * mistake. D28(d)'s refresh ran right after `createStake`, racing
- * `syncBootstrapClaims` — an async Firestore trigger on that very
- * write — before it had run; it lost almost every time and re-cached a
- * claimless token for ~1h. Here the `manager` claim was minted
- * *minutes* earlier: `useEnsureBootstrapAdmin` writes
+ * writes — don't delete the refresh inside `waitForManagerClaim` on the
+ * assumption it repeats that mistake. D28(d)'s refresh ran right after
+ * `createStake`, racing `syncBootstrapClaims` — an async Firestore
+ * trigger on that very write — before it had run; it lost almost every
+ * time and re-cached a claimless token for ~1h. Here the `manager`
+ * claim was minted *minutes* earlier: `useEnsureBootstrapAdmin` writes
  * `kindooManagers/{canonical}` at wizard mount, `syncManagersClaims`
  * fires off that write, and the admin then works through the rest of
  * the wizard's steps before ever reaching Complete Setup. By the time
- * this mutation runs, the claim already exists server-side — the
- * refresh fetches something that's already there, not something still
- * in flight.
- *
- * If the refresh throws (e.g. a transient network failure), the
- * `updateDoc` below never runs — the `await` is ahead of it — so the
- * stake doc is untouched (`setup_complete` still `false`) and the
- * wizard is exactly where it was. The admin sees the mutation error via
- * the caller's toast and can just retry; nothing is left half-done.
+ * this mutation runs the claim already exists server-side in the
+ * overwhelming common case — the bounded wait is a backstop for the
+ * rare cases where it doesn't, not the primary mechanism.
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();
@@ -481,7 +515,12 @@ export function useCompleteSetupMutation() {
   return useMutation({
     mutationFn: async () => {
       const sid = requireActiveStake(activeStakeId);
-      await refreshIdToken();
+      const claimLanded = await waitForManagerClaim(sid);
+      if (!claimLanded) {
+        throw new Error(
+          'Setup access is still syncing — wait a moment and try Complete Setup again.',
+        );
+      }
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, sid), {
         setup_complete: true,
