@@ -40,6 +40,19 @@
 // when the principal has zero claim-derived stakes AND is not a platform
 // superadmin (a superadmin must keep landing on `/superadmin/stakes` via
 // the `setupGate.ts` short-circuit, not get auto-switched into a wizard).
+//
+// A known `bootstrapStakes` answer must beat an UNVALIDATED stale
+// storage value. The storage tiers' permissive carve-out (see
+// `isPermissiveStorage` below) exists only to cover the window before
+// any claims — including `bootstrapStakes` — have arrived. Once
+// `bootstrapStakes` is populated, tier 4 has a validated target; a
+// stale `localStorage`/`sessionStorage` entry naming an unrelated,
+// now-inaccessible stake must fall through to it instead of winning
+// tier 2/3 outright. (A zero-role principal who is now the bootstrap
+// admin of stake B, but still carries `localStorage` from a prior
+// session naming old stake A, must resolve to B — not permission-deny
+// against A forever. See `docs/BUGS.md` B-19.) The URL tier is exempt
+// from this narrowing; see the `isPermissiveUrl` comment below for why.
 
 import type { Principal } from './principal-derive';
 
@@ -134,6 +147,18 @@ export function resolveActiveStake(
   //     downstream by the `value.length > 0` checks; no further
   //     validation possible without a stake-read).
   //
+  // The STORAGE tiers (2-3) add a fifth condition on top of
+  // `isBootstrapCandidate`: `bootstrapStakeIds` must ALSO be empty. Once
+  // `bootstrapStakes` is populated we have a validated tier-4 answer, so
+  // an unvalidated stale storage value must not win outright — it needs
+  // to invalidate and fall through to tier 4 like any other bad value.
+  // Without this, a stale storage entry naming an old, now-inaccessible
+  // stake shadows tier 4 forever (B-19's permanent-Not-Authorized shape:
+  // the stale value resolves, the stake-doc read permission-denies, and
+  // nothing ever re-evaluates because the storage-tier permissive
+  // carve-out — and thus tier 4 — never runs). See the file header for
+  // the URL tier's different treatment.
+  //
   // Platform superadmins (the `isPlatformSuperadmin === true` flag) are
   // treated permissively at the URL TIER ONLY. Per spec §5.4 + F19 the
   // rules permit them to read every stake's parent doc, so a Stake-List
@@ -150,11 +175,24 @@ export function resolveActiveStake(
     accessible.length === 0 &&
     !principal.isPlatformSuperadmin;
   const isPlatformSuperadmin = principal.isPlatformSuperadmin === true;
-  // URL-tier permissive: superadmin OR bootstrap candidate.
+  // URL-tier permissive: superadmin OR bootstrap candidate. Deliberately
+  // NOT narrowed by `bootstrapStakes` the way the storage tiers below
+  // are. A `?stake=X` URL is explicit, present-tense intent for THIS
+  // navigation — a fresh invite/notification link, a Stake-List click —
+  // not stale residue from a prior session, so a populated
+  // `bootstrapStakes` doesn't get to override it. It also can't become
+  // a silent PERMANENT trap the way storage can: the resolver strips
+  // the param from the URL after consuming it (`stripStakeParamFromUrl`
+  // in `useActiveStake.ts`), so a bad value can't keep winning on every
+  // subsequent load the way a stale storage entry would — and if the
+  // URL-tier hit does get persisted into storage, that persisted value
+  // is immediately subject to the (now-narrowed) storage-tier gate on
+  // the very next resolve, so it self-corrects rather than compounding.
   const isPermissiveUrl = isBootstrapCandidate || isPlatformSuperadmin;
-  // Storage-tier permissive: bootstrap candidate ONLY. Superadmins
-  // intentionally fall through to invalidation here.
-  const isPermissiveStorage = isBootstrapCandidate;
+  // Storage-tier permissive: bootstrap candidate AND zero known
+  // `bootstrapStakes`. See the file header + the comment above
+  // `isBootstrapCandidate` for why this is narrower than the URL tier.
+  const isPermissiveStorage = isBootstrapCandidate && bootstrapStakeIds.length === 0;
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
@@ -200,7 +238,7 @@ function resolveStorageTiers(
   accessible: string[],
   bootstrapStakeIds: string[],
   isPlatformSuperadmin: boolean,
-  isPermissive: boolean = accessible.length === 0,
+  isPermissive: boolean = accessible.length === 0 && bootstrapStakeIds.length === 0,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
   if (sessionValue !== null && sessionValue.length > 0) {
@@ -241,7 +279,7 @@ function resolveLocalThenPrincipal(
   accessible: string[],
   bootstrapStakeIds: string[],
   isPlatformSuperadmin: boolean,
-  isPermissive: boolean = accessible.length === 0,
+  isPermissive: boolean = accessible.length === 0 && bootstrapStakeIds.length === 0,
 ): ResolveActiveStakeResult {
   if (localValue !== null && localValue.length > 0) {
     if (accessSet.has(localValue)) {
@@ -319,6 +357,31 @@ export function persistActiveStakeChoice(stakeId: string): void {
   }
   try {
     window.localStorage.setItem(LOCAL_KEY, stakeId);
+  } catch {
+    // Same.
+  }
+}
+
+/**
+ * Clear both storage tiers. Called from `signOut()` so a stake
+ * selection doesn't leak from one account into the next on a shared
+ * browser, and so a value that's stale (or invalidated but never
+ * settled — see the settling-path note in `useActiveStake.ts`) can't
+ * survive into a fresh sign-in as permanent residue. This is the other
+ * half of the B-19 fix: the storage-tier gate above stops a stale value
+ * from beating a validated `bootstrapStakes` answer WHILE signed in;
+ * this stops it from outliving the session that wrote it at all.
+ */
+export function clearActiveStakeStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Storage access may throw in private-browsing modes; nothing more
+    // to do — sign-out proceeds regardless.
+  }
+  try {
+    window.localStorage.removeItem(LOCAL_KEY);
   } catch {
     // Same.
   }

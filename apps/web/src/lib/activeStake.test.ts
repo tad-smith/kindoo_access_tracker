@@ -10,6 +10,7 @@ import {
   ACTIVE_STAKE_LOCAL_KEY,
   ACTIVE_STAKE_SESSION_KEY,
   accessibleStakes,
+  clearActiveStakeStorage,
   persistActiveStakeChoice,
   readLocalStake,
   readSessionStake,
@@ -342,6 +343,80 @@ describe('resolveActiveStake', () => {
       expect(result).toEqual({ stakeId: 'alpha', source: 'principal', invalidatedTier: null });
     });
   });
+
+  describe('B-19 reviewer finding: a known bootstrapStakes answer beats stale storage', () => {
+    // A zero-role principal (deactivated manager, lapsed bishopric
+    // access) who is now the bootstrap admin of stake B, but still
+    // carries a leftover storage entry naming old stake A, must resolve
+    // to B — not permission-denying against A forever.
+
+    it('localStorage: stale value naming a different stake falls through to bootstrapStakes, flags local', () => {
+      const p = makePrincipal({
+        managerStakes: [],
+        stakeMemberStakes: [],
+        bishopricWards: {},
+        isPlatformSuperadmin: false,
+        bootstrapStakes: ['ridgeline'],
+      });
+      const result = resolveActiveStake(p, null, null, 'oldstake');
+      expect(result.stakeId).toBe('ridgeline');
+      expect(result.source).toBe('principal');
+      expect(result.invalidatedTier).toBe('local');
+    });
+
+    it('sessionStorage: stale value naming a different stake falls through to bootstrapStakes, flags session', () => {
+      const p = makePrincipal({
+        managerStakes: [],
+        stakeMemberStakes: [],
+        bishopricWards: {},
+        isPlatformSuperadmin: false,
+        bootstrapStakes: ['ridgeline'],
+      });
+      const result = resolveActiveStake(p, null, 'oldstake', null);
+      expect(result.stakeId).toBe('ridgeline');
+      expect(result.source).toBe('principal');
+      expect(result.invalidatedTier).toBe('session');
+    });
+
+    it('sessionStorage stale + localStorage also stale: both invalidate, still lands on bootstrapStakes', () => {
+      const p = makePrincipal({
+        managerStakes: [],
+        isPlatformSuperadmin: false,
+        bootstrapStakes: ['ridgeline'],
+      });
+      const result = resolveActiveStake(p, null, 'oldstake', 'alsostale');
+      expect(result.stakeId).toBe('ridgeline');
+      expect(result.source).toBe('principal');
+      expect(result.invalidatedTier).toBe('session');
+    });
+
+    it('still permissively accepts stale storage when bootstrapStakes is EMPTY (pre-claims window preserved)', () => {
+      // The original carve-out this narrowing must not break: before
+      // ANY claims (including bootstrapStakes) have arrived, storage is
+      // still the best hint available and must resolve permissively.
+      const p = makePrincipal({
+        managerStakes: [],
+        isPlatformSuperadmin: false,
+        bootstrapStakes: [],
+      });
+      const result = resolveActiveStake(p, null, null, 'unclaimed-hint');
+      expect(result).toEqual({ stakeId: 'unclaimed-hint', source: 'local', invalidatedTier: null });
+    });
+
+    it('URL tier: a stale ?stake=X for a bootstrap candidate is still honoured over bootstrapStakes (explicit intent, not residue)', () => {
+      // Deliberate asymmetry with the storage tiers — see the
+      // `isPermissiveUrl` comment in activeStake.ts. The URL can't
+      // become a silent permanent trap the way storage can, so it stays
+      // permissive even against a populated bootstrapStakes.
+      const p = makePrincipal({
+        managerStakes: [],
+        isPlatformSuperadmin: false,
+        bootstrapStakes: ['ridgeline'],
+      });
+      const result = resolveActiveStake(p, 'someotherstake', null, null);
+      expect(result).toEqual({ stakeId: 'someotherstake', source: 'url', invalidatedTier: null });
+    });
+  });
 });
 
 describe('persistActiveStakeChoice', () => {
@@ -351,5 +426,26 @@ describe('persistActiveStakeChoice', () => {
     expect(readLocalStake()).toBe('newstake');
     expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('newstake');
     expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('newstake');
+  });
+});
+
+describe('clearActiveStakeStorage', () => {
+  it('removes both sessionStorage AND localStorage tiers', () => {
+    persistActiveStakeChoice('somestake');
+    expect(readSessionStake()).toBe('somestake');
+    expect(readLocalStake()).toBe('somestake');
+
+    clearActiveStakeStorage();
+
+    expect(readSessionStake()).toBeNull();
+    expect(readLocalStake()).toBeNull();
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBeNull();
+    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBeNull();
+  });
+
+  it('is a no-op when neither tier is set', () => {
+    expect(() => clearActiveStakeStorage()).not.toThrow();
+    expect(readSessionStake()).toBeNull();
+    expect(readLocalStake()).toBeNull();
   });
 });
