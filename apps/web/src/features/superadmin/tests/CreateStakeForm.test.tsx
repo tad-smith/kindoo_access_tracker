@@ -23,7 +23,11 @@
 //   - `{success:true}` fires a success toast + calls `onClose`. The
 //     new stake row arrives via the live `useStakes()` snapshot
 //     listener; `useCreateStake` has no `onSuccess` (`invalidateQueries`
-//     is a no-op against the D11 never-resolving `queryFn`).
+//     is a no-op against the D11 never-resolving `queryFn`). No forced
+//     token refresh — `createStake` is superadmin-gated, so the creator
+//     already holds the claim needed to see the new stake via its
+//     deep-link; the StakeSwitcher entry lands on the next natural
+//     token refresh.
 //   - Re-opening the dialog after a successful create yields an empty
 //     form (open-transition `reset()`).
 //   - Cancel button calls `onClose` without firing the mutation.
@@ -38,7 +42,6 @@ import type { CreateStakeInput, CreateStakeResult } from '@kindoo/shared';
 
 const mutateAsyncMock = vi.fn<(input: CreateStakeInput) => Promise<CreateStakeResult>>();
 const toastMock = vi.fn();
-const refreshIdTokenMock = vi.fn<() => Promise<void>>();
 
 vi.mock('../hooks', () => ({
   useCreateStake: () => ({
@@ -51,18 +54,12 @@ vi.mock('../../../lib/store/toast', () => ({
   toast: (...args: unknown[]) => toastMock(...args),
 }));
 
-vi.mock('../../auth/useTokenRefresh', () => ({
-  refreshIdToken: () => refreshIdTokenMock(),
-}));
-
 import { CreateStakeForm } from '../CreateStakeForm';
 import { DEFAULT_TIMEZONE } from '../schemas';
 
 beforeEach(() => {
   mutateAsyncMock.mockReset();
   toastMock.mockReset();
-  refreshIdTokenMock.mockReset();
-  refreshIdTokenMock.mockResolvedValue(undefined);
 });
 
 /**
@@ -220,31 +217,6 @@ describe('<CreateStakeForm />', () => {
     });
     expect(toastMock).toHaveBeenCalledWith('Stake `cottonwood-south-stake` created.', 'success');
     expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('forces an ID-token refresh on {success:true} so the new bootstrap claim shows up without waiting an hour', async () => {
-    mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cottonwood-south-stake' });
-    const user = userEvent.setup();
-    render(<Harness />);
-    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
-    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
-    await user.click(screen.getByTestId('create-stake-submit'));
-
-    await vi.waitFor(() => {
-      expect(refreshIdTokenMock).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it('does not force a token refresh on a soft-fail or hard error', async () => {
-    mutateAsyncMock.mockResolvedValue({ success: false, error: 'name_required' });
-    const user = userEvent.setup();
-    render(<Harness />);
-    await user.type(screen.getByTestId('create-stake-name'), 'X');
-    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
-    await user.click(screen.getByTestId('create-stake-submit'));
-
-    await screen.findByTestId('create-stake-name-error');
-    expect(refreshIdTokenMock).not.toHaveBeenCalled();
   });
 
   it('clears the form on re-open after a successful create', async () => {

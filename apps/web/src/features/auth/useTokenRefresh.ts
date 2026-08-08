@@ -10,17 +10,6 @@
 // React tree until something else caused a re-render. This hook
 // bumps a counter on every `onIdTokenChanged` event so consumers
 // re-evaluate their decoded claims.
-//
-// `refreshIdToken()` is the sibling half: a mutation that just changed
-// the signed-in user's own custom claims (e.g. `createStake`, whose
-// `syncBootstrapClaims` trigger mints a `bootstrap` claim for the
-// superadmin who's still sitting on the form) needs those claims to
-// show up in `usePrincipal()` without waiting for the SDK's hourly
-// auto-refresh. Calling it fires `onIdTokenChanged` once the new token
-// lands, which is exactly the signal this hook already listens to — so
-// every mounted `usePrincipal()` consumer re-derives for free. Callers
-// should not hand-roll their own `getIdToken(true)`; go through this
-// function so the "how do we force a refresh" logic stays in one place.
 
 import { onIdTokenChanged } from 'firebase/auth';
 import { useEffect, useState } from 'react';
@@ -43,18 +32,4 @@ export function useTokenRefresh(): number {
   }, []);
 
   return tick;
-}
-
-/**
- * Force the signed-in user's Firebase Auth ID token to refresh
- * immediately, rather than waiting for the SDK's hourly auto-refresh.
- * Fires `onIdTokenChanged` once the new token lands, which every
- * mounted `useTokenRefresh()` (and therefore `usePrincipal()`) consumer
- * already listens to.
- *
- * No-op when no user is signed in. Callers that don't need to await the
- * round-trip can fire-and-forget with `.catch()`.
- */
-export async function refreshIdToken(): Promise<void> {
-  await auth.currentUser?.getIdToken(true);
 }
