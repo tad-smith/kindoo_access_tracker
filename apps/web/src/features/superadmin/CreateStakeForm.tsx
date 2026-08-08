@@ -174,6 +174,10 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
 
   const stakeIdField = register('stake_id');
 
+  // Read during render, not inside the handler — that's what registers
+  // the `formState` proxy subscription that keeps this value fresh.
+  const { isSubmitted } = formState;
+
   const onStakeIdChange = (event: ChangeEvent<HTMLInputElement>) => {
     const el = event.currentTarget;
     const raw = el.value;
@@ -185,7 +189,13 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
     // they type next — and `onStakeIdBlur` restores the default if they
     // walk away without entering one.
     stakeIdDetached.current = next.length > 0;
-    setValue('stake_id', next, { shouldDirty: true });
+    // Validating once the form has been submitted is the re-validation
+    // pass this handler would otherwise skip: it replaces the registered
+    // `onChange`, so RHF's `reValidateMode: 'onChange'` never runs for
+    // this field. Without it a `setError` from the last submit — a slug
+    // collision, the field's whole reason to exist — sits there telling
+    // the operator a freshly typed ID is taken until they submit again.
+    setValue('stake_id', next, { shouldDirty: true, shouldValidate: isSubmitted });
     // `setValue` writes `ref.value` synchronously, which drops the caret
     // to the end. Put it back where the operator left it, shifted by
     // whatever the sanitize added or removed.

@@ -28,6 +28,10 @@
 //     `invalid_timezone`) surfaces as an inline message against the
 //     matching field — the slug codes landing on Stake ID when the
 //     payload carried one and on the name when it didn't.
+//   - A server error on Stake ID clears once the operator edits the
+//     field, the same way a normally registered field's would.
+//   - A mid-string edit that rewrites the value keeps the caret where
+//     the operator was typing.
 //   - `{success:true}` fires a success toast + calls `onClose`. The
 //     new stake row arrives via the live `useStakes()` snapshot
 //     listener; `useCreateStake` has no `onSuccess` (`invalidateQueries`
@@ -535,6 +539,50 @@ describe('<CreateStakeForm />', () => {
     );
     expect(screen.queryByTestId('create-stake-name-error')).toBeNull();
     expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it('clears a server error on the stake ID as soon as the operator edits the field', async () => {
+    // The registered `onChange` is replaced by the sanitize handler, so
+    // RHF's post-submit re-validation only runs if that handler asks for
+    // it. Without it the collision message from the last submit sits
+    // there while the operator types a completely different ID.
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'slug_collision' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'CS North Stake');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+    await screen.findByTestId('create-stake-id-error');
+
+    await user.clear(screen.getByTestId('create-stake-id'));
+    await user.type(screen.getByTestId('create-stake-id'), 'cs-north-two');
+    await vi.waitFor(() => {
+      expect(screen.queryByTestId('create-stake-id-error')).toBeNull();
+    });
+
+    // And it stays cleared through the blur-time trim/refill.
+    await user.click(screen.getByTestId('create-stake-email'));
+    expect(screen.getByTestId('create-stake-id')).toHaveValue('cs-north-two');
+    expect(screen.queryByTestId('create-stake-id-error')).toBeNull();
+  });
+
+  it('leaves the caret where the operator typed when a mid-string edit rewrites the value', async () => {
+    // Typing a space inside `cs|north` yields `cs-north`; rewriting the
+    // field value drops the caret to the end, so the handler puts it
+    // back at 3 — otherwise the rest of the ID gets typed backwards.
+    // A literal `-` wouldn't exercise this: the value is unchanged, and
+    // neither jsdom nor a browser moves the caret then.
+    const user = userEvent.setup();
+    render(<Harness />);
+    const stakeId = screen.getByTestId('create-stake-id') as HTMLInputElement;
+    await user.type(stakeId, 'csnorth');
+    await user.type(stakeId, ' ', {
+      initialSelectionStart: 2,
+      initialSelectionEnd: 2,
+    });
+
+    expect(stakeId).toHaveValue('cs-north');
+    expect(stakeId.selectionStart).toBe(3);
   });
 
   it('surfaces `invalid_timezone` against the timezone field', async () => {
