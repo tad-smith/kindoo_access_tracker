@@ -480,8 +480,8 @@ const CLAIM_POLL_INTERVAL_MS = 500;
  *
  *   - `kindooManagers` (:780-785) — gated on `isManager(stakeId) ||
  *     isBootstrapAdmin(stakeId)`, no `isPlatformSuperadmin()` disjunct
- *   - `wards` (:704) — same `isManager(stakeId) || isBootstrapAdmin`
- *   - `buildings` (:715) — same `isManager(stakeId) || isBootstrapAdmin`
+ *   - `wards` writes (:705) — same `isManager(stakeId) || isBootstrapAdmin`
+ *   - `buildings` writes (:719) — same `isManager(stakeId) || isBootstrapAdmin`
  *
  * and no rule or callable lets a platform superadmin write
  * `kindooManagers`, so once flipped there is no path back to `manager`.
