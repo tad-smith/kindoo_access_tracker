@@ -639,11 +639,25 @@ export function detect(inputs: DetectInputs): DetectResult {
   // entirely would otherwise reach the home-site keep-branch below (the
   // one that preserves unparseable users so `kindoo-only` surfaces) and
   // land as drift, which is the very noise the list exists to remove.
+  //
+  // The dropped canonicals are carried out so the SEAT side can be
+  // dropped with them. Removing only the Kindoo half would leave any
+  // SBA seat we hold for that member looking orphaned, and it would
+  // land as `sba-only` — a drift row asserting "the user is not present
+  // in Kindoo" (false; they are, we chose not to look) and offering the
+  // danger-variant Remove From SBA. That fires on the feature's own
+  // rollout: seats a manager minted from the pre-feature `kindoo-only`
+  // rows all flip to it at once, and the extension cannot tell those
+  // from a seat that is legitimately ours whose shared Kindoo
+  // description the other stake's extension overwrote. Ignoring a ward
+  // means not reasoning about its members at all — on either side.
   const consideredKindooUsers: KindooEnvironmentUser[] = [];
+  const ignoredCanonicals = new Set<string>();
   let ignoredCount = 0;
   for (const u of inputs.kindooUsers) {
     if (isFullyIgnored(parseDescription(u.description, inputs.stake, inputs.wards))) {
       ignoredCount++;
+      ignoredCanonicals.add(canonicalEmail(u.username));
       continue;
     }
     consideredKindooUsers.push(u);
@@ -656,6 +670,8 @@ export function detect(inputs: DetectInputs): DetectResult {
   type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock };
   const projectedSeats: ProjectedSeat[] = [];
   for (const seat of inputs.seats) {
+    // Ignored member — drop the seat with its Kindoo user (see above).
+    if (ignoredCanonicals.has(seat.member_canonical)) continue;
     if (!inputs.activeSite) {
       // No active-site context — preserve pre-T-42 behaviour (don't
       // filter; project against the seat's primary fields directly).

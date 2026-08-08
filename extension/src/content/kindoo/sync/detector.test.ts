@@ -2447,6 +2447,34 @@ describe('detect — stake.kindoo_ignored_wards', () => {
     expect(result.ignoredCount).toBe(1);
   });
 
+  it('drops an SBA seat we hold for an ignored member instead of calling it orphaned', () => {
+    // Regression (PR #261 review). Dropping only the Kindoo half left the
+    // seat looking orphaned: an `sba-only` drift row reasoning "the user
+    // is not present in Kindoo" — false, they are; we chose not to look —
+    // offering the danger-variant Remove From SBA. It fires on the
+    // feature's own rollout, when seats minted from the pre-feature
+    // `kindoo-only` rows all flip to it at once.
+    const ourSeatForTheirMember = seat({
+      member_canonical: 'bishop@aspengrove.example',
+      member_email: 'bishop@aspengrove.example',
+    });
+    const result = detect(inputs(IGNORING, [FOREIGN_MEMBER], [ourSeatForTheirMember]));
+    expect(result.discrepancies).toEqual([]);
+    expect(result.seatCount).toBe(0);
+    expect(result.kindooCount).toBe(0);
+    expect(result.ignoredCount).toBe(1);
+  });
+
+  it('still reports a genuinely orphaned seat as sba-only', () => {
+    // The counterpart: no Kindoo user at all, nothing ignored about
+    // them. Dropping ignored members must not blunt the real code.
+    const result = detect(inputs(IGNORING, [], [seat({})]));
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('sba-only');
+    expect(result.seatCount).toBe(1);
+    expect(result.ignoredCount).toBe(0);
+  });
+
   it('leaves our own members untouched alongside them', () => {
     const result = detect(inputs(IGNORING, [FOREIGN_MEMBER, kuser({})], [seat({})]));
     expect(result.discrepancies).toEqual([]);
