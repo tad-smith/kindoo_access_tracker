@@ -17,14 +17,13 @@
 // accessible stakes; per-stake-aware hooks pass `null` through to
 // their queries so the DIY data hooks stay disabled.
 //
-// Also owns bootstrap-stake discovery: fires the `resolveBootstrapStake`
-// callable once per signed-in identity so a fresh bootstrap admin (zero
-// role claims) — and an EXISTING manager who is separately named
-// bootstrap admin of an unrelated, not-yet-setup stake — both resolve
-// to (or at least can switch into) the stake they're meant to set up.
-// See `activeStake.ts`'s header for how the result threads into
-// resolution, and `useActiveStake`/`useBootstrapStakeDiscoveryPending`/
-// `useAccessibleStakesWithBootstrap` below for the three public facets.
+// Bootstrap-admin stakes (`principal.bootstrapStakes`, per
+// `StakeClaims.bootstrap` — see `packages/shared`) arrive on the same
+// token read as every other claim, so resolution is fully synchronous:
+// no discovery round-trip, no pending state to gate route rendering on.
+// See `activeStake.ts`'s header for how the claim threads into
+// resolution, and `useAccessibleStakesWithBootstrap` below for the
+// StakeSwitcher's menu source.
 //
 // Implementation note on context-free reads. `useActiveStake` is
 // consumed by `useRequireRole`, which fires at the top of every route
@@ -42,7 +41,6 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { canonicalEmail } from '@kindoo/shared';
 import {
   ACTIVE_STAKE_LOCAL_KEY,
   ACTIVE_STAKE_SESSION_KEY,
@@ -54,7 +52,6 @@ import {
 } from './activeStake';
 import { FIRESTORE_QUERY_KEY_PREFIX } from './data/queryKeys';
 import { usePrincipal } from './principal';
-import type { Principal } from './principal';
 
 const STAKE_PARAM = 'stake';
 
@@ -230,7 +227,6 @@ export function __resetActiveStakeModuleForTests(): void {
   lastInvalidationContext = null;
   activeStakeInvalidation = null;
   activeStakeInvalidationEventId = 0;
-  bootstrapDiscoveryState = null;
   notifyUrlStakeParamSubscribers();
   for (const fn of activeStakeInvalidationSubscribers) {
     try {
@@ -239,7 +235,6 @@ export function __resetActiveStakeModuleForTests(): void {
       // ignore
     }
   }
-  notifyBootstrapDiscoverySubscribers();
 }
 
 /**
@@ -371,147 +366,25 @@ export function useActiveStakeInvalidation(): ActiveStakeInvalidationEvent | nul
   );
 }
 
-// Bootstrap-stake discovery. `resolveBootstrapStake` (the callable) has
-// no client-side signal for "is this user a bootstrap admin somewhere"
-// — the only way to find out is to ask the server. We ask once per
-// signed-in identity, for EVERY signed-in user (not just zero-claims
-// ones): an existing manager can also be the newly-named bootstrap
-// admin of an unrelated stake, and that stake needs to surface in their
-// StakeSwitcher. See `activeStake.ts`'s file header for how the result
-// (`bootstrapStakeIds`) feeds into resolution.
-const EMPTY_STAKE_IDS: string[] = [];
-const BOOTSTRAP_DISCOVERY_QUERY_KEY_PREFIX = '__kindoo_bootstrap_discovery__';
-
-interface BootstrapDiscoveryState {
-  /** The identity (`canonical || canonicalEmail(email)`) this result is for. */
-  identityKey: string;
-  status: 'pending' | 'done';
-  /** Ascending-sorted; empty once `status: 'done'` finds nothing. */
-  stakeIds: string[];
-}
-
-// Module-scoped (not per-hook-instance) so the Shell + AuthedLayout +
-// useRequireRole + every feature data hook that mounts `useActiveStake`
-// share ONE in-flight callable instead of firing one each.
-let bootstrapDiscoveryState: BootstrapDiscoveryState | null = null;
-const bootstrapDiscoverySubscribers = new Set<() => void>();
-
-function notifyBootstrapDiscoverySubscribers(): void {
-  for (const fn of bootstrapDiscoverySubscribers) {
-    try {
-      fn();
-    } catch {
-      // ignore individual subscriber errors
-    }
-  }
-}
-
-function subscribeToBootstrapDiscovery(callback: () => void): () => void {
-  bootstrapDiscoverySubscribers.add(callback);
-  return () => {
-    bootstrapDiscoverySubscribers.delete(callback);
-  };
-}
-
-function readBootstrapDiscoveryState(): BootstrapDiscoveryState | null {
-  return bootstrapDiscoveryState;
-}
-
 /**
- * Kick off (or no-op into) the bootstrap-discovery callable for
- * `identityKey`. Idempotent: a call for an identity that's already
- * pending or done is a no-op, so multiple mounted `useActiveStake`
- * instances calling this on the same render tick issue exactly one
- * network request. No-ops entirely when no QueryClient is registered
- * (route-gate unit tests that don't bring their own — see
- * `registerActiveStakeQueryClient`), matching this file's existing
- * "no QueryClient → the feature degrades to a no-op" contract.
- */
-function ensureBootstrapDiscoveryStarted(identityKey: string): void {
-  const queryClient = activeStakeQueryClient;
-  if (queryClient === null) return;
-  if (bootstrapDiscoveryState !== null && bootstrapDiscoveryState.identityKey === identityKey) {
-    return;
-  }
-  bootstrapDiscoveryState = { identityKey, status: 'pending', stakeIds: EMPTY_STAKE_IDS };
-  notifyBootstrapDiscoverySubscribers();
-
-  queryClient
-    .fetchQuery({
-      queryKey: [BOOTSTRAP_DISCOVERY_QUERY_KEY_PREFIX, identityKey],
-      // Dynamic import: see `resolveBootstrapStake.ts` header for why
-      // the Firebase Functions SDK singleton is loaded lazily here
-      // rather than via a static top-of-file import.
-      queryFn: async () => {
-        const { resolveBootstrapStake } = await import('./resolveBootstrapStake');
-        return resolveBootstrapStake();
-      },
-      staleTime: Infinity,
-      gcTime: Infinity,
-    })
-    .then((result) => {
-      // A reset (tests) or a newer identity superseded this call while
-      // it was in flight — drop the stale result.
-      if (bootstrapDiscoveryState?.identityKey !== identityKey) return;
-      bootstrapDiscoveryState = { identityKey, status: 'done', stakeIds: result.stakeIds };
-      notifyBootstrapDiscoverySubscribers();
-    })
-    .catch(() => {
-      if (bootstrapDiscoveryState?.identityKey !== identityKey) return;
-      // Fail closed: treat a network/callable error as "found nothing"
-      // rather than leaving the gate on `pending` forever.
-      bootstrapDiscoveryState = { identityKey, status: 'done', stakeIds: EMPTY_STAKE_IDS };
-      notifyBootstrapDiscoverySubscribers();
-    });
-}
-
-/**
- * The signed-in user's stable identity key for discovery purposes.
- * `principal.canonical` is the empty string during the first-sign-in
- * window before `onAuthUserCreate` mints claims (see B-2 in
- * `docs/BUGS.md`), so fall back to canonicalising the typed email —
- * available synchronously off the Firebase Auth user object, no claims
- * needed. Empty string means "no identity to key on yet" (e.g. a
- * Firebase Auth user record with no email).
- */
-function discoveryIdentityKeyFor(principal: Principal): string {
-  return principal.canonical || canonicalEmail(principal.email);
-}
-
-/**
- * Internal engine behind `useActiveStake`, `useBootstrapStakeDiscoveryPending`,
- * and `useAccessibleStakesWithBootstrap`. Returns the current stake ID
- * (or `null` for a zero-role platform superadmin), whether bootstrap
- * discovery is still in flight in a way that matters to the caller, and
- * the raw discovered stake-id list (for the StakeSwitcher's menu
- * source). Re-renders on:
+ * The active-stake hook. Returns the current stake ID, or `null` for a
+ * zero-role platform superadmin.
  *
- *   - principal changes (claim rotation)
+ * Re-renders on:
+ *   - principal changes (claim rotation — includes `bootstrapStakes`),
  *   - router navigation that adds a new `?stake=X` param (push deep
- *     links arriving on an already-open tab)
- *   - the bootstrap-discovery callable resolving
+ *     links arriving on an already-open tab),
+ *   - a storage-tier write from the switcher.
  *
  * Side effects:
- *
  *   - On URL-tier hit: persists value to both storage tiers, strips
  *     `?stake=X` from the URL, invalidates per-stake TanStack Query
  *     caches via the registered QueryClient.
  *   - On invalidated tier: shows a toast and overwrites the stale
  *     storage value with the resolved stake (or clears it when the
  *     resolved stake is null).
- *   - Fires the `resolveBootstrapStake` callable at most once per
- *     signed-in identity (see `ensureBootstrapDiscoveryStarted`).
- *
- * Split into three thin public wrappers (rather than changing
- * `useActiveStake`'s return shape) so its many existing call sites keep
- * receiving exactly `string | null` — see module header + the callers
- * that need the discovery flag or the raw list opt in explicitly.
  */
-function useActiveStakeInternal(): {
-  stakeId: string | null;
-  discoveryPending: boolean;
-  bootstrapStakeIds: string[];
-} {
+export function useActiveStake(): string | null {
   const principal = usePrincipal();
 
   // Stable signature of the principal fields the resolver actually
@@ -528,9 +401,14 @@ function useActiveStakeInternal(): {
   //     resolution (per item 3).
   //   - `accessibleStakes(...)` — the set the resolver validates URL /
   //     storage values against.
+  //   - `bootstrapStakes` — widens tiers 1-3's validation set and
+  //     backstops tier 4 (see `activeStake.ts`). Sorted before joining
+  //     so two claims payloads carrying the same set in a different
+  //     insertion order don't spuriously bust the signature.
   const principalSignature = useMemo(() => {
     const accessible = accessibleStakes(principal).join(',');
-    return `${principal.firebaseAuthSignedIn ? '1' : '0'}|${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
+    const bootstrap = [...principal.bootstrapStakes].sort().join(',');
+    return `${principal.firebaseAuthSignedIn ? '1' : '0'}|${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}|${bootstrap}`;
   }, [principal]);
 
   // Track the URL `?stake=X` value through navigations. The value is
@@ -597,47 +475,6 @@ function useActiveStakeInternal(): {
     };
   }, []);
 
-  // Bootstrap-discovery wiring. Fires the `resolveBootstrapStake`
-  // callable for EVERY signed-in identity with a resolvable email —
-  // there's no client-side signal for "is this user a bootstrap admin
-  // somewhere," so we always ask, once, and let the resolver above
-  // decide what (if anything) to do with the answer. `discoveryCapable`
-  // degrades this to a no-op when no QueryClient is registered (see
-  // `ensureBootstrapDiscoveryStarted`).
-  const discoveryIdentityKey = discoveryIdentityKeyFor(principal);
-  const discoveryCapable = activeStakeQueryClient !== null;
-  const shouldFireDiscovery =
-    discoveryCapable && principal.firebaseAuthSignedIn === true && discoveryIdentityKey !== '';
-
-  const discoveryState = useSyncExternalStore(
-    subscribeToBootstrapDiscovery,
-    readBootstrapDiscoveryState,
-    readBootstrapDiscoveryState,
-  );
-
-  useEffect(() => {
-    if (!shouldFireDiscovery) return;
-    ensureBootstrapDiscoveryStarted(discoveryIdentityKey);
-  }, [shouldFireDiscovery, discoveryIdentityKey]);
-
-  const discoveryResultForIdentity =
-    discoveryState !== null && discoveryState.identityKey === discoveryIdentityKey
-      ? discoveryState
-      : null;
-  const bootstrapStakeIds = discoveryResultForIdentity?.stakeIds ?? EMPTY_STAKE_IDS;
-
-  // True while discovery might still change which stakes are valid for
-  // this identity — we've asked (or are about to) but don't have a
-  // settled answer yet. The persist/strip/invalidate-toast effect below
-  // MUST defer while this holds: a bootstrap-only stake sitting in
-  // storage from an earlier switcher click is genuinely invalid against
-  // `bootstrapStakeIds: []` (discovery hasn't confirmed it yet), and
-  // running the "overwrite the stale entry" side effect on that
-  // FALSE-NEGATIVE invalidation would permanently clobber the correct
-  // value with the tier-4 fallback before discovery ever gets to
-  // validate it.
-  const discoverySettling = shouldFireDiscovery && discoveryResultForIdentity?.status !== 'done';
-
   // Resolve every render so consumers (`useRequireRole`, etc.) see the
   // right stake on the SAME render that the principal claims load.
   // Storing the resolution in `useState` and updating it from an effect
@@ -654,20 +491,14 @@ function useActiveStakeInternal(): {
   // render — they can change out from under us (the switcher writes on
   // click; the URL tier writes via the effect below).
   const resolved = useMemo(
-    () =>
-      resolveActiveStake(
-        principal,
-        urlStakeParam,
-        readSessionStake(),
-        readLocalStake(),
-        bootstrapStakeIds,
-      ),
-    // `principalSignature` carries the accessible-stake fingerprint;
-    // `urlStakeParam` is state; `storageTick` bumps on switcher click.
-    // Storage reads happen inside; not in the dep list because they're
-    // snapshots, not signals — the tick is the change feed.
+    () => resolveActiveStake(principal, urlStakeParam, readSessionStake(), readLocalStake()),
+    // `principalSignature` carries the accessible-stake + bootstrap-
+    // stake fingerprint; `urlStakeParam` is state; `storageTick` bumps
+    // on switcher click. Storage reads happen inside; not in the dep
+    // list because they're snapshots, not signals — the tick is the
+    // change feed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [principalSignature, urlStakeParam, storageTick, bootstrapStakeIds],
+    [principalSignature, urlStakeParam, storageTick],
   );
 
   // Track whether we've already STRIPPED the URL for a given
@@ -686,10 +517,15 @@ function useActiveStakeInternal(): {
   //   (a) the transient claims-loading window — `onAuthStateChanged`
   //       has fired but `getIdTokenResult` hasn't returned yet; and
   //   (b) the permanent no-roles signed-in state (typo'd email, revoked
-  //       access). The predicate stays true forever in (b), which is
-  //       intentional: the user is parked on NotAuthorized, and firing
-  //       the URL-strip / storage-persist / toast effects would be a
-  //       false signal that the deep-link landed somewhere usable.
+  //       access — a bootstrap-only principal is included here, since
+  //       `bootstrap` deliberately does NOT count toward
+  //       `isAuthenticated`). The predicate stays true forever in (b),
+  //       which is intentional: the user is parked on NotAuthorized (or
+  //       routed to the wizard by `setupGate.ts` directly off
+  //       `resolved.stakeId`, which is NOT gated by this predicate —
+  //       only the side effects below are), and firing the URL-strip /
+  //       storage-persist / toast effects would be a false signal that
+  //       the deep-link landed somewhere usable.
   // Running side effects on a half-loaded principal in (a) would also
   // fire false-positive "this stake is no longer available" toasts on
   // the deep-link path.
@@ -735,127 +571,70 @@ function useActiveStakeInternal(): {
     // NEW invalidation event" is (principalSignature|urlStakeParam) —
     // when either changes, the prior decision is stale and a new toast
     // for the same key is legitimate.
-    //
-    // Deferred while `discoverySettling`: a stale-looking tier value
-    // may be genuinely valid once bootstrap discovery answers — e.g. a
-    // session-tier value from an earlier switcher click on a bootstrap-
-    // only stake looks invalid against `bootstrapStakeIds: []` before
-    // discovery has loaded. Firing this block on that FALSE-NEGATIVE
-    // would overwrite the correct value with the tier-4 fallback before
-    // discovery ever gets to validate it (the URL-tier persist/strip
-    // above stay ungated — they only act on an ALREADY-valid `'url'`
-    // source, never on a not-yet-confirmed one).
-    if (!discoverySettling) {
-      const invalidationContext = `${principalSignature}|${urlStakeParam ?? ''}`;
-      if (resolved.invalidatedTier !== null) {
-        const invalidationKey = `${resolved.invalidatedTier}:${resolved.stakeId ?? ''}`;
-        const contextChanged = lastInvalidationContext !== invalidationContext;
-        if (contextChanged) {
-          // New context (URL or claims changed) — reset the dedupe so a
-          // legitimate repeat-invalidation can fire its toast again.
-          lastInvalidationKey = null;
-          lastInvalidationContext = invalidationContext;
-        }
-        if (lastInvalidationKey !== invalidationKey) {
-          lastInvalidationKey = invalidationKey;
-          // Publish the event to the boundary component for display-name
-          // aware toast rendering. The boundary mounts once in Shell, so
-          // module-scope dedupe above is belt-and-braces — even if the
-          // dedupe slipped, the subscriber bus delivers one event per
-          // publish and the boundary renders exactly one toast per event.
-          publishActiveStakeInvalidation(resolved.invalidatedTier, resolved.stakeId);
-          // Overwrite the stale storage entries with the resolved stake
-          // so the next read doesn't re-trigger the toast. When
-          // `stakeId` is null (zero-role superadmin with stale storage)
-          // clear both tiers.
-          try {
-            if (resolved.stakeId === null) {
-              if (typeof window !== 'undefined') {
-                try {
-                  window.sessionStorage.removeItem(ACTIVE_STAKE_SESSION_KEY);
-                  window.localStorage.removeItem(ACTIVE_STAKE_LOCAL_KEY);
-                } catch {
-                  // ignore
-                }
-              }
-            } else {
-              persistChoiceCore(resolved.stakeId);
-            }
-          } catch {
-            // ignore
-          }
-        }
-      } else {
-        // Clear the invalidation dedupe key when the resolution is
-        // clean so a later stale tier can re-fire the toast. Track the
-        // last-seen context so a return-to-clean state doesn't itself
-        // count as a "context change" that re-fires the toast on the
-        // next invalidation.
+    const invalidationContext = `${principalSignature}|${urlStakeParam ?? ''}`;
+    if (resolved.invalidatedTier !== null) {
+      const invalidationKey = `${resolved.invalidatedTier}:${resolved.stakeId ?? ''}`;
+      const contextChanged = lastInvalidationContext !== invalidationContext;
+      if (contextChanged) {
+        // New context (URL or claims changed) — reset the dedupe so a
+        // legitimate repeat-invalidation can fire its toast again.
         lastInvalidationKey = null;
         lastInvalidationContext = invalidationContext;
       }
+      if (lastInvalidationKey !== invalidationKey) {
+        lastInvalidationKey = invalidationKey;
+        // Publish the event to the boundary component for display-name
+        // aware toast rendering. The boundary mounts once in Shell, so
+        // module-scope dedupe above is belt-and-braces — even if the
+        // dedupe slipped, the subscriber bus delivers one event per
+        // publish and the boundary renders exactly one toast per event.
+        publishActiveStakeInvalidation(resolved.invalidatedTier, resolved.stakeId);
+        // Overwrite the stale storage entries with the resolved stake
+        // so the next read doesn't re-trigger the toast. When
+        // `stakeId` is null (zero-role superadmin with stale storage)
+        // clear both tiers.
+        try {
+          if (resolved.stakeId === null) {
+            if (typeof window !== 'undefined') {
+              try {
+                window.sessionStorage.removeItem(ACTIVE_STAKE_SESSION_KEY);
+                window.localStorage.removeItem(ACTIVE_STAKE_LOCAL_KEY);
+              } catch {
+                // ignore
+              }
+            }
+          } else {
+            persistChoiceCore(resolved.stakeId);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      // Clear the invalidation dedupe key when the resolution is
+      // clean so a later stale tier can re-fire the toast. Track the
+      // last-seen context so a return-to-clean state doesn't itself
+      // count as a "context change" that re-fires the toast on the
+      // next invalidation.
+      lastInvalidationKey = null;
+      lastInvalidationContext = invalidationContext;
     }
     // Re-run side effects when the resolution changes or the principal
     // settles. `resolved` is memoized on `principalSignature` +
     // `urlStakeParam`; `principalSettling` is the gate that defers side
-    // effects until the principal's claims have actually loaded;
-    // `discoverySettling` defers the toast/overwrite block specifically
-    // (see its own comment above) until bootstrap discovery has a
-    // settled answer for this identity.
-  }, [resolved, urlStakeParam, principalSettling, discoverySettling, principalSignature]);
+    // effects until the principal's claims have actually loaded.
+  }, [resolved, urlStakeParam, principalSettling, principalSignature]);
 
-  // Gate the route gates' render on discovery ONLY when it would
-  // actually change the outcome: the principal has zero claim-derived
-  // stakes (a claims-bearing user renders their normal landing page
-  // immediately — a manager of A must not block on a callable whose
-  // answer, at best, adds an unrelated stake B to their switcher), is
-  // not a platform superadmin (they already short-circuit at
-  // `setupGate.ts:111-113` regardless of discovery), and resolution
-  // hasn't already landed on a stake via a URL/session/local hint
-  // (including the superadmin URL-tier deep-link carve-out) — those
-  // don't need to wait on an answer they won't use.
-  const hasClaimStakes = accessibleStakes(principal).length > 0;
-  const discoveryPending =
-    shouldFireDiscovery &&
-    principal.isPlatformSuperadmin !== true &&
-    !hasClaimStakes &&
-    resolved.stakeId === null &&
-    discoveryResultForIdentity?.status !== 'done';
-
-  return { stakeId: resolved.stakeId, discoveryPending, bootstrapStakeIds };
-}
-
-/**
- * The active-stake hook. Returns the current stake ID, or `null` for a
- * zero-role platform superadmin. See `useActiveStakeInternal` for the
- * full resolution + side-effect contract; this wrapper preserves the
- * pre-discovery `string | null` return shape so its many existing call
- * sites are unaffected.
- */
-export function useActiveStake(): string | null {
-  return useActiveStakeInternal().stakeId;
-}
-
-/**
- * True while the bootstrap-discovery callable is in flight AND its
- * answer would change where the route gates send the user (see
- * `useActiveStakeInternal`'s `discoveryPending` computation). The two
- * gates (`routes/_authed.tsx`, `routes/index.tsx`) pass this straight
- * into `gateDecision`'s 4th param so a fresh bootstrap admin renders
- * `null` (pending) instead of flashing NotAuthorized while their stake
- * is still being looked up.
- */
-export function useBootstrapStakeDiscoveryPending(): boolean {
-  return useActiveStakeInternal().discoveryPending;
+  return resolved.stakeId;
 }
 
 /** A stake in the StakeSwitcher's menu source. */
 export interface AccessibleStakeEntry {
   stakeId: string;
   /**
-   * True when this stake is reachable ONLY via bootstrap-admin
-   * discovery — the principal holds no claim-derived role on it (yet).
-   * The switcher badges these so a manager of A who's also the named
+   * True when this stake is reachable ONLY via a bootstrap-admin claim
+   * — the principal holds no claim-derived role on it (yet). The
+   * switcher badges these so a manager of A who's also the named
    * bootstrap admin of not-yet-setup stake B can see B and switch into
    * its wizard without waiting for a role to be granted first.
    */
@@ -865,13 +644,13 @@ export interface AccessibleStakeEntry {
 /**
  * The StakeSwitcher's menu source: claim-derived accessible stakes
  * (`useAccessibleStakes`, listed first, in their existing alphabetical
- * order) plus any bootstrap-only stakes discovery has found for this
- * identity (appended, `needsSetup: true`, deduped against the
- * claim-derived set).
+ * order) plus any bootstrap-only stakes named in `principal.bootstrapStakes`
+ * (appended, `needsSetup: true`, deduped against the claim-derived set).
+ * Fully synchronous — the bootstrap marker arrives on the same token
+ * read as every other claim.
  */
 export function useAccessibleStakesWithBootstrap(): AccessibleStakeEntry[] {
   const principal = usePrincipal();
-  const { bootstrapStakeIds } = useActiveStakeInternal();
   return useMemo(() => {
     const claimAccessible = accessibleStakes(principal);
     const claimSet = new Set(claimAccessible);
@@ -879,13 +658,13 @@ export function useAccessibleStakesWithBootstrap(): AccessibleStakeEntry[] {
       stakeId,
       needsSetup: false,
     }));
-    for (const stakeId of bootstrapStakeIds) {
+    for (const stakeId of principal.bootstrapStakes) {
       if (!claimSet.has(stakeId)) {
         entries.push({ stakeId, needsSetup: true });
       }
     }
     return entries;
-  }, [principal, bootstrapStakeIds]);
+  }, [principal]);
 }
 
 /**

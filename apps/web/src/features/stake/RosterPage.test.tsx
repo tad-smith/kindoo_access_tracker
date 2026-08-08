@@ -134,6 +134,7 @@ function principal(
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
     limitedStakes: opts.limited ? ['csnorth'] : [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };

@@ -35,7 +35,7 @@ import { defaultLandingFor, deepLinkPath } from '../lib/routing';
 import { useFirestoreDoc } from '../lib/data';
 import { stakeRef } from '../lib/docs';
 import { db } from '../lib/firebase';
-import { useActiveStake, useBootstrapStakeDiscoveryPending } from '../lib/useActiveStake';
+import { useActiveStake } from '../lib/useActiveStake';
 import { gateDecision } from '../lib/setupGate';
 
 const indexSearchSchema = z.object({
@@ -57,7 +57,6 @@ export const Route = createFileRoute('/')({
 function Index() {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
-  const discoveryPending = useBootstrapStakeDiscoveryPending();
   const navigate = useNavigate();
   const stake = useFirestoreDoc(
     principal.firebaseAuthSignedIn && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
@@ -73,7 +72,6 @@ function Index() {
     principal,
     { data: stake.data, status: stake.status },
     activeStakeId,
-    discoveryPending,
   );
 
   // Decide where to send a fully-authed principal. Only meaningful
