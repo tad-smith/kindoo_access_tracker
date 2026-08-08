@@ -640,17 +640,15 @@ export function detect(inputs: DetectInputs): DetectResult {
   // one that preserves unparseable users so `kindoo-only` surfaces) and
   // land as drift, which is the very noise the list exists to remove.
   //
-  // The dropped canonicals are carried out so the SEAT side can be
-  // dropped with them. Removing only the Kindoo half would leave any
-  // SBA seat we hold for that member looking orphaned, and it would
-  // land as `sba-only` — a drift row asserting "the user is not present
-  // in Kindoo" (false; they are, we chose not to look) and offering the
-  // danger-variant Remove From SBA. That fires on the feature's own
-  // rollout: seats a manager minted from the pre-feature `kindoo-only`
-  // rows all flip to it at once, and the extension cannot tell those
-  // from a seat that is legitimately ours whose shared Kindoo
-  // description the other stake's extension overwrote. Ignoring a ward
-  // means not reasoning about its members at all — on either side.
+  // An ignored member reads as ABSENT FROM KINDOO, not as absent from
+  // the diff. So the SBA side is left alone: a seat we still hold for
+  // them surfaces as `sba-only` and offers Remove From SBA, which is
+  // the right remedy — a seat for a member of a ward we've declared
+  // isn't ours is consuming one of our licences, and removing it is the
+  // same action a genuine orphan needs. The dropped canonicals are
+  // carried out only so the row can say WHY the member is absent; the
+  // generic `sba-only` wording would assert they aren't in Kindoo,
+  // which is false.
   const consideredKindooUsers: KindooEnvironmentUser[] = [];
   const ignoredCanonicals = new Set<string>();
   let ignoredCount = 0;
@@ -670,8 +668,6 @@ export function detect(inputs: DetectInputs): DetectResult {
   type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock };
   const projectedSeats: ProjectedSeat[] = [];
   for (const seat of inputs.seats) {
-    // Ignored member — drop the seat with its Kindoo user (see above).
-    if (ignoredCanonicals.has(seat.member_canonical)) continue;
     if (!inputs.activeSite) {
       // No active-site context — preserve pre-T-42 behaviour (don't
       // filter; project against the seat's primary fields directly).
@@ -717,12 +713,19 @@ export function detect(inputs: DetectInputs): DetectResult {
     // 1. sba-only — seat present, no Kindoo user. (No `kuser`, so the
     //    Installer skip below never applies here.)
     if (seat && sbaBlock && !kuser) {
+      // Two ways to have no Kindoo user: genuinely absent, or dropped by
+      // `kindoo_ignored_wards`. Same code, same remedy (the seat should
+      // not be here either way) — but the generic wording would assert
+      // they aren't in Kindoo, which for an ignored member is false and
+      // leaves the manager unable to place a name they don't recognise.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'sba-only',
         severity: 'drift',
-        reason: 'SBA has a seat for this member, but the user is not present in Kindoo.',
+        reason: ignoredCanonicals.has(canon)
+          ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
+          : 'SBA has a seat for this member, but the user is not present in Kindoo.',
         sba: sbaBlock,
         kindoo: null,
       });

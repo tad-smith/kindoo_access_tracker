@@ -2447,30 +2447,45 @@ describe('detect — stake.kindoo_ignored_wards', () => {
     expect(result.ignoredCount).toBe(1);
   });
 
-  it('drops an SBA seat we hold for an ignored member instead of calling it orphaned', () => {
-    // Regression (PR #261 review). Dropping only the Kindoo half left the
-    // seat looking orphaned: an `sba-only` drift row reasoning "the user
-    // is not present in Kindoo" — false, they are; we chose not to look —
-    // offering the danger-variant Remove From SBA. It fires on the
-    // feature's own rollout, when seats minted from the pre-feature
-    // `kindoo-only` rows all flip to it at once.
+  it('offers Remove From SBA for a seat we still hold for an ignored member', () => {
+    // An ignored member reads as absent from Kindoo, so a seat we hold
+    // for them is an orphan and the remedy is the same one a genuine
+    // orphan needs: the seat is consuming one of our licences for
+    // somebody another stake manages.
     const ourSeatForTheirMember = seat({
       member_canonical: 'bishop@aspengrove.example',
       member_email: 'bishop@aspengrove.example',
     });
     const result = detect(inputs(IGNORING, [FOREIGN_MEMBER], [ourSeatForTheirMember]));
-    expect(result.discrepancies).toEqual([]);
-    expect(result.seatCount).toBe(0);
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.severity).toBe('drift');
+    expect(fixActionsFor(row).map((a) => a.label)).toEqual(['Remove From SBA']);
+    expect(result.seatCount).toBe(1);
     expect(result.kindooCount).toBe(0);
     expect(result.ignoredCount).toBe(1);
   });
 
-  it('still reports a genuinely orphaned seat as sba-only', () => {
-    // The counterpart: no Kindoo user at all, nothing ignored about
-    // them. Dropping ignored members must not blunt the real code.
+  it('says the ward is on the ignore list rather than that the user is absent', () => {
+    // Same code and same action as a genuine orphan, but the generic
+    // wording would assert they aren't in Kindoo — false here, and it
+    // leaves the manager unable to place a name they don't recognise.
+    const ourSeatForTheirMember = seat({
+      member_canonical: 'bishop@aspengrove.example',
+      member_email: 'bishop@aspengrove.example',
+    });
+    const result = detect(inputs(IGNORING, [FOREIGN_MEMBER], [ourSeatForTheirMember]));
+    expect(result.discrepancies[0]!.reason).toContain('ignore list');
+    expect(result.discrepancies[0]!.reason).not.toContain('not present in Kindoo');
+  });
+
+  it('keeps the generic wording for a genuinely orphaned seat', () => {
     const result = detect(inputs(IGNORING, [], [seat({})]));
     expect(result.discrepancies).toHaveLength(1);
-    expect(result.discrepancies[0]!.code).toBe('sba-only');
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.reason).toContain('not present in Kindoo');
     expect(result.seatCount).toBe(1);
     expect(result.ignoredCount).toBe(0);
   });

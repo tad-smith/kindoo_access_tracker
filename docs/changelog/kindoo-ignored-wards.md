@@ -20,7 +20,7 @@ The reciprocal shape is why the new list lives on the Kindoo Sites tab rather th
 - **Match on the segment's scope-name, exact and case-insensitive** — not a substring of the whole description. `Maple Ward` matches `Maple Ward (Bishop)` and the multi-segment form, but not `Maple Ward Annex (Bishop)` and not a calling that contains the phrase (`Aspen (Maple Ward Liaison)`). A substring rule would swallow that last case. The cost is that a malformed non-parens description (`Maple Ward - Bishop`) is not matched — acceptable, because the extension writes these descriptions and the `Scope (Calling)` shape is reliable.
 - **Only unresolved segments are ignore-eligible.** A ward this stake owns resolves against the wards catalogue, so the list cannot hide our own scope even if an entry collides with a ward name — including a collision created by a rename *after* the entry was added. The Configuration UI's own-ward guard is therefore a better error message rather than the only defence.
 - **Segment-level, not user-level.** A member holding callings in both an ignored ward and one of ours still syncs, on our segment alone. They drop out entirely only when nothing survives.
-- **A dropped member takes their SBA seat out of the diff with them.** Found in review (see below). The seat is not modified — Sync just stops having an opinion about it.
+- **An ignored member reads as absent from Kindoo, not as absent from the diff.** A seat we still hold for them is an orphan and gets the ordinary `sba-only` row with **Remove From SBA**. See below.
 - **Stored on the parent stake doc, not a sub-collection.** A handful of strings, and the extension already reads the stake doc on every Sync run — so the filter costs zero extra reads.
 - **No Firestore rules change.** Managers can already update the parent stake doc (`firestore.rules:686`) and the SBA UI is the only writer, so a dedicated field validator would be defence-in-depth against nothing.
 
@@ -30,15 +30,17 @@ The reciprocal shape is why the new list lives on the Kindoo Sites tab rather th
 
 `detect` drops fully-ignored users ahead of the active-site filter and independently of it — a ward that is not ours is not ours on any site. Segment-level stripping happens inside `parseDescription`, so all three call sites see the survivors with no extra plumbing.
 
-## Caught in review
+## What an ignored member's SBA seat does
 
-The first cut dropped only the Kindoo half of an ignored member. Any SBA seat we held for them then looked orphaned and fell into `sba-only`: a **drift** row reasoning *"SBA has a seat for this member, but the user is not present in Kindoo"* — false, they are present; we chose not to look — offering the danger-variant **Remove From SBA**.
+The original cut said nothing about this, and review caught it: a seat held for a fully-ignored member fell into `sba-only` with the generic reason *"the user is not present in Kindoo"* and the danger-variant **Remove From SBA**. It is reachable on the feature's own rollout — every seat minted from the pre-feature `kindoo-only` rows surfaces at once the first time Sync runs with the list configured.
 
-Not an edge case. It fires on the feature's own rollout scenario: any seat a manager already minted from the pre-feature `kindoo-only` rows flips to it the first time Sync runs with the list configured. And the extension cannot tell those seats from one that is legitimately ours whose shared Kindoo description the other stake's extension overwrote — a ward boundary realignment being the likeliest cause, and precisely the moment a one-click bulk delete does the most damage.
+Two wrong turns before landing on the rule, both worth recording because the reasoning is easy to repeat.
 
-Fixed by carrying the dropped canonicals out of the ignore pass and skipping the matching seats in the projection loop, so neither side is compared or counted. Two regression tests: the seat is dropped, and a genuinely orphaned seat still reports `sba-only` (the fix must not blunt the real code). `spec.md` §15 gained the rule and the reasoning — the original text said nothing about seats, which is how the case got missed.
+The first was to drop the seat along with the Kindoo user, on the argument that the operator "can't distinguish this from a genuine orphan." That distinction buys nothing: the remedy is identical either way. A seat for a member of a ward the stake has declared isn't its own is consuming one of its licences, and it should go. Suppressing the row hides a real license leak from the one tool whose job is reconciliation.
 
-The rejected alternative was a distinct review-severity code surfacing the seat without an action button. Operator chose silence: ignoring a ward should mean Sync has no opinion about its members, and the seat is still visible on All Seats if it needs removing.
+The second was to weigh a boundary-realignment scenario — a ward moving between stakes while still on the ignore list — as a reason to withhold the action, described as risking a "one-click bulk delete." There is no bulk apply. Fixes are per-row, deliberate clicks on a visible row, and a misconfigured ignore entry is something the operator fixes by editing the list.
+
+**The rule: an ignored member reads as absent from Kindoo, not as absent from the diff.** Same code, same severity, same action as a genuine orphan — only the reason differs, naming the ignore list instead of asserting an absence that isn't true. The false wording was the only actual defect; the rest of the row was already right.
 
 ## Spec / doc edits in this phase
 
