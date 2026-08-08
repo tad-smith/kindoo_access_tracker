@@ -101,9 +101,12 @@ function shouldSkip(): boolean {
  * `setCustomUserClaims`, and revoke refresh tokens iff the result
  * differs from what was previously set.
  *
- * `newStakeClaims === null` means "remove this stake's claim block
- * entirely" — used when a delete happens and the resulting block
- * would be `{ manager: false, stake: false, wards: [] }`.
+ * `newStakeClaims === null` means "remove this domain's contribution to
+ * this stake's claim block" — used when a delete happens and the
+ * resulting block would be `{ manager: false, stake: false, wards: [] }`.
+ * An existing `bootstrap: true` on the block is a different owner's
+ * field (`applyBootstrapClaim`'s) and survives regardless — including
+ * a `null` replace — so this call can never erase it.
  */
 export async function applyStakeClaims(
   uid: string,
@@ -200,14 +203,22 @@ function mergeStake(
     ? { ...existing, canonical: existing.canonical || canonical }
     : { canonical };
 
-  // Wholesale replace, same as `limited`: `newStakeClaims` never carries
-  // `bootstrap` (it isn't derived from role data), so a role-data write
-  // for this stake silently drops any marker `applyBootstrapClaim` had
-  // set. Accepted — see the "dropped by a subsequent applyStakeClaims"
-  // test in `applyClaims.test.ts`.
+  // `bootstrap` belongs to a different owner (`syncBootstrapClaims` /
+  // `applyBootstrapClaim`), not to this domain's role data. `newStakeClaims`
+  // is always freshly computed from `access`/`kindooManagers` and so never
+  // carries it — without carrying the existing flag forward, whichever
+  // trigger fires last would win and silently erase the other's field.
+  // Mirrors `mergeBootstrap` preserving manager/stake/wards/limited in the
+  // other direction.
   const stakes: Record<string, StakeClaims> = base.stakes ? { ...base.stakes } : {};
-  if (newStakeClaims && isNonEmptyStakeClaims(newStakeClaims)) {
-    stakes[stakeId] = newStakeClaims;
+  const priorBootstrap = stakes[stakeId]?.bootstrap;
+  const next: StakeClaims = {
+    ...(newStakeClaims ?? { manager: false, stake: false, wards: [] }),
+    ...(priorBootstrap === true ? { bootstrap: true } : {}),
+  };
+
+  if (isNonEmptyStakeClaims(next)) {
+    stakes[stakeId] = next;
   } else {
     delete stakes[stakeId];
   }
