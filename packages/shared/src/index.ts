@@ -50,6 +50,7 @@ export {
 } from './requesterDisplay.js';
 export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
 export { scopeLabel } from './scopeLabel.js';
+export { sanitizeSlugInput } from './slugInput.js';
 export {
   comparisonDateMs,
   outstandingCutoffMs,

@@ -281,7 +281,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 ### 4.1 `stakes/{stakeId}` — parent doc (Config collapsed in)
 
-**Doc ID:** human-readable slug (`csnorth`, `someother`).
+**Doc ID:** human-readable slug (`csnorth`, `someother`). Written by `createStake` (`spec.md` §5.4) as `buildingSlug()` of the **Stake ID** the Create Stake form submitted, else of `stake_name` — one rule over whichever source won, so `CS North` lands at `stakes/cs-north` whether it arrived as the ID or as the name. The form's Stake ID field auto-fills from the name and the operator may overwrite it, so an ID rides in the payload on essentially every submit; the two branches agree by construction, since the submitted value is already canonical and `buildingSlug` is idempotent. A supplied value that slugifies to empty soft-fails `invalid_slug` rather than falling back to the name. Fixed at create; `stake_name` is the mutable display name and nothing re-slugs the doc.
 
 **Fields:**
 

@@ -1,7 +1,8 @@
 // Integration tests for the `createStake` callable. Backs the Stake
 // List page's Create Stake form (spec §5.4 / F19). Coverage: auth gate
-// on the `isPlatformSuperadmin` claim, slug derivation + collision
-// detection, soft-failure envelope on empty inputs / invalid slugs,
+// on the `isPlatformSuperadmin` claim, slug resolution (name-derived or
+// operator-typed `stake_id`) + collision detection, soft-failure
+// envelope on empty inputs / invalid slugs,
 // lowercased-but-dots-and-+suffix-preserved bootstrap email storage,
 // ActorRef shape on the bookkeeping fields, and `platformAuditLog`
 // row emission.
@@ -145,6 +146,28 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(result).toEqual({ success: false, error: 'invalid_slug' });
   });
 
+  it('returns invalid_slug when a typed stake_id slugifies to empty', async () => {
+    // A typed value with no alnum characters soft-fails exactly like a
+    // nameless one — same rule, same error code, no new code path.
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: '!!!',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: false, error: 'invalid_slug' });
+
+    // The name-derived slug must NOT be used as a fallback — the
+    // operator asked for a specific doc ID and it was unusable.
+    const { db } = requireEmulators();
+    expect((await db.doc('stakes/cottonwood-south-stake').get()).exists).toBe(false);
+    expect((await db.collection('platformAuditLog').get()).empty).toBe(true);
+  });
+
   it('returns invalid_timezone for a non-IANA tz; no parent doc, no audit row', async () => {
     // The audit-log date filter and other tz-sensitive paths call
     // `Intl.DateTimeFormat(undefined, { timeZone })`; a malformed value
@@ -187,6 +210,21 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
         callableReq({
           auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
           data: { stake_name: 'Cottonwood South Stake', bootstrap_admin_email: 42 },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid-argument' });
+  });
+
+  it('rejects non-string stake_id with invalid-argument', async () => {
+    await expect(
+      createStake.run(
+        callableReq({
+          auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+          data: {
+            stake_name: 'Cottonwood South Stake',
+            bootstrap_admin_email: 'admin@example.com',
+            stake_id: 42,
+          },
         }),
       ),
     ).rejects.toMatchObject({ code: 'invalid-argument' });
@@ -255,6 +293,83 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     const snap = await db.doc('stakes/st-george-utah').get();
     expect(snap.exists).toBe(true);
     expect((snap.data() as Stake).stake_name).toBe('St. George Utah');
+  });
+
+  // ----- Operator-supplied slug -----
+
+  it('uses a typed stake_id as the doc ID in place of the name-derived slug', async () => {
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: 'csnorth',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: true, stakeId: 'csnorth' });
+
+    const { db } = requireEmulators();
+    const snap = await db.doc('stakes/csnorth').get();
+    expect(snap.exists).toBe(true);
+    // The display name is stored verbatim; only the doc ID changed.
+    expect((snap.data() as Stake).stake_name).toBe('Cottonwood South Stake');
+    // Nothing landed at the name-derived slug.
+    expect((await db.doc('stakes/cottonwood-south-stake').get()).exists).toBe(false);
+
+    // The audit row's entity_id follows the doc ID actually written.
+    const auditSnap = await db.collection('platformAuditLog').get();
+    expect(auditSnap.size).toBe(1);
+    expect((auditSnap.docs[0]!.data() as PlatformAuditLog).entity_id).toBe('csnorth');
+  });
+
+  it('slugifies a typed stake_id through the same rule as the name ("CS North" → "cs-north")', async () => {
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: 'CS North',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: true, stakeId: 'cs-north' });
+
+    const { db } = requireEmulators();
+    expect((await db.doc('stakes/cs-north').get()).exists).toBe(true);
+  });
+
+  it('falls back to the name-derived slug when stake_id is whitespace-only', async () => {
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: '   ',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: true, stakeId: 'cottonwood-south-stake' });
+
+    const { db } = requireEmulators();
+    expect((await db.doc('stakes/cottonwood-south-stake').get()).exists).toBe(true);
+  });
+
+  it('falls back to the name-derived slug when stake_id is an empty string', async () => {
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: '',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: true, stakeId: 'cottonwood-south-stake' });
   });
 
   it('honours an operator-typed timezone override', async () => {
@@ -348,6 +463,31 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     // No audit row written.
     const auditSnap = await db.collection('platformAuditLog').get();
     expect(auditSnap.empty).toBe(true);
+  });
+
+  it('returns slug_collision when a stake doc already exists at a typed stake_id', async () => {
+    const { db } = requireEmulators();
+    await db.doc('stakes/csnorth').set({ stake_name: 'Pre-existing CS North' });
+
+    const result = await createStake.run(
+      callableReq({
+        auth: { email: SUPERADMIN_EMAIL, isPlatformSuperadmin: true },
+        data: {
+          stake_name: 'Cottonwood South Stake',
+          bootstrap_admin_email: 'admin@example.com',
+          stake_id: 'csnorth',
+        },
+      }),
+    );
+    expect(result).toEqual({ success: false, error: 'slug_collision' });
+
+    // Pre-existing doc untouched, and no fallback write at the
+    // name-derived slug.
+    expect((await db.doc('stakes/csnorth').get()).data()?.['stake_name']).toBe(
+      'Pre-existing CS North',
+    );
+    expect((await db.doc('stakes/cottonwood-south-stake').get()).exists).toBe(false);
+    expect((await db.collection('platformAuditLog').get()).empty).toBe(true);
   });
 
   // ----- platformAuditLog -----
