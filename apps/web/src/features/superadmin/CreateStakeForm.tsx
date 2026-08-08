@@ -13,10 +13,12 @@
 // Cancel mid-edit) starts fresh. This matches the pattern used by
 // `CallingTemplateFormDialog`.
 //
-// Slug preview: the doc ID slug is derived from the typed stake name
-// using the same `buildingSlug` helper the callable applies. We show
-// it under the name field so the operator can sanity-check the
-// resulting URL before submitting.
+// Slug preview: the doc ID slug comes from the typed Stake ID when
+// the operator supplies one, else from the stake name. Both run
+// through the same `buildingSlug` helper the callable applies, so the
+// preview under the Stake ID field is what the server will compute.
+// The Stake ID input holds only what the operator typed — nothing
+// ever writes a name-derived value into it.
 //
 // Timezone: rendered via the shared `TimezoneCombobox` (curated US
 // IANA list). The default is `America/Denver`; the operator picks
@@ -43,15 +45,21 @@ function errorMessage(err: unknown): string {
 
 /**
  * Map a soft-failure error code to a human-friendly message and the
- * field it should attach to. `invalid_slug` and `slug_collision` both
- * surface against `stake_name` since that's the input the operator
- * controls; `name_required`, `email_required`, `invalid_email`, and
- * `invalid_timezone` mirror their inputs.
+ * field it should attach to. `invalid_slug` and `slug_collision` are
+ * about whichever input produced the slug: the Stake ID when the
+ * operator typed one (`typedStakeId` non-empty), the stake name when
+ * they didn't. `name_required`, `email_required`, `invalid_email`, and
+ * `invalid_timezone` mirror their inputs. Pure — the caller threads in
+ * the submitted Stake ID rather than the mapper reading form state.
  */
-function softFailToFieldError(error: CreateStakeError): {
+function softFailToFieldError(
+  error: CreateStakeError,
+  typedStakeId: string,
+): {
   field: keyof CreateStakeForm;
   message: string;
 } {
+  const idWasTyped = typedStakeId.trim().length > 0;
   switch (error) {
     case 'name_required':
       return { field: 'stake_name', message: 'Stake name is required.' };
@@ -66,16 +74,26 @@ function softFailToFieldError(error: CreateStakeError): {
         message: 'Not a valid email address.',
       };
     case 'invalid_slug':
-      return {
-        field: 'stake_name',
-        message:
-          'Stake name contains no letters or digits — pick a name that produces a valid slug.',
-      };
+      return idWasTyped
+        ? {
+            field: 'stake_id',
+            message: 'Stake ID contains no letters or digits — pick an ID that slugifies.',
+          }
+        : {
+            field: 'stake_name',
+            message:
+              'Stake name contains no letters or digits — pick a name that produces a valid slug.',
+          };
     case 'slug_collision':
-      return {
-        field: 'stake_name',
-        message: 'A stake with that slug already exists. Pick a different name.',
-      };
+      return idWasTyped
+        ? {
+            field: 'stake_id',
+            message: 'A stake with that ID already exists. Pick a different ID.',
+          }
+        : {
+            field: 'stake_name',
+            message: 'A stake with that slug already exists. Pick a different name.',
+          };
     case 'invalid_timezone':
       return {
         field: 'timezone',
@@ -87,6 +105,7 @@ function softFailToFieldError(error: CreateStakeError): {
 
 const EMPTY_DEFAULTS: CreateStakeForm = {
   stake_name: '',
+  stake_id: '',
   bootstrap_admin_email: '',
   timezone: DEFAULT_TIMEZONE,
 };
@@ -113,15 +132,22 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
   }, [open, reset]);
 
   const watchedName = watch('stake_name') ?? '';
-  // Mirror the callable's slug rule. Reused at render so the preview
-  // stays in lockstep with what the server will compute on submit.
-  const slugPreview = useMemo(() => buildingSlug(watchedName), [watchedName]);
+  const watchedStakeId = watch('stake_id') ?? '';
+  // Mirror the callable's slug rule: a typed Stake ID wins, else the
+  // slug falls back to the name. Reused at render so the preview stays
+  // in lockstep with what the server will compute on submit.
+  const slugPreview = useMemo(
+    () => buildingSlug(watchedStakeId.trim().length > 0 ? watchedStakeId : watchedName),
+    [watchedStakeId, watchedName],
+  );
 
   const onSubmit = handleSubmit(async (input) => {
+    const typedStakeId = input.stake_id.trim();
     try {
       const result = await mutation.mutateAsync({
         stake_name: input.stake_name,
         bootstrap_admin_email: input.bootstrap_admin_email,
+        ...(typedStakeId.length > 0 ? { stake_id: typedStakeId } : {}),
         ...(input.timezone.trim().length > 0 ? { timezone: input.timezone } : {}),
       });
       if (result.success) {
@@ -129,7 +155,7 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
         onClose();
         return;
       }
-      const { field, message } = softFailToFieldError(result.error);
+      const { field, message } = softFailToFieldError(result.error, typedStakeId);
       setError(field, { type: 'server', message });
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -158,8 +184,24 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
             {...register('stake_name')}
             data-testid="create-stake-name"
           />
+        </label>
+        {formState.errors.stake_name ? (
+          <p className="kd-form-error" role="alert" data-testid="create-stake-name-error">
+            {formState.errors.stake_name.message}
+          </p>
+        ) : null}
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium">Stake ID</span>
+          <Input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            {...register('stake_id')}
+            data-testid="create-stake-id"
+          />
           <span className="text-xs text-gray-500" data-testid="create-stake-slug-preview">
-            Slug:{' '}
+            Optional — defaults from the stake name. Slug:{' '}
             {slugPreview.length > 0 ? (
               <code>{slugPreview}</code>
             ) : (
@@ -167,9 +209,9 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
             )}
           </span>
         </label>
-        {formState.errors.stake_name ? (
-          <p className="kd-form-error" role="alert" data-testid="create-stake-name-error">
-            {formState.errors.stake_name.message}
+        {formState.errors.stake_id ? (
+          <p className="kd-form-error" role="alert" data-testid="create-stake-id-error">
+            {formState.errors.stake_id.message}
           </p>
         ) : null}
 
