@@ -363,31 +363,6 @@ export function persistActiveStakeChoice(stakeId: string): void {
 }
 
 /**
- * Clear both storage tiers. Called from `signOut()` so a stake
- * selection doesn't leak from one account into the next on a shared
- * browser, and so a value that's stale (or invalidated but never
- * settled — see the settling-path note in `useActiveStake.ts`) can't
- * survive into a fresh sign-in as permanent residue. This is the other
- * half of the B-19 fix: the storage-tier gate above stops a stale value
- * from beating a validated `bootstrapStakes` answer WHILE signed in;
- * this stops it from outliving the session that wrote it at all.
- */
-export function clearActiveStakeStorage(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.removeItem(SESSION_KEY);
-  } catch {
-    // Storage access may throw in private-browsing modes; nothing more
-    // to do — sign-out proceeds regardless.
-  }
-  try {
-    window.localStorage.removeItem(LOCAL_KEY);
-  } catch {
-    // Same.
-  }
-}
-
-/**
  * Read the sessionStorage tier. Returns `null` when the value is
  * absent or storage is unavailable.
  */
