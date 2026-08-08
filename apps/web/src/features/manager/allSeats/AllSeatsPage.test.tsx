@@ -67,6 +67,7 @@ function principal(opts: { stake?: boolean; wards?: string[]; manager?: boolean 
     managerStakes: manager ? ['csnorth'] : [],
     stakeMemberStakes: opts.stake ? ['csnorth'] : [],
     bishopricWards: opts.wards ? { csnorth: opts.wards } : {},
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => opts.wards ?? [],
   };
@@ -1226,6 +1227,7 @@ describe('<AllSeatsPage /> — Give Access To Stake Buildings button', () => {
       managerStakes: [],
       stakeMemberStakes: ['csnorth'],
       bishopricWards: { csnorth: ['FN'] },
+      bootstrapStakes: [],
       hasAnyRole: () => true,
       wardsInStake: () => ['FN'],
     });

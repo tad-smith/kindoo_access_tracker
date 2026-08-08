@@ -17,6 +17,14 @@
 // accessible stakes; per-stake-aware hooks pass `null` through to
 // their queries so the DIY data hooks stay disabled.
 //
+// Bootstrap-admin stakes (`principal.bootstrapStakes`, per
+// `StakeClaims.bootstrap` — see `packages/shared`) arrive on the same
+// token read as every other claim, so resolution is fully synchronous:
+// no discovery round-trip, no pending state to gate route rendering on.
+// See `activeStake.ts`'s header for how the claim threads into
+// resolution, and `useAccessibleStakesWithBootstrap` below for the
+// StakeSwitcher's menu source.
+//
 // Implementation note on context-free reads. `useActiveStake` is
 // consumed by `useRequireRole`, which fires at the top of every route
 // gate — including in route-gate unit tests that don't wrap a
@@ -182,10 +190,16 @@ function refreshModuleUrlStakeParamFromUrl(): void {
 }
 
 /**
- * Mark the current URL-tier value as consumed. Called once the
- * resolver lands on a principal-validated URL-tier hit and persists
- * to storage — from then on, storage is the source of truth and we
- * can let `refreshModuleUrlStakeParamFromUrl` clear the slot.
+ * Mark the current URL-tier value as consumed. Called once `resolved`
+ * has actually used the URL-tier value as its answer — validated or
+ * permissive (see `isPermissiveUrl` in `activeStake.ts`) — regardless
+ * of whether the principal is fully settled (see
+ * `urlConsumeAllowedWhileSettling` in `useActiveStake`). From then on,
+ * `refreshModuleUrlStakeParamFromUrl` can clear the module-scoped slot
+ * on its next null read, so a stale/invalid value can't keep winning
+ * tier 1 forever. Deliberately decoupled from the storage persist
+ * (`persistChoiceCore`), which stays gated on a fully-settled
+ * principal.
  */
 function markUrlStakeParamConsumed(): void {
   moduleUrlStakeParamConsumed = true;
@@ -359,15 +373,16 @@ export function useActiveStakeInvalidation(): ActiveStakeInvalidationEvent | nul
 }
 
 /**
- * The active-stake hook. Returns the current stake ID (or `null` for a
- * zero-role platform superadmin). Re-renders on:
+ * The active-stake hook. Returns the current stake ID, or `null` for a
+ * zero-role platform superadmin.
  *
- *   - principal changes (claim rotation)
+ * Re-renders on:
+ *   - principal changes (claim rotation — includes `bootstrapStakes`),
  *   - router navigation that adds a new `?stake=X` param (push deep
- *     links arriving on an already-open tab)
+ *     links arriving on an already-open tab),
+ *   - a storage-tier write from the switcher.
  *
  * Side effects:
- *
  *   - On URL-tier hit: persists value to both storage tiers, strips
  *     `?stake=X` from the URL, invalidates per-stake TanStack Query
  *     caches via the registered QueryClient.
@@ -392,9 +407,14 @@ export function useActiveStake(): string | null {
   //     resolution (per item 3).
   //   - `accessibleStakes(...)` — the set the resolver validates URL /
   //     storage values against.
+  //   - `bootstrapStakes` — widens tiers 1-3's validation set and
+  //     backstops tier 4 (see `activeStake.ts`). Sorted before joining
+  //     so two claims payloads carrying the same set in a different
+  //     insertion order don't spuriously bust the signature.
   const principalSignature = useMemo(() => {
     const accessible = accessibleStakes(principal).join(',');
-    return `${principal.firebaseAuthSignedIn ? '1' : '0'}|${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}`;
+    const bootstrap = [...principal.bootstrapStakes].sort().join(',');
+    return `${principal.firebaseAuthSignedIn ? '1' : '0'}|${principal.isPlatformSuperadmin ? '1' : '0'}|${accessible}|${bootstrap}`;
   }, [principal]);
 
   // Track the URL `?stake=X` value through navigations. The value is
@@ -478,10 +498,11 @@ export function useActiveStake(): string | null {
   // click; the URL tier writes via the effect below).
   const resolved = useMemo(
     () => resolveActiveStake(principal, urlStakeParam, readSessionStake(), readLocalStake()),
-    // `principalSignature` carries the accessible-stake fingerprint;
-    // `urlStakeParam` is state; `storageTick` bumps on switcher click.
-    // Storage reads happen inside; not in the dep list because they're
-    // snapshots, not signals — the tick is the change feed.
+    // `principalSignature` carries the accessible-stake + bootstrap-
+    // stake fingerprint; `urlStakeParam` is state; `storageTick` bumps
+    // on switcher click. Storage reads happen inside; not in the dep
+    // list because they're snapshots, not signals — the tick is the
+    // change feed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [principalSignature, urlStakeParam, storageTick],
   );
@@ -494,33 +515,111 @@ export function useActiveStake(): string | null {
   // first-pass" transition where the URL value was already stripped
   // but the resolver couldn't validate it on the first render.
   const lastStrippedUrlParamRef = useRef<string | null>(null);
+  // Track the last URL-tier stakeId we've marked consumed so a
+  // re-render doesn't call `markUrlStakeParamConsumed()` every frame.
+  // Separate from `lastPersistedUrlStakeIdRef` below because the two
+  // can now fire on DIFFERENT renders — see `urlConsumeAllowedWhileSettling`.
+  const lastConsumedUrlStakeIdRef = useRef<string | null>(null);
   // Track the last storage value we wrote for a given URL-tier hit so a
   // re-render doesn't re-persist + re-invalidate every frame.
   const lastPersistedUrlStakeIdRef = useRef<string | null>(null);
 
-  // True for two cases that both warrant deferring the side effects:
+  // True for two cases that both warrant deferring MOST side effects:
   //   (a) the transient claims-loading window — `onAuthStateChanged`
   //       has fired but `getIdTokenResult` hasn't returned yet; and
   //   (b) the permanent no-roles signed-in state (typo'd email, revoked
-  //       access). The predicate stays true forever in (b), which is
-  //       intentional: the user is parked on NotAuthorized, and firing
-  //       the URL-strip / storage-persist / toast effects would be a
-  //       false signal that the deep-link landed somewhere usable.
+  //       access — a bootstrap-only principal is included here, since
+  //       `bootstrap` deliberately does NOT count toward
+  //       `isAuthenticated`). The predicate stays true forever in (b),
+  //       which is intentional: the user is parked on NotAuthorized (or
+  //       routed to the wizard by `setupGate.ts` directly off
+  //       `resolved.stakeId`, which is NOT gated by this predicate —
+  //       only the side effects below are), and firing the
+  //       storage-persist / toast effects would be a false signal that
+  //       the deep-link landed somewhere usable.
   // Running side effects on a half-loaded principal in (a) would also
   // fire false-positive "this stake is no longer available" toasts on
   // the deep-link path.
   const principalSettling = principal.firebaseAuthSignedIn && !principal.isAuthenticated;
 
+  // The URL tier's permissiveness (`isPermissiveUrl` in activeStake.ts)
+  // is only safe because the value is supposed to be single-shot: once
+  // used, `stripStakeParamFromUrl()` + `markUrlStakeParamConsumed()`
+  // consume it so it can't keep re-winning tier 1 on every future
+  // resolve — see that file's header for the full argument. Gating
+  // BOTH of those on `!principalSettling`, the way the rest of this
+  // effect is gated, breaks that precondition for exactly the identity
+  // the argument was about: case (b) above never ends, so
+  // `principalSettling` never flips false for a bootstrap-only
+  // principal, and the consume never runs. A stale/invalid `?stake=A`
+  // then shadows tier 4's `bootstrapStakes` answer for the tab's
+  // lifetime instead of self-correcting (`docs/BUGS.md`).
+  //
+  // Fix: let the strip + consume run once `bootstrapStakes` is
+  // populated, even while `principalSettling` stays true.
+  // `bootstrapStakes` is only ever non-empty after a REAL token read —
+  // during case (a)'s transient window `principalFromClaims` returns
+  // the empty principal (claims are still `null`), so `bootstrapStakes`
+  // reads `[]` there regardless of what the eventual real principal
+  // will be. That makes it a safe "claims have actually landed" signal
+  // distinct from `principalSettling`: the consume can't fire during
+  // the loading flicker — before ANY principal, including a future
+  // claim-bearing one, has had a real chance to validate the URL value
+  // — only once a genuine bootstrap-only principal is on hand. The rest
+  // of the settling-gated behaviour (storage persist, invalidation
+  // toast, stale-storage overwrite) stays deferred exactly as before —
+  // those still assume a principal that might yet resolve to a normal
+  // role, and firing them on a half-loaded read would corrupt storage
+  // (the historical bug this gate was introduced for — see git history
+  // on `principalSettling`).
+  //
+  // Residual bound: `markUrlStakeParamConsumed()` only flips a flag —
+  // clearing `moduleUrlStakeParam` itself still requires
+  // `refreshModuleUrlStakeParamFromUrl()` to run again with a null URL
+  // read, which only happens on a router navigation or `popstate`, not
+  // on the `replaceState` call the strip makes. A parked bootstrap-only
+  // principal that never navigates keeps the stale URL value shadowing
+  // tier 4 for the rest of the tab's life; it self-corrects on the next
+  // navigation, not spontaneously.
+  const urlConsumeAllowedWhileSettling = principal.bootstrapStakes.length > 0;
+
   useEffect(() => {
+    // URL-tier strip + consume. Runs whenever the principal is fully
+    // settled OR `urlConsumeAllowedWhileSettling` says claims have
+    // genuinely landed even though the identity stays settling forever
+    // (bootstrap-only) — see that flag's comment above for why this is
+    // safe. Strip runs once per `urlStakeParam` arrival regardless of
+    // validity (a bad param still shouldn't survive in the URL bar);
+    // consume runs once `resolved` has actually used the value as its
+    // answer, marking it so subsequent null reads from the URL
+    // (post-strip) can clear the module-scoped slot and stop it from
+    // shadowing tier 4 forever.
+    if (!principalSettling || urlConsumeAllowedWhileSettling) {
+      if (urlStakeParam !== null && lastStrippedUrlParamRef.current !== urlStakeParam) {
+        lastStrippedUrlParamRef.current = urlStakeParam;
+        stripStakeParamFromUrl();
+      }
+      if (
+        urlStakeParam !== null &&
+        resolved.source === 'url' &&
+        resolved.stakeId !== null &&
+        lastConsumedUrlStakeIdRef.current !== resolved.stakeId
+      ) {
+        lastConsumedUrlStakeIdRef.current = resolved.stakeId;
+        markUrlStakeParamConsumed();
+      }
+    }
+
     if (principalSettling) return;
 
     // URL-tier persist. Fires the first time a `urlStakeParam` resolves
     // as a valid URL-tier hit (resolved.source === 'url'). Re-runs the
     // persist if the resolved stakeId changes (e.g., principal claims
     // arrived AFTER the initial empty-principal first render that
-    // stripped the URL but couldn't validate it). Marks the
-    // module-scoped URL value as consumed so subsequent null reads
-    // from the URL (post-strip) can clear it.
+    // stripped the URL but couldn't validate it). Stays gated on a
+    // fully-settled principal — see `principalSettling`'s comment;
+    // writing storage off a half-loaded or permanently-roleless read
+    // is the historical bug this gate exists to prevent.
     if (
       urlStakeParam !== null &&
       resolved.source === 'url' &&
@@ -530,16 +629,6 @@ export function useActiveStake(): string | null {
       lastPersistedUrlStakeIdRef.current = resolved.stakeId;
       persistChoiceCore(resolved.stakeId);
       invalidatePerStakeQueries();
-      markUrlStakeParamConsumed();
-    }
-
-    // URL-tier strip. Runs once per `urlStakeParam` arrival, regardless
-    // of whether the param was valid (a bad param still shouldn't
-    // survive in the URL bar). Deduped on `urlStakeParam` itself so the
-    // post-strip router-history subscriber callback doesn't re-fire it.
-    if (urlStakeParam !== null && lastStrippedUrlParamRef.current !== urlStakeParam) {
-      lastStrippedUrlParamRef.current = urlStakeParam;
-      stripStakeParamFromUrl();
     }
 
     // Toast + overwrite-stale-storage handling. Dedupe on a
@@ -569,10 +658,10 @@ export function useActiveStake(): string | null {
         // dedupe slipped, the subscriber bus delivers one event per
         // publish and the boundary renders exactly one toast per event.
         publishActiveStakeInvalidation(resolved.invalidatedTier, resolved.stakeId);
-        // Overwrite the stale storage entries with the resolved stake so
-        // the next read doesn't re-trigger the toast. When `stakeId` is
-        // null (zero-role superadmin with stale storage) clear both
-        // tiers.
+        // Overwrite the stale storage entries with the resolved stake
+        // so the next read doesn't re-trigger the toast. When
+        // `stakeId` is null (zero-role superadmin with stale storage)
+        // clear both tiers.
         try {
           if (resolved.stakeId === null) {
             if (typeof window !== 'undefined') {
@@ -591,8 +680,8 @@ export function useActiveStake(): string | null {
         }
       }
     } else {
-      // Clear the invalidation dedupe key when the resolution is clean
-      // so a later stale tier can re-fire the toast. Track the
+      // Clear the invalidation dedupe key when the resolution is
+      // clean so a later stale tier can re-fire the toast. Track the
       // last-seen context so a return-to-clean state doesn't itself
       // count as a "context change" that re-fires the toast on the
       // next invalidation.
@@ -601,11 +690,58 @@ export function useActiveStake(): string | null {
     }
     // Re-run side effects when the resolution changes or the principal
     // settles. `resolved` is memoized on `principalSignature` +
-    // `urlStakeParam`; `principalSettling` is the gate that defers side
-    // effects until the principal's claims have actually loaded.
-  }, [resolved, urlStakeParam, principalSettling, principalSignature]);
+    // `urlStakeParam`; `principalSettling` is the gate that defers most
+    // side effects until the principal's claims have actually loaded;
+    // `urlConsumeAllowedWhileSettling` reopens the strip/consume pair
+    // specifically for a settled bootstrap-only principal.
+  }, [
+    resolved,
+    urlStakeParam,
+    principalSettling,
+    urlConsumeAllowedWhileSettling,
+    principalSignature,
+  ]);
 
   return resolved.stakeId;
+}
+
+/** A stake in the StakeSwitcher's menu source. */
+export interface AccessibleStakeEntry {
+  stakeId: string;
+  /**
+   * True when this stake is reachable ONLY via a bootstrap-admin claim
+   * — the principal holds no claim-derived role on it (yet). The
+   * switcher badges these so a manager of A who's also the named
+   * bootstrap admin of not-yet-setup stake B can see B and switch into
+   * its wizard without waiting for a role to be granted first.
+   */
+  needsSetup: boolean;
+}
+
+/**
+ * The StakeSwitcher's menu source: claim-derived accessible stakes
+ * (via `accessibleStakes(principal)`, listed first, in their existing
+ * alphabetical order) plus any bootstrap-only stakes named in
+ * `principal.bootstrapStakes` (appended, `needsSetup: true`, deduped
+ * against the claim-derived set). Fully synchronous — the bootstrap
+ * marker arrives on the same token read as every other claim.
+ */
+export function useAccessibleStakesWithBootstrap(): AccessibleStakeEntry[] {
+  const principal = usePrincipal();
+  return useMemo(() => {
+    const claimAccessible = accessibleStakes(principal);
+    const claimSet = new Set(claimAccessible);
+    const entries: AccessibleStakeEntry[] = claimAccessible.map((stakeId) => ({
+      stakeId,
+      needsSetup: false,
+    }));
+    for (const stakeId of principal.bootstrapStakes) {
+      if (!claimSet.has(stakeId)) {
+        entries.push({ stakeId, needsSetup: true });
+      }
+    }
+    return entries;
+  }, [principal]);
 }
 
 /**
@@ -630,14 +766,4 @@ export function useActiveStakeSwitcher(): (stakeId: string) => void {
       queryClient.invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] }).catch(() => {});
     };
   }, [queryClient]);
-}
-
-/**
- * Read the principal's accessible stakes — convenience re-export so
- * call sites don't have to bridge two modules. Returns the
- * alphabetically-sorted, deduped array suitable for menu rendering.
- */
-export function useAccessibleStakes(): string[] {
-  const principal = usePrincipal();
-  return useMemo(() => accessibleStakes(principal), [principal]);
 }

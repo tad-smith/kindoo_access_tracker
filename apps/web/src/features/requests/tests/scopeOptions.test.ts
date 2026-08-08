@@ -40,6 +40,7 @@ function makePrincipal(overrides: Partial<Principal>): Principal {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => false,
     wardsInStake: () => [],
     ...overrides,
@@ -472,6 +473,7 @@ describe('canRemoveSeat — per-row Remove affordance gate', () => {
     const principal = makePrincipal({
       managerStakes: [STAKE_ID],
       limitedStakes: [],
+      bootstrapStakes: [],
     });
     expect(canRemoveSeat(principal, STAKE_ID, manualSeat('CO'), makeGrant('CO', 'manual'))).toBe(
       true,

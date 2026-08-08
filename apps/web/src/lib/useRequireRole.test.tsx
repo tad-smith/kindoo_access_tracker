@@ -21,6 +21,7 @@ const mockedPrincipal: { current: Principal } = {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => false,
     wardsInStake: () => [],
   },
@@ -77,6 +78,7 @@ beforeEach(() => {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => false,
     wardsInStake: () => [],
   };
@@ -231,6 +233,7 @@ describe('holdsAnyRole', () => {
       stakeMemberStakes: [],
       bishopricWards: {},
       limitedStakes: [],
+      bootstrapStakes: [],
       hasAnyRole: () => false,
       wardsInStake: () => [],
       ...overrides,

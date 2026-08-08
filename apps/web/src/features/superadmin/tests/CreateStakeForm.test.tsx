@@ -37,7 +37,11 @@
 //   - `{success:true}` fires a success toast + calls `onClose`. The
 //     new stake row arrives via the live `useStakes()` snapshot
 //     listener; `useCreateStake` has no `onSuccess` (`invalidateQueries`
-//     is a no-op against the D11 never-resolving `queryFn`).
+//     is a no-op against the D11 never-resolving `queryFn`). No forced
+//     token refresh — `createStake` is superadmin-gated, so the creator
+//     already holds the claim needed to see the new stake via its
+//     deep-link; the StakeSwitcher entry lands on the next natural
+//     token refresh.
 //   - Re-opening the dialog after a successful create yields an empty
 //     form and a re-attached Stake ID (open-transition `reset()`).
 //   - Cancel button calls `onClose` without firing the mutation.

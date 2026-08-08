@@ -7,6 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { gateDecision, type GatePrincipal, type GateStakeRead } from './setupGate';
+import { resolveActiveStake } from './activeStake';
+import { principalFromClaims, type CustomClaims } from './principal-derive';
 import type { Stake } from '@kindoo/shared';
 
 function principal(over: Partial<GatePrincipal> = {}): GatePrincipal {
@@ -274,5 +276,69 @@ describe('gateDecision', () => {
       }),
     );
     expect(decision).toBe('wizard');
+  });
+
+  describe('end-to-end: bootstrap claim → active-stake resolution → gate (headline path)', () => {
+    // Joins the pieces the other unit tests each cover in isolation
+    // (the tier-4 resolver, `principalFromClaims`, the switcher badge,
+    // claim minting) into the one path an actual bootstrap admin's
+    // browser tab drives: a token whose ONLY claim is
+    // `stakes.{id}.bootstrap === true` must (1) resolve that stake as
+    // active via `resolveActiveStake`, and (2) reach `'wizard'` through
+    // `gateDecision` — including across the pending window — without
+    // ever transiting `'not-authorized'`. That last assertion is the
+    // regression guard for the pending-flash fix above: before that
+    // fix, step (2)'s pending call returned `'not-authorized'` because
+    // a bootstrap-only principal is `isAuthenticated: false` by design.
+    it('a bootstrap-only claim resolves its stake active and reaches wizard, never not-authorized', () => {
+      const claims: CustomClaims = {
+        canonical: 'admin@example.com',
+        stakes: {
+          ridgeline: { manager: false, stake: false, wards: [], bootstrap: true },
+        },
+      };
+      const principal = principalFromClaims({ email: 'admin@example.com' }, claims);
+
+      // The claim carries no role — `bootstrap` must NOT count toward
+      // `hasAnyRole` / `isAuthenticated`. Pinning this here (not just in
+      // `principal.test.ts`) because the rest of this test's assertions
+      // depend on that polarity staying put.
+      expect(principal.isAuthenticated).toBe(false);
+      expect(principal.bootstrapStakes).toEqual(['ridgeline']);
+
+      // Step 1: active-stake resolution. No URL/session/local hint — a
+      // fresh bootstrap admin's first-ever tab — so tier 4's
+      // bootstrap-fallback must pick the claimed stake.
+      const resolved = resolveActiveStake(principal, null, null, null);
+      expect(resolved.stakeId).toBe('ridgeline');
+
+      // Step 2a: the pending window. The stake-doc listener hasn't
+      // yielded a snapshot yet. Must wait ('pending'), never reject
+      // ('not-authorized') — that flash is exactly Finding 1's bug.
+      const pendingDecision = gateDecision(
+        principal,
+        { status: 'pending', data: undefined },
+        resolved.stakeId,
+      );
+      expect(pendingDecision).toBe('pending');
+      expect(pendingDecision).not.toBe('not-authorized');
+
+      // Step 2b: the snapshot lands. setup_complete=false and this
+      // principal's canonical matches bootstrap_admin_email → wizard.
+      const wizardDecision = gateDecision(
+        principal,
+        {
+          status: 'success',
+          data: {
+            stake_name: 'Ridgeline',
+            bootstrap_admin_email: 'admin@example.com',
+            setup_complete: false,
+          },
+        },
+        resolved.stakeId,
+      );
+      expect(wizardDecision).toBe('wizard');
+      expect(wizardDecision).not.toBe('not-authorized');
+    });
   });
 });
