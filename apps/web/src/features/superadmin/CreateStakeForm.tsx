@@ -13,12 +13,23 @@
 // Cancel mid-edit) starts fresh. This matches the pattern used by
 // `CallingTemplateFormDialog`.
 //
-// Slug preview: the doc ID slug comes from the typed Stake ID when
-// the operator supplies one, else from the stake name. Both run
-// through the same `buildingSlug` helper the callable applies, so the
-// preview under the Stake ID field is what the server will compute.
-// The Stake ID input holds only what the operator typed — nothing
-// ever writes a name-derived value into it.
+// Stake ID: the field shows the doc ID slug directly — no separate
+// preview line, because the input can only ever hold a canonical slug.
+// It follows the stake name (slugified, live) until the operator edits
+// it, at which point it detaches and the name stops driving it. Cleared
+// back to empty it re-attaches: empty means "give me the default back",
+// so name edits drive it again and blurring an empty field refills it.
+// The refill waits for blur rather than firing the moment the field
+// empties, so clearing it to type a fresh ID doesn't append what they
+// type to the default they just deleted. The detach flag resets with
+// the form on every open transition.
+//
+// Two slug rules, and the difference is load-bearing. Auto-fill from
+// the name re-derives from the whole name each keystroke, so plain
+// `buildingSlug` is right there. Direct typing goes through
+// `sanitizeSlugInput`, which keeps a trailing hyphen so `cs ` doesn't
+// collapse to `cs` and turn the next character into `csnorth`; the
+// hyphen is trimmed on blur and on submit.
 //
 // Timezone: rendered via the shared `TimezoneCombobox` (curated US
 // IANA list). The default is `America/Denver`; the operator picks
@@ -27,10 +38,10 @@
 // error mapping for that code is preserved even though the UI can't
 // practically produce it.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useRef, type ChangeEvent, type FocusEvent } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { buildingSlug, type CreateStakeError } from '@kindoo/shared';
+import { buildingSlug, sanitizeSlugInput, type CreateStakeError } from '@kindoo/shared';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
@@ -47,10 +58,13 @@ function errorMessage(err: unknown): string {
  * Map a soft-failure error code to a human-friendly message and the
  * field it should attach to. `invalid_slug` and `slug_collision` are
  * about whichever input produced the slug: the Stake ID when the
- * operator typed one (`typedStakeId` non-empty), the stake name when
- * they didn't. `name_required`, `email_required`, `invalid_email`, and
- * `invalid_timezone` mirror their inputs. Pure — the caller threads in
- * the submitted Stake ID rather than the mapper reading form state.
+ * payload carried one (`typedStakeId` non-empty), the stake name when
+ * it didn't. Since the ID field auto-fills, the name branch is reached
+ * only when the name has nothing to slugify — an `invalid_slug` on a
+ * name like `###`, which leaves the ID field empty. `name_required`,
+ * `email_required`, `invalid_email`, and `invalid_timezone` mirror
+ * their inputs. Pure — the caller threads in the submitted Stake ID
+ * rather than the mapper reading form state.
  */
 function softFailToFieldError(
   error: CreateStakeError,
@@ -122,27 +136,78 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
     resolver: zodResolver(createStakeSchema),
     defaultValues: EMPTY_DEFAULTS,
   });
-  const { register, control, handleSubmit, watch, reset, setError, formState } = form;
+  const {
+    register,
+    control,
+    handleSubmit,
+    watch,
+    reset,
+    setValue,
+    getValues,
+    setError,
+    formState,
+  } = form;
+
+  // True once the operator has typed into the Stake ID field, which
+  // stops the stake name from driving it. A ref rather than state: only
+  // the handlers below read it, and flipping it never needs a re-render.
+  const stakeIdDetached = useRef(false);
 
   // Reset on every open transition so a re-opened dialog starts empty
   // (after a successful create, or after a Cancel mid-edit). Mirrors
-  // the pattern used by `CallingTemplateFormDialog`.
+  // the pattern used by `CallingTemplateFormDialog`. The detach flag is
+  // form state too, so it resets here alongside the fields.
   useEffect(() => {
-    if (open) reset(EMPTY_DEFAULTS);
+    if (!open) return;
+    stakeIdDetached.current = false;
+    reset(EMPTY_DEFAULTS);
   }, [open, reset]);
 
   const watchedName = watch('stake_name') ?? '';
-  const watchedStakeId = watch('stake_id') ?? '';
-  // Mirror the callable's slug rule: a typed Stake ID wins, else the
-  // slug falls back to the name. Reused at render so the preview stays
-  // in lockstep with what the server will compute on submit.
-  const slugPreview = useMemo(
-    () => buildingSlug(watchedStakeId.trim().length > 0 ? watchedStakeId : watchedName),
-    [watchedStakeId, watchedName],
-  );
+
+  // Stake ID follows the name until the operator takes it over, so they
+  // can see the doc ID they're about to get without typing it.
+  useEffect(() => {
+    if (stakeIdDetached.current) return;
+    setValue('stake_id', buildingSlug(watchedName));
+  }, [watchedName, setValue]);
+
+  const stakeIdField = register('stake_id');
+
+  const onStakeIdChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const el = event.currentTarget;
+    const raw = el.value;
+    const caret = el.selectionStart ?? raw.length;
+    const next = sanitizeSlugInput(raw);
+    // Emptying the field hands it back to the name; anything else is
+    // the operator taking it over. Left empty it stays empty while they
+    // keep typing — refilling here would append the default to whatever
+    // they type next — and `onStakeIdBlur` restores the default if they
+    // walk away without entering one.
+    stakeIdDetached.current = next.length > 0;
+    setValue('stake_id', next, { shouldDirty: true });
+    // `setValue` writes `ref.value` synchronously, which drops the caret
+    // to the end. Put it back where the operator left it, shifted by
+    // whatever the sanitize added or removed.
+    const pos = Math.min(next.length, Math.max(0, caret + next.length - raw.length));
+    el.setSelectionRange(pos, pos);
+  };
+
+  const onStakeIdBlur = (event: FocusEvent<HTMLInputElement>) => {
+    // Drop the word-boundary hyphen now that typing has stopped, and put
+    // the name-derived default back if the field was left empty — at
+    // rest it always shows the ID the stake will actually get.
+    const trimmed = buildingSlug(event.currentTarget.value);
+    setValue('stake_id', trimmed.length > 0 ? trimmed : buildingSlug(getValues('stake_name')), {
+      shouldDirty: true,
+    });
+    void stakeIdField.onBlur(event);
+  };
 
   const onSubmit = handleSubmit(async (input) => {
-    const typedStakeId = input.stake_id.trim();
+    // `buildingSlug` finalizes the sanitized field value, trimming a
+    // trailing hyphen left by a submit that beat the blur.
+    const typedStakeId = buildingSlug(input.stake_id);
     try {
       const result = await mutation.mutateAsync({
         stake_name: input.stake_name,
@@ -197,16 +262,13 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
             type="text"
             autoComplete="off"
             spellCheck={false}
-            {...register('stake_id')}
+            {...stakeIdField}
+            onChange={onStakeIdChange}
+            onBlur={onStakeIdBlur}
             data-testid="create-stake-id"
           />
-          <span className="text-xs text-gray-500" data-testid="create-stake-slug-preview">
-            Optional — defaults from the stake name. Slug:{' '}
-            {slugPreview.length > 0 ? (
-              <code>{slugPreview}</code>
-            ) : (
-              <em className="not-italic text-gray-400">(empty)</em>
-            )}
+          <span className="text-xs text-gray-500" data-testid="create-stake-id-hint">
+            Lowercase letters, digits, and hyphens — defaults from the stake name.
           </span>
         </label>
         {formState.errors.stake_id ? (
