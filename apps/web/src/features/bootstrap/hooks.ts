@@ -16,6 +16,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
 import type { Building, KindooManager, Stake, Ward } from '@kindoo/shared';
+import { refreshIdToken } from '../auth/useTokenRefresh';
 import { useFirestoreCollection, useFirestoreDoc } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import {
@@ -435,6 +436,43 @@ export function useEnsureBootstrapAdmin() {
  * the `lastActor` integrity field; this Firestore flip is the entire
  * Complete-Setup action (the routing gate redirects once it lands, and
  * the `auditTrigger` fans the audit row).
+ *
+ * Forces an ID-token refresh FIRST, before issuing the flip — not in
+ * `onSuccess`. The instant `setup_complete` becomes `true`,
+ * `isSetupInProgressReadable` and `isBootstrapAdmin` (firestore.rules)
+ * both stop applying — they're gated on `setup_complete == false` — so
+ * the stake-doc read falls back to plain `isAnyMember`, which needs the
+ * `manager` claim `useEnsureBootstrapAdmin`'s auto-add minted earlier in
+ * the wizard. If the client's cached token doesn't carry that claim yet
+ * when the post-flip snapshot arrives, the read permission-denies,
+ * `gateDecision` hits its `status === 'error'` branch, and the admin
+ * bounces to NotAuthorized instead of their manager default page.
+ * Refreshing in `onSuccess` (after the flip) leaves that exact window
+ * open — the live listener can re-evaluate against the new doc before
+ * an `onSuccess` refresh call has resolved. Refreshing first closes it:
+ * the client already holds the `manager` claim before the flip is even
+ * issued, so there is nothing left to race once the doc changes.
+ *
+ * This is deliberately NOT the pattern `architecture.md` D28(d)
+ * reverted, even though both are a forced refresh next to `stakes`
+ * writes — don't delete this call on the assumption it repeats that
+ * mistake. D28(d)'s refresh ran right after `createStake`, racing
+ * `syncBootstrapClaims` — an async Firestore trigger on that very
+ * write — before it had run; it lost almost every time and re-cached a
+ * claimless token for ~1h. Here the `manager` claim was minted
+ * *minutes* earlier: `useEnsureBootstrapAdmin` writes
+ * `kindooManagers/{canonical}` at wizard mount, `syncManagersClaims`
+ * fires off that write, and the admin then works through the rest of
+ * the wizard's steps before ever reaching Complete Setup. By the time
+ * this mutation runs, the claim already exists server-side — the
+ * refresh fetches something that's already there, not something still
+ * in flight.
+ *
+ * If the refresh throws (e.g. a transient network failure), the
+ * `updateDoc` below never runs — the `await` is ahead of it — so the
+ * stake doc is untouched (`setup_complete` still `false`) and the
+ * wizard is exactly where it was. The admin sees the mutation error via
+ * the caller's toast and can just retry; nothing is left half-done.
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();
@@ -443,6 +481,7 @@ export function useCompleteSetupMutation() {
   return useMutation({
     mutationFn: async () => {
       const sid = requireActiveStake(activeStakeId);
+      await refreshIdToken();
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, sid), {
         setup_complete: true,

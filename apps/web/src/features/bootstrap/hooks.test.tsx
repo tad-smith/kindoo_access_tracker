@@ -120,9 +120,27 @@ vi.mock('firebase/firestore', async () => {
   };
 });
 
+// `getIdTokenMock` backs `refreshIdToken()` (via `auth.currentUser`),
+// which `useCompleteSetupMutation` calls before flipping
+// `setup_complete`. Defaults to a signed-in user so every other
+// describe block (none of which touch `auth`) is unaffected; the
+// `useCompleteSetupMutation` tests below override behaviour per case.
+// `vi.hoisted` is required here (unlike the plain top-level `const`s
+// above) because the `vi.mock` factory below reads `authMock` as a
+// value at mock-registration time rather than closing over it inside a
+// lazily-invoked function — without `vi.hoisted` that read lands in the
+// TDZ, since `vi.mock` calls are hoisted above ordinary `const`s.
+const { getIdTokenMock, authMock } = vi.hoisted(() => {
+  const getIdTokenMock = vi.fn().mockResolvedValue(undefined);
+  const authMock: { currentUser: { getIdToken: typeof getIdTokenMock } | null } = {
+    currentUser: { getIdToken: getIdTokenMock },
+  };
+  return { getIdTokenMock, authMock };
+});
+
 vi.mock('../../lib/firebase', () => ({
   db: { __sentinel: 'db' },
-  auth: { currentUser: null },
+  auth: authMock,
 }));
 
 vi.mock('../../lib/docs', async () => {
@@ -160,7 +178,12 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
 }));
 
-import { useAddBuildingMutation, useAddWardMutation, useStep1Mutation } from './hooks';
+import {
+  useAddBuildingMutation,
+  useAddWardMutation,
+  useCompleteSetupMutation,
+  useStep1Mutation,
+} from './hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({
@@ -175,6 +198,9 @@ beforeEach(() => {
   getDocMock.mockClear();
   serverTimestampMock.mockClear();
   runTransactionMock.mockClear();
+  getIdTokenMock.mockClear();
+  getIdTokenMock.mockReset().mockResolvedValue(undefined);
+  authMock.currentUser = { getIdToken: getIdTokenMock };
 });
 
 describe('useStep1Mutation', () => {
@@ -331,5 +357,54 @@ describe('useAddWardMutation', () => {
       }),
     ).rejects.toThrow(/Ward name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Hook-level: complete setup --------------------------------------
+//
+// The defect this closes: once `setup_complete` flips true,
+// `isBootstrapAdmin`/`isSetupInProgressReadable` (firestore.rules) go
+// silent, and the client needs the `manager` claim
+// `useEnsureBootstrapAdmin` minted earlier in the wizard already loaded
+// onto its cached ID token — or the post-flip stake-doc read
+// permission-denies and the admin bounces to NotAuthorized. These tests
+// assert the *ordering* (refresh lands before the write goes out), not
+// merely that a refresh happened — a call-count assertion is exactly
+// what let the equivalent D28(d) bug ship.
+describe('useCompleteSetupMutation', () => {
+  it('refreshes the ID token before flipping setup_complete, not in onSuccess after it', async () => {
+    const callOrder: string[] = [];
+    getIdTokenMock.mockImplementation(async () => {
+      callOrder.push('refresh');
+    });
+    updateDocMock.mockImplementationOnce(async () => {
+      callOrder.push('write');
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    expect(callOrder).toEqual(['refresh', 'write']);
+    // Force-refresh, not a read of the (possibly stale) cached token.
+    expect(getIdTokenMock).toHaveBeenCalledWith(true);
+  });
+
+  it('leaves setup_complete unwritten when the token refresh fails', async () => {
+    getIdTokenMock.mockRejectedValue(new Error('network blip'));
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await expect(result.current.mutateAsync()).rejects.toThrow(/network blip/);
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('still writes setup_complete=true with the lastActor integrity field', async () => {
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [ref, body] = updateDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth' });
+    expect(body).toMatchObject({
+      setup_complete: true,
+      last_modified_at: '__server_timestamp__',
+      last_modified_by: { email: 'admin@example.com', canonical: 'admin@example.com' },
+      lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    });
   });
 });
