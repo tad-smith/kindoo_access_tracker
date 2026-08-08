@@ -44,6 +44,7 @@ function principal(overrides: Record<string, unknown> = {}) {
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: { csnorth: ['CO'] },
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => ['CO'],
     ...overrides,

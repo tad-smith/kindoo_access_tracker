@@ -157,6 +157,7 @@ function principal(wards: string[], opts: { limited?: boolean } = {}) {
     stakeMemberStakes: [],
     bishopricWards: { csnorth: wards },
     limitedStakes: opts.limited ? ['csnorth'] : [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => wards,
   };

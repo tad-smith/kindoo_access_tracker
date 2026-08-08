@@ -37,7 +37,7 @@ import { usePrincipal } from '../lib/principal';
 import { useFirestoreDoc } from '../lib/data';
 import { stakeRef } from '../lib/docs';
 import { db } from '../lib/firebase';
-import { useActiveStake, useBootstrapStakeDiscoveryPending } from '../lib/useActiveStake';
+import { useActiveStake } from '../lib/useActiveStake';
 import { gateDecision } from '../lib/setupGate';
 
 export const Route = createFileRoute('/_authed')({
@@ -49,7 +49,6 @@ export const Route = createFileRoute('/_authed')({
 export function AuthedLayout() {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
-  const discoveryPending = useBootstrapStakeDiscoveryPending();
   const stake = useFirestoreDoc(
     principal.firebaseAuthSignedIn && activeStakeId !== null ? stakeRef(db, activeStakeId) : null,
   );
@@ -58,7 +57,6 @@ export function AuthedLayout() {
     principal,
     { data: stake.data, status: stake.status },
     activeStakeId,
-    discoveryPending,
   );
 
   switch (decision) {

@@ -28,15 +28,15 @@
 // access to."; storage: "Your last-active stake is no longer
 // available; switched to <new stake>.").
 //
-// `bootstrapStakeIds` (5th param, default `[]`): server-discovered via
-// the `resolveBootstrapStake` callable — every not-yet-setup stake the
-// signed-in user is the designated bootstrap admin of, regardless of
-// whether they also hold claim-derived roles elsewhere. `useActiveStake`
-// fetches this once per signed-in identity and threads it through on
-// every resolve. It widens tiers 1-3's validation set (a stake reachable
-// only via bootstrap-admin discovery validates normally instead of
+// `principal.bootstrapStakes`: every not-yet-setup stake the signed-in
+// user is the designated bootstrap admin of (per `StakeClaims.bootstrap`
+// — a custom-claims marker, NOT a role; see `packages/shared`), whether
+// or not they also hold claim-derived roles elsewhere. It arrives on the
+// same principal/token read as every other claim — no separate discovery
+// round-trip. It widens tiers 1-3's validation set (a stake reachable
+// only via bootstrap-admin claim validates normally instead of
 // invalidating-with-a-toast) and backstops tier 4: claim-derived stakes
-// always win tier 4; `bootstrapStakeIds[0]` is the tier-4 fallback ONLY
+// always win tier 4; `bootstrapStakes[0]` is the tier-4 fallback ONLY
 // when the principal has zero claim-derived stakes AND is not a platform
 // superadmin (a superadmin must keep landing on `/superadmin/stakes` via
 // the `setupGate.ts` short-circuit, not get auto-switched into a wizard).
@@ -104,12 +104,12 @@ export function resolveActiveStake(
   urlParam: string | null,
   sessionValue: string | null,
   localValue: string | null,
-  bootstrapStakeIds: string[] = [],
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
+  const bootstrapStakeIds = principal.bootstrapStakes;
   // Effective validation set for tiers 1-3: claim-derived stakes plus
-  // whatever the bootstrap-discovery callable has found for this
-  // identity so far (empty before discovery resolves). See file header.
+  // whatever bootstrap-admin claims this identity carries. See file
+  // header.
   const accessSet = new Set<string>([...accessible, ...bootstrapStakeIds]);
   // Bootstrap-admin / pre-claim path: an AUTHENTICATED user with zero
   // accessible stakes who is NOT a platform superadmin is either
@@ -282,13 +282,14 @@ function resolveLocalThenPrincipal(
  * Tier-4 fallback. Claim-derived stakes always win — a manager of A who
  * is ALSO the bootstrap admin of not-yet-setup stake B must keep
  * landing on A, not get auto-switched into B's wizard on every login.
- * `bootstrapStakeIds[0]` (server-sorted ascending; see
- * `resolveBootstrapStake` contract) is consulted ONLY when the
- * principal has zero claim-derived stakes AND is not a platform
- * superadmin — a zero-claim superadmin must keep landing on
- * `/superadmin/stakes` via the `setupGate.ts` short-circuit rather than
- * being auto-routed into a wizard for a stake they merely happen to be
- * the named bootstrap admin of.
+ * The alphabetically-first entry of `bootstrapStakeIds` (insertion order
+ * off the claims object isn't guaranteed sorted; we sort here for a
+ * deterministic pick) is consulted ONLY when the principal has zero
+ * claim-derived stakes AND is not a platform superadmin — a zero-claim
+ * superadmin must keep landing on `/superadmin/stakes` via the
+ * `setupGate.ts` short-circuit rather than being auto-routed into a
+ * wizard for a stake they merely happen to be the named bootstrap admin
+ * of.
  */
 function principalDerivedStake(
   accessibleSorted: string[],
@@ -297,7 +298,7 @@ function principalDerivedStake(
 ): string | null {
   if (accessibleSorted.length > 0) return accessibleSorted[0] ?? null;
   if (isPlatformSuperadmin) return null;
-  return bootstrapStakeIds[0] ?? null;
+  return [...bootstrapStakeIds].sort()[0] ?? null;
 }
 
 /**

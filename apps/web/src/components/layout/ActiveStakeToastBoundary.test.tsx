@@ -71,6 +71,7 @@ const basePrincipal = {
   managerStakes: ['csnorth', 'ridgeline'],
   stakeMemberStakes: [],
   bishopricWards: {},
+  bootstrapStakes: [],
   hasAnyRole: () => true,
   wardsInStake: () => [],
 };
