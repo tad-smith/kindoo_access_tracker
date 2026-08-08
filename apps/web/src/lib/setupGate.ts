@@ -35,17 +35,14 @@
 //   document it here so future changes don't accidentally let absent
 //   docs through.
 //
-// Why we block on pending instead of shortcutting no-claims users to
-// NotAuthorized: rendering NotAuthorized while the stake doc is still
-// pending creates a brief flash for the rare "non-admin during
-// bootstrap" case that re-renders into SetupInProgress once the
-// snapshot lands. The flash is jarring; rendering null briefly while
-// the listener fires (typically <100ms in practice) is cleaner. The
-// previous gate justified the flash by citing slow Firestore
-// permission-denied callbacks in CI, but the rules already explicitly
-// allow any authed user to read the parent stake doc during
-// `setup_complete=false` (firestore.rules
-// `isSetupInProgressReadable`), so the snapshot lands quickly.
+// While the stake-doc subscription is pending: an authed (claim-bearing)
+// principal, or an unauthenticated principal who is the bootstrap admin
+// of the active stake (`bootstrapStakes` includes it), waits ('pending')
+// rather than being rejected — both are permitted to read the doc per
+// the rules (`isAnyMember` / `isSetupInProgressReadable`), so the
+// snapshot lands quickly and the wait is brief. Every other principal
+// shortcuts straight to NotAuthorized rather than waiting; see the
+// `stake.status === 'pending'` branch below for why.
 
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import type { Stake } from '@kindoo/shared';
@@ -58,6 +55,15 @@ import type { Stake } from '@kindoo/shared';
  * `isPlatformSuperadmin` is included so the gate can short-circuit
  * the "no active stake" case for a superadmin (see `gateDecision`
  * stake-doc-pending branch). Defaults to `false` when omitted.
+ *
+ * `bootstrapStakes` mirrors `Principal.bootstrapStakes` (per
+ * `packages/shared`) — the stakes where this principal holds a
+ * `bootstrap: true` claim. `bootstrap` is deliberately excluded from
+ * `hasAnyRole` (so `isAuthenticated` stays `false` for a bootstrap-only
+ * principal — that must NOT change), but the gate still needs to know
+ * about it to avoid mis-treating a bootstrapping admin as a stranger
+ * during the pending window (see the `stake.status === 'pending'`
+ * branch below). Defaults to `[]` when omitted.
  */
 export type GatePrincipal = {
   firebaseAuthSignedIn: boolean;
@@ -65,6 +71,7 @@ export type GatePrincipal = {
   isPlatformSuperadmin?: boolean;
   email: string | null | undefined;
   canonical?: string | null | undefined;
+  bootstrapStakes?: string[];
 };
 
 /**
@@ -135,8 +142,19 @@ export function gateDecision(
   // bootstrap" case (where the listener succeeds and the gate
   // re-renders into SetupInProgress) is acceptable; a 5-second blank
   // page or a crashed app is not.
+  //
+  // Exception: a bootstrap-only principal (`isAuthenticated: false` by
+  // design — `bootstrap` deliberately does not count toward
+  // `hasAnyRole`) whose `bootstrapStakes` names the active stake IS
+  // permitted to read the stake doc while `setup_complete=false`
+  // (rules' `isSetupInProgressReadable`), so (a) doesn't apply — the
+  // listener will resolve, not permission-deny. Wait for it instead of
+  // shortcutting to NotAuthorized; that shortcut is precisely the flash
+  // this carve-out exists to eliminate.
   if (stake.status === 'pending') {
-    return principal.isAuthenticated ? 'pending' : 'not-authorized';
+    const bootstrapping =
+      activeStakeId !== null && (principal.bootstrapStakes ?? []).includes(activeStakeId);
+    return principal.isAuthenticated || bootstrapping ? 'pending' : 'not-authorized';
   }
 
   // Listener error path. The most common cause is a no-claims user
@@ -152,6 +170,13 @@ export function gateDecision(
   // or a rules misconfiguration. NotAuthorized is the safest failure
   // mode (better than letting them past the gate on a stake we
   // couldn't read).
+  //
+  // No bootstrapping carve-out here (unlike the pending branch above):
+  // `isBootstrapAdmin`/`isSetupInProgressReadable` both require the
+  // stake doc to `exists()`, so a bootstrap-only principal can only
+  // reach `error` when the doc genuinely doesn't exist yet (an
+  // unseeded stake) — a real failure, not a timing window. Already
+  // uniform with the claim-bearing-user case above; kept that way.
   if (stake.status === 'error') {
     return 'not-authorized';
   }
@@ -183,6 +208,12 @@ export function gateDecision(
     // stake doc per the runbook, and absent should be a "this
     // isn't set up yet" state, not "this is fully set up." Route
     // them to SetupInProgress.
+    //
+    // No bootstrapping carve-out here either, same reasoning as the
+    // `error` branch above: `exists()`-gated rules mean a bootstrap-
+    // only principal can't reach a successful-but-absent read on a
+    // doc that's truly missing, so this stays the same "genuinely
+    // ambiguous, fail safe" path as the no-claims case.
     if (!principal.isAuthenticated) {
       return 'not-authorized';
     }
