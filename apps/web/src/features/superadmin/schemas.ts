@@ -12,6 +12,10 @@ export const DEFAULT_TIMEZONE = 'America/Denver';
 
 export const createStakeSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
+  // Operator-supplied doc-ID slug. Optional in effect: the empty
+  // string is accepted and the callable derives the slug from
+  // `stake_name` instead. Slugified server-side either way.
+  stake_id: z.string().trim(),
   bootstrap_admin_email: z
     .string()
     .trim()

@@ -24,6 +24,8 @@
 export type CreateStakeInput = {
   /** Display name — trimmed server-side. Non-empty required. */
   stake_name: string;
+  /** Optional operator-supplied doc-ID slug. Slugified server-side via `buildingSlug`. When absent or empty, the slug is derived from `stake_name`. */
+  stake_id?: string;
   /** Bootstrap admin email — trimmed + lowercased server-side; dots and `+suffix` preserved (NOT `canonicalEmail()`). Non-empty required. */
   bootstrap_admin_email: string;
   /** Optional operator-supplied doc-ID slug. Slugified server-side via `buildingSlug`. When absent or empty, the slug is derived from `stake_name`. */

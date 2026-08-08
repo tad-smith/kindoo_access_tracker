@@ -14,12 +14,16 @@
 //   - Empty `stake_name` is rejected client-side by the zod resolver.
 //   - Empty `bootstrap_admin_email` is rejected client-side.
 //   - Valid submit invokes the mutation with the expected payload.
+//   - Stake ID is operator-owned: a typed value rides along in the
+//     payload, an empty one omits the key, and typing in the name
+//     field never rewrites what the operator put in the ID field.
 //   - Picking a different timezone from the combobox propagates into
 //     the submitted payload.
 //   - Each soft-fail error code (`name_required`, `email_required`,
 //     `invalid_email`, `slug_collision`, `invalid_slug`,
 //     `invalid_timezone`) surfaces as an inline message against the
-//     matching field.
+//     matching field — the slug codes landing on Stake ID when the
+//     operator typed one and on the name when they didn't.
 //   - `{success:true}` fires a success toast + calls `onClose`. The
 //     new stake row arrives via the live `useStakes()` snapshot
 //     listener; `useCreateStake` has no `onSuccess` (`invalidateQueries`
@@ -28,7 +32,8 @@
 //     form (open-transition `reset()`).
 //   - Cancel button calls `onClose` without firing the mutation.
 //   - Hard errors (thrown HttpsError) surface as a toast.
-//   - Slug preview tracks the typed name in real time.
+//   - Slug preview tracks the typed name in real time, and switches to
+//     the slugified Stake ID once the operator types one.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { useState } from 'react';
@@ -90,12 +95,14 @@ function Harness({
 }
 
 describe('<CreateStakeForm />', () => {
-  it('renders all three fields with the timezone defaulted to America/Denver', () => {
+  it('renders all four fields with an empty stake ID and the timezone defaulted to America/Denver', () => {
     render(<Harness />);
     const name = screen.getByTestId('create-stake-name') as HTMLInputElement;
+    const stakeId = screen.getByTestId('create-stake-id') as HTMLInputElement;
     const email = screen.getByTestId('create-stake-email') as HTMLInputElement;
     const tz = screen.getByTestId('create-stake-timezone');
     expect(name.value).toBe('');
+    expect(stakeId.value).toBe('');
     expect(email.value).toBe('');
     // The combobox trigger is a button; assert the rendered IANA label
     // rather than a non-existent `.value`.
@@ -164,6 +171,38 @@ describe('<CreateStakeForm />', () => {
     expect(preview).toHaveTextContent(/st-mary-s-stake/);
   });
 
+  it('previews the slugified stake ID instead of the name once one is typed', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-id'), 'CS North');
+    // The callable slugifies a typed ID too, so the preview has to show
+    // the slugified form rather than the raw text.
+    const preview = screen.getByTestId('create-stake-slug-preview');
+    expect(preview).toHaveTextContent(/cs-north/);
+    expect(preview).not.toHaveTextContent(/cottonwood-south-stake/);
+  });
+
+  it('falls back to the name-derived slug in the preview when the stake ID is cleared', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-id'), 'cs-north');
+    await user.clear(screen.getByTestId('create-stake-id'));
+    expect(screen.getByTestId('create-stake-slug-preview')).toHaveTextContent(
+      /cottonwood-south-stake/,
+    );
+  });
+
+  it('leaves a typed stake ID untouched when the stake name is edited afterwards', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-id'), 'my-own-id');
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    expect(screen.getByTestId('create-stake-id')).toHaveValue('my-own-id');
+    expect(screen.getByTestId('create-stake-slug-preview')).toHaveTextContent(/my-own-id/);
+  });
+
   it('calls the createStake mutation with the typed payload on valid submit', async () => {
     mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cottonwood-south-stake' });
     const user = userEvent.setup();
@@ -178,6 +217,38 @@ describe('<CreateStakeForm />', () => {
       bootstrap_admin_email: 'admin@example.com',
       timezone: DEFAULT_TIMEZONE,
     });
+  });
+
+  it('sends the typed stake ID in the payload', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cs-north' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-id'), 'cs-north');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    expect(mutateAsyncMock).toHaveBeenCalledWith({
+      stake_name: 'Cottonwood South Stake',
+      stake_id: 'cs-north',
+      bootstrap_admin_email: 'admin@example.com',
+      timezone: DEFAULT_TIMEZONE,
+    });
+  });
+
+  it('omits stake_id from the payload entirely when the field is left empty', async () => {
+    // The callable treats an absent key as "derive from the name"; an
+    // empty string would be a different (and wrong) instruction.
+    mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cottonwood-south-stake' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    const payload = mutateAsyncMock.mock.calls[0]?.[0];
+    expect(payload).toBeDefined();
+    expect(Object.keys(payload as object)).not.toContain('stake_id');
   });
 
   it('propagates a timezone change picked from the combobox into the payload', async () => {
@@ -221,6 +292,7 @@ describe('<CreateStakeForm />', () => {
     render(<Harness />);
     // First open: type values, switch tz, submit -> dialog closes.
     await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-id'), 'cw-south');
     await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
     await user.click(screen.getByTestId('create-stake-timezone'));
     await user.click(await screen.findByTestId('create-stake-timezone-option-America/Chicago'));
@@ -233,6 +305,7 @@ describe('<CreateStakeForm />', () => {
     // tz back to default.
     await user.click(screen.getByTestId('harness-open'));
     expect((await screen.findByTestId('create-stake-name')) as HTMLInputElement).toHaveValue('');
+    expect(screen.getByTestId('create-stake-id')).toHaveValue('');
     expect(screen.getByTestId('create-stake-email')).toHaveValue('');
     expect(screen.getByTestId('create-stake-timezone')).toHaveTextContent(DEFAULT_TIMEZONE);
   });
@@ -314,7 +387,7 @@ describe('<CreateStakeForm />', () => {
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it('surfaces `invalid_slug` against the stake_name field', async () => {
+  it('surfaces `invalid_slug` against the stake_name field when no stake ID was typed', async () => {
     mutateAsyncMock.mockResolvedValue({ success: false, error: 'invalid_slug' });
     const user = userEvent.setup();
     render(<Harness />);
@@ -325,10 +398,27 @@ describe('<CreateStakeForm />', () => {
     expect(await screen.findByTestId('create-stake-name-error')).toHaveTextContent(
       /no letters or digits/i,
     );
+    expect(screen.queryByTestId('create-stake-id-error')).toBeNull();
     expect(toastMock).not.toHaveBeenCalled();
   });
 
-  it('surfaces `slug_collision` against the stake_name field', async () => {
+  it('surfaces `invalid_slug` against the stake ID field when one was typed', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'invalid_slug' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-id'), '###');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    expect(await screen.findByTestId('create-stake-id-error')).toHaveTextContent(
+      /no letters or digits/i,
+    );
+    expect(screen.queryByTestId('create-stake-name-error')).toBeNull();
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces `slug_collision` against the stake_name field when no stake ID was typed', async () => {
     mutateAsyncMock.mockResolvedValue({ success: false, error: 'slug_collision' });
     const user = userEvent.setup();
     render(<Harness />);
@@ -337,8 +427,26 @@ describe('<CreateStakeForm />', () => {
     await user.click(screen.getByTestId('create-stake-submit'));
 
     expect(await screen.findByTestId('create-stake-name-error')).toHaveTextContent(
-      /A stake with that slug already exists/i,
+      /A stake with that slug already exists\. Pick a different name/i,
     );
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces `slug_collision` against the stake ID field when one was typed', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'slug_collision' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'CS North Stake');
+    await user.type(screen.getByTestId('create-stake-id'), 'cs-north');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    // A collision on an ID the operator typed is fixed by picking a
+    // different ID, not by renaming the stake.
+    expect(await screen.findByTestId('create-stake-id-error')).toHaveTextContent(
+      /A stake with that ID already exists\. Pick a different ID/i,
+    );
+    expect(screen.queryByTestId('create-stake-name-error')).toBeNull();
     expect(toastMock).not.toHaveBeenCalled();
   });
 
