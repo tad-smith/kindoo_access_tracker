@@ -572,6 +572,15 @@ export function useActiveStake(): string | null {
   // role, and firing them on a half-loaded read would corrupt storage
   // (the historical bug this gate was introduced for — see git history
   // on `principalSettling`).
+  //
+  // Residual bound: `markUrlStakeParamConsumed()` only flips a flag —
+  // clearing `moduleUrlStakeParam` itself still requires
+  // `refreshModuleUrlStakeParamFromUrl()` to run again with a null URL
+  // read, which only happens on a router navigation or `popstate`, not
+  // on the `replaceState` call the strip makes. A parked bootstrap-only
+  // principal that never navigates keeps the stale URL value shadowing
+  // tier 4 for the rest of the tab's life; it self-corrects on the next
+  // navigation, not spontaneously.
   const urlConsumeAllowedWhileSettling = principal.bootstrapStakes.length > 0;
 
   useEffect(() => {

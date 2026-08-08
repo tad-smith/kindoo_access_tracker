@@ -8,6 +8,10 @@
 //   - null for zero-role platform superadmin.
 //   - `principal.bootstrapStakes` widening tiers 1-4 and feeding the
 //     StakeSwitcher's menu source (`useAccessibleStakesWithBootstrap`).
+//   - For a settling (bootstrap-only) principal: the URL bar is
+//     stripped immediately, but the module-scoped URL-tier value keeps
+//     shadowing the `bootstrapStakes` answer absent a real router
+//     navigation — a known bound, not a regression under test.
 //
 // Toast TEXT is owned by `<ActiveStakeToastBoundary>` (per item 7) so
 // the storage-tier wording substitutes the display name. Those test
@@ -438,15 +442,76 @@ describe('useActiveStake — principal.bootstrapStakes (claims-derived, synchron
 });
 
 describe('useActiveStake — URL-tier consume for a settling (bootstrap-only) principal', () => {
-  // PR #258 reviewer finding: D29(b) argues a URL value can't compound
-  // into a permanent trap because it's consumed exactly once. That
-  // precondition didn't hold for a zero-role, bootstrap-only principal
-  // — `isAuthenticated` deliberately never flips true for `bootstrap`,
-  // so a consume gated on `!principalSettling` alone never ran, and a
-  // stale/invalid `?stake=X` shadowed the `bootstrapStakes` answer for
-  // the tab's lifetime.
+  // PR #258 reviewer finding, corrected: the original regression test
+  // here manufactured the condition it claimed to test by calling
+  // `notifyActiveStakeUrlNavigated()` directly. In the real flow that
+  // function only fires from `main.tsx`'s `router.history.subscribe`
+  // — a REAL router navigation. `stripStakeParamFromUrl()` uses
+  // `history.replaceState` directly, which does not go through the
+  // router's history instance and so does not fire that subscription.
+  // A bootstrap-only principal parked on the wizard never navigates,
+  // so the module-scoped URL slot is never re-read and a stale
+  // `?stake=A` keeps shadowing tier 4's `bootstrapStakes` answer for
+  // the rest of the tab's life. See the "Residual bound" comment above
+  // `urlConsumeAllowedWhileSettling` in `useActiveStake.ts`.
 
-  it('a stale ?stake=A does not permanently shadow the bootstrapStakes answer for a zero-role bootstrap-only principal', async () => {
+  it('strips a stale ?stake=A from the URL bar immediately for a settling bootstrap-only principal', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    render(<Probe onResult={() => {}} />);
+    // The strip itself doesn't need a router navigation (it's a plain
+    // `history.replaceState` call) — a reload after this point would
+    // not re-read 'foreign' off the URL bar, even though (see next
+    // test) the in-memory answer still does.
+    expect(window.location.search).not.toContain('stake=');
+  });
+
+  it('a stale ?stake=A keeps shadowing the bootstrapStakes answer absent a real router navigation', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    let result: string | null = null;
+    const { rerender } = render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    // First pass: the URL is explicit, present-tense intent, so it
+    // wins even though 'foreign' isn't in this principal's accessible
+    // or bootstrap set (`isPermissiveUrl` in activeStake.ts).
+    expect(result).toBe('foreign');
+
+    // No `popstate` and no `notifyActiveStakeUrlNavigated()` fire here
+    // — this IS the parked-on-wizard case, not a stand-in for one.
+    // Force a re-render the way any unrelated state change elsewhere
+    // in the tree would; the module-scoped slot has no channel to
+    // re-read the (already-stripped) URL without a navigation event,
+    // so it keeps answering 'foreign' instead of falling through to
+    // 'ridgeline'.
+    rerender(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('foreign');
+  });
+
+  it('a router navigation clears the stale slot and falls through to bootstrapStakes', async () => {
     setPrincipal({
       managerStakes: [],
       stakeMemberStakes: [],
@@ -463,25 +528,20 @@ describe('useActiveStake — URL-tier consume for a settling (bootstrap-only) pr
         }}
       />,
     );
-    // First pass: the URL is explicit, present-tense intent, so it
-    // wins even though 'foreign' isn't in this principal's accessible
-    // or bootstrap set (`isPermissiveUrl` in activeStake.ts).
     expect(result).toBe('foreign');
 
-    // Simulate the next resolve — a subsequent router-history
-    // navigation re-checking the URL, the same trigger `main.tsx` uses
-    // for SW-notificationclick deep links. The URL was already
-    // stripped; the consumed value must not keep resurrecting
-    // 'foreign' from module state — it must fall through to tier 4's
-    // bootstrapStakes answer instead. Without the fix this stays
-    // 'foreign' forever.
+    // `notifyActiveStakeUrlNavigated()` here stands in for a REAL
+    // router navigation firing `main.tsx`'s `router.history.subscribe`
+    // — NOT the parked-principal case above, where no navigation ever
+    // happens. Only a real navigation (or `popstate`) re-runs
+    // `refreshModuleUrlStakeParamFromUrl()` and clears the slot.
     await act(async () => {
       notifyActiveStakeUrlNavigated();
     });
     expect(result).toBe('ridgeline');
   });
 
-  it('a legitimate invite deep-link for a bootstrap-only principal still resolves to that stake on first navigation', () => {
+  it('a legitimate invite deep-link for a bootstrap-only principal resolves to that stake on first render, no navigation required', () => {
     setPrincipal({
       managerStakes: [],
       stakeMemberStakes: [],
