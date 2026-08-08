@@ -11,6 +11,18 @@
 //     (deactivating themselves would lock them out).
 //   - Mutation failures surface as error toasts (delete failures must
 //     not be silent — the original staging-bug regression).
+//   - Escape bar (PR #258 reviewer finding): a principal with other
+//     accessible stakes gets a way back to them that overwrites BOTH
+//     persisted storage tiers (so the resolver doesn't bounce back into
+//     this bootstrap-only stake); a pure bootstrap admin (no other
+//     stake) gets a sign-out control instead. Neither gates the
+//     wizard's own step-through behaviour.
+//
+// `lib/activeStake` and `lib/useActiveStake` are NOT mocked here — the
+// escape-bar tests exercise the real `accessibleStakes` /
+// `useActiveStakeSwitcher` implementations against jsdom's real
+// sessionStorage/localStorage so the "does it actually stop the
+// bounce-back" claim is verified, not assumed.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
@@ -18,6 +30,11 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { Building, KindooManager, Stake, Ward } from '@kindoo/shared';
+import {
+  ACTIVE_STAKE_LOCAL_KEY,
+  ACTIVE_STAKE_SESSION_KEY,
+  persistActiveStakeChoice,
+} from '../../lib/activeStake';
 
 const useStakeDocMock = vi.fn();
 const useBuildingsMock = vi.fn();
@@ -29,6 +46,7 @@ const step1Mutate = vi.fn().mockResolvedValue(undefined);
 const usePrincipalMock = vi.fn();
 const navigateMock = vi.fn().mockResolvedValue(undefined);
 const toastSpy = vi.fn();
+const signOutMock = vi.fn();
 
 const deleteBuildingMutate = vi.fn();
 const deleteWardMutate = vi.fn();
@@ -71,6 +89,9 @@ vi.mock('../../lib/principal', () => ({
 }));
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
+}));
+vi.mock('../auth/signOut', () => ({
+  signOut: () => signOutMock(),
 }));
 
 import { BootstrapWizardPage } from './BootstrapWizardPage';
@@ -120,9 +141,19 @@ function Wrapper({ children }: { children: ReactNode }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.sessionStorage.clear();
+  window.localStorage.clear();
+  // Default principal: a pure bootstrap admin with no claim-derived
+  // stake access anywhere — the common case per PR #258's finding, and
+  // the shape `accessibleStakes()` (real, unmocked) reads. Individual
+  // escape-bar tests override `managerStakes` / `stakeMemberStakes` /
+  // `bishopricWards` to exercise the "other stakes" branch.
   usePrincipalMock.mockReturnValue({
     email: 'admin@example.com',
     canonical: 'admin@example.com',
+    managerStakes: [],
+    stakeMemberStakes: [],
+    bishopricWards: {},
   });
   useStakeDocMock.mockReturnValue(stakeResult(makeStake()));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
@@ -135,6 +166,7 @@ beforeEach(() => {
   addBuildingMutate.mockResolvedValue(undefined);
   addWardMutate.mockResolvedValue(undefined);
   addManagerMutate.mockResolvedValue(undefined);
+  signOutMock.mockResolvedValue(undefined);
 });
 
 describe('<BootstrapWizardPage />', () => {
@@ -576,5 +608,61 @@ describe('<BootstrapWizardPage />', () => {
         'error',
       ),
     );
+  });
+
+  describe('escape bar (PR #258 finding: "Setup needed" was a one-way door)', () => {
+    it('offers a way back to other accessible stakes and does not bounce back into the wizard', async () => {
+      // Simulate the precondition that created the one-way door: the
+      // StakeSwitcher's "Setup needed" click already wrote THIS
+      // bootstrap-only stake into both storage tiers before landing here.
+      persistActiveStakeChoice('bootstrap-only-stake');
+      expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('bootstrap-only-stake');
+      expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('bootstrap-only-stake');
+
+      usePrincipalMock.mockReturnValue({
+        email: 'admin@example.com',
+        canonical: 'admin@example.com',
+        managerStakes: ['acmestake'],
+        stakeMemberStakes: [],
+        bishopricWards: {},
+      });
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+
+      expect(screen.queryByTestId('wizard-escape-sign-out')).toBeInTheDocument();
+      const back = screen.getByTestId('wizard-escape-back-to-stakes');
+      expect(back).toHaveTextContent(/Back to my stake/i);
+
+      await user.click(back);
+
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
+      // The stale bootstrap-only value must be OVERWRITTEN in both
+      // tiers — leaving it in place is exactly what re-resolves back
+      // into this wizard on the next render (the reported bug).
+      expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('acmestake');
+      expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('acmestake');
+    });
+
+    it('renders sign-out (no way-back link) for a pure bootstrap admin with no other accessible stakes', async () => {
+      // Default beforeEach principal already has zero accessible stakes.
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+
+      expect(screen.queryByTestId('wizard-escape-back-to-stakes')).not.toBeInTheDocument();
+      const signOutButton = screen.getByTestId('wizard-escape-sign-out');
+      expect(signOutButton).toHaveTextContent(/Sign out/i);
+
+      await user.click(signOutButton);
+      expect(signOutMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not gate the wizard step-through: Next still advances steps with the escape bar present', async () => {
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('wizard-escape-sign-out')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /^Next$/ }));
+      expect(screen.getByTestId('wizard-step-2')).toBeInTheDocument();
+    });
   });
 });
