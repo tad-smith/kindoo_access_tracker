@@ -28,6 +28,7 @@ import {
   clearEmulators,
   hasEmulators,
   hasFunctionsEmulator,
+  makeSettledUser,
   requireEmulators,
   waitFor,
 } from './lib/emulator.js';
@@ -172,25 +173,6 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
     await clearEmulators();
   });
 
-  /**
-   * Create a user and wait out `onAuthUserCreate`'s async baseline claim
-   * write when the Functions emulator is live, so the trigger can't
-   * clobber what the test writes next. Mirrors the wait in the suite
-   * above.
-   */
-  async function makeSettledUser(email: string): Promise<string> {
-    const { auth } = requireEmulators();
-    const user = await auth.createUser({ email });
-    if (functionsEmulatorReachable) {
-      const seeded = await waitFor(async () => {
-        const u = await auth.getUser(user.uid);
-        return ((u.customClaims ?? {}) as { canonical?: string }).canonical === email;
-      }, 20_000);
-      expect(seeded).toBe(true);
-    }
-    return user.uid;
-  }
-
   const stakeBlock = (over: Partial<StakeClaims> = {}): StakeClaims => ({
     manager: false,
     stake: false,
@@ -212,7 +194,7 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
     { timeout: 30_000 },
     async () => {
       const email = 'multi@gmail.com';
-      const uid = await makeSettledUser(email);
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
       // Full-access block in stake A, then a limited block in stake B.
       await applyStakeClaims(uid, email, 'alpha', stakeBlock({ stake: true, wards: [] }));
@@ -237,7 +219,7 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
     async () => {
       const { auth } = requireEmulators();
       const email = 'flip@gmail.com';
-      const uid = await makeSettledUser(email);
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
       await applyStakeClaims(uid, email, 'csnorth', stakeBlock());
 
@@ -282,19 +264,6 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
     await clearEmulators();
   });
 
-  async function makeSettledUser(email: string): Promise<string> {
-    const { auth } = requireEmulators();
-    const user = await auth.createUser({ email });
-    if (functionsEmulatorReachable) {
-      const seeded = await waitFor(async () => {
-        const u = await auth.getUser(user.uid);
-        return ((u.customClaims ?? {}) as { canonical?: string }).canonical === email;
-      }, 20_000);
-      expect(seeded).toBe(true);
-    }
-    return user.uid;
-  }
-
   async function readBlock(uid: string, stakeId: string): Promise<Record<string, unknown>> {
     const { auth } = requireEmulators();
     const claims = ((await auth.getUser(uid)).customClaims ?? {}) as {
@@ -305,7 +274,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it('mints bootstrap: true on a stake with no prior claim block, and prunes it back out', async () => {
     const email = 'boot@gmail.com';
-    const uid = await makeSettledUser(email);
+    const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
     await applyBootstrapClaim(uid, email, 'new-stake', true);
     expect(await readBlock(uid, 'new-stake')).toEqual({
@@ -323,7 +292,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it('preserves an existing manager/stake block when toggling bootstrap on and off', async () => {
     const email = 'both@gmail.com';
-    const uid = await makeSettledUser(email);
+    const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
     await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: ['GE'] });
     await applyBootstrapClaim(uid, email, 'csnorth', true);
@@ -352,7 +321,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
     // `applyBootstrapClaim` already preserving manager/stake/wards in
     // the other direction.
     const email = 'reorder@gmail.com';
-    const uid = await makeSettledUser(email);
+    const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
     await applyBootstrapClaim(uid, email, 'csnorth', true);
     expect((await readBlock(uid, 'csnorth'))['bootstrap']).toBe(true);
@@ -379,7 +348,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
     // self-heals it (`syncBootstrapClaims` only fires on stake-doc
     // writes, and the stake doc never changed).
     const email = 'lockout@gmail.com';
-    const uid = await makeSettledUser(email);
+    const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
     // 1. Bootstrap admin discoverable.
     await applyBootstrapClaim(uid, email, 'csnorth', true);
@@ -404,7 +373,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it('does not clobber a sibling stake block', async () => {
     const email = 'multi@gmail.com';
-    const uid = await makeSettledUser(email);
+    const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
     await applyStakeClaims(uid, email, 'alpha', { manager: false, stake: true, wards: [] });
     await applyBootstrapClaim(uid, email, 'beta', true);
