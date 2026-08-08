@@ -6,9 +6,9 @@
 // immutable-`building_id` create semantics.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Building, Ward } from '@kindoo/shared';
 import { buildingDeleteBlocker, duplicateBuildingNameBlocker } from './hooks';
 
@@ -120,9 +120,12 @@ vi.mock('firebase/firestore', async () => {
   };
 });
 
-// `getIdTokenMock` backs `refreshIdToken()` (via `auth.currentUser`),
-// which `useCompleteSetupMutation` calls before flipping
-// `setup_complete`. Defaults to a signed-in user so every other
+// `getIdTokenMock` backs `refreshIdToken()` and `getIdTokenResultMock`
+// backs the claim read in `waitForManagerClaim` (both via
+// `auth.currentUser`), which `useCompleteSetupMutation` calls before
+// flipping `setup_complete`. `getIdTokenResultMock` defaults to a token
+// that already carries the `manager` claim on the active stake
+// ('csnorth', per the `useActiveStake` mock below) so every other
 // describe block (none of which touch `auth`) is unaffected; the
 // `useCompleteSetupMutation` tests below override behaviour per case.
 // `vi.hoisted` is required here (unlike the plain top-level `const`s
@@ -130,12 +133,20 @@ vi.mock('firebase/firestore', async () => {
 // value at mock-registration time rather than closing over it inside a
 // lazily-invoked function — without `vi.hoisted` that read lands in the
 // TDZ, since `vi.mock` calls are hoisted above ordinary `const`s.
-const { getIdTokenMock, authMock } = vi.hoisted(() => {
+const { getIdTokenMock, getIdTokenResultMock, authMock } = vi.hoisted(() => {
   const getIdTokenMock = vi.fn().mockResolvedValue(undefined);
-  const authMock: { currentUser: { getIdToken: typeof getIdTokenMock } | null } = {
-    currentUser: { getIdToken: getIdTokenMock },
+  const getIdTokenResultMock = vi
+    .fn()
+    .mockResolvedValue({ claims: { stakes: { csnorth: { manager: true } } } });
+  const authMock: {
+    currentUser: {
+      getIdToken: typeof getIdTokenMock;
+      getIdTokenResult: typeof getIdTokenResultMock;
+    } | null;
+  } = {
+    currentUser: { getIdToken: getIdTokenMock, getIdTokenResult: getIdTokenResultMock },
   };
-  return { getIdTokenMock, authMock };
+  return { getIdTokenMock, getIdTokenResultMock, authMock };
 });
 
 vi.mock('../../lib/firebase', () => ({
@@ -200,7 +211,15 @@ beforeEach(() => {
   runTransactionMock.mockClear();
   getIdTokenMock.mockClear();
   getIdTokenMock.mockReset().mockResolvedValue(undefined);
-  authMock.currentUser = { getIdToken: getIdTokenMock };
+  getIdTokenResultMock.mockClear();
+  getIdTokenResultMock
+    .mockReset()
+    .mockResolvedValue({ claims: { stakes: { csnorth: { manager: true } } } });
+  authMock.currentUser = { getIdToken: getIdTokenMock, getIdTokenResult: getIdTokenResultMock };
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useStep1Mutation', () => {
@@ -367,10 +386,17 @@ describe('useAddWardMutation', () => {
 // silent, and the client needs the `manager` claim
 // `useEnsureBootstrapAdmin` minted earlier in the wizard already loaded
 // onto its cached ID token — or the post-flip stake-doc read
-// permission-denies and the admin bounces to NotAuthorized. These tests
-// assert the *ordering* (refresh lands before the write goes out), not
-// merely that a refresh happened — a call-count assertion is exactly
-// what let the equivalent D28(d) bug ship.
+// permission-denies and the admin bounces to NotAuthorized.
+//
+// A refresh alone doesn't prove the claim arrived — a transient failure
+// of the wizard's fire-and-forget auto-add, or a silent
+// `uidForCanonical` miss in `syncManagersClaims`, can leave the token
+// claimless even after a fresh fetch. So on top of the ordering
+// assertion (refresh lands before the write goes out — a call-count
+// assertion alone is exactly what let the equivalent D28(d) bug ship),
+// the tests below assert the fail-closed gate: a claim that never
+// lands must block the write outright, not just log a warning and
+// proceed.
 describe('useCompleteSetupMutation', () => {
   it('refreshes the ID token before flipping setup_complete, not in onSuccess after it', async () => {
     const callOrder: string[] = [];
@@ -406,5 +432,47 @@ describe('useCompleteSetupMutation', () => {
       last_modified_by: { email: 'admin@example.com', canonical: 'admin@example.com' },
       lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
     });
+  });
+
+  it('proceeds with the flip once the manager claim is confirmed present after the refresh', async () => {
+    getIdTokenResultMock.mockResolvedValue({
+      claims: { stakes: { csnorth: { manager: true } } },
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
+  });
+
+  // The gap PR #260's reviewer found: the prior fix refreshed and
+  // proceeded regardless. A claim that never lands must leave the stake
+  // doc untouched — asserted on the write itself, not merely on the
+  // rejection, since a rejected promise with a write that fired anyway
+  // would still strand the admin.
+  it('never calls updateDoc and rejects the mutation when the manager claim never arrives', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({ claims: {} });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  // Proves the retry loop actually re-checks rather than the first read
+  // happening to already succeed (the previous test's mock never
+  // resolves the claim; this one resolves it two retries in).
+  it('proceeds with the flip when the manager claim arrives on a later retry', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: { stakes: { csnorth: { manager: true } } } });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    await act(() => vi.runAllTimersAsync());
+    await pending;
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(3);
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
   });
 });
