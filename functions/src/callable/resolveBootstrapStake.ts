@@ -1,16 +1,25 @@
-// Callable: lets a freshly signed-in user discover whether they are
-// the bootstrap admin of a not-yet-set-up stake. `createStake` writes
+// Callable: lets a freshly signed-in user discover every not-yet-set-up
+// stake they're the bootstrap admin of. `createStake` writes
 // `bootstrap_admin_email` on the parent stake doc but mints no custom
 // claim — the wizard doesn't create the manager doc (and thus the
 // claim) until later — so nothing else in the system can answer
-// "which stake am I the bootstrap admin of?". A client-side query
+// "which stake(s) am I the bootstrap admin of?". A client-side query
 // can't do this either: rules can't scope a `list` to "docs where
 // bootstrap_admin_email == me" without leaking every stake's name and
 // admin email to any signed-in user. Discovery has to be server-side.
 //
+// A caller can be the bootstrap admin of more than one stake at once
+// (e.g. a platform superadmin who provisioned several, or an email
+// reused across two in-progress stakes) — return all of them and let
+// the web switcher list every match rather than guessing which one
+// the caller wants. This also means every signed-in session calls
+// this once, not just zero-claims sessions, so the no-match path
+// (empty result) has to stay a single cheap equality query — no
+// caching, no batching.
+//
 // Auth: any signed-in caller — deliberately no role gate, since role
 // discovery is the entire point. This is safe because the query only
-// ever returns a stake whose `bootstrap_admin_email` already equals
+// ever returns stakes whose `bootstrap_admin_email` already equals
 // the caller's own token email.
 //
 // Match on plain lowercase, NOT `canonicalEmail()`. Mirrors
@@ -23,8 +32,7 @@
 //
 // `setup_complete` gate: only a stake still mid-setup is eligible.
 // Post-setup access is claim-gated like everything else, so a
-// completed stake must return `null` here even on an exact email
-// match.
+// completed stake is excluded even on an exact email match.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import type { ResolveBootstrapStakeOutput, Stake } from '@kindoo/shared';
@@ -40,21 +48,19 @@ export const resolveBootstrapStake = onCall(
     // Firebase Auth always emits this lowercased.
     const email = req.auth.token.email;
     if (!email) {
-      return { stakeId: null };
+      return { stakeIds: [] };
     }
 
     const db = getDb();
     const snap = await db.collection('stakes').where('bootstrap_admin_email', '==', email).get();
 
-    // Multiple matches shouldn't happen in practice (an operator would
-    // have to reuse the same bootstrap admin email across two
-    // in-progress stakes), but pick deterministically so repeat calls
-    // are stable rather than racing on Firestore's unspecified order.
-    const stakeId = snap.docs
+    // Sorted so repeat calls are stable rather than racing on
+    // Firestore's unspecified order.
+    const stakeIds = snap.docs
       .filter((d) => (d.data() as Stake).setup_complete !== true)
       .map((d) => d.id)
-      .sort()[0];
+      .sort();
 
-    return { stakeId: stakeId ?? null };
+    return { stakeIds };
   },
 );

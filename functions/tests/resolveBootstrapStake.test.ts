@@ -2,22 +2,24 @@
 // the bootstrap admin of a newly-created stake landing on
 // "Not Authorized": before the wizard runs, no claim exists that
 // identifies them as the bootstrap admin of anything, so the client
-// has no other way to discover the stakeId.
+// has no other way to discover the stakeId(s).
 //
 // Coverage:
 //   - Unauthenticated caller → HttpsError('unauthenticated').
-//   - Signed-in caller with no email on the token → { stakeId: null }
+//   - Signed-in caller with no email on the token → { stakeIds: [] }
 //     (not an error).
 //   - Happy path: exact `bootstrap_admin_email` match on a
 //     not-yet-set-up stake → that stake's id.
-//   - `setup_complete: true` → null even on an exact email match.
-//   - No match at all → null.
+//   - `setup_complete: true` → excluded even on an exact email match.
+//   - No match at all → { stakeIds: [] }.
 //   - Gmail dot / `+suffix` alias stored verbatim by `createStake` →
 //     matches the token email verbatim. Guards against a regression
 //     that canonicalises the lookup (which would silently break the
 //     match, since the stored value is deliberately NOT canonicalised
 //     — see `firestore.rules` `isBootstrapAdmin` / `createStake.ts`).
-//   - Multiple matching stakes → deterministic (lowest doc id) pick.
+//   - Multiple matching stakes (e.g. a superadmin bootstrapping two
+//     stakes with the same admin email) → all returned, sorted
+//     ascending by doc id.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -83,9 +85,9 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
     });
   });
 
-  it('returns { stakeId: null } for a signed-in caller with no email on the token', async () => {
+  it('returns { stakeIds: [] } for a signed-in caller with no email on the token', async () => {
     const result = await resolveBootstrapStake.run(callableReq({ auth: {} }));
-    expect(result).toEqual({ stakeId: null });
+    expect(result).toEqual({ stakeIds: [] });
   });
 
   it('returns the stakeId on an exact bootstrap_admin_email match', async () => {
@@ -98,10 +100,10 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
       callableReq({ auth: { email: 'admin@example.com' } }),
     );
 
-    expect(result).toEqual({ stakeId: 'happy-stake' });
+    expect(result).toEqual({ stakeIds: ['happy-stake'] });
   });
 
-  it('returns null once the stake has finished setup', async () => {
+  it('excludes a stake that has finished setup', async () => {
     await seedStake('done-stake', {
       bootstrap_admin_email: 'doneadmin@example.com',
       setup_complete: true,
@@ -111,10 +113,10 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
       callableReq({ auth: { email: 'doneadmin@example.com' } }),
     );
 
-    expect(result).toEqual({ stakeId: null });
+    expect(result).toEqual({ stakeIds: [] });
   });
 
-  it('returns null when no stake matches the caller email', async () => {
+  it('returns { stakeIds: [] } when no stake matches the caller email', async () => {
     await seedStake('other-stake', {
       bootstrap_admin_email: 'someone-else@example.com',
       setup_complete: false,
@@ -124,7 +126,7 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
       callableReq({ auth: { email: 'nobody@example.com' } }),
     );
 
-    expect(result).toEqual({ stakeId: null });
+    expect(result).toEqual({ stakeIds: [] });
   });
 
   it('matches a Gmail dot/+suffix alias verbatim (no canonicalisation)', async () => {
@@ -140,17 +142,25 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
 
     const result = await resolveBootstrapStake.run(callableReq({ auth: { email: alias } }));
 
-    expect(result).toEqual({ stakeId: 'gmail-stake' });
+    expect(result).toEqual({ stakeIds: ['gmail-stake'] });
   });
 
-  it('picks deterministically (lowest doc id) when multiple stakes match', async () => {
+  it('returns all matching stakes, sorted ascending by doc id', async () => {
+    // Models a caller (e.g. a platform superadmin) who is the
+    // bootstrap admin of more than one in-progress stake at once —
+    // the web switcher lists all of them rather than picking one.
     const email = 'shared-admin@example.com';
     await seedStake('zzz-stake', { bootstrap_admin_email: email, setup_complete: false });
     await seedStake('aaa-stake', { bootstrap_admin_email: email, setup_complete: false });
     await seedStake('mmm-stake', { bootstrap_admin_email: email, setup_complete: false });
+    // A finished stake with the same email must not appear.
+    await seedStake('done-shared-stake', {
+      bootstrap_admin_email: email,
+      setup_complete: true,
+    });
 
     const result = await resolveBootstrapStake.run(callableReq({ auth: { email } }));
 
-    expect(result).toEqual({ stakeId: 'aaa-stake' });
+    expect(result).toEqual({ stakeIds: ['aaa-stake', 'mmm-stake', 'zzz-stake'] });
   });
 });
