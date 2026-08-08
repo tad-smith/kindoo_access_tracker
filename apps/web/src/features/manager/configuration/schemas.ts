@@ -9,6 +9,7 @@
 // `useForm<T>()` requires under exactOptionalPropertyTypes.
 
 import { z } from 'zod';
+import { collidesWithOwnWard, normaliseIgnoredWard } from '@kindoo/shared';
 
 export const wardSchema = z.object({
   // `ward_code` is no longer a user input — it's derived from `ward_name`
@@ -34,6 +35,60 @@ export const buildingSchema = z.object({
   kindoo_site_id: z.string().nullable(),
 });
 export type BuildingForm = z.infer<typeof buildingSchema>;
+
+// Home Kindoo Site — the stake's own Kindoo environment. Normally
+// written by the extension's configure wizard, which discovers the EID
+// from the live session; this form is the manual escape hatch, so it is
+// superadmin-only (see `HomeKindooSiteSection`).
+//
+// `site_name` maps to `stake.kindoo_expected_site_name`, the value the
+// description parser and the wizard's home-by-name resolution compare
+// against (both fall back to `stake_name` when it is unset). `eid` maps
+// to `stake.kindoo_config.site_id`.
+export const homeKindooSiteSchema = z.object({
+  site_name: z.string().trim().min(1, 'Kindoo site name is required.'),
+  eid: z
+    .number({ message: 'EID must be a number.' })
+    .int('EID must be a whole number.')
+    .positive('EID must be greater than 0.'),
+});
+export type HomeKindooSiteForm = z.infer<typeof homeKindooSiteSchema>;
+
+// Wards to Ignore in Kindoo — one free-text ward name. Two of the three
+// rules depend on live catalogues, so this is a factory rather than a
+// constant: the dialog rebuilds it whenever the ignore list or the
+// wards snapshot changes.
+export type IgnoredWardForm = { ward: string };
+
+export function makeIgnoredWardSchema(
+  existing: readonly string[],
+  ownWardNames: readonly string[],
+) {
+  return z.object({
+    ward: z
+      .string()
+      .trim()
+      .min(1, 'Ward name is required.')
+      // Matching is on the scope-name portion of a description, so a
+      // pasted `Maple Ward (Bishop)` would sit in the list matching
+      // nothing. The likeliest of the three mistakes.
+      .refine(
+        (v) => !v.includes('('),
+        'Enter the ward name only — drop the calling in parentheses.',
+      )
+      .refine(
+        (v) => !existing.some((w) => normaliseIgnoredWard(w) === normaliseIgnoredWard(v)),
+        'That ward is already on the list.',
+      )
+      // An entry naming a ward we own is inert (the extension only
+      // ignores segments that failed to resolve), so it would sit there
+      // looking like it does something.
+      .refine(
+        (v) => !collidesWithOwnWard(v, ownWardNames),
+        'That is one of your own wards — ignoring it would hide its own Sync rows.',
+      ),
+  });
+}
 
 // Kindoo Sites — foreign Kindoo environments this stake's managers can
 // write to. Home site is implicit on the parent stake doc; this form

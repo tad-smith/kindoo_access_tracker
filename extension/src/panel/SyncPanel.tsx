@@ -34,8 +34,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { scopeLabel, type Ward } from '@kindoo/shared';
 import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
-import { listAllEnvironmentUsers } from '../content/kindoo/endpoints';
+import { listAllEnvironmentUsers, type KindooEnvironmentUser } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
+import { isFullyIgnored, parseDescription } from '../content/kindoo/sync/parser';
 import {
   detect,
   type Discrepancy,
@@ -185,13 +186,32 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       const ruleIds = collectRuleIds(siteBuildings);
       const ruleDoorMap = await buildRuleDoorMap(session, session.eid, ruleIds);
 
+      // Phase B.5: drop the users the stake's ignore list consumes
+      // whole — another SBA stake's wards sharing this Kindoo site.
+      // `detect` would drop them anyway, but only AFTER Phase C has
+      // spent a `getUserDoorGrants` round-trip on each one, every run.
+      // In the motivating case (a neighbouring stake's two wards
+      // provisioned into our env) that is their entire membership
+      // billed to our call budget for nothing.
+      //
+      // They still go into `detect` below — un-enriched, which costs
+      // nothing because it drops them before reading `derivedBuildings`
+      // — so its own pass stays the backstop and `ignoredCount` (the
+      // report header's `N ignored`) keeps coming from one place.
+      const usersToEnrich: KindooEnvironmentUser[] = [];
+      const ignoredUsers: KindooEnvironmentUser[] = [];
+      for (const u of kindooUsers) {
+        const parsed = parseDescription(u.description, bundle.stake, bundle.wards);
+        (isFullyIgnored(parsed) ? ignoredUsers : usersToEnrich).push(u);
+      }
+
       // Phase C: enrich each user with derivedBuildings. ~313 calls
       // at concurrency=4; the operator sees "Reading Kindoo user N of
       // M…" tick along.
       const enriched = await enrichUsersWithDerivedBuildings(
         session,
         session.eid,
-        kindooUsers,
+        usersToEnrich,
         ruleDoorMap,
         siteBuildings,
         {
@@ -207,7 +227,11 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
         },
       );
 
-      const result = detect({ ...bundle, kindooUsers: enriched, activeSite });
+      const result = detect({
+        ...bundle,
+        kindooUsers: [...enriched, ...ignoredUsers],
+        activeSite,
+      });
       const ctx: DispatchContext = { stakeId };
       const activeSiteLabel = describeActiveSite(activeSite, bundle);
       setStep({ kind: 'report', result, ctx, activeSiteLabel, wards: bundle.wards });
@@ -350,7 +374,7 @@ function SyncBody({ step, filter, codeFilter, onRun, onFilter, onCodeFilter }: B
     return (
       <div data-testid="sba-sync-unknown-site">
         <p className="sba-error" data-testid="sba-sync-unknown-site-message">
-          This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Sites or
+          This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Config or
           switch to a known site.
         </p>
         <button type="button" className="sba-btn" onClick={onRun} data-testid="sba-sync-retry">

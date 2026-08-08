@@ -6,6 +6,20 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-89] Kindoo Config tab — Home Kindoo Site, section renames, Sync pre-filter
+Status: done (2026-08-08 — `feat/kindoo-config-tab`)
+Owner: @web-engineer, @extension-engineer
+Phase: Kindoo Sites (§15)
+
+**Done.** Follow-ups to [T-88], plus the two items PR #261's review filed as non-blocking. Full write-up in `docs/changelog/kindoo-config-tab.md`.
+
+- Configuration tab **"Kindoo Sites" → "Kindoo Config"**, now three sections: Home Kindoo Site, Foreign Kindoo Sites (renamed), Wards to Ignore in Kindoo. Tab **key** stays `kindoo-sites` — it is in the URL.
+- **Home Kindoo Site** section: shows `kindoo_expected_site_name` (falling back to `stake_name`) + `kindoo_config.site_id`, superadmin-editable. Closes the gap where `kindoo_expected_site_name` had no writer anywhere and `kindoo_config` was extension-only — which is what made a never-configured stake unreachable from the extension panel (its EID isn't recorded, so it isn't a resolution candidate).
+- **Sync pre-filter** — the ignore-list drop moved ahead of the door-grant enrichment loop; it was costing one Kindoo round-trip per ignored member per run.
+- **`(` guard** on ignore-list entries, and the section moved to the header-button + dialog pattern.
+
+Two things worth not re-deriving. The superadmin gate is a **UI** gate: `firestore.rules` still requires `isManager(stakeId)` on the stake doc, so the editor must be both — a superadmin who manages no stakes cannot use it. And the EID input carries **no `min` attribute**: native constraint validation suppresses the submit event, so React never sees it and the zod message can never render.
+
 ## [T-88] Wards to Ignore in Kindoo — skip another SBA stake's wards during Sync
 Status: done (2026-08-08 — `feat/kindoo-ignored-wards`)
 Owner: @web-engineer, @extension-engineer

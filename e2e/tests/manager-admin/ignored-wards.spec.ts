@@ -1,4 +1,4 @@
-// Wards to Ignore in Kindoo — the second list on the Kindoo Sites tab.
+// Wards to Ignore in Kindoo — the last list on the Kindoo Config tab.
 // Validation and mutation payloads are covered at the component layer
 // (ConfigurationPage.test.tsx); this proves the section renders in a
 // real bundle and that a write round-trips through Firestore rules to
@@ -65,15 +65,22 @@ test.describe('Wards to Ignore in Kindoo', () => {
     await expect(page.getByRole('heading', { name: 'Wards to Ignore in Kindoo' })).toBeVisible();
     await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();
 
+    await page.getByTestId('config-ignored-wards-add-button').click();
+
+    // A pasted description is refused — matching is on the ward name alone.
+    await page.getByTestId('config-ignored-ward-input').fill('Aspen Grove Ward (Bishop)');
+    await expect(page.getByTestId('config-ignored-ward-error')).toContainText(
+      'drop the calling in parentheses',
+    );
+
     // Our own ward is refused — ignoring it would hide its own Sync rows.
     await page.getByTestId('config-ignored-ward-input').fill('Maple Ward');
     await expect(page.getByTestId('config-ignored-ward-error')).toContainText('one of your own');
-    await expect(page.getByTestId('config-ignored-ward-add')).toBeDisabled();
 
     // A neighbouring stake's ward goes through and survives a reload.
     await page.getByTestId('config-ignored-ward-input').fill('Aspen Grove Ward');
     await expect(page.getByTestId('config-ignored-ward-error')).toHaveCount(0);
-    await page.getByTestId('config-ignored-ward-add').click();
+    await page.getByTestId('config-ignored-ward-submit').click();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
 
     await page.reload();

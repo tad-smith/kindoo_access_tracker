@@ -750,6 +750,64 @@ export function useUpsertKindooSiteMutation() {
   });
 }
 
+// ---- Home Kindoo site -----------------------------------------------
+//
+// The stake's own Kindoo environment. Normally written by the
+// extension's configure wizard, which discovers the EID from the live
+// Kindoo session; this is the manual path, gated to superadmins in the
+// UI because a wrong EID silently points every Kindoo operation at
+// another environment.
+//
+// It also breaks a genuine deadlock. The extension resolves an active
+// EID to a stake only among stakes that ALREADY record that EID, so a
+// stake whose home site has never been configured can never be reached
+// from the panel to configure it — and if a sibling stake has the same
+// environment as a foreign site, the panel silently resolves to the
+// sibling instead.
+//
+// `kindoo_config` must be written WHOLE: `validKindooConfig`
+// (firestore.rules) checks all four keys against the merged result on
+// every stake-doc update, so a partial write would deny every
+// subsequent client write to this doc — the Config tab included.
+
+export interface HomeKindooSiteInput {
+  /** → `stake.kindoo_expected_site_name`. */
+  siteName: string;
+  /** → `stake.kindoo_config.site_id`. */
+  eid: number;
+}
+
+export function useUpdateHomeKindooSiteMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: HomeKindooSiteInput) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      const siteName = input.siteName.trim();
+      await updateDoc(stakeRef(db, sid), {
+        kindoo_expected_site_name: siteName,
+        kindoo_config: {
+          site_id: input.eid,
+          // `kindoo_config.site_name` is the wizard's capture of what
+          // Kindoo calls the site. Editing here keeps the two in step
+          // rather than leaving a stale capture beside a new name.
+          site_name: siteName,
+          configured_at: serverTimestamp(),
+          configured_by: actor,
+        },
+        last_modified_at: serverTimestamp(),
+        last_modified_by: actor,
+        lastActor: actor,
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
 // ---- Wards to ignore in Kindoo --------------------------------------
 //
 // `stake.kindoo_ignored_wards` — ward names that appear in one of this

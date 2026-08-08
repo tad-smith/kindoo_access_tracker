@@ -1,7 +1,7 @@
 // Manager Configuration page — multi-tab CRUD over every editable
 // table.
 //
-// Tabs (left → right): Config, Managers, Kindoo Sites, Buildings, Wards,
+// Tabs (left → right): Config, Managers, Kindoo Config, Buildings, Wards,
 // Organizations. Buildings precede Wards because a ward must reference an
 // existing building. Organizations sit last — a free-standing seat pool
 // with no dependency on the other tables.
@@ -30,17 +30,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { collidesWithOwnWard, normaliseIgnoredWard, resolveWardBuilding } from '@kindoo/shared';
+import { resolveWardBuilding } from '@kindoo/shared';
 import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
   configSchema,
+  homeKindooSiteSchema,
   kindooSiteFormSchema,
+  makeIgnoredWardSchema,
   managerSchema,
   organizationFormSchema,
   wardSchema,
   type BuildingForm,
   type ConfigForm,
+  type HomeKindooSiteForm,
+  type IgnoredWardForm,
   type KindooSiteForm,
   type ManagerForm,
   type OrganizationForm,
@@ -59,6 +63,7 @@ import {
   useRequests,
   useSeats,
   useStakeDoc,
+  useUpdateHomeKindooSiteMutation,
   useUpdateIgnoredWardsMutation,
   useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
@@ -76,6 +81,7 @@ import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
+import { usePrincipal } from '../../../lib/principal';
 import { toast } from '../../../lib/store/toast';
 
 export type ConfigTabKey =
@@ -89,7 +95,10 @@ export type ConfigTabKey =
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'config', label: 'Config' },
   { key: 'managers', label: 'Managers' },
-  { key: 'kindoo-sites', label: 'Kindoo Sites' },
+  // Key stays `kindoo-sites` while the label reads "Kindoo Config" —
+  // it is in the URL (`?tab=…`), so renaming it would break every
+  // existing deep link and bookmark for no user-visible gain.
+  { key: 'kindoo-sites', label: 'Kindoo Config' },
   { key: 'buildings', label: 'Buildings' },
   { key: 'wards', label: 'Wards' },
   { key: 'organizations', label: 'Organizations' },
@@ -117,7 +126,7 @@ export function ConfigurationPage({ initialTab }: ConfigurationPageProps) {
     <section className="kd-page-wide">
       <h1>Configuration</h1>
       <p className="kd-page-subtitle">
-        Edit Buildings, Wards, Managers, Kindoo Sites, Organizations, and stake-level config.
+        Edit Buildings, Wards, Managers, Kindoo Config, Organizations, and stake-level config.
       </p>
 
       <nav className="kd-config-tabs" aria-label="Configuration sections">
@@ -730,9 +739,11 @@ function KindooSitesTab() {
 
   return (
     <div className="kd-config-section">
+      <HomeKindooSiteSection />
+
       <SectionHeader
-        title="Kindoo Sites"
-        addLabel="Add Kindoo Site"
+        title="Foreign Kindoo Sites"
+        addLabel="Add Foreign Kindoo Site"
         onAdd={() => setOpenMode('add')}
         testid="config-kindoo-sites"
       />
@@ -801,6 +812,154 @@ function KindooSitesTab() {
   );
 }
 
+// ---- Home Kindoo Site -----------------------------------------------
+//
+// The stake's OWN Kindoo environment — the one the foreign sites below
+// are foreign to. It has no `kindooSites` doc; it lives on the parent
+// stake doc, and the extension's configure wizard normally writes it
+// from the live Kindoo session.
+//
+// Read-only for managers, editable by platform superadmins. A wrong EID
+// silently points every Kindoo operation at another environment, and
+// the value is discoverable automatically in the ordinary case — so
+// hand-editing is the escape hatch, not the workflow.
+//
+// Site name shows `kindoo_expected_site_name`, falling back to the
+// stake name — the same fallback the description parser and the
+// wizard's home-by-name resolution apply, so the row shows what those
+// actually compare against rather than an empty field.
+
+function HomeKindooSiteSection() {
+  const principal = usePrincipal();
+  const stake = useStakeDoc();
+  const update = useUpdateHomeKindooSiteMutation();
+  const [editing, setEditing] = useState(false);
+
+  const canEdit = principal.isPlatformSuperadmin;
+  const siteName = stake.data?.kindoo_expected_site_name?.trim() || (stake.data?.stake_name ?? '');
+  const isDefaultedName = !stake.data?.kindoo_expected_site_name?.trim();
+  const eid = stake.data?.kindoo_config?.site_id ?? null;
+
+  return (
+    <div className="kd-config-subsection-lead" data-testid="config-home-kindoo-site">
+      <h2>Home Kindoo Site</h2>
+      <p className="kd-form-hint">
+        This stake’s own Kindoo environment — the one the sites below are foreign to. The
+        extension’s configure wizard records it from your live Kindoo session the first time you use
+        it.
+      </p>
+
+      {editing ? (
+        <HomeKindooSiteForm
+          defaults={{ site_name: siteName, eid: eid ?? 0 }}
+          isPending={update.isPending}
+          onCancel={() => setEditing(false)}
+          onSubmit={async (input) => {
+            await update.mutateAsync({ siteName: input.site_name, eid: input.eid });
+            setEditing(false);
+            toast('Home Kindoo site saved.', 'success');
+          }}
+        />
+      ) : (
+        <>
+          <ul className="kd-config-rows" data-testid="config-home-kindoo-site-rows">
+            <li>
+              <span>
+                Site name: <strong data-testid="config-home-site-name">{siteName || '—'}</strong>
+                {isDefaultedName ? (
+                  <em className="kd-form-hint"> (defaults to the stake name)</em>
+                ) : null}
+              </span>
+            </li>
+            <li>
+              <span>
+                Kindoo EID:{' '}
+                {eid === null ? (
+                  <em data-testid="config-home-site-eid">Not set</em>
+                ) : (
+                  <code data-testid="config-home-site-eid">{eid}</code>
+                )}
+              </span>
+            </li>
+          </ul>
+          {canEdit ? (
+            <Button
+              variant="secondary"
+              onClick={() => setEditing(true)}
+              data-testid="config-home-kindoo-site-edit"
+            >
+              Edit
+            </Button>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface HomeKindooSiteFormProps {
+  defaults: HomeKindooSiteForm;
+  isPending: boolean;
+  onSubmit: (input: HomeKindooSiteForm) => Promise<void>;
+  onCancel: () => void;
+}
+
+function HomeKindooSiteForm({ defaults, isPending, onSubmit, onCancel }: HomeKindooSiteFormProps) {
+  const form = useForm<HomeKindooSiteForm>({
+    resolver: zodResolver(homeKindooSiteSchema),
+    defaultValues: defaults,
+  });
+
+  return (
+    <form
+      className="kd-config-inline-form"
+      onSubmit={form.handleSubmit(async (values) => {
+        try {
+          await onSubmit(values);
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      })}
+      data-testid="config-home-kindoo-site-form"
+    >
+      <label>
+        Kindoo site name
+        <Input {...form.register('site_name')} data-testid="config-home-site-name-input" />
+      </label>
+      {form.formState.errors.site_name ? (
+        <p className="kd-form-error">{form.formState.errors.site_name.message}</p>
+      ) : null}
+      <label>
+        Kindoo EID
+        {/* No `min` attribute: native constraint validation suppresses the
+            submit event entirely, so the zod message below would never
+            render. Zod owns the bound. */}
+        <Input
+          type="number"
+          {...form.register('eid', { valueAsNumber: true })}
+          data-testid="config-home-site-eid-input"
+        />
+      </label>
+      {form.formState.errors.eid ? (
+        <p className="kd-form-error">{form.formState.errors.eid.message}</p>
+      ) : null}
+      <div className="kd-config-row-actions">
+        <Button type="submit" disabled={isPending} data-testid="config-home-kindoo-site-save">
+          {isPending ? 'Saving…' : 'Save'}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onCancel}
+          data-testid="config-home-kindoo-site-cancel"
+        >
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 // ---- Wards to Ignore in Kindoo --------------------------------------
 //
 // The mirror image of the Kindoo Sites list above. That list is for
@@ -816,35 +975,15 @@ function IgnoredWardsSection() {
   const stake = useStakeDoc();
   const wards = useWards();
   const update = useUpdateIgnoredWardsMutation();
-  const [draft, setDraft] = useState('');
+  const [open, setOpen] = useState(false);
 
   const ignored = useMemo(() => stake.data?.kindoo_ignored_wards ?? [], [stake.data]);
   const wardNames = useMemo(() => (wards.data ?? []).map((w) => w.ward_name), [wards.data]);
 
-  // Gate Add on the wards snapshot arriving: the own-ward guard below
-  // runs against it, and an empty array would wave through an entry
-  // that silently does nothing.
+  // Gate Add on the wards snapshot arriving: the dialog's own-ward guard
+  // runs against it, and an empty array would wave through an entry that
+  // silently does nothing.
   const ready = stake.data !== undefined && wards.data !== undefined;
-
-  const trimmed = draft.trim();
-  const problem = !trimmed
-    ? null
-    : ignored.some((w) => normaliseIgnoredWard(w) === normaliseIgnoredWard(trimmed))
-      ? 'That ward is already on the list.'
-      : collidesWithOwnWard(trimmed, wardNames)
-        ? `“${trimmed}” is one of your own wards — ignoring it would hide its own Sync rows.`
-        : null;
-
-  const add = () => {
-    if (!ready || !trimmed || problem) return;
-    update
-      .mutateAsync([...ignored, trimmed])
-      .then(() => {
-        setDraft('');
-        toast('Ward added to the ignore list.', 'success');
-      })
-      .catch((err) => toast(errorMessage(err), 'error'));
-  };
 
   const remove = (name: string) => {
     update
@@ -855,7 +994,14 @@ function IgnoredWardsSection() {
 
   return (
     <div className="kd-config-subsection" data-testid="config-ignored-wards">
-      <h2>Wards to Ignore in Kindoo</h2>
+      <SectionHeader
+        title="Wards to Ignore in Kindoo"
+        addLabel="Add Ward to Ignore"
+        onAdd={() => setOpen(true)}
+        testid="config-ignored-wards"
+        addDisabled={!ready}
+        addDisabledHint="Loading…"
+      />
       <p className="kd-form-hint">
         Wards that appear in one of your Kindoo sites but are managed by a different stake in Stake
         Building Access — typically a neighbouring stake whose wards meet in one of your buildings
@@ -864,35 +1010,17 @@ function IgnoredWardsSection() {
         the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>.
       </p>
 
-      <div className="kd-inline-add">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              add();
-            }
-          }}
-          placeholder="Ward name as Kindoo shows it"
-          aria-label="Ward to ignore"
-          aria-invalid={problem ? true : undefined}
-          disabled={!ready}
-          data-testid="config-ignored-ward-input"
-        />
-        <Button
-          onClick={add}
-          disabled={!ready || !trimmed || problem !== null || update.isPending}
-          data-testid="config-ignored-ward-add"
-        >
-          Add
-        </Button>
-      </div>
-      {problem && (
-        <p className="kd-form-error" data-testid="config-ignored-ward-error">
-          {problem}
-        </p>
-      )}
+      <IgnoredWardDialog
+        open={open}
+        existing={ignored}
+        ownWardNames={wardNames}
+        isPending={update.isPending}
+        onClose={() => setOpen(false)}
+        onSubmit={async (ward) => {
+          await update.mutateAsync([...ignored, ward]);
+          toast('Ward added to the ignore list.', 'success');
+        }}
+      />
 
       {ignored.length === 0 ? (
         <p className="kd-empty-state" data-testid="config-ignored-wards-empty">
@@ -920,6 +1048,87 @@ function IgnoredWardsSection() {
         </ul>
       )}
     </div>
+  );
+}
+
+interface IgnoredWardDialogProps {
+  open: boolean;
+  /** Live ignore list — feeds the duplicate rule. */
+  existing: readonly string[];
+  /** Live ward names — feed the own-ward rule. */
+  ownWardNames: readonly string[];
+  isPending: boolean;
+  onSubmit: (ward: string) => Promise<void>;
+  onClose: () => void;
+}
+
+function IgnoredWardDialog({
+  open,
+  existing,
+  ownWardNames,
+  isPending,
+  onSubmit,
+  onClose,
+}: IgnoredWardDialogProps) {
+  // Two of the three rules close over live catalogues, so the schema is
+  // rebuilt when either changes rather than being a module constant.
+  const schema = useMemo(
+    () => makeIgnoredWardSchema(existing, ownWardNames),
+    [existing, ownWardNames],
+  );
+  const form = useForm<IgnoredWardForm>({
+    resolver: zodResolver(schema),
+    defaultValues: { ward: '' },
+    // Validate as the operator types: all three rules are about the
+    // entry being inert, and finding that out on submit is later than
+    // it needs to be.
+    mode: 'onChange',
+  });
+  const { register, handleSubmit, reset, formState } = form;
+
+  useEffect(() => {
+    if (open) reset({ ward: '' });
+  }, [open, reset]);
+
+  const submit = handleSubmit(async ({ ward }) => {
+    try {
+      await onSubmit(ward.trim());
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  });
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+      title="Add ward to ignore"
+    >
+      <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ignored-ward-form">
+        <label>
+          Ward name
+          <Input
+            {...register('ward')}
+            placeholder="Ward name as Kindoo shows it"
+            data-testid="config-ignored-ward-input"
+          />
+        </label>
+        {formState.errors.ward ? (
+          <p role="alert" className="kd-form-error" data-testid="config-ignored-ward-error">
+            {formState.errors.ward.message}
+          </p>
+        ) : null}
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
+          <Button type="submit" disabled={isPending} data-testid="config-ignored-ward-submit">
+            {isPending ? 'Adding…' : 'Add'}
+          </Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog>
   );
 }
 
