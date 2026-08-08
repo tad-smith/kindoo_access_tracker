@@ -28,6 +28,24 @@ On the record before more managers opt in. Since PR #253 the poll makes **two** 
 
 What makes it worth a note rather than nothing: the volume scales with **open tabs**, not with request volume, so it does not shrink at 1–2 requests/week and it grows with every manager who opts in and every second Kindoo window they leave open. Nothing needs doing yet. If it ever does, the cheap moves in order are a longer visible poll period; then folding the two reads into one `status in ['queued','running']` query, which also removes the hazard the fixed read order exists to dodge (one snapshot cannot miss a job mid-transition) but needs the gate's and the claim's differing uses of the two pages untangled first; and only then anything push-shaped, which D27 rejected for reasons that have not changed.
 
+## [T-87] Spec §5.4 + changelog describe the pre-autofill Stake ID field
+Status: pending
+Owner: @docs-keeper
+Phase: create-stake custom slug (PR #259)
+
+The Stake ID field on Create Stake was reworked on `feat/create-stake-custom-slug-autofill` (folding into PR #259) after operator review: it now auto-fills from the stake name, and the separate slug preview line is gone. The spec and changelog prose that landed earlier on the same PR branch (commit `d6a6afe`) states the opposite in so many words and needs rewriting by the same agent that wrote it.
+
+What is now true: the Stake ID input holds the slug itself and shows the name slugified, live, keystroke by keystroke. It detaches the moment the operator edits it, so later name edits leave it alone; cleared back to empty it re-attaches, and blurring an empty field restores the name-derived default. Direct typing is sanitized on every keystroke via the new `sanitizeSlugInput` in `packages/shared/src/slugInput.ts` — same rule as `buildingSlug` except a trailing hyphen survives while typing (so `cs ` does not collapse to `cs` and turn the next character into `csnorth`); `buildingSlug` finalizes it on blur and on submit. The hint under the field now reads `Lowercase letters, digits, and hyphens — defaults from the stake name.`
+
+Specific contradictions to fix:
+- `docs/spec.md` §5.4 (~line 243): "The form mirrors that rule locally to render the slug preview, which sits under the Stake ID field and reads `Optional — defaults from the stake name. Slug: <slug>`" — the preview line no longer exists.
+- `docs/spec.md` §5.4 (~line 245): "The Stake ID field holds only what the operator typed. Nothing auto-fills it from the stake name" — exactly backwards now. The sentence after it (editing the name leaves a *typed* ID untouched) is still true and is now the detach rule.
+- `docs/changelog/create-stake-custom-slug.md` lines 18, 28, 29 — same three claims, including the design note arguing *against* auto-fill ("A field that mirrors the name until you touch it has to answer 'what counts as touched'"). The operator overrode that call; the answer to "what counts as touched" is a per-open detach flag reset by the dialog's existing `reset(EMPTY_DEFAULTS)` open-transition effect.
+
+Two behaviours worth stating precisely because they changed without the code changing:
+- **`stake_id` now rides in the payload on essentially every submit**, since the field is populated whenever the name yields a slug. The callable is unaffected — `buildingSlug` is idempotent, so the autofilled value resolves to the same doc ID the callable would have derived from the name on its own. The omit-when-empty path still exists but is only reachable when the name has no ASCII letters or digits.
+- **The `invalid_slug` / `slug_collision` field-attachment rule is unchanged in code, but its name-field branch is now nearly unreachable** for `slug_collision` — the ID field is non-empty whenever the name slugifies. `invalid_slug` still lands on the name field for a name like `###`, which is the case that leaves the ID empty. Spec §5.4 phrases this as "the Stake ID field when one was typed"; "when the payload carried one" is now the accurate framing.
+
 ## [T-84] Spec §16: the result dialog belongs to the page, not to the request's card
 Status: done (2026-08-03 — `feat/remote-apply-docs5`, against `feat/remote-apply` at `263af23`)
 Owner: @docs-keeper
