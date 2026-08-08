@@ -74,8 +74,7 @@ export async function seedClaimsFromRoleData(
  * aliases must NOT be folded, per F19 / `firebase-schema.md` §4.1)
  * AND still mid-setup (`setup_complete === false` exactly, filtered
  * in memory per the "composite indexes require justification"
- * convention — this mirrors the deleted `resolveBootstrapStake`
- * callable's query shape).
+ * convention).
  *
  * Queried directly against `stakes/` rather than through
  * `getStakeIds`'s cached list, so a stake created after the cache
