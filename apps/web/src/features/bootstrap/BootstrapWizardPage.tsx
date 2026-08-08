@@ -334,13 +334,22 @@ export function completionBlockers(args: {
 // without a building, and setup can't complete without a ward — so
 // walking past them empty only produces a dead end. The step tabs stay
 // unrestricted as the escape hatch.
+//
+// Step 3 defers to the upstream gap when there are no buildings: the
+// tabs make step 3 reachable with an empty step 2, and there "add a
+// ward" names an action the step can't perform (`Step3Wards` disables
+// its own Add button on the same condition).
 export function nextBlocker(args: {
   step: StepNumber;
   step2Done: boolean;
   step3Done: boolean;
 }): string | null {
   if (args.step === 2 && !args.step2Done) return 'Add at least one building to continue.';
-  if (args.step === 3 && !args.step3Done) return 'Add at least one ward to continue.';
+  if (args.step === 3 && !args.step3Done) {
+    return args.step2Done
+      ? 'Add at least one ward to continue.'
+      : 'Add a building (Step 2) before adding wards.';
+  }
   return null;
 }
 

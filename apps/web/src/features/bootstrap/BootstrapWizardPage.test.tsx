@@ -707,6 +707,21 @@ describe('<BootstrapWizardPage />', () => {
       expect(screen.getByTestId('wizard-step-3')).toBeInTheDocument();
     });
 
+    it('points at the missing building, not the ward, when step 3 is reached with step 2 empty', async () => {
+      // The tabs make this reachable, and `Step3Wards` disables its own
+      // Add-ward button here — so "add a ward" would name an impossible
+      // action.
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+      expect(screen.getByTestId('bootstrap-next-blocker')).toHaveTextContent(
+        /Add a building \(Step 2\) before adding wards/i,
+      );
+      expect(screen.getByTestId('bootstrap-next-blocker')).not.toHaveTextContent(/one ward/i);
+    });
+
     it('disables Next on the wards step until a ward exists, and says why', async () => {
       // Buildings populated so the block is unambiguously the ward one.
       useBuildingsMock.mockReturnValue(liveResult<Building>([building]));
@@ -897,6 +912,11 @@ describe('nextBlocker()', () => {
     expect(nextBlocker({ step: 2, step2Done: false, step3Done: false })).toMatch(/one building/i);
     expect(nextBlocker({ step: 2, step2Done: true, step3Done: false })).toBeNull();
     expect(nextBlocker({ step: 3, step2Done: true, step3Done: false })).toMatch(/one ward/i);
+    // Step 3 reached via the tabs with step 2 still empty: naming the
+    // ward would instruct an action the step's own form disables.
+    expect(nextBlocker({ step: 3, step2Done: false, step3Done: false })).toMatch(
+      /building \(Step 2\)/i,
+    );
     expect(nextBlocker({ step: 3, step2Done: true, step3Done: true })).toBeNull();
     expect(nextBlocker({ step: 4, step2Done: false, step3Done: false })).toBeNull();
   });
