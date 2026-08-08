@@ -2,7 +2,8 @@
 // from the Superadmin Stake List page (`/superadmin/stakes`, spec §5.4).
 // Each click of the Create Stake form dispatches one callable
 // invocation; the payload carries the operator's typed inputs and the
-// callable derives the doc-ID slug + writes the parent doc.
+// callable resolves the doc-ID slug (from `stake_id` when supplied,
+// otherwise from `stake_name`) + writes the parent doc.
 //
 // `bootstrap_admin_email` is stored on the parent stake doc
 // lowercased on write; dots and `+suffix` are preserved verbatim
@@ -25,6 +26,8 @@ export type CreateStakeInput = {
   stake_name: string;
   /** Bootstrap admin email — trimmed + lowercased server-side; dots and `+suffix` preserved (NOT `canonicalEmail()`). Non-empty required. */
   bootstrap_admin_email: string;
+  /** Optional operator-supplied doc-ID slug. Slugified server-side via `buildingSlug`. When absent or empty, the slug is derived from `stake_name`. */
+  stake_id?: string;
   /** Optional IANA tz identifier. Defaults to `'America/Denver'` when absent. */
   timezone?: string;
 };
