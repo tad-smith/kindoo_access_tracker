@@ -27,6 +27,19 @@
 // toast (URL: "This notification was for a stake you no longer have
 // access to."; storage: "Your last-active stake is no longer
 // available; switched to <new stake>.").
+//
+// `bootstrapStakeIds` (5th param, default `[]`): server-discovered via
+// the `resolveBootstrapStake` callable — every not-yet-setup stake the
+// signed-in user is the designated bootstrap admin of, regardless of
+// whether they also hold claim-derived roles elsewhere. `useActiveStake`
+// fetches this once per signed-in identity and threads it through on
+// every resolve. It widens tiers 1-3's validation set (a stake reachable
+// only via bootstrap-admin discovery validates normally instead of
+// invalidating-with-a-toast) and backstops tier 4: claim-derived stakes
+// always win tier 4; `bootstrapStakeIds[0]` is the tier-4 fallback ONLY
+// when the principal has zero claim-derived stakes AND is not a platform
+// superadmin (a superadmin must keep landing on `/superadmin/stakes` via
+// the `setupGate.ts` short-circuit, not get auto-switched into a wizard).
 
 import type { Principal } from './principal-derive';
 
@@ -91,9 +104,13 @@ export function resolveActiveStake(
   urlParam: string | null,
   sessionValue: string | null,
   localValue: string | null,
+  bootstrapStakeIds: string[] = [],
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
-  const accessSet = new Set(accessible);
+  // Effective validation set for tiers 1-3: claim-derived stakes plus
+  // whatever the bootstrap-discovery callable has found for this
+  // identity so far (empty before discovery resolves). See file header.
+  const accessSet = new Set<string>([...accessible, ...bootstrapStakeIds]);
   // Bootstrap-admin / pre-claim path: an AUTHENTICATED user with zero
   // accessible stakes who is NOT a platform superadmin is either
   // (a) the bootstrap admin for a stake whose `setup_complete` hasn't
@@ -157,13 +174,23 @@ export function resolveActiveStake(
       sessionValue,
       localValue,
       accessible,
+      bootstrapStakeIds,
+      isPlatformSuperadmin,
       isPermissiveStorage,
     );
     return { ...fallback, invalidatedTier: 'url' };
   }
 
   // Tiers 2-4.
-  return resolveStorageTiers(accessSet, sessionValue, localValue, accessible, isPermissiveStorage);
+  return resolveStorageTiers(
+    accessSet,
+    sessionValue,
+    localValue,
+    accessible,
+    bootstrapStakeIds,
+    isPlatformSuperadmin,
+    isPermissiveStorage,
+  );
 }
 
 function resolveStorageTiers(
@@ -171,6 +198,8 @@ function resolveStorageTiers(
   sessionValue: string | null,
   localValue: string | null,
   accessible: string[],
+  bootstrapStakeIds: string[],
+  isPlatformSuperadmin: boolean,
   isPermissive: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
@@ -184,18 +213,34 @@ function resolveStorageTiers(
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
     // Invalid — fall through to local + principal but flag.
-    const next = resolveLocalThenPrincipal(accessSet, localValue, accessible, isPermissive);
+    const next = resolveLocalThenPrincipal(
+      accessSet,
+      localValue,
+      accessible,
+      bootstrapStakeIds,
+      isPlatformSuperadmin,
+      isPermissive,
+    );
     return { ...next, invalidatedTier: 'session' };
   }
 
   // Tier 3 + 4.
-  return resolveLocalThenPrincipal(accessSet, localValue, accessible, isPermissive);
+  return resolveLocalThenPrincipal(
+    accessSet,
+    localValue,
+    accessible,
+    bootstrapStakeIds,
+    isPlatformSuperadmin,
+    isPermissive,
+  );
 }
 
 function resolveLocalThenPrincipal(
   accessSet: Set<string>,
   localValue: string | null,
   accessible: string[],
+  bootstrapStakeIds: string[],
+  isPlatformSuperadmin: boolean,
   isPermissive: boolean = accessible.length === 0,
 ): ResolveActiveStakeResult {
   if (localValue !== null && localValue.length > 0) {
@@ -208,7 +253,11 @@ function resolveLocalThenPrincipal(
       return { stakeId: localValue, source: 'local', invalidatedTier: null };
     }
     // Invalid — fall through to principal but flag.
-    const principalChoice = principalDerivedStake(accessible);
+    const principalChoice = principalDerivedStake(
+      accessible,
+      bootstrapStakeIds,
+      isPlatformSuperadmin,
+    );
     return {
       stakeId: principalChoice,
       source: principalChoice === null ? 'none' : 'principal',
@@ -217,7 +266,11 @@ function resolveLocalThenPrincipal(
   }
   // Tier 4: principal-derived. No invalidation (priority-4 is valid by
   // construction).
-  const principalChoice = principalDerivedStake(accessible);
+  const principalChoice = principalDerivedStake(
+    accessible,
+    bootstrapStakeIds,
+    isPlatformSuperadmin,
+  );
   return {
     stakeId: principalChoice,
     source: principalChoice === null ? 'none' : 'principal',
@@ -225,8 +278,26 @@ function resolveLocalThenPrincipal(
   };
 }
 
-function principalDerivedStake(accessibleSorted: string[]): string | null {
-  return accessibleSorted[0] ?? null;
+/**
+ * Tier-4 fallback. Claim-derived stakes always win — a manager of A who
+ * is ALSO the bootstrap admin of not-yet-setup stake B must keep
+ * landing on A, not get auto-switched into B's wizard on every login.
+ * `bootstrapStakeIds[0]` (server-sorted ascending; see
+ * `resolveBootstrapStake` contract) is consulted ONLY when the
+ * principal has zero claim-derived stakes AND is not a platform
+ * superadmin — a zero-claim superadmin must keep landing on
+ * `/superadmin/stakes` via the `setupGate.ts` short-circuit rather than
+ * being auto-routed into a wizard for a stake they merely happen to be
+ * the named bootstrap admin of.
+ */
+function principalDerivedStake(
+  accessibleSorted: string[],
+  bootstrapStakeIds: string[],
+  isPlatformSuperadmin: boolean,
+): string | null {
+  if (accessibleSorted.length > 0) return accessibleSorted[0] ?? null;
+  if (isPlatformSuperadmin) return null;
+  return bootstrapStakeIds[0] ?? null;
 }
 
 /**
