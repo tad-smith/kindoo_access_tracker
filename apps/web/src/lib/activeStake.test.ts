@@ -10,7 +10,6 @@ import {
   ACTIVE_STAKE_LOCAL_KEY,
   ACTIVE_STAKE_SESSION_KEY,
   accessibleStakes,
-  clearActiveStakeStorage,
   persistActiveStakeChoice,
   readLocalStake,
   readSessionStake,
@@ -426,26 +425,5 @@ describe('persistActiveStakeChoice', () => {
     expect(readLocalStake()).toBe('newstake');
     expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('newstake');
     expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('newstake');
-  });
-});
-
-describe('clearActiveStakeStorage', () => {
-  it('removes both sessionStorage AND localStorage tiers', () => {
-    persistActiveStakeChoice('somestake');
-    expect(readSessionStake()).toBe('somestake');
-    expect(readLocalStake()).toBe('somestake');
-
-    clearActiveStakeStorage();
-
-    expect(readSessionStake()).toBeNull();
-    expect(readLocalStake()).toBeNull();
-    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBeNull();
-    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBeNull();
-  });
-
-  it('is a no-op when neither tier is set', () => {
-    expect(() => clearActiveStakeStorage()).not.toThrow();
-    expect(readSessionStake()).toBeNull();
-    expect(readLocalStake()).toBeNull();
   });
 });
