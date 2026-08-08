@@ -18,7 +18,9 @@ Phase: Kindoo Sites (§15)
 - **Sync pre-filter** — the ignore-list drop moved ahead of the door-grant enrichment loop; it was costing one Kindoo round-trip per ignored member per run.
 - **`(` guard** on ignore-list entries, and the section moved to the header-button + dialog pattern.
 
-Two things worth not re-deriving. The superadmin gate is a **UI** gate: `firestore.rules` still requires `isManager(stakeId)` on the stake doc, so the editor must be both — a superadmin who manages no stakes cannot use it. And the EID input carries **no `min` attribute**: native constraint validation suppresses the submit event, so React never sees it and the zod message can never render.
+Two things worth not re-deriving. `stakes/{stakeId}` update now allows `isManager || isBootstrapAdmin || isPlatformSuperadmin` — a superadmin can set a stake's home site without being made a manager of it. Deliberately not field-scoped: it mirrors the read rule, which already exposes every parent stake doc to superadmins, and an allowlist would need updating for every future Config-tab key. And the EID input carries **no `min` attribute**: native constraint validation suppresses the submit event, so React never sees it and the zod message can never render.
+
+**Not yet wired end-to-end.** The rule is in, but a superadmin who manages no stakes still can't reach the editor: `/manager/configuration` gates on `useRequireRole('manager')`, and `accessibleStakes()` (`lib/activeStake.ts`) derives only from manager / stake-member / bishopric claims, so even a `?stake=X` deep link falls through to a null active stake. Deferred pending an operator call on how much of Configuration a non-manager superadmin should see — every other tab writes sub-collections still gated on `isManager`.
 
 ## [T-88] Wards to Ignore in Kindoo — skip another SBA stake's wards during Sync
 Status: done (2026-08-08 — `feat/kindoo-ignored-wards`)

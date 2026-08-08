@@ -243,6 +243,76 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       );
     });
 
+    // A platform superadmin must be able to set a stake's HOME Kindoo
+    // site without first being made a manager of it (`spec.md` §15).
+    // `superadminContext` holds NO per-stake claims, so these prove the
+    // superadmin branch and nothing else.
+    it('platform superadmin (no per-stake role) can update the parent stake doc', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_expected_site_name: 'Black Forest',
+            kindoo_config: {
+              site_id: 27994,
+              site_name: 'Black Forest',
+              configured_at: new Date(),
+              configured_by: lastActorOf(personas.superadmin),
+            },
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('platform superadmin can update any stake parent doc (cross-stake)', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertSucceeds(
+        db.doc(OTHER_PATH).set(
+          freshStakeDoc({
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('superadmin update still fails the lastActor integrity check', async () => {
+      // The role widened; the stamp-your-own-identity invariant did not.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(freshStakeDoc({ lastActor: lastActorOf(personas.manager) })),
+      );
+    });
+
+    it('superadmin update still fails a malformed kindoo_config', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            // `site_id` must be an int — a partial write here would
+            // otherwise deny every later client write to the doc.
+            kindoo_config: { site_id: 'not-a-number', site_name: 'X' },
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
     it('cross-stake: manager of stake A is denied updating stake B', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());

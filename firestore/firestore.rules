@@ -683,7 +683,20 @@ service cloud.firestore {
       // shape when present; absence is fine. Bootstrap admin path
       // pre-dates the extension and never writes this field, but the
       // validator is no-op when absent so it stays in the predicate.
-      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+      //
+      // Platform superadmins are in the predicate so they can set a
+      // stake's HOME Kindoo site (`kindoo_expected_site_name` +
+      // `kindoo_config`) without first being made a manager of it —
+      // `spec.md` §15 "Home Kindoo Site surface". That is the operator
+      // need; the grant is deliberately NOT field-scoped, matching the
+      // read rule above, which already lets a superadmin read every
+      // stake's parent doc. A superadmin can already create stakes and
+      // run the platform fix callables, so full write on this one doc
+      // is not a new tier of authority — and a field allowlist here
+      // would have to be kept in step with every future Config-tab key.
+      // The integrity check still applies: the write is stamped with
+      // the superadmin's own identity.
+      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId) || isPlatformSuperadmin())
         && lastActorMatchesAuth(request.resource.data)
         && validKindooConfig(request.resource.data);
       allow delete: if false;
