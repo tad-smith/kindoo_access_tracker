@@ -1,14 +1,20 @@
 // Integration tests for `syncBootstrapClaims`. Fires on every write to
 // `stakes/{stakeId}`; mints or clears the `bootstrap` marker (see
 // `StakeClaims.bootstrap`) on the designated bootstrap admin's claim
-// block for that stake, driven off the before/after
-// `(bootstrap_admin_email, setup_complete)` pair.
+// block for that stake, reconciled off the AFTER
+// `(bootstrap_admin_email, setup_complete)` state on every write (not
+// just eligibility transitions) so a divergence between the claim and
+// the doc heals on the next write, whatever it is.
 //
 // Coverage: mint on create; no-op when no Auth user exists for the
 // email; clear when `setup_complete` flips to true; re-point when
 // `bootstrap_admin_email` changes while still in setup; clear on
 // stake-doc delete; `setup_complete` absent or non-boolean does NOT
-// mint.
+// mint; an irrelevant write performs no claim write / no token
+// revocation, both mid-setup and in the (far more common) steady state
+// of an already-complete stake; a stuck divergence in either direction
+// (claim true but doc complete, claim missing but doc mid-setup) heals
+// on the next unrelated write.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { syncBootstrapClaims } from '../src/triggers/syncBootstrapClaims.js';
@@ -267,6 +273,99 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
       const refreshed = await auth.getUser(uid);
       expect(bootstrapFlag(refreshed.customClaims, 'stable-stake')).toBe(true);
       expect(refreshed.tokensValidAfterTime).toBe(tokensValidAfterFirstMint);
+    },
+  );
+
+  it(
+    'no-ops on ordinary writes to an already-complete stake (steady state)',
+    { timeout: 30_000 },
+    async () => {
+      // The common case for the lifetime of a stake: setup finished
+      // long ago, `bootstrap_admin_email` is still on the doc (it's
+      // never cleared), and ordinary operation keeps writing the doc
+      // (config changes, `last_over_caps_json`, seat-count churn). None
+      // of that may write claims or revoke tokens — assert on the
+      // absence of the write via `tokensValidAfterTime`, not just the
+      // resulting claim shape, since the whole point is avoiding churn.
+      const { auth } = requireEmulators();
+      const email = 'complete@example.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
+      const doc = { bootstrap_admin_email: email, setup_complete: true };
+      const tokensValidBefore = (await auth.getUser(uid)).tokensValidAfterTime;
+
+      await syncBootstrapClaims.run(
+        makeEvent({
+          stakeId: 'complete-stake',
+          before: doc,
+          after: { ...doc, last_over_caps_json: '[]' },
+        }),
+      );
+
+      const refreshed = await auth.getUser(uid);
+      expect(bootstrapFlag(refreshed.customClaims, 'complete-stake')).toBeUndefined();
+      expect(refreshed.tokensValidAfterTime).toBe(tokensValidBefore);
+    },
+  );
+
+  it(
+    'heals a claim stuck at bootstrap: true after setup already completed',
+    { timeout: 30_000 },
+    async () => {
+      // Models the durability gap directly: the doc is already past
+      // setup, but the claim never got cleared — a lost update racing
+      // a concurrent same-uid claim write, a failed claim write, or a
+      // half-completed backfill. Force the divergence directly
+      // (bypassing the trigger) rather than trying to construct a real
+      // race. The very next write to the doc, unrelated to bootstrap,
+      // must heal it.
+      const { auth } = requireEmulators();
+      const email = 'stale@example.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
+
+      await auth.setCustomUserClaims(uid, {
+        canonical: email,
+        stakes: { 'stale-stake': { manager: false, stake: false, wards: [], bootstrap: true } },
+      });
+      expect(bootstrapFlag((await auth.getUser(uid)).customClaims, 'stale-stake')).toBe(true);
+
+      const doc = { bootstrap_admin_email: email, setup_complete: true };
+      await syncBootstrapClaims.run(
+        makeEvent({
+          stakeId: 'stale-stake',
+          before: doc,
+          after: { ...doc, stake_seat_cap: 60 },
+        }),
+      );
+
+      const refreshed = await auth.getUser(uid);
+      expect(bootstrapFlag(refreshed.customClaims, 'stale-stake')).toBeUndefined();
+    },
+  );
+
+  it(
+    'heals a claim stuck missing bootstrap: true while still mid-setup',
+    { timeout: 30_000 },
+    async () => {
+      // The inverse divergence: the doc is still eligible but the
+      // claim never got minted. An unrelated write must heal it too.
+      const { auth } = requireEmulators();
+      const email = 'missing@example.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
+      expect(
+        bootstrapFlag((await auth.getUser(uid)).customClaims, 'missing-stake'),
+      ).toBeUndefined();
+
+      const doc = { bootstrap_admin_email: email, setup_complete: false };
+      await syncBootstrapClaims.run(
+        makeEvent({
+          stakeId: 'missing-stake',
+          before: doc,
+          after: { ...doc, stake_seat_cap: 12 },
+        }),
+      );
+
+      const refreshed = await auth.getUser(uid);
+      expect(bootstrapFlag(refreshed.customClaims, 'missing-stake')).toBe(true);
     },
   );
 });
