@@ -33,6 +33,17 @@
 // `setup_complete` gate: only a stake still mid-setup is eligible.
 // Post-setup access is claim-gated like everything else, so a
 // completed stake is excluded even on an exact email match.
+//
+// Requires an exact boolean `false`, matching `firestore.rules:157-163`
+// `isBootstrapAdmin`'s `get(stakePath).data.setup_complete == false` —
+// NOT `setupGate.ts`'s strict-truthy `=== true` polarity. The gate and
+// the rules already diverge on this field; this callable must follow
+// the rules, because the rules are what gate the wizard's writes. A
+// doc where the field is absent or holds a non-boolean value fails the
+// rule's `== false` too, so handing back that stakeId would open the
+// wizard only to have every write refused with permission-denied — a
+// worse outcome than the NotAuthorized page this callable exists to
+// avoid. Do not "harmonise" this with the gate's polarity.
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import type { ResolveBootstrapStakeOutput, Stake } from '@kindoo/shared';
@@ -57,7 +68,7 @@ export const resolveBootstrapStake = onCall(
     // Sorted so repeat calls are stable rather than racing on
     // Firestore's unspecified order.
     const stakeIds = snap.docs
-      .filter((d) => (d.data() as Stake).setup_complete !== true)
+      .filter((d) => (d.data() as Stake).setup_complete === false)
       .map((d) => d.id)
       .sort();
 

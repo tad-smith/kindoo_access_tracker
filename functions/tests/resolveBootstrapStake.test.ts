@@ -20,6 +20,12 @@
 //   - Multiple matching stakes (e.g. a superadmin bootstrapping two
 //     stakes with the same admin email) → all returned, sorted
 //     ascending by doc id.
+//   - `setup_complete` absent entirely, or set to a non-boolean value
+//     → excluded. Only an exact boolean `false` matches
+//     `firestore.rules` `isBootstrapAdmin`'s `== false`; `createStake`
+//     always writes a real boolean, but an out-of-band console seed
+//     (permitted by `infra/runbooks/provision-firebase-projects.md`)
+//     might not.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -29,14 +35,13 @@ import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.j
 
 const ACTOR = { email: 'super@example.com', canonical: 'super@example.com' };
 
-async function seedStake(stakeId: string, overrides: Partial<Stake> = {}): Promise<void> {
-  const { db } = requireEmulators();
-  const stake: Stake = {
+/** Bookkeeping/capacity fields every seeded stake doc needs, minus `setup_complete`. */
+function baseStakeBody(bootstrapAdminEmail: string): Record<string, unknown> {
+  return {
     stake_name: 'Test Stake',
     created_at: Timestamp.now(),
     created_by: ACTOR.canonical,
-    bootstrap_admin_email: 'admin@example.com',
-    setup_complete: false,
+    bootstrap_admin_email: bootstrapAdminEmail,
     stake_seat_cap: 0,
     timezone: 'America/Denver',
     notifications_enabled: true,
@@ -44,9 +49,38 @@ async function seedStake(stakeId: string, overrides: Partial<Stake> = {}): Promi
     last_modified_at: Timestamp.now(),
     last_modified_by: ACTOR,
     lastActor: ACTOR,
+  };
+}
+
+async function seedStake(stakeId: string, overrides: Partial<Stake> = {}): Promise<void> {
+  const { db } = requireEmulators();
+  const stake: Stake = {
+    ...(baseStakeBody('admin@example.com') as Omit<Stake, 'setup_complete'>),
+    setup_complete: false,
     ...overrides,
   };
   await db.doc(`stakes/${stakeId}`).set(stake);
+}
+
+/**
+ * Seed a stake doc with a malformed `setup_complete` — absent
+ * (`setupComplete === undefined`) or a non-boolean value — bypassing
+ * the `Stake` type entirely. Models a doc seeded out-of-band via the
+ * Firestore console rather than through `createStake` (which always
+ * writes a real boolean); `infra/runbooks/provision-firebase-projects.md`
+ * explicitly permits that seed path, so this is reachable in practice.
+ */
+async function seedMalformedStake(
+  stakeId: string,
+  bootstrapAdminEmail: string,
+  setupComplete: unknown,
+): Promise<void> {
+  const { db } = requireEmulators();
+  const body = baseStakeBody(bootstrapAdminEmail);
+  if (setupComplete !== undefined) {
+    body['setup_complete'] = setupComplete;
+  }
+  await db.doc(`stakes/${stakeId}`).set(body);
 }
 
 /** Build the `req` argument `onCall(...).run(...)` accepts. `email:
@@ -162,5 +196,25 @@ describe.skipIf(!hasEmulators())('resolveBootstrapStake callable', () => {
     const result = await resolveBootstrapStake.run(callableReq({ auth: { email } }));
 
     expect(result).toEqual({ stakeIds: ['aaa-stake', 'mmm-stake', 'zzz-stake'] });
+  });
+
+  it('excludes a stake whose setup_complete field is absent entirely', async () => {
+    await seedMalformedStake('absent-field-stake', 'noflag@example.com', undefined);
+
+    const result = await resolveBootstrapStake.run(
+      callableReq({ auth: { email: 'noflag@example.com' } }),
+    );
+
+    expect(result).toEqual({ stakeIds: [] });
+  });
+
+  it('excludes a stake whose setup_complete is a non-boolean value', async () => {
+    await seedMalformedStake('non-boolean-stake', 'stringflag@example.com', 'false');
+
+    const result = await resolveBootstrapStake.run(
+      callableReq({ auth: { email: 'stringflag@example.com' } }),
+    );
+
+    expect(result).toEqual({ stakeIds: [] });
   });
 });
