@@ -255,6 +255,71 @@ describe('resolveActiveStake', () => {
       expect(result.source).toBe('none');
     });
   });
+
+  describe('bootstrapStakeIds (server-discovered bootstrap-admin stakes)', () => {
+    it('tier 4: claim-derived stakes always win over bootstrapStakeIds', () => {
+      // Manager of A who is ALSO the bootstrap admin of not-yet-setup B
+      // must keep landing on A, not get auto-switched into B's wizard.
+      const p = makePrincipal({ managerStakes: ['csnorth'] });
+      const result = resolveActiveStake(p, null, null, null, ['ridgeline']);
+      expect(result).toEqual({ stakeId: 'csnorth', source: 'principal', invalidatedTier: null });
+    });
+
+    it('tier 4: zero claim-derived stakes falls back to bootstrapStakeIds[0] for a non-superadmin', () => {
+      // The original bug's fix: a fresh bootstrap admin with zero role
+      // claims auto-selects the stake discovery found.
+      const p = makePrincipal({ managerStakes: [], isPlatformSuperadmin: false });
+      const result = resolveActiveStake(p, null, null, null, ['ridgeline']);
+      expect(result).toEqual({ stakeId: 'ridgeline', source: 'principal', invalidatedTier: null });
+    });
+
+    it('tier 4: a zero-claim platform superadmin is NOT auto-routed into a bootstrap stake', () => {
+      // Must keep landing on `/superadmin/stakes` via the setupGate.ts
+      // short-circuit rather than being auto-switched into a wizard for
+      // a stake they merely happen to be the named bootstrap admin of.
+      const sa = makePrincipal({ managerStakes: [], isPlatformSuperadmin: true });
+      const result = resolveActiveStake(sa, null, null, null, ['ridgeline']);
+      expect(result).toEqual({ stakeId: null, source: 'none', invalidatedTier: null });
+    });
+
+    it('tier 4: bootstrapStakeIds defaults to [] when omitted (back-compat)', () => {
+      const p = makePrincipal({ managerStakes: [], isPlatformSuperadmin: false });
+      const result = resolveActiveStake(p, null, null, null);
+      expect(result).toEqual({ stakeId: null, source: 'none', invalidatedTier: null });
+    });
+
+    it('URL tier: a bootstrap-only stake validates normally, without invalidation', () => {
+      // Selecting stake B from the switcher writes B to the URL/storage;
+      // the resolver must accept it outright rather than falling through
+      // the permissive carve-out (no toast, no fallback demotion).
+      const p = makePrincipal({ managerStakes: ['csnorth'] });
+      const result = resolveActiveStake(p, 'ridgeline', null, null, ['ridgeline']);
+      expect(result).toEqual({ stakeId: 'ridgeline', source: 'url', invalidatedTier: null });
+    });
+
+    it('session tier: a bootstrap-only stake persisted by the switcher resolves without invalidation', () => {
+      // "Selecting B persists and resolves to B on the next render" —
+      // the storage tier no longer invalidates it now that
+      // bootstrapStakeIds widens the validation set.
+      const p = makePrincipal({ managerStakes: ['csnorth'] });
+      const result = resolveActiveStake(p, null, 'ridgeline', null, ['ridgeline']);
+      expect(result).toEqual({ stakeId: 'ridgeline', source: 'session', invalidatedTier: null });
+    });
+
+    it('local tier: a bootstrap-only stake validates normally', () => {
+      const p = makePrincipal({ managerStakes: ['csnorth'] });
+      const result = resolveActiveStake(p, null, null, 'ridgeline', ['ridgeline']);
+      expect(result).toEqual({ stakeId: 'ridgeline', source: 'local', invalidatedTier: null });
+    });
+
+    it('a stake NOT in bootstrapStakeIds still invalidates normally for a claim-bearing principal', () => {
+      const p = makePrincipal({ managerStakes: ['csnorth'] });
+      const result = resolveActiveStake(p, null, 'foreign', null, ['ridgeline']);
+      expect(result.stakeId).toBe('csnorth');
+      expect(result.source).toBe('principal');
+      expect(result.invalidatedTier).toBe('session');
+    });
+  });
 });
 
 describe('persistActiveStakeChoice', () => {

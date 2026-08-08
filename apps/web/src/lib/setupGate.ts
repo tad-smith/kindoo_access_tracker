@@ -46,6 +46,13 @@
 // allow any authed user to read the parent stake doc during
 // `setup_complete=false` (firestore.rules
 // `isSetupInProgressReadable`), so the snapshot lands quickly.
+//
+// `discoveryPending` (4th param — see `gateDecision`'s doc comment):
+// inserted between step 1 and step 2 above. A zero-claim, non-superadmin
+// principal with no stake hint is indistinguishable, client-side, from
+// a fresh bootstrap admin the `resolveBootstrapStake` callable hasn't
+// finished identifying yet; while that callable is in flight, hold on
+// 'pending' rather than falling into step 2's no-claims shortcut.
 
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import type { Stake } from '@kindoo/shared';
@@ -91,11 +98,23 @@ export type GateDecision =
  * Pure decision: where does this user belong? Idempotent — call as
  * often as you like; identical inputs always produce the identical
  * decision string.
+ *
+ * `discoveryPending` (4th param, default `false`): true while
+ * `useBootstrapStakeDiscoveryPending()` reports the `resolveBootstrapStake`
+ * callable is still in flight for a zero-claim, non-superadmin principal
+ * with no URL/session/local stake hint yet. Forces `'pending'` so the
+ * caller renders `null` instead of flashing NotAuthorized for the
+ * common case this gate previously couldn't distinguish: a genuinely
+ * fresh bootstrap admin (server will find a stake) from a truly no-
+ * access signed-in user (server will find nothing) look IDENTICAL from
+ * the client until the callable answers. See `docs/BUGS.md` — the
+ * "lands on Not Authorized instead of the bootstrap wizard" fix.
  */
 export function gateDecision(
   principal: GatePrincipal,
   stake: GateStakeRead,
   activeStakeId: string | null = null,
+  discoveryPending: boolean = false,
 ): GateDecision {
   if (!principal.firebaseAuthSignedIn) {
     return 'sign-in';
@@ -110,6 +129,15 @@ export function gateDecision(
   // route them.
   if (principal.isPlatformSuperadmin === true && activeStakeId === null) {
     return 'authed';
+  }
+
+  // Bootstrap-discovery still in flight for a zero-claim, non-superadmin
+  // principal with no stake hint yet. Hold on `pending` — the caller
+  // renders `null` — rather than falling into the no-claims shortcut
+  // below, which would flash NotAuthorized for what may turn out to be
+  // a fresh bootstrap admin the callable hasn't finished identifying.
+  if (discoveryPending) {
+    return 'pending';
   }
 
   // Stake-doc subscription not yet resolved.
