@@ -7,10 +7,11 @@
 // → `syncSuperadminClaims` trigger → claim). A signed-in non-superadmin
 // is rejected with `permission-denied`.
 //
-// Slug: derived from `stake_name` via the same lowercase-alnum-only
-// rule `packages/shared/buildingSlug.ts` uses. Collision is detected
-// inside the same transaction that writes the parent doc, so a
-// concurrent retry is safe.
+// Slug: derived from `stake_id` when the operator typed one, else from
+// `stake_name`. Either way it goes through the same lowercase-alnum-only
+// rule `packages/shared/buildingSlug.ts` uses, so the form's preview is
+// what gets written. Collision is detected inside the same transaction
+// that writes the parent doc, so a concurrent retry is safe.
 //
 // `bootstrap_admin_email`: stored lowercased — but ONLY case is
 // normalized; dots and `+suffix` are preserved verbatim. The
@@ -82,6 +83,9 @@ export const createStake = onCall(
     if (data.timezone !== undefined && typeof data.timezone !== 'string') {
       throw new HttpsError('invalid-argument', 'timezone must be a string');
     }
+    if (data.stake_id !== undefined && typeof data.stake_id !== 'string') {
+      throw new HttpsError('invalid-argument', 'stake_id must be a string');
+    }
 
     const stakeName = (data.stake_name ?? '').trim();
     if (stakeName.length === 0) {
@@ -125,7 +129,13 @@ export const createStake = onCall(
       return { success: false, error: 'invalid_timezone' };
     }
 
-    const slug = buildingSlug(stakeName);
+    // One slug rule, applied to whichever source the operator chose: a
+    // typed `CS North` becomes `cs-north` exactly as a stake named that
+    // would, so the form's preview is what lands as the doc ID. A typed
+    // value with no alnum characters soft-fails `invalid_slug` the same
+    // way a nameless one does — no separate error code.
+    const typedSlugSource = (data.stake_id ?? '').trim();
+    const slug = buildingSlug(typedSlugSource.length > 0 ? typedSlugSource : stakeName);
     if (slug.length === 0) {
       return { success: false, error: 'invalid_slug' };
     }
