@@ -1,9 +1,10 @@
 // Stake-switcher dropdown. Renders next to the brand-bar stake name
-// when the principal has any role on ≥ 2 stakes (spec §2.1). Hidden
-// entirely otherwise. The trigger is a chevron-only affordance — the
-// brand bar (`Shell.tsx` `.kd-brandbar-stake`) already shows WHICH
-// stake the user is on, so the switcher trigger doesn't duplicate the
-// label; the chevron is the "switch" affordance.
+// when the principal's menu source (claim-derived accessible stakes
+// plus any bootstrap-only stakes discovery has found) has ≥ 2 entries
+// (spec §2.1). Hidden entirely otherwise. The trigger is a chevron-only
+// affordance — the brand bar (`Shell.tsx` `.kd-brandbar-stake`) already
+// shows WHICH stake the user is on, so the switcher trigger doesn't
+// duplicate the label; the chevron is the "switch" affordance.
 //
 // Click on an option persists the chosen stake to both sessionStorage
 // and localStorage and invalidates per-stake TanStack Query caches so
@@ -12,6 +13,11 @@
 // Each menu item is labelled with the stake's `stake_name` (read live
 // from `stakes/{stakeId}`); the doc-id slug appears as a smaller
 // caption so a stake-name collision still distinguishes itself.
+// Bootstrap-only entries (the principal has no claim-derived role on
+// the stake — they're only its designated not-yet-setup bootstrap
+// admin) carry a "Setup needed" badge so a manager of stake A who's
+// also the bootstrap admin of stake B can find and switch into B's
+// wizard.
 
 import { ChevronDown, Check } from 'lucide-react';
 import { useMemo } from 'react';
@@ -19,8 +25,9 @@ import type { Stake } from '@kindoo/shared';
 import { useFirestoreDoc } from '../../lib/data';
 import { db } from '../../lib/firebase';
 import { stakeRef } from '../../lib/docs';
-import { useAccessibleStakes, useActiveStakeSwitcher } from '../../lib/useActiveStake';
+import { useAccessibleStakesWithBootstrap, useActiveStakeSwitcher } from '../../lib/useActiveStake';
 import { cn } from '../../lib/cn';
+import { Badge } from '../ui/Badge';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/Popover';
 
 interface StakeSwitcherProps {
@@ -33,11 +40,11 @@ interface StakeSwitcherProps {
 }
 
 export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
-  const accessible = useAccessibleStakes();
+  const entries = useAccessibleStakesWithBootstrap();
   const switchStake = useActiveStakeSwitcher();
 
-  // Hidden when the user has < 2 accessible stakes.
-  if (accessible.length < 2) return null;
+  // Hidden when the menu source has < 2 entries.
+  if (entries.length < 2) return null;
   if (activeStakeId === null) return null;
 
   return (
@@ -62,11 +69,12 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
         data-testid="stake-switcher-menu"
       >
         <ul className="flex flex-col">
-          {accessible.map((stakeId) => (
+          {entries.map(({ stakeId, needsSetup }) => (
             <StakeSwitcherItem
               key={stakeId}
               stakeId={stakeId}
               isActive={stakeId === activeStakeId}
+              needsSetup={needsSetup}
               onSelect={() => switchStake(stakeId)}
             />
           ))}
@@ -79,10 +87,11 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
 interface StakeSwitcherItemProps {
   stakeId: string;
   isActive: boolean;
+  needsSetup: boolean;
   onSelect: () => void;
 }
 
-function StakeSwitcherItem({ stakeId, isActive, onSelect }: StakeSwitcherItemProps) {
+function StakeSwitcherItem({ stakeId, isActive, needsSetup, onSelect }: StakeSwitcherItemProps) {
   const ref = useMemo(() => stakeRef(db, stakeId), [stakeId]);
   const doc = useFirestoreDoc<Stake>(ref);
   const stakeName = doc.data?.stake_name ?? stakeId;
@@ -100,7 +109,14 @@ function StakeSwitcherItem({ stakeId, isActive, onSelect }: StakeSwitcherItemPro
         data-active={isActive ? 'true' : 'false'}
       >
         <span className="flex flex-col">
-          <span>{stakeName}</span>
+          <span className="flex items-center gap-1.5">
+            {stakeName}
+            {needsSetup ? (
+              <Badge variant="warning" data-testid={`stake-switcher-setup-badge-${stakeId}`}>
+                Setup needed
+              </Badge>
+            ) : null}
+          </span>
           {stakeName !== stakeId ? <span className="text-xs text-gray-500">{stakeId}</span> : null}
         </span>
         {isActive ? <Check size={14} aria-hidden="true" /> : null}

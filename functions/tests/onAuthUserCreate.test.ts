@@ -242,6 +242,46 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     }
   });
 
+  it('seeds the bootstrap marker for the admin of an in-setup stake at first sign-in', async () => {
+    // Models the common ordering: `createStake` writes the stake doc
+    // (and its `bootstrap_admin_email`) before the admin has ever
+    // signed in, so `syncBootstrapClaims` finds no Auth user to stamp.
+    // First sign-in is the next chance to catch it up.
+    const { auth, db } = requireEmulators();
+    await db.doc('stakes/boot-stake').set({
+      stake_name: 'Boot Stake',
+      bootstrap_admin_email: 'bootstrap@example.com',
+      setup_complete: false,
+    });
+
+    const user = await auth.createUser({ email: 'bootstrap@example.com' });
+    await runOnAuthUserCreate(user);
+
+    const refreshed = await auth.getUser(user.uid);
+    const claims = refreshed.customClaims as {
+      stakes?: Record<string, { bootstrap?: boolean }>;
+    };
+    expect(claims.stakes?.['boot-stake']?.bootstrap).toBe(true);
+  });
+
+  it('does NOT seed the bootstrap marker for the admin of a completed stake', async () => {
+    const { auth, db } = requireEmulators();
+    await db.doc('stakes/done-stake').set({
+      stake_name: 'Done Stake',
+      bootstrap_admin_email: 'doneadmin@example.com',
+      setup_complete: true,
+    });
+
+    const user = await auth.createUser({ email: 'doneadmin@example.com' });
+    await runOnAuthUserCreate(user);
+
+    const refreshed = await auth.getUser(user.uid);
+    // No role data anywhere, and setup is already complete → plain
+    // empty-roles claim block, same as the "no pre-existing role data"
+    // case.
+    expect(refreshed.customClaims).toEqual({ canonical: 'doneadmin@example.com' });
+  });
+
   it('no-ops gracefully when the user has no email', async () => {
     // Users created without an email (phone-only flows) shouldn't crash
     // the trigger. We simulate by passing a minimal UserRecord-shaped

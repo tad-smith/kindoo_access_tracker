@@ -38,6 +38,7 @@ import type { CreateStakeInput, CreateStakeResult } from '@kindoo/shared';
 
 const mutateAsyncMock = vi.fn<(input: CreateStakeInput) => Promise<CreateStakeResult>>();
 const toastMock = vi.fn();
+const refreshIdTokenMock = vi.fn<() => Promise<void>>();
 
 vi.mock('../hooks', () => ({
   useCreateStake: () => ({
@@ -50,12 +51,18 @@ vi.mock('../../../lib/store/toast', () => ({
   toast: (...args: unknown[]) => toastMock(...args),
 }));
 
+vi.mock('../../auth/useTokenRefresh', () => ({
+  refreshIdToken: () => refreshIdTokenMock(),
+}));
+
 import { CreateStakeForm } from '../CreateStakeForm';
 import { DEFAULT_TIMEZONE } from '../schemas';
 
 beforeEach(() => {
   mutateAsyncMock.mockReset();
   toastMock.mockReset();
+  refreshIdTokenMock.mockReset();
+  refreshIdTokenMock.mockResolvedValue(undefined);
 });
 
 /**
@@ -213,6 +220,31 @@ describe('<CreateStakeForm />', () => {
     });
     expect(toastMock).toHaveBeenCalledWith('Stake `cottonwood-south-stake` created.', 'success');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('forces an ID-token refresh on {success:true} so the new bootstrap claim shows up without waiting an hour', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: true, stakeId: 'cottonwood-south-stake' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'Cottonwood South Stake');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    await vi.waitFor(() => {
+      expect(refreshIdTokenMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not force a token refresh on a soft-fail or hard error', async () => {
+    mutateAsyncMock.mockResolvedValue({ success: false, error: 'name_required' });
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(screen.getByTestId('create-stake-name'), 'X');
+    await user.type(screen.getByTestId('create-stake-email'), 'admin@example.com');
+    await user.click(screen.getByTestId('create-stake-submit'));
+
+    await screen.findByTestId('create-stake-name-error');
+    expect(refreshIdTokenMock).not.toHaveBeenCalled();
   });
 
   it('clears the form on re-open after a successful create', async () => {

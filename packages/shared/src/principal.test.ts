@@ -186,6 +186,69 @@ describe('principalFromClaims', () => {
     expect(principalFromClaims(undefined, undefined).limitedStakes).toEqual([]);
   });
 
+  it('collects stakes whose claim block carries bootstrap: true', () => {
+    const claims: CustomClaims = {
+      canonical: 'boot@gmail.com',
+      stakes: { csnorth: { manager: false, stake: false, wards: [], bootstrap: true } },
+    };
+    const p = principalFromClaims(claims, 'boot@gmail.com');
+    expect(p.bootstrapStakes).toEqual(['csnorth']);
+  });
+
+  it('treats a bootstrap-only principal as NOT authenticated', () => {
+    // `bootstrap` grants no access — it only makes the stake
+    // discoverable pre-setup. A bootstrap-only principal must keep
+    // reading as "no roles" until the wizard's auto-add mints a real
+    // manager claim; the whole setup gate depends on this.
+    const claims: CustomClaims = {
+      canonical: 'boot@gmail.com',
+      stakes: { csnorth: { manager: false, stake: false, wards: [], bootstrap: true } },
+    };
+    const p = principalFromClaims(claims, 'boot@gmail.com');
+    expect(p.isAuthenticated).toBe(false);
+    expect(p.managerStakes).toEqual([]);
+    expect(p.stakeMemberStakes).toEqual([]);
+    expect(p.bishopricWards).toEqual({});
+    expect(p.bootstrapStakes).toEqual(['csnorth']);
+  });
+
+  it('treats an absent bootstrap flag as not-bootstrap', () => {
+    const claims: CustomClaims = {
+      canonical: 'full@gmail.com',
+      stakes: { csnorth: { manager: false, stake: true, wards: [] } },
+    };
+    expect(principalFromClaims(claims, 'full@gmail.com').bootstrapStakes).toEqual([]);
+  });
+
+  it('treats bootstrap: false as not-bootstrap', () => {
+    const claims: CustomClaims = {
+      canonical: 'full@gmail.com',
+      stakes: { csnorth: { manager: false, stake: true, wards: [], bootstrap: false } },
+    };
+    expect(principalFromClaims(claims, 'full@gmail.com').bootstrapStakes).toEqual([]);
+  });
+
+  it('resolves bootstrap independently per stake in a mixed multi-stake token', () => {
+    const claims: CustomClaims = {
+      canonical: 'multi@gmail.com',
+      stakes: {
+        csnorth: { manager: false, stake: false, wards: [], bootstrap: true },
+        someother: { manager: true, stake: false, wards: ['LK'] },
+      },
+    };
+    const p = principalFromClaims(claims, 'multi@gmail.com');
+    expect(p.bootstrapStakes).toEqual(['csnorth']);
+    expect(p.managerStakes).toEqual(['someother']);
+    // The bootstrap-only stake contributes no role, but the OTHER
+    // stake's manager role still authenticates the whole principal.
+    expect(p.isAuthenticated).toBe(true);
+  });
+
+  it('leaves bootstrapStakes empty on an unauthenticated principal', () => {
+    expect(principalFromClaims(null, 'someone@example.com').bootstrapStakes).toEqual([]);
+    expect(principalFromClaims(undefined, undefined).bootstrapStakes).toEqual([]);
+  });
+
   it('survives malformed stake-claim entries by treating them as no-role', () => {
     // Defense-in-depth: claims come from a network token; a wrong shape
     // shouldn't crash the SPA. Coerce to all-false/empty.

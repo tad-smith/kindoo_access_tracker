@@ -25,6 +25,7 @@ src/
 │   ├── syncAccessClaims.ts            # access doc → custom claims
 │   ├── syncManagersClaims.ts          # kindooManagers doc → custom claims
 │   ├── syncSuperadminClaims.ts        # platformSuperadmins → custom claims
+│   ├── syncBootstrapClaims.ts         # stake bootstrap_admin_email + setup_complete → bootstrap marker
 │   ├── auditTrigger.ts                # parameterized; fans audit rows for every entity write (9 collections)
 │   ├── notifyOnRequestWrite.ts        # email on submit/complete/reject/cancel
 │   ├── notifyOnOverCap.ts             # email when last_over_caps_json transitions

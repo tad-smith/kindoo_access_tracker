@@ -20,6 +20,7 @@ function principal(overrides: Partial<Principal> = {}): Principal {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
     ...overrides,

@@ -45,6 +45,7 @@ export function principalFromClaims(
   const stakeMemberStakes: string[] = [];
   const bishopricWards: Record<string, string[]> = {};
   const limitedStakes: string[] = [];
+  const bootstrapStakes: string[] = [];
 
   if (claims.stakes) {
     for (const [stakeId, stake] of Object.entries(claims.stakes)) {
@@ -55,6 +56,11 @@ export function principalFromClaims(
       // `limited` narrows what an existing role may do; it is not a
       // role itself, so it stays out of the `hasAnyRole` test below.
       if (s.limited === true) limitedStakes.push(stakeId);
+      // `bootstrap` grants no access — it only makes the stake
+      // discoverable pre-setup. Stays out of `hasAnyRole` too: a
+      // bootstrap-only principal must keep reading as unauthenticated
+      // until the wizard's auto-add mints a real manager claim.
+      if (s.bootstrap === true) bootstrapStakes.push(stakeId);
     }
   }
 
@@ -73,6 +79,7 @@ export function principalFromClaims(
     stakeMemberStakes,
     bishopricWards,
     limitedStakes,
+    bootstrapStakes,
   };
 }
 
@@ -86,6 +93,7 @@ function emptyPrincipal(email: string): Principal {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
   };
 }
 
@@ -104,5 +112,9 @@ function normaliseStakeClaims(raw: unknown): StakeClaims {
     // Anything but a literal `true` — absent, `false`, a truthy string
     // off the wire — reads as full access.
     ...(r.limited === true ? { limited: true } : {}),
+    // Same omit-when-false convention as `limited`. A block whose only
+    // content is `bootstrap: true` must still round-trip here — it's
+    // not "no roles", it's a discoverable pre-setup marker.
+    ...(r.bootstrap === true ? { bootstrap: true } : {}),
   };
 }

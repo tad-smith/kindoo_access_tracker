@@ -5,7 +5,10 @@
 // Soft-failure envelopes from the callable (`{success:false, error}`)
 // are surfaced as inline field errors against the field that owns the
 // problem; hard `HttpsError`s (caught from the SDK) become a toast.
-// `{success:true}` fires a success toast and closes the dialog; the
+// `{success:true}` fires a success toast, forces an ID-token refresh
+// (`refreshIdToken` — the new stake's bootstrap claim landed server-side
+// while this superadmin was still signed in, so their cached token is
+// stale until the SDK's next hourly refresh), and closes the dialog; the
 // new stake row arrives via the live `useStakes()` snapshot listener.
 //
 // Form-state lifecycle: the form `reset()`s to empty defaults on every
@@ -34,6 +37,7 @@ import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { TimezoneCombobox } from '../../components/TimezoneCombobox';
 import { toast } from '../../lib/store/toast';
+import { refreshIdToken } from '../auth/useTokenRefresh';
 import { useCreateStake } from './hooks';
 import { createStakeSchema, DEFAULT_TIMEZONE, type CreateStakeForm } from './schemas';
 
@@ -126,6 +130,13 @@ export function CreateStakeForm({ open, onClose }: CreateStakeFormProps) {
       });
       if (result.success) {
         toast(`Stake \`${result.stakeId}\` created.`, 'success');
+        // `syncBootstrapClaims` mints the new stake's `bootstrap` claim
+        // server-side while the superadmin is still signed in on this
+        // form; without forcing a refresh here, their token stays stale
+        // until the SDK's hourly auto-refresh and the new stake won't
+        // show up in the StakeSwitcher. Fire-and-forget — the toast and
+        // dialog close don't need to wait on the round-trip.
+        refreshIdToken().catch(() => {});
         onClose();
         return;
       }
