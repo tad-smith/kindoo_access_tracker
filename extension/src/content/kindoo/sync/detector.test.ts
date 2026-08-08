@@ -2405,3 +2405,108 @@ describe('detect', () => {
     expect(row.kindoo?.primaryScope).toBe('stake');
   });
 });
+
+// ---- stake.kindoo_ignored_wards --------------------------------------
+//
+// The shipping scenario: two wards of a NEIGHBOURING stake meet in one
+// of our buildings and their own managers provision them into our home
+// Kindoo site. Our home-site session used to flag every one of their
+// members as `kindoo-only` drift, because an unresolvable description is
+// deliberately kept on home so real `kindoo-only` rows still surface.
+
+describe('detect — stake.kindoo_ignored_wards', () => {
+  const IGNORING = stake({ kindoo_ignored_wards: ['Aspen Grove Ward'] });
+  const FOREIGN_MEMBER = kuser({
+    username: 'bishop@aspengrove.example',
+    description: 'Aspen Grove Ward (Bishop)',
+  });
+
+  function inputs(s: Stake, kindooUsers: KindooEnvironmentUser[], seats: Seat[] = []) {
+    return {
+      stake: s,
+      wards: WARDS,
+      buildings: BUILDINGS,
+      seats,
+      kindooUsers,
+      activeSite: { kind: 'home' } as const,
+    };
+  }
+
+  it('flags an outside ward member as drift when no list is configured', () => {
+    // Baseline — this is the noise the list exists to remove.
+    const result = detect(inputs(STAKE, [FOREIGN_MEMBER]));
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('kindoo-only');
+    expect(result.ignoredCount).toBe(0);
+  });
+
+  it('drops them entirely once their ward is on the ignore list', () => {
+    const result = detect(inputs(IGNORING, [FOREIGN_MEMBER]));
+    expect(result.discrepancies).toEqual([]);
+    expect(result.kindooCount).toBe(0);
+    expect(result.ignoredCount).toBe(1);
+  });
+
+  it('leaves our own members untouched alongside them', () => {
+    const result = detect(inputs(IGNORING, [FOREIGN_MEMBER, kuser({})], [seat({})]));
+    expect(result.discrepancies).toEqual([]);
+    expect(result.seatCount).toBe(1);
+    expect(result.kindooCount).toBe(1);
+    expect(result.ignoredCount).toBe(1);
+  });
+
+  it('still syncs a member who holds a calling in BOTH an ignored ward and one of ours', () => {
+    const both = kuser({
+      username: 'dual@example.com',
+      description: 'Aspen Grove Ward (Bishop) | Maple Ward (Ward Clerk)',
+    });
+    const result = detect(inputs(IGNORING, [both]));
+    // Not fully ignored — the surviving Maple Ward segment drives the row.
+    expect(result.ignoredCount).toBe(0);
+    expect(result.kindooCount).toBe(1);
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.kindoo?.primaryScope).toBe('CO');
+    expect(row.kindoo?.intendedFreeText).toBe('Ward Clerk');
+  });
+
+  it('cannot hide one of our own wards even when an entry names it', () => {
+    const collides = stake({ kindoo_ignored_wards: ['Maple Ward'] });
+    const result = detect(inputs(collides, [kuser({})]));
+    expect(result.ignoredCount).toBe(0);
+    expect(result.kindooCount).toBe(1);
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('kindoo-only');
+  });
+
+  it('reports ignoredCount 0 on the unknown-active-site early return', () => {
+    const result = detect({
+      stake: IGNORING,
+      wards: WARDS,
+      buildings: BUILDINGS,
+      seats: [],
+      kindooUsers: [FOREIGN_MEMBER],
+      activeSite: { kind: 'unknown' },
+    });
+    expect(result).toEqual({
+      discrepancies: [],
+      seatCount: 0,
+      kindooCount: 0,
+      ignoredCount: 0,
+    });
+  });
+
+  it('applies on a foreign-site session too', () => {
+    const result = detect({
+      stake: IGNORING,
+      wards: WARDS,
+      buildings: BUILDINGS,
+      seats: [],
+      kindooUsers: [FOREIGN_MEMBER],
+      activeSite: { kind: 'foreign', siteId: 'east' },
+    });
+    expect(result.discrepancies).toEqual([]);
+    expect(result.ignoredCount).toBe(1);
+  });
+});

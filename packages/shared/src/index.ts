@@ -25,6 +25,11 @@ export {
   seatHasStakeGrant,
   type ExistingSeatFacts,
 } from './existingSeatGate.js';
+export {
+  collidesWithOwnWard,
+  matchesIgnoredWard,
+  normaliseIgnoredWard,
+} from './kindooIgnoredWards.js';
 export { REQUESTER_GUIDE_PATH } from './links.js';
 export { principalFromClaims } from './principal.js';
 export {

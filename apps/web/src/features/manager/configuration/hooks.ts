@@ -750,6 +750,40 @@ export function useUpsertKindooSiteMutation() {
   });
 }
 
+// ---- Wards to ignore in Kindoo --------------------------------------
+//
+// `stake.kindoo_ignored_wards` — ward names that appear in one of this
+// stake's Kindoo sites but belong to a NEIGHBOURING SBA stake, whose own
+// managers provision them. Sync strips their description segments so
+// they never surface here as drift. Lives on the parent stake doc rather
+// than a sub-collection: it's a handful of strings, and the extension
+// already reads the stake doc on every Sync run.
+//
+// The caller passes the whole new list; add / remove is a client-side
+// array edit against the live snapshot. No transaction — one operator
+// edits this, and a lost update costs one re-typed row.
+
+export function useUpdateIgnoredWardsMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (wards: string[]) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      await updateDoc(stakeRef(db, sid), {
+        kindoo_ignored_wards: wards,
+        last_modified_at: serverTimestamp(),
+        last_modified_by: actor,
+        lastActor: actor,
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
 // Block deletes when any building still references this site. Only
 // buildings carry `kindoo_site_id`; a ward's site is derived from its
 // building, so the building guard transitively covers wards. Orphaning

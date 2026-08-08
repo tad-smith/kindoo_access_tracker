@@ -318,6 +318,20 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   // the separate `backfillEqPresidentAccess` callable (§7).
   eq_president_app_access?: boolean;
 
+  // Kindoo Sites — wards to ignore (`spec.md` §15, "Wards to ignore in Kindoo")
+  // Ward names that appear in one of this stake's Kindoo sites but belong to a
+  // DIFFERENT SBA stake — the reciprocal of the `kindooSites` sub-collection (§4.11):
+  // that one records wards of ours living in someone else's Kindoo site, this one
+  // records wards of theirs living in one of ours. The extension's Sync strips the
+  // description segments naming them, so another stake's members never surface here
+  // as `kindoo-only` drift. Operator-typed on Configuration → Kindoo Sites; matched
+  // case-insensitively against the scope-name portion of a Kindoo description segment,
+  // and only ever against segments that did NOT resolve to one of this stake's own
+  // wards. ABSENT or empty ⇒ nothing is ignored. Read by the extension only (it
+  // already loads the stake doc on every Sync run, which is why this is a field here
+  // and not a sub-collection).
+  kindoo_ignored_wards?: string[];
+
   // Notifications
   notifications_enabled: boolean;
   notifications_reply_to?: string;     // optional reply-to address; when unset, EmailService omits the Reply-To header
@@ -357,7 +371,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page; `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Sites tab); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 

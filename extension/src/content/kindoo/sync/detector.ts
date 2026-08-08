@@ -18,6 +18,7 @@ import type {
 } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
+  isFullyIgnored,
   parseDescription,
   pickPrimarySegment,
   type ParsedDescription,
@@ -190,6 +191,13 @@ export interface DetectResult {
   seatCount: number;
   /** Total Kindoo user count — surfaces in the report header. */
   kindooCount: number;
+  /**
+   * Kindoo users dropped whole by `stake.kindoo_ignored_wards` — every
+   * segment of their description named another SBA stake's ward.
+   * Surfaced in the report header so a configured ignore list is
+   * distinguishable from a scrape that silently returned nothing.
+   */
+  ignoredCount: number;
 }
 
 /** Build a Map keyed by canonical email for quick lookup. */
@@ -367,9 +375,12 @@ function pickSegmentForSite(
   const filtered = parsed.segments.filter((s) => segmentSite(s) === wantSiteId);
   if (filtered.length === 0) return null;
   // Reuse `pickPrimarySegment`'s tiebreaker by wrapping the filter in
-  // a ParsedDescription shell (`raw` / `unparseable` aren't used by
-  // the picker).
-  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw }, opts);
+  // a ParsedDescription shell (`raw` / `unparseable` / `ignoredCount`
+  // aren't used by the picker).
+  return pickPrimarySegment(
+    { segments: filtered, unparseable: false, raw: parsed.raw, ignoredCount: 0 },
+    opts,
+  );
 }
 
 /**
@@ -612,7 +623,30 @@ export function detect(inputs: DetectInputs): DetectResult {
       discrepancies: [],
       seatCount: 0,
       kindooCount: 0,
+      ignoredCount: 0,
     };
+  }
+
+  // Ignore-list filter — drop the Kindoo users whose description names
+  // ONLY wards on `stake.kindoo_ignored_wards`: wards of a NEIGHBOURING
+  // SBA stake that share one of our Kindoo sites, provisioned by their
+  // managers, not ours. Runs ahead of the active-site filter and
+  // independently of it — a ward that isn't ours isn't ours on any site.
+  //
+  // Segment-level stripping already happened inside `parseDescription`,
+  // so every later parse in this function sees the survivors. This pass
+  // only handles the whole-user case: a description the list consumed
+  // entirely would otherwise reach the home-site keep-branch below (the
+  // one that preserves unparseable users so `kindoo-only` surfaces) and
+  // land as drift, which is the very noise the list exists to remove.
+  const consideredKindooUsers: KindooEnvironmentUser[] = [];
+  let ignoredCount = 0;
+  for (const u of inputs.kindooUsers) {
+    if (isFullyIgnored(parseDescription(u.description, inputs.stake, inputs.wards))) {
+      ignoredCount++;
+      continue;
+    }
+    consideredKindooUsers.push(u);
   }
 
   // Project each seat onto the active site (primary if its
@@ -632,7 +666,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     if (projected) projectedSeats.push({ seat, sbaBlock: projected });
   }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
-    inputs.kindooUsers,
+    consideredKindooUsers,
     inputs.stake,
     inputs.wards,
     inputs.buildings,
@@ -1008,6 +1042,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     discrepancies,
     seatCount: projectedSeats.length,
     kindooCount: filteredKindooUsers.length,
+    ignoredCount,
   };
 }
 
