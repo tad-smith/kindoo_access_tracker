@@ -18,6 +18,7 @@
 
 import {
   filterAppAccessCallings,
+  matchesIgnoredWard,
   type AppAccessOptions,
   type Stake,
   type Ward,
@@ -36,12 +37,17 @@ export interface ParsedSegment {
 }
 
 export interface ParsedDescription {
+  /** Surviving segments — those the stake's ignore list did not drop. */
   segments: ParsedSegment[];
-  /** True when no segment could be resolved (e.g. random text, Kindoo
-   * Manager descriptions). Distinct from "no segments at all". */
+  /** True when no surviving segment could be resolved (e.g. random text,
+   * Kindoo Manager descriptions). Distinct from "no segments at all". */
   unparseable: boolean;
   /** Original input, preserved for diagnostic rendering. */
   raw: string;
+  /** How many segments `stake.kindoo_ignored_wards` removed. Lets callers
+   * tell a fully-ignored description (another stake's user) apart from a
+   * blank one — both leave `segments` empty. See `isFullyIgnored`. */
+  ignoredCount: number;
 }
 
 const SEGMENT_RE = /^(.+?)\s*\((.+)\)\s*$/;
@@ -73,17 +79,24 @@ function normalise(s: string): string {
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or
  * Kindoo Manager descriptions like `"Kindoo Manager - Stake Clerk"`.
+ *
+ * Segments naming a ward on `stake.kindoo_ignored_wards` are dropped
+ * before any of that, and counted in `ignoredCount`. Only UNRESOLVED
+ * segments are eligible: a ward this stake owns resolves, so the ignore
+ * list can never hide our own scope even if an entry collides with a
+ * ward name (renamed after the entry was added, say).
  */
 export function parseDescription(
   raw: string,
-  stake: Pick<Stake, 'stake_name' | 'kindoo_expected_site_name'>,
+  stake: Pick<Stake, 'stake_name' | 'kindoo_expected_site_name' | 'kindoo_ignored_wards'>,
   wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>,
 ): ParsedDescription {
   const input = raw ?? '';
   if (input.trim().length === 0) {
-    return { segments: [], unparseable: true, raw: input };
+    return { segments: [], unparseable: true, raw: input, ignoredCount: 0 };
   }
 
+  const ignoredWards = stake.kindoo_ignored_wards;
   const expectedSiteName = stake.kindoo_expected_site_name?.trim();
   const stakeKey = normalise(
     expectedSiteName && expectedSiteName.length > 0 ? expectedSiteName : stake.stake_name,
@@ -105,12 +118,23 @@ export function parseDescription(
 
   const rawSegments = input.split(' | ');
   const segments: ParsedSegment[] = [];
+  let ignoredCount = 0;
+  const pushSegment = (segment: ParsedSegment): void => {
+    // Ignore-eligible only while unresolved — a scope that matched one
+    // of our own wards or the stake is ours regardless of the list.
+    if (!segment.resolvedScope && matchesIgnoredWard(segment.rawScopeName, ignoredWards)) {
+      ignoredCount++;
+      return;
+    }
+    segments.push(segment);
+  };
+
   for (const rawSeg of rawSegments) {
     const m = rawSeg.match(SEGMENT_RE);
     if (!m) {
       // No parens shape — record an unresolved segment so the detector
       // can render the raw text in the report.
-      segments.push({
+      pushSegment({
         rawScopeName: rawSeg.trim(),
         scope: null,
         calling: '',
@@ -135,11 +159,24 @@ export function parseDescription(
       }
     }
 
-    segments.push({ rawScopeName, scope, calling, resolvedScope });
+    pushSegment({ rawScopeName, scope, calling, resolvedScope });
   }
 
   const unparseable = segments.every((s) => !s.resolvedScope);
-  return { segments, unparseable, raw: input };
+  return { segments, unparseable, raw: input, ignoredCount };
+}
+
+/**
+ * Did the stake's ignore list consume the whole description? True only
+ * when at least one segment was dropped AND nothing survived — i.e. the
+ * user belongs entirely to another SBA stake's wards and Sync should
+ * not see them at all.
+ *
+ * The `ignoredCount > 0` half matters: a blank description also leaves
+ * `segments` empty, and that one is a real review row.
+ */
+export function isFullyIgnored(parsed: ParsedDescription): boolean {
+  return parsed.ignoredCount > 0 && parsed.segments.length === 0;
 }
 
 /** True iff any calling in `segment.calling` (split on `,`) grants app

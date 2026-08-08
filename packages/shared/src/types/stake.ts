@@ -71,6 +71,20 @@ export type Stake = {
   /** Optional; absent until v2.1 first-run config completes. */
   kindoo_config?: KindooConfig;
 
+  /**
+   * Ward names that appear in this stake's Kindoo sites but belong to a
+   * different SBA stake — e.g. two wards of a neighbouring stake that
+   * meet in one of our buildings and are provisioned by *their*
+   * managers. Sync drops the description segments naming them, so they
+   * never surface as `kindoo-only` drift here.
+   *
+   * Entries are operator-typed, matched case-insensitively against the
+   * scope-name portion of a Kindoo description segment, and only ever
+   * applied to segments that did NOT resolve to one of this stake's own
+   * wards (see `matchesIgnoredWard`). Absent ⇒ nothing is ignored.
+   */
+  kindoo_ignored_wards?: string[];
+
   // ----- App access -----
   /**
    * Opt-in: when `true`, Elders Quorum President joins the ward
