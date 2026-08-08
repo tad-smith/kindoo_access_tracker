@@ -224,7 +224,18 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
       }),
     );
 
-    expect(claimsOf(await auth.getUser(uid))).toEqual(settledBaseline);
+    // NOT the same `settledBaseline` as above: `syncBootstrapClaims`
+    // converges on every write that has a candidate email, eligible or
+    // not — `applyBootstrapClaim`/`mergeBootstrap` always establishes
+    // the `{ canonical }` shape the first time it touches a uid (an
+    // all-false stake block is pruned to nothing by
+    // `isNonEmptyStakeClaims`, leaving just `canonical`). So the run
+    // above converges the claim to `{ canonical }` regardless of
+    // whether `onAuthUserCreate` already put it there (CI) or this call
+    // is the first claim write this uid has ever gotten (local) — what
+    // the "does NOT mint" contract actually rules out is a `stakes`
+    // block appearing at all, let alone `bootstrap: true`.
+    expect(claimsOf(await auth.getUser(uid))).toEqual({ canonical: email });
   });
 
   it('does NOT mint when setup_complete is a non-boolean value', { timeout: 30_000 }, async () => {
@@ -242,7 +253,11 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
       }),
     );
 
-    expect(claimsOf(await auth.getUser(uid))).toEqual(settledBaseline);
+    // Same divergence from `settledBaseline` as the sibling "absent"
+    // test above, and for the same reason: the run itself establishes
+    // `{ canonical }` on a first touch, so that's the post-run shape
+    // under both configs, not just under CI.
+    expect(claimsOf(await auth.getUser(uid))).toEqual({ canonical: email });
   });
 
   it(
@@ -291,6 +306,21 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
       const email = 'complete@example.com';
       const uid = await makeSettledUser(email, functionsEmulatorReachable);
       const doc = { bootstrap_admin_email: email, setup_complete: true };
+
+      // Prime the canonical baseline with an identity write (before ===
+      // after) before capturing `tokensValidAfterTime`. Under CI,
+      // `onAuthUserCreate` already established `{ canonical }` by the
+      // time `makeSettledUser` returns, so this is a genuine no-op.
+      // Under `test:integration:local` that trigger never fires, so
+      // without priming, the very first claim write this uid ever gets
+      // would be the one under test below — always triggering a revoke
+      // (see `applyBootstrapClaim`/`mergeBootstrap`: a first touch
+      // always writes at least `{ canonical }`) regardless of whether
+      // it's steady-state churn, which is exactly what this test means
+      // to rule out.
+      await syncBootstrapClaims.run(
+        makeEvent({ stakeId: 'complete-stake', before: doc, after: doc }),
+      );
       const tokensValidBefore = (await auth.getUser(uid)).tokensValidAfterTime;
 
       await syncBootstrapClaims.run(
