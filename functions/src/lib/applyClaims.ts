@@ -200,6 +200,11 @@ function mergeStake(
     ? { ...existing, canonical: existing.canonical || canonical }
     : { canonical };
 
+  // Wholesale replace, same as `limited`: `newStakeClaims` never carries
+  // `bootstrap` (it isn't derived from role data), so a role-data write
+  // for this stake silently drops any marker `applyBootstrapClaim` had
+  // set. Accepted — see the "dropped by a subsequent applyStakeClaims"
+  // test in `applyClaims.test.ts`.
   const stakes: Record<string, StakeClaims> = base.stakes ? { ...base.stakes } : {};
   if (newStakeClaims && isNonEmptyStakeClaims(newStakeClaims)) {
     stakes[stakeId] = newStakeClaims;
