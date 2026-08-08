@@ -46,7 +46,6 @@ vi.mock('../../lib/principal', () => ({
 
 vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
-  useAccessibleStakes: () => ['csnorth'],
   useAccessibleStakesWithBootstrap: () => [{ stakeId: 'csnorth', needsSetup: false }],
   useActiveStakeSwitcher: () => () => {},
   useActiveStakeInvalidation: () => null,

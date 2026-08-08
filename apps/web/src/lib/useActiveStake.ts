@@ -643,11 +643,11 @@ export interface AccessibleStakeEntry {
 
 /**
  * The StakeSwitcher's menu source: claim-derived accessible stakes
- * (`useAccessibleStakes`, listed first, in their existing alphabetical
- * order) plus any bootstrap-only stakes named in `principal.bootstrapStakes`
- * (appended, `needsSetup: true`, deduped against the claim-derived set).
- * Fully synchronous — the bootstrap marker arrives on the same token
- * read as every other claim.
+ * (via `accessibleStakes(principal)`, listed first, in their existing
+ * alphabetical order) plus any bootstrap-only stakes named in
+ * `principal.bootstrapStakes` (appended, `needsSetup: true`, deduped
+ * against the claim-derived set). Fully synchronous — the bootstrap
+ * marker arrives on the same token read as every other claim.
  */
 export function useAccessibleStakesWithBootstrap(): AccessibleStakeEntry[] {
   const principal = usePrincipal();
@@ -689,14 +689,4 @@ export function useActiveStakeSwitcher(): (stakeId: string) => void {
       queryClient.invalidateQueries({ queryKey: [FIRESTORE_QUERY_KEY_PREFIX] }).catch(() => {});
     };
   }, [queryClient]);
-}
-
-/**
- * Read the principal's accessible stakes — convenience re-export so
- * call sites don't have to bridge two modules. Returns the
- * alphabetically-sorted, deduped array suitable for menu rendering.
- */
-export function useAccessibleStakes(): string[] {
-  const principal = usePrincipal();
-  return useMemo(() => accessibleStakes(principal), [principal]);
 }

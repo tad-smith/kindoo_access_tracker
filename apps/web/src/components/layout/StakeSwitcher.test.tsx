@@ -97,8 +97,8 @@ describe('StakeSwitcher visibility', () => {
   it('renders the trigger when a manager of A is also the bootstrap admin of not-yet-setup B', () => {
     // The operator's exact scenario: one claim-derived stake plus one
     // bootstrap-discovery-only stake still totals ≥ 2 menu entries, so
-    // the switcher must appear even though `useAccessibleStakes()`
-    // alone (claim-derived only) would report just one.
+    // the switcher must appear even though the claim-derived set alone
+    // would report just one.
     entriesSpy.current = [claimEntry('csnorth'), bootstrapEntry('ridgeline')];
     render(<StakeSwitcher activeStakeId="csnorth" />);
     expect(screen.getByTestId('stake-switcher-trigger')).toBeInTheDocument();
