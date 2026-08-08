@@ -58,6 +58,6 @@ export const onAuthUserCreate = v1Auth.user().onCreate(async (user: UserRecord) 
   // 2. Seed claims from any pre-existing role data. The `canonical`
   //    field is always set so rules can rely on
   //    `request.auth.token.canonical`.
-  const claims = await seedClaimsFromRoleData(user.uid, canonical);
+  const claims = await seedClaimsFromRoleData(user.uid, canonical, typedEmail);
   await applyFullClaims(user.uid, claims);
 });

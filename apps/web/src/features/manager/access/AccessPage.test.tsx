@@ -34,6 +34,7 @@ vi.mock('../../../lib/principal', () => ({
     managerStakes: ['csnorth'],
     stakeMemberStakes: [],
     bishopricWards: {},
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
   }),

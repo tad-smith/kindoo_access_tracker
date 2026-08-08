@@ -6,6 +6,8 @@
 //   - Invalidation event published on URL-tier invalidation.
 //   - Invalidation event published on storage-tier invalidation.
 //   - null for zero-role platform superadmin.
+//   - `principal.bootstrapStakes` widening tiers 1-4 and feeding the
+//     StakeSwitcher's menu source (`useAccessibleStakesWithBootstrap`).
 //
 // Toast TEXT is owned by `<ActiveStakeToastBoundary>` (per item 7) so
 // the storage-tier wording substitutes the display name. Those test
@@ -28,6 +30,7 @@ const mockedPrincipal: { current: Principal } = {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
   },
@@ -47,8 +50,10 @@ const invalidationEvents: Array<{
 import {
   __resetActiveStakeModuleForTests,
   notifyActiveStakeUrlNavigated,
+  useAccessibleStakesWithBootstrap,
   useActiveStake,
   useActiveStakeInvalidation,
+  type AccessibleStakeEntry,
 } from './useActiveStake';
 import { ACTIVE_STAKE_LOCAL_KEY, ACTIVE_STAKE_SESSION_KEY } from './activeStake';
 import { useEffect } from 'react';
@@ -65,6 +70,16 @@ function InvalidationProbe() {
 function Probe({ onResult }: { onResult: (v: string | null) => void }) {
   const id = useActiveStake();
   onResult(id);
+  return null;
+}
+
+function AccessibleWithBootstrapProbe({
+  onResult,
+}: {
+  onResult: (v: AccessibleStakeEntry[]) => void;
+}) {
+  const entries = useAccessibleStakesWithBootstrap();
+  onResult(entries);
   return null;
 }
 
@@ -88,6 +103,7 @@ beforeEach(() => {
     stakeMemberStakes: [],
     bishopricWards: {},
     isPlatformSuperadmin: false,
+    bootstrapStakes: [],
   });
   // Reset the hook's module-scoped URL + invalidation state so each
   // test starts from the URL set above, not the one that lingered.
@@ -290,5 +306,129 @@ describe('useActiveStake — invalidation event dedupe across hook instances (it
       (e) => e.tier === 'session' || e.tier === 'local',
     );
     expect(storageEvents).toHaveLength(1);
+  });
+});
+
+describe('useActiveStake — principal.bootstrapStakes (claims-derived, synchronous)', () => {
+  it('a fresh bootstrap admin (zero role claims) auto-selects the stake named in bootstrapStakes', () => {
+    // The original bug fix, now driven synchronously off the token:
+    // no callable, no discovery round-trip — the claim is already on
+    // the principal by the time this hook first renders.
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+  });
+
+  it('manager of A who is also the bootstrap admin of not-yet-setup B: active stake stays A, B appears in the switcher source flagged needsSetup', () => {
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    let stakeId: string | null = null;
+    let entries: AccessibleStakeEntry[] = [];
+    render(
+      <>
+        <Probe
+          onResult={(v) => {
+            stakeId = v;
+          }}
+        />
+        <AccessibleWithBootstrapProbe
+          onResult={(v) => {
+            entries = v;
+          }}
+        />
+      </>,
+    );
+    // Claim-derived stake wins tier 4 — never auto-switched into B.
+    expect(stakeId).toBe('csnorth');
+    expect(entries).toEqual([
+      { stakeId: 'csnorth', needsSetup: false },
+      { stakeId: 'ridgeline', needsSetup: true },
+    ]);
+  });
+
+  it('zero-claims platform superadmin who is also the bootstrap admin of B is not auto-switched into B', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isPlatformSuperadmin: true,
+      bootstrapStakes: ['ridgeline'],
+    });
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('regression: a bootstrap-only stake already persisted to sessionStorage is never clobbered by the tier-4 fallback', () => {
+    // The hazard the old async-discovery code guarded against with a
+    // `discoverySettling` defer: a stale-looking storage value that's
+    // actually valid must not get overwritten before the data that
+    // would validate it is available. Now that bootstrapStakes rides
+    // the same synchronous token read as every other claim, there is
+    // no window where the resolver sees a principal with the OLD
+    // (narrower) bootstrap set while storage already holds the NEW
+    // stake — the principal used to resolve and the principal used to
+    // validate are the same object on the same render. Pin the
+    // no-clobber behavior directly.
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    window.sessionStorage.setItem(ACTIVE_STAKE_SESSION_KEY, 'ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('ridgeline');
+  });
+
+  it('a URL-tier hit for a claim-derived stake persists and strips immediately regardless of bootstrapStakes', () => {
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: [],
+    });
+    setUrl('/manager/dashboard?stake=csnorth');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(window.location.search).not.toContain('stake=');
+    expect(result).toBe('csnorth');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('csnorth');
   });
 });
