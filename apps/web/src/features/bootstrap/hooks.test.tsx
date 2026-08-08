@@ -121,7 +121,7 @@ vi.mock('firebase/firestore', async () => {
 });
 
 // `getIdTokenMock` backs `refreshIdToken()` and `getIdTokenResultMock`
-// backs the claim read in `waitForPostFlipStakeAccess` (both via
+// backs the claim read in `waitForPostFlipAdminAccess` (both via
 // `auth.currentUser`), which `useCompleteSetupMutation` calls before
 // flipping `setup_complete`. `getIdTokenResultMock` defaults to a token
 // that already carries the `manager` claim on the active stake
@@ -448,36 +448,54 @@ describe('useCompleteSetupMutation', () => {
     await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
   });
 
-  // Second reviewer finding on PR #260: the post-flip stake-doc read is
-  // gated by `isAnyMember(stakeId) || isPlatformSuperadmin()`
-  // (firestore.rules), which is broader than `manager` alone. These
-  // three cover the other disjuncts — a principal that satisfies the
-  // rule but would have been wrongly blocked by a `manager`-only check.
-  it('proceeds with the flip for a stake-level member with no manager claim (widened predicate)', async () => {
+  // Regression guard for the widened-predicate mistake on PR #260: a
+  // second reviewer pass initially argued the gate should match the
+  // post-flip stake-doc *read* rule (`isAnyMember(stakeId) ||
+  // isPlatformSuperadmin()`, firestore.rules), broader than `manager`
+  // alone — then, on the same PR, found that reasoning wrong. Passing
+  // this gate must mean the admin can still ADMINISTER the stake
+  // post-flip, not merely read its parent doc: `kindooManagers`
+  // (:780-785), `wards` (:704) and `buildings` (:715) all stay gated on
+  // `isManager(stakeId) || isBootstrapAdmin(stakeId)` post-flip — no
+  // `isPlatformSuperadmin`, `stake`, or `wards` disjunct — and nothing
+  // lets a platform superadmin write `kindooManagers` to recover. Each
+  // of these three principals would satisfy the (wrong) widened check
+  // and the read rule, but must NOT be allowed to proceed here.
+  it('does not proceed with the flip for a platform superadmin with no manager claim on this stake', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({ claims: { isPlatformSuperadmin: true } });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('does not proceed with the flip for a stake-level member with no manager claim', async () => {
+    vi.useFakeTimers();
     getIdTokenResultMock.mockResolvedValue({
       claims: { stakes: { csnorth: { manager: false, stake: true } } },
     });
     const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
-    await result.current.mutateAsync();
-    await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
   });
 
-  it('proceeds with the flip for a bishopric ward member with no manager claim (widened predicate)', async () => {
+  it('does not proceed with the flip for a bishopric ward member with no manager claim', async () => {
+    vi.useFakeTimers();
     getIdTokenResultMock.mockResolvedValue({
       claims: { stakes: { csnorth: { manager: false, wards: ['CO'] } } },
     });
     const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
-    await result.current.mutateAsync();
-    await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
-  });
-
-  it('proceeds with the flip for a platform superadmin with no stake claims at all (widened predicate)', async () => {
-    getIdTokenResultMock.mockResolvedValue({
-      claims: { isPlatformSuperadmin: true },
-    });
-    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
-    await result.current.mutateAsync();
-    await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
   });
 
   // The gap PR #260's reviewer found: the prior fix refreshed and

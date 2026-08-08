@@ -458,40 +458,46 @@ const CLAIM_POLL_ITERATIONS = 10;
 const CLAIM_POLL_INTERVAL_MS = 500;
 
 /**
- * Mirrors the `/stakes/{stakeId}` read predicate `firestore.rules`
- * actually enforces once `setup_complete` flips true. Pre-flip, the read
- * is additionally covered by `isBootstrapAdmin(stakeId)` and
- * `isSetupInProgressReadable(stakeId)` — but both of those are gated on
- * `setup_complete == false`, so the instant this mutation's `updateDoc`
- * lands they evaluate false forever. What survives is exactly:
+ * Whether this admin can still ADMINISTER the stake once
+ * `setup_complete` flips true — i.e. still holds the `manager` claim on
+ * this stake — not merely whether they can read the parent stake doc.
  *
- *   isAnyMember(stakeId) || isPlatformSuperadmin()
+ * This is deliberately NARROWER than the post-flip `/stakes/{stakeId}`
+ * *read* rule `firestore.rules` enforces once `setup_complete` is true:
+ * `isAnyMember(stakeId) || isPlatformSuperadmin()` (:677-679; `isAnyMember`
+ * at :137-141 is `isManager || isStakeMember ||
+ * bishopricWardOf(stakeId).size() > 0`). A previous revision of this gate
+ * widened the check to mirror that read rule — checking `stake` and
+ * `wards` claims and `isPlatformSuperadmin` alongside `manager` — on the
+ * reasoning that anything narrower would wrongly block a principal the
+ * read rule itself admits. That was wrong, and got reverted: passing
+ * this gate must mean the admin can still ADMINISTER the stake
+ * post-flip, not merely read its parent doc. Once
+ * `isBootstrapAdmin`/`isSetupInProgressReadable` go silent post-flip
+ * (both gated on `setup_complete == false`), a platform superadmin — or
+ * a principal holding only a `stake`- or `wards`-scoped claim on this
+ * stake — satisfies the read rule above but loses:
  *
- * and `isAnyMember` is `isManager || isStakeMember ||
- * bishopricWardOf(stakeId).size() > 0` — i.e. `manager` claim OR `stake`
- * claim OR a non-empty `wards` list on this stake. Checking only
- * `manager` (as the previous fix did) is narrower than the rule: a
- * platform superadmin, or a principal who only holds a stake-level or
- * ward-level (bishopric) claim on this stake, would pass the rule but
- * get blocked by the gate. This checks the same four disjuncts the rule
- * does.
+ *   - `kindooManagers` (:780-785) — gated on `isManager(stakeId) ||
+ *     isBootstrapAdmin(stakeId)`, no `isPlatformSuperadmin()` disjunct
+ *   - `wards` (:704) — same `isManager(stakeId) || isBootstrapAdmin`
+ *   - `buildings` (:715) — same `isManager(stakeId) || isBootstrapAdmin`
+ *
+ * and no rule or callable lets a platform superadmin write
+ * `kindooManagers`, so once flipped there is no path back to `manager`.
+ * Widening the gate to match the read rule let exactly the stranding
+ * this gate exists to prevent happen to a wider set of principals. Don't
+ * re-widen this a third time on "but the read rule allows it" reasoning
+ * — that reasoning is exactly what got it wrong the second time.
  */
-function canReadStakeDocPostFlip(claims: CustomClaims | undefined, stakeId: string): boolean {
-  if (!claims) return false;
-  if (claims.isPlatformSuperadmin === true) return true;
-  const stakeClaims = claims.stakes?.[stakeId];
-  if (!stakeClaims) return false;
-  return (
-    stakeClaims.manager === true ||
-    stakeClaims.stake === true ||
-    (stakeClaims.wards?.length ?? 0) > 0
-  );
+function canAdministerStakePostFlip(claims: CustomClaims | undefined, stakeId: string): boolean {
+  return claims?.stakes?.[stakeId]?.manager === true;
 }
 
 /**
- * Bounded wait for the post-flip stake-doc read to become satisfiable on
- * the signed-in admin's cached ID token — see `canReadStakeDocPostFlip`
- * for exactly which claim shapes qualify. Same shape as
+ * Bounded wait for the `manager` claim to become present on the
+ * signed-in admin's cached ID token — see `canAdministerStakePostFlip`
+ * for exactly which claim shape qualifies. Same shape as
  * `pollForCanonicalClaim`: force-refresh, check the decoded claims, and
  * if nothing qualifying is there yet, sleep and refresh again — up to
  * `CLAIM_POLL_ITERATIONS` times.
@@ -500,15 +506,15 @@ function canReadStakeDocPostFlip(claims: CustomClaims | undefined, stakeId: stri
  * helper always resolves — a downstream page handles a permanently
  * missing claim. This one backs a fail-closed gate ahead of an
  * irreversible write (see `useCompleteSetupMutation` below), so it
- * reports whether a qualifying claim actually landed rather than
- * silently carrying on either way.
+ * reports whether the claim actually landed rather than silently
+ * carrying on either way.
  */
-async function waitForPostFlipStakeAccess(stakeId: string): Promise<boolean> {
+async function waitForPostFlipAdminAccess(stakeId: string): Promise<boolean> {
   await refreshIdToken();
   for (let i = 0; i < CLAIM_POLL_ITERATIONS; i++) {
     const result = await auth.currentUser?.getIdTokenResult();
     const claims = result?.claims as CustomClaims | undefined;
-    if (canReadStakeDocPostFlip(claims, stakeId)) return true;
+    if (canAdministerStakePostFlip(claims, stakeId)) return true;
     await new Promise((resolve) => setTimeout(resolve, CLAIM_POLL_INTERVAL_MS));
     await refreshIdToken();
   }
@@ -521,13 +527,19 @@ async function waitForPostFlipStakeAccess(stakeId: string): Promise<boolean> {
  * Complete-Setup action (the routing gate redirects once it lands, and
  * the `auditTrigger` fans the audit row).
  *
- * Verifies a qualifying claim is actually ON THE TOKEN before issuing
- * the flip — not just that a refresh happened. The instant
- * `setup_complete` becomes `true`, `isSetupInProgressReadable` and
- * `isBootstrapAdmin` (firestore.rules) both stop applying — they're
- * gated on `setup_complete == false` — so the stake-doc read falls back
- * to plain `isAnyMember(stakeId) || isPlatformSuperadmin()` (see
- * `canReadStakeDocPostFlip`). The overwhelmingly common qualifier is the
+ * Verifies the `manager` claim is actually ON THE TOKEN before issuing
+ * the flip — not just that a refresh happened, and not merely that the
+ * stake doc would still be READABLE. The instant `setup_complete`
+ * becomes `true`, `isSetupInProgressReadable` and `isBootstrapAdmin`
+ * (firestore.rules) both stop applying — they're gated on
+ * `setup_complete == false` — so the stake-doc *read* falls back to
+ * plain `isAnyMember(stakeId) || isPlatformSuperadmin()`. That read rule
+ * is a distractor here: `canAdministerStakePostFlip` checks `manager`
+ * specifically, deliberately narrower than the read rule — see its doc
+ * comment for why mirroring the read rule would strand a platform
+ * superadmin or a stake/wards-only principal (they could still read the
+ * flipped stake doc, but couldn't write `kindooManagers`, `wards`, or
+ * `buildings` to recover). The claim this mutation needs is the
  * `manager` claim `useEnsureBootstrapAdmin`'s auto-add minted earlier in
  * the wizard. A refresh alone doesn't guarantee that claim actually
  * arrived: the auto-add write is fire-and-forget from
@@ -539,7 +551,7 @@ async function waitForPostFlipStakeAccess(stakeId: string): Promise<boolean> {
  * doesn't recover, and the auto-add effect can't re-mint the claim
  * because it early-returns once the manager doc exists.
  *
- * So `waitForPostFlipStakeAccess` is a gate, not a courtesy: if nothing
+ * So `waitForPostFlipAdminAccess` is a gate, not a courtesy: if nothing
  * qualifying lands within its bound, `mutationFn` re-issues the auto-add
  * write (see below) and throws — the `updateDoc` never runs,
  * `setup_complete` stays `false`, and the wizard is exactly where it
@@ -564,7 +576,7 @@ async function waitForPostFlipStakeAccess(stakeId: string): Promise<boolean> {
  *
  * This is deliberately NOT the pattern `architecture.md` D28(d)
  * reverted, even though both are a forced refresh next to `stakes`
- * writes — don't delete the refresh inside `waitForPostFlipStakeAccess`
+ * writes — don't delete the refresh inside `waitForPostFlipAdminAccess`
  * on the assumption it repeats that mistake. D28(d)'s refresh ran right
  * after `createStake`, racing `syncBootstrapClaims` — an async Firestore
  * trigger on that very write — before it had run; it lost almost every
@@ -585,7 +597,7 @@ export function useCompleteSetupMutation() {
   return useMutation({
     mutationFn: async () => {
       const sid = requireActiveStake(activeStakeId);
-      const claimLanded = await waitForPostFlipStakeAccess(sid);
+      const claimLanded = await waitForPostFlipAdminAccess(sid);
       if (!claimLanded) {
         // Make the retry story true: the doc `useEnsureBootstrapAdmin`
         // wrote at wizard mount may already exist (so its own
@@ -596,6 +608,26 @@ export function useCompleteSetupMutation() {
         // before the admin's next Complete Setup click.
         const actor = actorOf(principal);
         await writeBootstrapAdminManagerDoc(sid, principal.email, principal.email, actor);
+        // Diagnostic breadcrumb: if `userIndex/{canonical}` is missing,
+        // `syncManagersClaims` hits `if (!uid) return` on every re-issue
+        // (functions/src/triggers/syncManagersClaims.ts) — this retry
+        // can then never succeed, and the message below promises a
+        // recovery that can't arrive. Rare (`onAuthUserCreate` +
+        // `pollForCanonicalClaim` normally seed `userIndex` at sign-in
+        // before this ever runs) but gives an operator looking at a
+        // stuck admin's console a thread to pull. Message text is left
+        // unchanged on repeat: distinguishing "still not syncing" from
+        // "syncing" would need attempt state to persist across separate
+        // mutation calls — a retry-counter machine not worth building
+        // for a once-per-stake flow. The console line is what actually
+        // makes this diagnosable; the operator already needs devtools
+        // access to unstick the admin regardless of which text shows.
+        if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
+          console.error('[complete-setup] manager claim did not land after re-issue', {
+            stakeId: sid,
+            canonical: actor.canonical,
+          });
+        }
         throw new Error(
           'Setup access is still syncing — wait a moment and try Complete Setup again.',
         );
