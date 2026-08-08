@@ -5,8 +5,12 @@
 // Soft-failure envelopes from the callable (`{success:false, error}`)
 // are surfaced as inline field errors against the field that owns the
 // problem; hard `HttpsError`s (caught from the SDK) become a toast.
-// `{success:true}` fires a success toast and closes the dialog; the
-// new stake row arrives via the live `useStakes()` snapshot listener.
+// `{success:true}` fires a success toast and closes the dialog; the new
+// stake row arrives via the live `useStakes()` snapshot listener — no
+// forced token refresh needed, since `createStake` is superadmin-gated
+// and the creator already holds that claim. The StakeSwitcher entry
+// (which does need the new stake's `bootstrap` claim) appears on the
+// next natural token refresh.
 //
 // Form-state lifecycle: the form `reset()`s to empty defaults on every
 // open transition so re-opening after a successful create (or after a

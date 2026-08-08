@@ -34,6 +34,7 @@ const mockedPrincipal: { current: Principal } = {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
   },
@@ -45,7 +46,7 @@ vi.mock('../../lib/principal', () => ({
 
 vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
-  useAccessibleStakes: () => ['csnorth'],
+  useAccessibleStakesWithBootstrap: () => [{ stakeId: 'csnorth', needsSetup: false }],
   useActiveStakeSwitcher: () => () => {},
   useActiveStakeInvalidation: () => null,
 }));
@@ -110,6 +111,7 @@ function defaultPrincipal(overrides: Partial<Principal> = {}): Principal {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
     ...overrides,

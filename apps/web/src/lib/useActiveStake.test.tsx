@@ -6,6 +6,12 @@
 //   - Invalidation event published on URL-tier invalidation.
 //   - Invalidation event published on storage-tier invalidation.
 //   - null for zero-role platform superadmin.
+//   - `principal.bootstrapStakes` widening tiers 1-4 and feeding the
+//     StakeSwitcher's menu source (`useAccessibleStakesWithBootstrap`).
+//   - For a settling (bootstrap-only) principal: the URL bar is
+//     stripped immediately, but the module-scoped URL-tier value keeps
+//     shadowing the `bootstrapStakes` answer absent a real router
+//     navigation — a known bound, not a regression under test.
 //
 // Toast TEXT is owned by `<ActiveStakeToastBoundary>` (per item 7) so
 // the storage-tier wording substitutes the display name. Those test
@@ -28,6 +34,7 @@ const mockedPrincipal: { current: Principal } = {
     stakeMemberStakes: [],
     bishopricWards: {},
     limitedStakes: [],
+    bootstrapStakes: [],
     hasAnyRole: () => true,
     wardsInStake: () => [],
   },
@@ -47,8 +54,10 @@ const invalidationEvents: Array<{
 import {
   __resetActiveStakeModuleForTests,
   notifyActiveStakeUrlNavigated,
+  useAccessibleStakesWithBootstrap,
   useActiveStake,
   useActiveStakeInvalidation,
+  type AccessibleStakeEntry,
 } from './useActiveStake';
 import { ACTIVE_STAKE_LOCAL_KEY, ACTIVE_STAKE_SESSION_KEY } from './activeStake';
 import { useEffect } from 'react';
@@ -65,6 +74,16 @@ function InvalidationProbe() {
 function Probe({ onResult }: { onResult: (v: string | null) => void }) {
   const id = useActiveStake();
   onResult(id);
+  return null;
+}
+
+function AccessibleWithBootstrapProbe({
+  onResult,
+}: {
+  onResult: (v: AccessibleStakeEntry[]) => void;
+}) {
+  const entries = useAccessibleStakesWithBootstrap();
+  onResult(entries);
   return null;
 }
 
@@ -88,6 +107,11 @@ beforeEach(() => {
     stakeMemberStakes: [],
     bishopricWards: {},
     isPlatformSuperadmin: false,
+    bootstrapStakes: [],
+    // Explicit (not just relying on the module-level initial value) so
+    // a test that flips this to `false` (a settling/bootstrap-only
+    // principal) can't leak it into the next test.
+    isAuthenticated: true,
   });
   // Reset the hook's module-scoped URL + invalidation state so each
   // test starts from the URL set above, not the one that lingered.
@@ -290,5 +314,273 @@ describe('useActiveStake — invalidation event dedupe across hook instances (it
       (e) => e.tier === 'session' || e.tier === 'local',
     );
     expect(storageEvents).toHaveLength(1);
+  });
+});
+
+describe('useActiveStake — principal.bootstrapStakes (claims-derived, synchronous)', () => {
+  it('a fresh bootstrap admin (zero role claims) auto-selects the stake named in bootstrapStakes', () => {
+    // The original bug fix, now driven synchronously off the token:
+    // no callable, no discovery round-trip — the claim is already on
+    // the principal by the time this hook first renders.
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+  });
+
+  it('manager of A who is also the bootstrap admin of not-yet-setup B: active stake stays A, B appears in the switcher source flagged needsSetup', () => {
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    let stakeId: string | null = null;
+    let entries: AccessibleStakeEntry[] = [];
+    render(
+      <>
+        <Probe
+          onResult={(v) => {
+            stakeId = v;
+          }}
+        />
+        <AccessibleWithBootstrapProbe
+          onResult={(v) => {
+            entries = v;
+          }}
+        />
+      </>,
+    );
+    // Claim-derived stake wins tier 4 — never auto-switched into B.
+    expect(stakeId).toBe('csnorth');
+    expect(entries).toEqual([
+      { stakeId: 'csnorth', needsSetup: false },
+      { stakeId: 'ridgeline', needsSetup: true },
+    ]);
+  });
+
+  it('zero-claims platform superadmin who is also the bootstrap admin of B is not auto-switched into B', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isPlatformSuperadmin: true,
+      bootstrapStakes: ['ridgeline'],
+    });
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBeNull();
+  });
+
+  it('regression: a bootstrap-only stake already persisted to sessionStorage is never clobbered by the tier-4 fallback', () => {
+    // The hazard the old async-discovery code guarded against with a
+    // `discoverySettling` defer: a stale-looking storage value that's
+    // actually valid must not get overwritten before the data that
+    // would validate it is available. Now that bootstrapStakes rides
+    // the same synchronous token read as every other claim, there is
+    // no window where the resolver sees a principal with the OLD
+    // (narrower) bootstrap set while storage already holds the NEW
+    // stake — the principal used to resolve and the principal used to
+    // validate are the same object on the same render. Pin the
+    // no-clobber behavior directly.
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: ['ridgeline'],
+    });
+    window.sessionStorage.setItem(ACTIVE_STAKE_SESSION_KEY, 'ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('ridgeline');
+  });
+
+  it('a URL-tier hit for a claim-derived stake persists and strips immediately regardless of bootstrapStakes', () => {
+    setPrincipal({
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: [],
+    });
+    setUrl('/manager/dashboard?stake=csnorth');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(window.location.search).not.toContain('stake=');
+    expect(result).toBe('csnorth');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('csnorth');
+  });
+});
+
+describe('useActiveStake — URL-tier consume for a settling (bootstrap-only) principal', () => {
+  // PR #258 reviewer finding, corrected: the original regression test
+  // here manufactured the condition it claimed to test by calling
+  // `notifyActiveStakeUrlNavigated()` directly. In the real flow that
+  // function only fires from `main.tsx`'s `router.history.subscribe`
+  // — a REAL router navigation. `stripStakeParamFromUrl()` uses
+  // `history.replaceState` directly, which does not go through the
+  // router's history instance and so does not fire that subscription.
+  // A bootstrap-only principal parked on the wizard never navigates,
+  // so the module-scoped URL slot is never re-read and a stale
+  // `?stake=A` keeps shadowing tier 4's `bootstrapStakes` answer for
+  // the rest of the tab's life. See the "Residual bound" comment above
+  // `urlConsumeAllowedWhileSettling` in `useActiveStake.ts`.
+
+  it('strips a stale ?stake=A from the URL bar immediately for a settling bootstrap-only principal', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    render(<Probe onResult={() => {}} />);
+    // The strip itself doesn't need a router navigation (it's a plain
+    // `history.replaceState` call) — a reload after this point would
+    // not re-read 'foreign' off the URL bar, even though (see next
+    // test) the in-memory answer still does.
+    expect(window.location.search).not.toContain('stake=');
+  });
+
+  it('a stale ?stake=A keeps shadowing the bootstrapStakes answer absent a real router navigation', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    let result: string | null = null;
+    const { rerender } = render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    // First pass: the URL is explicit, present-tense intent, so it
+    // wins even though 'foreign' isn't in this principal's accessible
+    // or bootstrap set (`isPermissiveUrl` in activeStake.ts).
+    expect(result).toBe('foreign');
+
+    // No `popstate` and no `notifyActiveStakeUrlNavigated()` fire here
+    // — this IS the parked-on-wizard case, not a stand-in for one.
+    // Force a re-render the way any unrelated state change elsewhere
+    // in the tree would; the module-scoped slot has no channel to
+    // re-read the (already-stripped) URL without a navigation event,
+    // so it keeps answering 'foreign' instead of falling through to
+    // 'ridgeline'.
+    rerender(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('foreign');
+  });
+
+  it('a router navigation clears the stale slot and falls through to bootstrapStakes', async () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('foreign');
+
+    // `notifyActiveStakeUrlNavigated()` here stands in for a REAL
+    // router navigation firing `main.tsx`'s `router.history.subscribe`
+    // — NOT the parked-principal case above, where no navigation ever
+    // happens. Only a real navigation (or `popstate`) re-runs
+    // `refreshModuleUrlStakeParamFromUrl()` and clears the slot.
+    await act(async () => {
+      notifyActiveStakeUrlNavigated();
+    });
+    expect(result).toBe('ridgeline');
+  });
+
+  it('a legitimate invite deep-link for a bootstrap-only principal resolves to that stake on first render, no navigation required', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+  });
+
+  it('existing URL-tier behaviour for a claim-bearing (non-settling) principal is unchanged', () => {
+    setPrincipal({
+      managerStakes: ['csnorth', 'ridgeline'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: [],
+      isAuthenticated: true,
+    });
+    setUrl('/manager/dashboard?stake=ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+    expect(window.location.search).not.toContain('stake=');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('ridgeline');
+    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('ridgeline');
   });
 });

@@ -14,6 +14,8 @@
 import { initializeApp, getApps, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { canonicalEmail } from '@kindoo/shared';
+import { expect } from 'vitest';
 
 const PROJECT_ID = process.env['GCLOUD_PROJECT'] ?? 'demo-kindoo-tests';
 
@@ -156,4 +158,38 @@ export async function waitFor(
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   return false;
+}
+
+/**
+ * Create an Auth user and, when the Functions emulator is live, wait out
+ * `onAuthUserCreate`'s async baseline claim write (its `applyFullClaims`
+ * stamping `{ canonical }`) before returning. CI's integration config
+ * (`--only firestore,auth,functions`) has that v1 auth trigger live, so
+ * a synchronous claim write made right after plain `auth.createUser(...)`
+ * races it and can be silently clobbered a few hundred ms later — the
+ * trigger writes exactly once per user, so once its baseline has landed
+ * it can't overwrite a later write. `test:integration:local` boots only
+ * firestore+auth, so the trigger never fires; pass the caller's snapshot
+ * of {@link hasFunctionsEmulator} (probed once at module load, per the
+ * suite-lifetime note on that function) so this stays correct there too.
+ */
+export async function makeSettledUser(
+  email: string,
+  functionsEmulatorReachable: boolean,
+): Promise<string> {
+  const { auth } = requireEmulators();
+  const user = await auth.createUser({ email });
+  if (functionsEmulatorReachable) {
+    // `onAuthUserCreate` stamps `canonical` via `canonicalize()`
+    // (lowercase + Gmail-alias folding), not the typed email verbatim —
+    // compare against the same canonical form so a mixed-case `email`
+    // (e.g. a test distinguishing `adminA@`/`adminB@`) still settles.
+    const wantCanonical = canonicalEmail(email);
+    const seeded = await waitFor(async () => {
+      const u = await auth.getUser(user.uid);
+      return ((u.customClaims ?? {}) as { canonical?: string }).canonical === wantCanonical;
+    }, 20_000);
+    expect(seeded).toBe(true);
+  }
+  return user.uid;
 }

@@ -335,6 +335,40 @@ and nothing is fetched or checked out — `git branch --show-current` is unchang
    - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
    - **Verify the Hosting cache headers** with the curl block from the staging step, substituting `host=stakebuildingaccess.org`. Same expected output: `no-cache, max-age=0, must-revalidate` for the shell + SW scripts, `public, max-age=31536000, immutable` for `/assets/…`.
 
+## One-time fixup: backfill the `bootstrap` claim after PR #258
+
+**Run this once, right after this deploy lands, then cross it off.** It is not a recurring deploy step — it is a gap left by adding a new trigger to an existing collection. `syncBootstrapClaims` (PR #258, `docs/architecture.md` D28, closes B-19) only fires on a *write* to `stakes/{stakeId}`, so a stake that already existed before this deploy and hasn't been written to since gets no `bootstrap` claim minted. Its bootstrap admin — who has typically already signed in once and hit "Not Authorized" — can't be rescued by the first-sign-in seeding either, since `onAuthUserCreate` only fires once per user, ever.
+
+**When this applies:** only to a stake doc with `setup_complete: false` that existed before this deploy. A stake created by `createStake` after this deploy mints the claim automatically on write — nothing to do for those.
+
+1. **Find affected stakes.** Firebase console → Firestore Database → `stakes` collection → filter `setup_complete == false`. For each match, that doc's `bootstrap_admin_email` is the admin who needs the fixup.
+
+2. **Fire the trigger with a throwaway write.** Open `stakes/<slug>` in the console:
+   - Add a field named `_touch`, type string, any value (e.g. `backfill`) → Save.
+   - Delete the `_touch` field → Save.
+
+   Either the add or the delete alone fires `onDocumentWritten` and mints the claim; doing both just leaves the doc exactly as it was before. Don't try to "fix" this by re-saving an existing field with the same value — the console may not register that as a change, and an unchanged doc doesn't re-fire the trigger.
+
+3. **Verify the marker landed**, from your laptop, against the affected project:
+
+   ```bash
+   out=$(mktemp)
+   firebase auth:export "$out" --project prod   # or: --project staging
+   jq --arg email "<bootstrap_admin_email, exactly as stored>" \
+     '.users[] | select(.email==$email) | .customAttributes' "$out"
+   rm -f "$out"
+   ```
+
+   Expected: a JSON string with `"bootstrap":true` nested under the affected stake's id, e.g.:
+
+   ```
+   "{\"canonical\":\"...\",\"stakes\":{\"<slug>\":{\"manager\":false,\"stake\":false,\"wards\":[],\"bootstrap\":true}}}"
+   ```
+
+   If `stakes.<slug>` is absent, or present without `bootstrap`, the write in step 2 didn't register as a change — repeat step 2 with a different scratch value.
+
+4. **Tell the admin to get a fresh ID token — a re-login, not a reload.** `applyBootstrapClaim`'s `writeClaims` (`functions/src/lib/applyClaims.ts`) revokes the user's refresh tokens whenever their claims change, same as every other claims-writing trigger in this repo. That means the admin's current session cannot pick the new claim up quietly on its next silent token refresh — the revoked refresh token makes that refresh fail. Have them sign out, close every tab open on the origin, and sign back in; that mints a new ID token and a new refresh token together, and they should land on the bootstrap wizard instead of "Not Authorized."
+
 ## Rollback
 
 Open TODO: walk and validate the rollback procedure end-to-end against staging, then promote the steps below from sketch to verified. Until that drill happens, treat these as a starting point, not a finished playbook.
