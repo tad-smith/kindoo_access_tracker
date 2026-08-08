@@ -24,8 +24,13 @@ import { getAdminAuth } from './admin.js';
  */
 const USER_GONE = Symbol('auth-user-not-found');
 
-/** Narrow the Admin SDK's `auth/user-not-found` error by its `code`. */
-function isUserNotFound(err: unknown): boolean {
+/**
+ * Narrow the Admin SDK's `auth/user-not-found` error by its `code`.
+ * Exported so callers that look a user up some other way (e.g.
+ * `syncBootstrapClaims`'s `getUserByEmail`) can apply the same
+ * no-op-on-missing-user handling this module uses internally.
+ */
+export function isUserNotFound(err: unknown): boolean {
   return (
     typeof err === 'object' &&
     err !== null &&
@@ -144,6 +149,33 @@ export async function applySuperadminClaim(
 }
 
 /**
+ * Set (or clear) the `bootstrap` marker on `stakeId`'s claim block for
+ * `uid`, preserving whatever `manager` / `stake` / `wards` / `limited`
+ * that block already carries. Used by `syncBootstrapClaims` — unlike
+ * {@link applyStakeClaims}, which recomputes a stake's whole block from
+ * role data, `bootstrap` is an independent signal (derived from the
+ * stake doc, not from `access`/`kindooManagers`) so this only patches
+ * the one field.
+ */
+export async function applyBootstrapClaim(
+  uid: string,
+  canonical: string,
+  stakeId: string,
+  flag: boolean,
+): Promise<void> {
+  if (shouldSkip()) return;
+  const auth = getAdminAuth();
+  const existing = await loadExistingClaims(auth, uid);
+  if (existing === USER_GONE) return;
+
+  const merged: CustomClaims = mergeBootstrap(existing, canonical, stakeId, flag);
+
+  if (claimsEqual(existing, merged)) return;
+
+  await writeClaims(auth, uid, merged);
+}
+
+/**
  * Replace the user's full claim block with `claims`, revoking refresh
  * tokens iff the result differs. Used by `onAuthUserCreate` after
  * `seedClaimsFromRoleData` has computed the from-scratch payload.
@@ -181,8 +213,42 @@ function mergeStake(
   return base;
 }
 
+/**
+ * Patch just the `bootstrap` field of `stakeId`'s block, leaving every
+ * other field (`manager`/`stake`/`wards`/`limited`) as-is. Mirrors
+ * {@link mergeStake}'s canonical-fallback + prune-when-empty shape.
+ */
+function mergeBootstrap(
+  existing: CustomClaims | null,
+  canonical: string,
+  stakeId: string,
+  flag: boolean,
+): CustomClaims {
+  const base: CustomClaims = existing
+    ? { ...existing, canonical: existing.canonical || canonical }
+    : { canonical };
+
+  const stakes: Record<string, StakeClaims> = base.stakes ? { ...base.stakes } : {};
+  const current = stakes[stakeId];
+  const next: StakeClaims = current ? { ...current } : { manager: false, stake: false, wards: [] };
+
+  if (flag) next.bootstrap = true;
+  else delete next.bootstrap;
+
+  if (isNonEmptyStakeClaims(next)) {
+    stakes[stakeId] = next;
+  } else {
+    delete stakes[stakeId];
+  }
+
+  if (Object.keys(stakes).length > 0) base.stakes = stakes;
+  else delete base.stakes;
+
+  return base;
+}
+
 function isNonEmptyStakeClaims(s: StakeClaims): boolean {
-  return s.manager || s.stake || s.wards.length > 0;
+  return s.manager || s.stake || s.wards.length > 0 || s.bootstrap === true;
 }
 
 function claimsEqual(a: CustomClaims | null, b: CustomClaims | null): boolean {

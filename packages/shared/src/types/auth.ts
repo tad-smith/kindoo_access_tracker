@@ -26,6 +26,15 @@ export type StakeClaims = {
    * byte-identical and claim sync sees no change (no token churn).
    */
   limited?: boolean;
+  /**
+   * Present-and-true iff the user is this stake's designated
+   * `bootstrap_admin_email` and `setup_complete === false`. NOT a role:
+   * it grants no access, it only makes the stake discoverable in the
+   * switcher so the admin can reach the wizard. ABSENT => not the
+   * bootstrap admin. Never written `false`, so pre-existing tokens stay
+   * byte-identical and claim sync sees no change (no token churn).
+   */
+  bootstrap?: boolean;
 };
 
 /**
@@ -74,4 +83,6 @@ export type Principal = {
   bishopricWards: Record<string, string[]>;
   /** Stake IDs whose claim block carries `limited: true`. A stake absent here is full-access. */
   limitedStakes: string[];
+  /** Stake IDs whose claim block carries `bootstrap: true`. Not a role — see `StakeClaims.bootstrap`. */
+  bootstrapStakes: string[];
 };

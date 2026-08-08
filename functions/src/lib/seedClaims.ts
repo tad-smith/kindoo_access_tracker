@@ -16,7 +16,7 @@
 // `importer_limited_callings[scope]` on the importer side. Nothing here
 // classifies a calling by name; the tier is whatever the writer stamped.
 
-import type { CustomClaims, StakeClaims } from '@kindoo/shared';
+import type { CustomClaims, Stake, StakeClaims } from '@kindoo/shared';
 import { getDb } from './admin.js';
 import { getStakeIds } from './stakeIds.js';
 
@@ -30,18 +30,28 @@ import { getStakeIds } from './stakeIds.js';
  * claims — it only computes them. The caller decides whether to call
  * `setCustomUserClaims` (always) plus `revokeRefreshTokens` (only if
  * claims actually changed; cheap to skip the no-op).
+ *
+ * `typedEmail` seeds the `bootstrap` marker (see
+ * `StakeClaims.bootstrap`) for the case `syncBootstrapClaims` can't
+ * cover: the stake was created before this admin ever had an Auth
+ * account, so that trigger found no user to stamp when the stake doc
+ * was written. First sign-in is the next chance to catch it up.
  */
 export async function seedClaimsFromRoleData(
   _uid: string,
   canonical: string,
+  typedEmail: string,
 ): Promise<CustomClaims> {
   const claims: CustomClaims = { canonical };
 
   const db = getDb();
   const stakeIds = await getStakeIds(db);
+  const bootstrapStakeIds = new Set(await bootstrapStakeIdsFor(typedEmail));
+
   const stakeClaims: Record<string, StakeClaims> = {};
-  for (const stakeId of stakeIds) {
+  for (const stakeId of new Set([...stakeIds, ...bootstrapStakeIds])) {
     const block = await computeStakeClaims(stakeId, canonical);
+    if (bootstrapStakeIds.has(stakeId)) block.bootstrap = true;
     if (isNonEmptyStakeClaims(block)) {
       stakeClaims[stakeId] = block;
     }
@@ -55,6 +65,30 @@ export async function seedClaimsFromRoleData(
   }
 
   return claims;
+}
+
+/**
+ * Stake IDs whose `bootstrap_admin_email` matches `typedEmail`
+ * (lowercased, NOT `canonicalize()`'d — mirrors `firestore.rules`
+ * `isBootstrapAdmin` and `syncBootstrapClaims`: Gmail dot/`+suffix`
+ * aliases must NOT be folded, per F19 / `firebase-schema.md` §4.1)
+ * AND still mid-setup (`setup_complete === false` exactly, filtered
+ * in memory per the "composite indexes require justification"
+ * convention — this mirrors the deleted `resolveBootstrapStake`
+ * callable's query shape).
+ *
+ * Queried directly against `stakes/` rather than through
+ * `getStakeIds`'s cached list, so a stake created after the cache
+ * warmed on this instance is still discoverable at first sign-in.
+ */
+async function bootstrapStakeIdsFor(typedEmail: string): Promise<string[]> {
+  const email = typedEmail.trim().toLowerCase();
+  if (!email) return [];
+  const db = getDb();
+  const snap = await db.collection('stakes').where('bootstrap_admin_email', '==', email).get();
+  return snap.docs
+    .filter((d) => (d.data() as Partial<Stake>).setup_complete === false)
+    .map((d) => d.id);
 }
 
 /**
@@ -196,9 +230,11 @@ async function isPlatformSuperadmin(canonical: string): Promise<boolean> {
 // `limited` is deliberately not part of the emptiness test: it can only
 // be true when at least one non-empty grant array exists, which already
 // sets `stake` or a ward. A block that is empty by these three fields
-// can never carry `limited`.
+// can never carry `limited`. `bootstrap` IS part of the test — it's an
+// independent signal (from the stake doc, not role data) and a
+// bootstrap-only block must survive, not be dropped as "no roles".
 function isNonEmptyStakeClaims(s: StakeClaims): boolean {
-  return s.manager || s.stake || s.wards.length > 0;
+  return s.manager || s.stake || s.wards.length > 0 || s.bootstrap === true;
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

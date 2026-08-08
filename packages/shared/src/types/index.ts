@@ -39,7 +39,6 @@ export type {
   RemoteApplyPresence,
 } from './remoteApply.js';
 export type { AccessRequest, CompletionStatus, RequestStatus, RequestType } from './request.js';
-export type { ResolveBootstrapStakeOutput } from './resolveBootstrapStake.js';
 export type { DuplicateGrant, Seat, SeatType } from './seat.js';
 export type { KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type {

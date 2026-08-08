@@ -18,7 +18,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { logger } from 'firebase-functions';
 import type { StakeClaims } from '@kindoo/shared';
-import { applyFullClaims, applyStakeClaims, applySuperadminClaim } from '../src/lib/applyClaims.js';
+import {
+  applyBootstrapClaim,
+  applyFullClaims,
+  applyStakeClaims,
+  applySuperadminClaim,
+} from '../src/lib/applyClaims.js';
 import {
   clearEmulators,
   hasEmulators,
@@ -82,6 +87,19 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
         stake: true,
         wards: [],
       }),
+    ).resolves.toBeUndefined();
+
+    expect(setClaims).not.toHaveBeenCalled();
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it('applyBootstrapClaim does not throw and writes no claims when the user is gone', async () => {
+    const { auth } = requireEmulators();
+    const setClaims = vi.spyOn(auth, 'setCustomUserClaims');
+    const revoke = vi.spyOn(auth, 'revokeRefreshTokens');
+
+    await expect(
+      applyBootstrapClaim(MISSING_UID, 'gone@gmail.com', 'csnorth', true),
     ).resolves.toBeUndefined();
 
     expect(setClaims).not.toHaveBeenCalled();
@@ -246,4 +264,98 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
       expect('limited' in back).toBe(false);
     },
   );
+});
+
+// `bootstrap` (see `StakeClaims.bootstrap`) is patched independently of
+// `applyStakeClaims`'s wholesale block replacement — `applyBootstrapClaim`
+// must preserve whatever `manager`/`stake`/`wards` a block already
+// carries, and must not touch sibling stakes.
+describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => {
+  beforeAll(async () => {
+    await clearEmulators();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await clearEmulators();
+  });
+  afterAll(async () => {
+    await clearEmulators();
+  });
+
+  async function makeSettledUser(email: string): Promise<string> {
+    const { auth } = requireEmulators();
+    const user = await auth.createUser({ email });
+    if (functionsEmulatorReachable) {
+      const seeded = await waitFor(async () => {
+        const u = await auth.getUser(user.uid);
+        return ((u.customClaims ?? {}) as { canonical?: string }).canonical === email;
+      }, 20_000);
+      expect(seeded).toBe(true);
+    }
+    return user.uid;
+  }
+
+  async function readBlock(uid: string, stakeId: string): Promise<Record<string, unknown>> {
+    const { auth } = requireEmulators();
+    const claims = ((await auth.getUser(uid)).customClaims ?? {}) as {
+      stakes?: Record<string, Record<string, unknown>>;
+    };
+    return claims.stakes?.[stakeId] ?? {};
+  }
+
+  it('mints bootstrap: true on a stake with no prior claim block, and prunes it back out', async () => {
+    const email = 'boot@gmail.com';
+    const uid = await makeSettledUser(email);
+
+    await applyBootstrapClaim(uid, email, 'new-stake', true);
+    expect(await readBlock(uid, 'new-stake')).toEqual({
+      manager: false,
+      stake: false,
+      wards: [],
+      bootstrap: true,
+    });
+
+    await applyBootstrapClaim(uid, email, 'new-stake', false);
+    // Nothing else in the block — pruned entirely, not left as an
+    // empty `{ manager: false, stake: false, wards: [] }` object.
+    expect(await readBlock(uid, 'new-stake')).toEqual({});
+  });
+
+  it('preserves an existing manager/stake block when toggling bootstrap on and off', async () => {
+    const email = 'both@gmail.com';
+    const uid = await makeSettledUser(email);
+
+    await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: ['GE'] });
+    await applyBootstrapClaim(uid, email, 'csnorth', true);
+    expect(await readBlock(uid, 'csnorth')).toEqual({
+      manager: true,
+      stake: false,
+      wards: ['GE'],
+      bootstrap: true,
+    });
+
+    await applyBootstrapClaim(uid, email, 'csnorth', false);
+    // Real role data keeps the block alive after bootstrap clears.
+    expect(await readBlock(uid, 'csnorth')).toEqual({
+      manager: true,
+      stake: false,
+      wards: ['GE'],
+    });
+  });
+
+  it('does not clobber a sibling stake block', async () => {
+    const email = 'multi@gmail.com';
+    const uid = await makeSettledUser(email);
+
+    await applyStakeClaims(uid, email, 'alpha', { manager: false, stake: true, wards: [] });
+    await applyBootstrapClaim(uid, email, 'beta', true);
+
+    expect(await readBlock(uid, 'alpha')).toEqual({ manager: false, stake: true, wards: [] });
+    expect(await readBlock(uid, 'beta')).toEqual({
+      manager: false,
+      stake: false,
+      wards: [],
+      bootstrap: true,
+    });
+  });
 });
