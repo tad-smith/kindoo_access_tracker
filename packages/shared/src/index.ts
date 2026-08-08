@@ -117,6 +117,7 @@ export type {
   RemoteApplyPresence,
   RequestStatus,
   RequestType,
+  ResolveBootstrapStakeOutput,
   SbaOnlyRemovePayload,
   ScopeMismatchPayload,
   Seat,

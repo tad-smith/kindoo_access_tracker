@@ -28,5 +28,6 @@ export { getMyPendingRequests } from './callable/getMyPendingRequests.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';
 export { syncApplyFix } from './callable/syncApplyFix.js';
 export { createStake } from './callable/createStake.js';
+export { resolveBootstrapStake } from './callable/resolveBootstrapStake.js';
 export { backfillKindooSiteId } from './callable/backfillKindooSiteId.js';
 export { backfillEqPresidentAccess } from './callable/backfillEqPresidentAccess.js';
