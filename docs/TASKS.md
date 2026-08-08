@@ -6,6 +6,22 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-88] Wards to Ignore in Kindoo — skip another SBA stake's wards during Sync
+Status: done (2026-08-08 — `feat/kindoo-ignored-wards`)
+Owner: @web-engineer, @extension-engineer
+Phase: Kindoo Sites (§15) Phase 6
+
+**Done.** The reciprocal of the Kindoo Sites feature. Kindoo Sites (§15 Phases 1–5) handles wards of OURS that live in someone else's Kindoo site; this handles wards of THEIRS that live in one of ours. Both fall out of the same building-sharing arrangement, so the new list sits on the Kindoo Sites tab.
+
+The trigger: two wards of one stake meet in a building governed by a second stake's Kindoo site. The first stake configures that site as a foreign Kindoo Site and provisions its own members into it. When the second stake is set up in SBA, those members appear in its **home** Kindoo site with descriptions naming wards it has never heard of — and Sync's home-site branch deliberately keeps unresolvable users so real `kindoo-only` rows still surface. Every one of the first stake's members therefore lands as `kindoo-only` drift, inviting the second stake to mint seats for another stake's people.
+
+- `packages/shared` — `Stake.kindoo_ignored_wards?: string[]` + zod schema; `kindooIgnoredWards.ts` carries the three comparison helpers both surfaces must agree on (`normaliseIgnoredWard`, `matchesIgnoredWard`, `collidesWithOwnWard`).
+- `apps/web` — "Wards to Ignore in Kindoo" section under the Kindoo Sites list: inline add, per-row Remove, `useUpdateIgnoredWardsMutation` against the parent stake doc. Blocks a case-insensitive duplicate and an entry naming one of this stake's own wards (both the bare stored form and the `" Ward"`-suffixed form).
+- `extension` — `parseDescription` strips matching segments and counts them; `isFullyIgnored` distinguishes a wholly-ignored description from a blank one; `detect` drops fully-ignored users ahead of the active-site filter and reports `ignoredCount`, which the Sync header renders.
+- **No rules change.** Managers can already update the parent stake doc (`firestore.rules:686`), and the SBA UI is the only writer.
+
+Three semantics worth not re-litigating. Matching is on the **scope-name portion** of a segment, exact and case-insensitive — a substring rule would swallow a calling like `Aspen (Maple Ward Liaison)`. Only **unresolved** segments are eligible, which makes the list structurally incapable of hiding one of our own wards even if an entry collides with a ward name after a later rename; the UI guard is then a better error rather than the only defence. And an ignored member reads as **absent from Kindoo, not absent from the diff** — a seat we still hold for them is an orphan, gets the ordinary `sba-only` row with Remove From SBA, and differs only in its reason. Suppressing that row was tried and rejected: the remedy is the same one a genuine orphan needs, so hiding it just conceals a licence being consumed for another stake's member.
+
 ## [T-85] Remote apply: tick as soon as a Kindoo tab comes forward
 Status: obsolete (2026-08-04 — optimises a moment that mostly does not occur; see the closing note)
 Owner: @extension-engineer

@@ -3,7 +3,7 @@
 // stay decoupled from real Firestore docs.
 
 import { describe, expect, it } from 'vitest';
-import { parseDescription, pickPrimarySegment } from './parser';
+import { isFullyIgnored, parseDescription, pickPrimarySegment } from './parser';
 
 const STAKE = { stake_name: 'Colorado Springs North Stake' };
 const WARDS = [
@@ -331,5 +331,114 @@ describe('pickPrimarySegment', () => {
     );
     const primary = pickPrimarySegment(parsed, { eqPresidentAccess: true });
     expect(primary?.scope).toBe('stake');
+  });
+});
+
+// ---- Ignored wards ---------------------------------------------------
+//
+// `stake.kindoo_ignored_wards` names wards of a neighbouring SBA stake
+// that share one of our Kindoo sites. Their segments are stripped so
+// Sync never sees them.
+
+describe('parseDescription — stake.kindoo_ignored_wards', () => {
+  const IGNORING = {
+    ...STAKE,
+    kindoo_ignored_wards: ['Aspen Grove Ward', 'Black Forest 2nd Ward'],
+  };
+
+  it('strips a segment naming an ignored ward and counts it', () => {
+    const parsed = parseDescription('Aspen Grove Ward (Bishop)', IGNORING, WARDS);
+    expect(parsed.segments).toHaveLength(0);
+    expect(parsed.ignoredCount).toBe(1);
+    expect(isFullyIgnored(parsed)).toBe(true);
+  });
+
+  it('matches case-insensitively and tolerates surrounding whitespace', () => {
+    const parsed = parseDescription('  aspen grove ward   (Bishop)', IGNORING, WARDS);
+    expect(parsed.ignoredCount).toBe(1);
+    expect(isFullyIgnored(parsed)).toBe(true);
+  });
+
+  it('keeps the surviving segment when only one of two is ignored', () => {
+    const parsed = parseDescription(
+      'Aspen Grove Ward (Bishop) | Maple Ward (Ward Clerk)',
+      IGNORING,
+      WARDS,
+    );
+    expect(parsed.ignoredCount).toBe(1);
+    expect(parsed.segments).toHaveLength(1);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'CO', calling: 'Ward Clerk' });
+    expect(parsed.unparseable).toBe(false);
+    expect(isFullyIgnored(parsed)).toBe(false);
+  });
+
+  it('drops every segment when the description names two ignored wards', () => {
+    const parsed = parseDescription(
+      'Aspen Grove Ward (Bishop) | Black Forest 2nd Ward (Ward Clerk)',
+      IGNORING,
+      WARDS,
+    );
+    expect(parsed.ignoredCount).toBe(2);
+    expect(isFullyIgnored(parsed)).toBe(true);
+  });
+
+  it('never strips a segment that resolved to one of our own wards', () => {
+    // An entry colliding with a ward we own (renamed after the entry was
+    // added, say) is inert — the resolved segment wins.
+    const collides = { ...STAKE, kindoo_ignored_wards: ['Maple Ward'] };
+    const parsed = parseDescription('Maple Ward (Bishop)', collides, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'CO', resolvedScope: true });
+    expect(isFullyIgnored(parsed)).toBe(false);
+  });
+
+  it('never strips the stake segment', () => {
+    const collides = { ...STAKE, kindoo_ignored_wards: ['Colorado Springs North Stake'] };
+    const parsed = parseDescription('Colorado Springs North Stake (Stake Clerk)', collides, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'stake' });
+  });
+
+  it('does not strip a longer name that merely starts with an entry', () => {
+    const parsed = parseDescription('Aspen Grove Ward Annex (Bishop)', IGNORING, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.segments).toHaveLength(1);
+    expect(parsed.unparseable).toBe(true);
+  });
+
+  it('does not strip on a calling that merely contains an entry', () => {
+    const parsed = parseDescription('Maple Ward (Aspen Grove Ward Liaison)', IGNORING, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.segments).toHaveLength(1);
+  });
+
+  it('strips a bare no-parens segment naming an ignored ward', () => {
+    const parsed = parseDescription('Aspen Grove Ward', IGNORING, WARDS);
+    expect(parsed.ignoredCount).toBe(1);
+    expect(isFullyIgnored(parsed)).toBe(true);
+  });
+
+  it('leaves a malformed non-parens description alone', () => {
+    // Decided semantics: the match is on the segment's scope-name
+    // portion, which for this shape is the whole string.
+    const parsed = parseDescription('Aspen Grove Ward - Bishop', IGNORING, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.unparseable).toBe(true);
+    expect(isFullyIgnored(parsed)).toBe(false);
+  });
+
+  it('reports ignoredCount 0 with no list configured', () => {
+    const parsed = parseDescription('Aspen Grove Ward (Bishop)', STAKE, WARDS);
+    expect(parsed.ignoredCount).toBe(0);
+    expect(parsed.unparseable).toBe(true);
+    expect(isFullyIgnored(parsed)).toBe(false);
+  });
+
+  it('separates a blank description from a fully-ignored one', () => {
+    // Both leave `segments` empty; only the latter is fully ignored.
+    const blank = parseDescription('', IGNORING, WARDS);
+    expect(blank.segments).toHaveLength(0);
+    expect(blank.ignoredCount).toBe(0);
+    expect(isFullyIgnored(blank)).toBe(false);
   });
 });

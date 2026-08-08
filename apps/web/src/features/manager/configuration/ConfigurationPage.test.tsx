@@ -34,6 +34,7 @@ const upsertOrganizationMock = vi.fn();
 const deleteOrganizationMock = vi.fn();
 const useOrganizationsMock = vi.fn();
 const updateStakeConfigMock = vi.fn();
+const updateIgnoredWardsMock = vi.fn();
 const backfillEqPresidentAccessMock = vi.fn();
 
 vi.mock('./hooks', () => ({
@@ -58,6 +59,7 @@ vi.mock('./hooks', () => ({
   useUpsertOrganizationMutation: () => ({ mutateAsync: upsertOrganizationMock, isPending: false }),
   useDeleteOrganizationMutation: () => ({ mutateAsync: deleteOrganizationMock }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: updateStakeConfigMock, isPending: false }),
+  useUpdateIgnoredWardsMutation: () => ({ mutateAsync: updateIgnoredWardsMock, isPending: false }),
   useBackfillEqPresidentAccessMutation: () => ({
     mutateAsync: backfillEqPresidentAccessMock,
     isPending: false,
@@ -142,6 +144,7 @@ function stakeDocResult(overrides: Partial<Stake> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   updateStakeConfigMock.mockResolvedValue(undefined);
+  updateIgnoredWardsMock.mockResolvedValue(undefined);
   // seats_matched is deliberately unequal to the figure the toast reports
   // (docs_written for grant) so the assertion fails if the toast reads the wrong field.
   backfillEqPresidentAccessMock.mockResolvedValue({
@@ -658,6 +661,107 @@ describe('Kindoo Sites tab', () => {
       expect(errorToasts[0]!.message).toContain('Cannot delete Kindoo site "east-stake"');
       expect(errorToasts[0]!.message).toContain('Pine Stake Center');
     });
+  });
+});
+
+describe('Wards to Ignore in Kindoo (Kindoo Sites tab)', () => {
+  // Wards of a NEIGHBOURING stake that show up in one of our Kindoo
+  // sites. Sync skips them; without the list they read as members
+  // missing a seat.
+
+  const mkWard = (name: string): Ward =>
+    ({ ward_code: name.toLowerCase().replace(/\s+/g, '-'), ward_name: name }) as Ward;
+
+  function renderTab(ignored?: string[], wards: Ward[] = []) {
+    useStakeDocMock.mockReturnValue(
+      stakeDocResult(ignored ? { kindoo_ignored_wards: ignored } : {}),
+    );
+    useWardsMock.mockReturnValue(liveResult<Ward>(wards));
+    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+  }
+
+  it('renders under the Kindoo Sites list with the empty state', () => {
+    renderTab();
+    expect(screen.getByTestId('config-ignored-wards')).toBeInTheDocument();
+    expect(screen.getByTestId('config-ignored-wards-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('config-ignored-wards-list')).toBeNull();
+  });
+
+  it('lists the configured wards', () => {
+    renderTab(['Aspen Grove Ward', 'Black Forest 2nd Ward']);
+    expect(screen.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeInTheDocument();
+    expect(screen.getByTestId('config-ignored-ward-row-Black Forest 2nd Ward')).toBeInTheDocument();
+    expect(screen.queryByTestId('config-ignored-wards-empty')).toBeNull();
+  });
+
+  it('appends a trimmed entry to the existing list', async () => {
+    const user = userEvent.setup();
+    renderTab(['Aspen Grove Ward']);
+    await user.type(screen.getByTestId('config-ignored-ward-input'), '  Black Forest 2nd Ward  ');
+    await user.click(screen.getByTestId('config-ignored-ward-add'));
+    expect(updateIgnoredWardsMock).toHaveBeenCalledWith([
+      'Aspen Grove Ward',
+      'Black Forest 2nd Ward',
+    ]);
+  });
+
+  it('removes an entry, leaving the rest', async () => {
+    const user = userEvent.setup();
+    renderTab(['Aspen Grove Ward', 'Black Forest 2nd Ward']);
+    await user.click(screen.getByTestId('config-ignored-ward-delete-Aspen Grove Ward'));
+    expect(updateIgnoredWardsMock).toHaveBeenCalledWith(['Black Forest 2nd Ward']);
+  });
+
+  it('blocks a case-insensitive duplicate', async () => {
+    const user = userEvent.setup();
+    renderTab(['Aspen Grove Ward']);
+    await user.type(screen.getByTestId('config-ignored-ward-input'), 'aspen grove ward');
+    expect(screen.getByTestId('config-ignored-ward-error')).toHaveTextContent(
+      /already on the list/,
+    );
+    expect(screen.getByTestId('config-ignored-ward-add')).toBeDisabled();
+  });
+
+  it('blocks an entry naming one of our own wards', async () => {
+    // SBA stores the name without the trailing " Ward"; Kindoo
+    // descriptions carry it. Both forms must be caught.
+    const user = userEvent.setup();
+    renderTab([], [mkWard('Maple')]);
+    const input = screen.getByTestId('config-ignored-ward-input');
+    await user.type(input, 'Maple Ward');
+    expect(screen.getByTestId('config-ignored-ward-error')).toHaveTextContent(/one of your own/);
+    expect(screen.getByTestId('config-ignored-ward-add')).toBeDisabled();
+    await user.clear(input);
+    await user.type(input, 'maple');
+    expect(screen.getByTestId('config-ignored-ward-error')).toHaveTextContent(/one of your own/);
+  });
+
+  it('allows a ward name this stake does not own', async () => {
+    const user = userEvent.setup();
+    renderTab([], [mkWard('Maple')]);
+    await user.type(screen.getByTestId('config-ignored-ward-input'), 'Aspen Grove Ward');
+    expect(screen.queryByTestId('config-ignored-ward-error')).toBeNull();
+    await user.click(screen.getByTestId('config-ignored-ward-add'));
+    expect(updateIgnoredWardsMock).toHaveBeenCalledWith(['Aspen Grove Ward']);
+  });
+
+  it('keeps Add disabled on an empty or whitespace-only entry', async () => {
+    const user = userEvent.setup();
+    renderTab();
+    expect(screen.getByTestId('config-ignored-ward-add')).toBeDisabled();
+    await user.type(screen.getByTestId('config-ignored-ward-input'), '   ');
+    expect(screen.getByTestId('config-ignored-ward-add')).toBeDisabled();
+  });
+
+  it('gates Add until the wards snapshot arrives', () => {
+    // Deep-linking into ?tab=kindoo-sites can land the Add button before
+    // wards hydrate; the own-ward guard would run against [] and wave
+    // through an entry that silently does nothing.
+    useStakeDocMock.mockReturnValue(stakeDocResult());
+    useWardsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-ignored-ward-input')).toBeDisabled();
+    expect(screen.getByTestId('config-ignored-ward-add')).toBeDisabled();
   });
 });
 

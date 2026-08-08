@@ -18,6 +18,7 @@ import type {
 } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
+  isFullyIgnored,
   parseDescription,
   pickPrimarySegment,
   type ParsedDescription,
@@ -190,6 +191,13 @@ export interface DetectResult {
   seatCount: number;
   /** Total Kindoo user count — surfaces in the report header. */
   kindooCount: number;
+  /**
+   * Kindoo users dropped whole by `stake.kindoo_ignored_wards` — every
+   * segment of their description named another SBA stake's ward.
+   * Surfaced in the report header so a configured ignore list is
+   * distinguishable from a scrape that silently returned nothing.
+   */
+  ignoredCount: number;
 }
 
 /** Build a Map keyed by canonical email for quick lookup. */
@@ -367,9 +375,12 @@ function pickSegmentForSite(
   const filtered = parsed.segments.filter((s) => segmentSite(s) === wantSiteId);
   if (filtered.length === 0) return null;
   // Reuse `pickPrimarySegment`'s tiebreaker by wrapping the filter in
-  // a ParsedDescription shell (`raw` / `unparseable` aren't used by
-  // the picker).
-  return pickPrimarySegment({ segments: filtered, unparseable: false, raw: parsed.raw }, opts);
+  // a ParsedDescription shell (`raw` / `unparseable` / `ignoredCount`
+  // aren't used by the picker).
+  return pickPrimarySegment(
+    { segments: filtered, unparseable: false, raw: parsed.raw, ignoredCount: 0 },
+    opts,
+  );
 }
 
 /**
@@ -612,7 +623,42 @@ export function detect(inputs: DetectInputs): DetectResult {
       discrepancies: [],
       seatCount: 0,
       kindooCount: 0,
+      ignoredCount: 0,
     };
+  }
+
+  // Ignore-list filter — drop the Kindoo users whose description names
+  // ONLY wards on `stake.kindoo_ignored_wards`: wards of a NEIGHBOURING
+  // SBA stake that share one of our Kindoo sites, provisioned by their
+  // managers, not ours. Runs ahead of the active-site filter and
+  // independently of it — a ward that isn't ours isn't ours on any site.
+  //
+  // Segment-level stripping already happened inside `parseDescription`,
+  // so every later parse in this function sees the survivors. This pass
+  // only handles the whole-user case: a description the list consumed
+  // entirely would otherwise reach the home-site keep-branch below (the
+  // one that preserves unparseable users so `kindoo-only` surfaces) and
+  // land as drift, which is the very noise the list exists to remove.
+  //
+  // An ignored member reads as ABSENT FROM KINDOO, not as absent from
+  // the diff. So the SBA side is left alone: a seat we still hold for
+  // them surfaces as `sba-only` and offers Remove From SBA, which is
+  // the right remedy — a seat for a member of a ward we've declared
+  // isn't ours is consuming one of our licences, and removing it is the
+  // same action a genuine orphan needs. The dropped canonicals are
+  // carried out only so the row can say WHY the member is absent; the
+  // generic `sba-only` wording would assert they aren't in Kindoo,
+  // which is false.
+  const consideredKindooUsers: KindooEnvironmentUser[] = [];
+  const ignoredCanonicals = new Set<string>();
+  let ignoredCount = 0;
+  for (const u of inputs.kindooUsers) {
+    if (isFullyIgnored(parseDescription(u.description, inputs.stake, inputs.wards))) {
+      ignoredCount++;
+      ignoredCanonicals.add(canonicalEmail(u.username));
+      continue;
+    }
+    consideredKindooUsers.push(u);
   }
 
   // Project each seat onto the active site (primary if its
@@ -632,7 +678,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     if (projected) projectedSeats.push({ seat, sbaBlock: projected });
   }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
-    inputs.kindooUsers,
+    consideredKindooUsers,
     inputs.stake,
     inputs.wards,
     inputs.buildings,
@@ -667,12 +713,19 @@ export function detect(inputs: DetectInputs): DetectResult {
     // 1. sba-only — seat present, no Kindoo user. (No `kuser`, so the
     //    Installer skip below never applies here.)
     if (seat && sbaBlock && !kuser) {
+      // Two ways to have no Kindoo user: genuinely absent, or dropped by
+      // `kindoo_ignored_wards`. Same code, same remedy (the seat should
+      // not be here either way) — but the generic wording would assert
+      // they aren't in Kindoo, which for an ignored member is false and
+      // leaves the manager unable to place a name they don't recognise.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'sba-only',
         severity: 'drift',
-        reason: 'SBA has a seat for this member, but the user is not present in Kindoo.',
+        reason: ignoredCanonicals.has(canon)
+          ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
+          : 'SBA has a seat for this member, but the user is not present in Kindoo.',
         sba: sbaBlock,
         kindoo: null,
       });
@@ -1008,6 +1061,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     discrepancies,
     seatCount: projectedSeats.length,
     kindooCount: filteredKindooUsers.length,
+    ignoredCount,
   };
 }
 
