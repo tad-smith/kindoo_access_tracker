@@ -21,10 +21,16 @@
 // "Next" button is gated — disabled on step 2 with zero buildings and
 // on step 3 with zero wards, since step 3 can't be filled in without a
 // building and setup can't complete without a ward. The
-// "Complete Setup" button is enabled iff steps 1–3 are valid:
+// "Complete Setup" button renders on every step and is enabled iff
+// steps 1–3 are valid:
 //   - stake.stake_name + stake_seat_cap set
 //   - ≥1 building
 //   - ≥1 ward
+//
+// Its blocker checklist renders on step 4 only. Steps 1–3 show the
+// step-scoped Next hint instead, so a disabled Complete Setup goes
+// unexplained there by design — the operator's next action on those
+// steps is Next, and step 4 carries the full list.
 //
 // Complete Setup flips `setup_complete=true` and lets the routing gate
 // redirect the admin to `/manager/dashboard`. The `setup_complete=true`
@@ -212,7 +218,15 @@ export function BootstrapWizardPage() {
             {nextBlocked}
           </p>
         ) : null}
-        <CompleteSetupBlockers missing={completionBlockers({ step1Done, step2Done, step3Done })} />
+        {/* The full checklist belongs to Complete Setup, so it renders
+            only on the step that button is the point of. Steps 1–3 get
+            their own step-scoped Next hint above instead; both at once
+            restated the same blocker twice, one line apart. */}
+        {step === 4 ? (
+          <CompleteSetupBlockers
+            missing={completionBlockers({ step1Done, step2Done, step3Done })}
+          />
+        ) : null}
       </div>
       {/* The wizard renders outside <Shell> so the global toast host
           isn't mounted by default. Mount it here so operator-visible
@@ -830,6 +844,8 @@ function CompleteSetupButton({ enabled, onCompleted }: CompleteSetupProps) {
 
 // Renders the blocker list below the button row when the wizard is not
 // yet finishable. Empty list → nothing rendered, so the row collapses.
+// The caller mounts this on step 4 only; `missing` still carries every
+// outstanding reason regardless of which step produced it.
 function CompleteSetupBlockers({ missing }: { missing: string[] }) {
   if (missing.length === 0) return null;
   return (

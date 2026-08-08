@@ -2,8 +2,9 @@
 // hooks + mutations so the component renders without a live emulator.
 // Coverage:
 //   - Initial render shows step 1.
-//   - Complete-Setup button is disabled until steps 1–3 all have data
-//     and surfaces helper text listing the remaining prerequisites.
+//   - Complete-Setup button is disabled until steps 1–3 all have data.
+//     Its helper text listing the remaining prerequisites renders on
+//     step 4 only; steps 1–3 carry the step-scoped Next hint instead.
 //   - Switching tabs renders the matching step pane.
 //   - Next is disabled (with a reason) on step 2 with zero buildings
 //     and step 3 with zero wards; step 1's Next, Back, and the step
@@ -341,15 +342,50 @@ describe('<BootstrapWizardPage />', () => {
     expect(await screen.findByText(/Stake name is required/i)).toBeInTheDocument();
   });
 
-  it('lists missing prerequisites under the Complete Setup button when disabled', () => {
+  it('lists missing prerequisites under the Complete Setup button on step 4', async () => {
+    const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
     const blockers = screen.getByTestId('bootstrap-complete-blockers');
     expect(blockers).toHaveTextContent(/Fill in stake name/);
     expect(blockers).toHaveTextContent(/at least one building/);
     expect(blockers).toHaveTextContent(/at least one ward/);
   });
 
-  it('drops the helper-text blockers list once every prerequisite is met', () => {
+  it('keeps the full checklist on step 4 even for blockers the earlier steps own', async () => {
+    // Step 4 is the only place the whole list renders, so it must still
+    // name the building and ward gaps the step-2/3 Next hints covered.
+    useStakeDocMock.mockReturnValue(
+      stakeResult(makeStake({ stake_name: 'My Stake', stake_seat_cap: 200 })),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
+    const blockers = screen.getByTestId('bootstrap-complete-blockers');
+    expect(blockers).not.toHaveTextContent(/Fill in stake name/);
+    expect(blockers).toHaveTextContent(/at least one building \(Step 2\)/);
+    expect(blockers).toHaveTextContent(/at least one ward \(Step 3\)/);
+  });
+
+  it('does not repeat the checklist on steps 1-3, where the Next hint speaks instead', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    // Step 1: nothing to say beyond the step's own Save.
+    expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+
+    for (const step of [2, 3]) {
+      await user.click(screen.getByTestId(`wizard-step-tab-${step}`));
+      expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+      // The step-scoped hint is what explains the blocked Next there.
+      expect(screen.getByTestId('bootstrap-next-blocker')).toBeInTheDocument();
+    }
+
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
+    expect(screen.getByTestId('bootstrap-complete-blockers')).toBeInTheDocument();
+    expect(screen.queryByTestId('bootstrap-next-blocker')).not.toBeInTheDocument();
+  });
+
+  it('drops the helper-text blockers list on step 4 once every prerequisite is met', async () => {
     useStakeDocMock.mockReturnValue(
       stakeResult(
         makeStake({
@@ -366,7 +402,9 @@ describe('<BootstrapWizardPage />', () => {
         { ward_code: 'CO', ward_name: 'Maple', building_name: 'B', seat_cap: 1 } as Ward,
       ]),
     );
+    const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
     expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
   });
 
