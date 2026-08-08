@@ -144,12 +144,19 @@ test.describe('Bootstrap wizard escape bar', () => {
       stake_seat_cap: 0,
     });
     const { uid } = await createAuthUser({ email: adminEmail });
-    await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
+    // Zero claim-derived stakes, but the `bootstrap: true` marker on
+    // `onlystake` is enough on its own: tier 4 of `resolveActiveStake`
+    // (`activeStake.ts`) falls back to the sorted-first `bootstrapStakes`
+    // entry when the principal has no claim-derived access anywhere, so
+    // no `?stake=` hint is needed. This is the claims-based discovery
+    // this PR ships — landing via a bare `?stake=` URL exercised the old
+    // permissive-URL fallback instead and didn't cover this path.
+    await setCustomClaims(uid, {
+      canonical: adminEmail,
+      stakes: { onlystake: { manager: false, stake: false, wards: [], bootstrap: true } },
+    });
 
-    // Zero claim-derived stakes — the resolver needs the `?stake=`
-    // hint the same way the pre-existing bootstrap-wizard.spec.ts tests
-    // do (no accessible-stake fallback to derive it from).
-    await page.goto('/?stake=onlystake');
+    await page.goto('/');
     await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
 
     await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();

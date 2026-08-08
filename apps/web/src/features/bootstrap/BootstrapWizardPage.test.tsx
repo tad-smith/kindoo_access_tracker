@@ -17,9 +17,18 @@
 //     this bootstrap-only stake); a pure bootstrap admin (no other
 //     stake) gets a sign-out control instead. Neither gates the
 //     wizard's own step-through behaviour.
+//   - Escape bar in-setup-stake exclusion (follow-up finding on PR
+//     #258): the "Back to my stake(s)" control's source set excludes
+//     the stake under setup, even after `useEnsureBootstrapAdmin`'s
+//     in-session auto-add mutates `accessibleStakes(principal)` to
+//     include it. A pure bootstrap admin who has been auto-added as
+//     manager of the in-setup stake must see ONLY sign-out (not a
+//     self-pointing back button); a dual-role admin whose bootstrap
+//     stake sorts alphabetically first must be sent to their OTHER
+//     stake, never the one under setup.
 //
 // `lib/activeStake` and `lib/useActiveStake` are NOT mocked here — the
-// escape-bar tests exercise the real `accessibleStakes` /
+// escape-bar tests exercise the real `accessibleStakes` / `useActiveStake` /
 // `useActiveStakeSwitcher` implementations against jsdom's real
 // sessionStorage/localStorage so the "does it actually stop the
 // bounce-back" claim is verified, not assumed.
@@ -145,15 +154,19 @@ beforeEach(() => {
   window.localStorage.clear();
   // Default principal: a pure bootstrap admin with no claim-derived
   // stake access anywhere — the common case per PR #258's finding, and
-  // the shape `accessibleStakes()` (real, unmocked) reads. Individual
-  // escape-bar tests override `managerStakes` / `stakeMemberStakes` /
-  // `bishopricWards` to exercise the "other stakes" branch.
+  // the shape `accessibleStakes()` / `useActiveStake()` (both real,
+  // unmocked here) read. Individual escape-bar tests override
+  // `managerStakes` / `stakeMemberStakes` / `bishopricWards` /
+  // `bootstrapStakes` to exercise the "other stakes" branch.
+  // `bootstrapStakes` must always be present (even empty) — the real
+  // `useActiveStake()`/`resolveActiveStake()` spreads it unconditionally.
   usePrincipalMock.mockReturnValue({
     email: 'admin@example.com',
     canonical: 'admin@example.com',
     managerStakes: [],
     stakeMemberStakes: [],
     bishopricWards: {},
+    bootstrapStakes: [],
   });
   useStakeDocMock.mockReturnValue(stakeResult(makeStake()));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
@@ -625,6 +638,11 @@ describe('<BootstrapWizardPage />', () => {
         managerStakes: ['acmestake'],
         stakeMemberStakes: [],
         bishopricWards: {},
+        // Named bootstrap admin of 'bootstrap-only-stake' (the stake the
+        // wizard is FOR) — required for the real `useActiveStake()` to
+        // actually resolve the persisted storage value to it, same as
+        // the live app would while this wizard is showing.
+        bootstrapStakes: ['bootstrap-only-stake'],
       });
       const user = userEvent.setup();
       render(<BootstrapWizardPage />, { wrapper: Wrapper });
@@ -654,6 +672,66 @@ describe('<BootstrapWizardPage />', () => {
 
       await user.click(signOutButton);
       expect(signOutMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows only Sign out for a pure bootstrap admin already auto-added as manager of the in-setup stake', async () => {
+      // The post-auto-add claim shape: `useEnsureBootstrapAdmin` (the
+      // effect at the top of the page component) mints a manager claim
+      // on THIS stake in-session, so `managerStakes` now includes it —
+      // exactly the mutation that made the un-filtered escape bar point
+      // "Back to my stake" straight back into the wizard it's supposed
+      // to escape. `bootstrapStakes` still carries the marker too
+      // (setup isn't complete yet). Omitting either half of this shape
+      // would let the bug pass unnoticed.
+      usePrincipalMock.mockReturnValue({
+        email: 'admin@example.com',
+        canonical: 'admin@example.com',
+        managerStakes: ['onlystake'],
+        stakeMemberStakes: [],
+        bishopricWards: {},
+        bootstrapStakes: ['onlystake'],
+      });
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+
+      // No self-pointing "Back to my stake" — the only accessible stake
+      // IS the one under setup.
+      expect(screen.queryByTestId('wizard-escape-back-to-stakes')).not.toBeInTheDocument();
+      const signOutButton = screen.getByTestId('wizard-escape-sign-out');
+      expect(signOutButton).toHaveTextContent(/Sign out/i);
+
+      await user.click(signOutButton);
+      expect(signOutMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a dual-role admin whose bootstrap stake sorts first to their OTHER stake, not the one under setup', async () => {
+      // `aaa-bootstrap-stake` sorts before `zzz-real-stake`, so it wins
+      // tier 4 of `resolveActiveStake` and is the stake this wizard is
+      // FOR. The admin is also a manager of `zzz-real-stake` elsewhere.
+      // An unfiltered escape bar would offer only the alphabetically-
+      // first accessible stake — the bootstrap stake itself — losing
+      // the route back to the admin's real stake entirely.
+      usePrincipalMock.mockReturnValue({
+        email: 'admin@example.com',
+        canonical: 'admin@example.com',
+        managerStakes: ['aaa-bootstrap-stake', 'zzz-real-stake'],
+        stakeMemberStakes: [],
+        bishopricWards: {},
+        bootstrapStakes: ['aaa-bootstrap-stake'],
+      });
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+
+      const back = screen.getByTestId('wizard-escape-back-to-stakes');
+      // Singular label — the filtered set has exactly one entry
+      // (`zzz-real-stake`); the excluded bootstrap stake doesn't count.
+      expect(back).toHaveTextContent(/Back to my stake/i);
+
+      await user.click(back);
+
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/', replace: true });
+      expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('zzz-real-stake');
+      expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('zzz-real-stake');
     });
 
     it('does not gate the wizard step-through: Next still advances steps with the escape bar present', async () => {

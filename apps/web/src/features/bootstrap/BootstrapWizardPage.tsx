@@ -68,7 +68,7 @@ import { toast } from '../../lib/store/toast';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { accessibleStakes } from '../../lib/activeStake';
-import { useActiveStakeSwitcher } from '../../lib/useActiveStake';
+import { useActiveStake, useActiveStakeSwitcher } from '../../lib/useActiveStake';
 import { signOut } from '../auth/signOut';
 
 type StepNumber = 1 | 2 | 3 | 4;
@@ -214,18 +214,34 @@ export function BootstrapWizardPage() {
 // escapes, both always evaluated off the live principal (not gated by
 // wizard step/progress):
 //   - "Back to my stake(s)" — only when the principal has claim-derived
-//     access elsewhere. Switches the active-stake selection (persists
-//     to BOTH storage tiers, same as the StakeSwitcher click handler)
-//     before navigating home, so the resolver doesn't land back on
-//     this bootstrap-only stake on the next render.
+//     access elsewhere, EXCLUDING the stake this wizard is setting up.
+//     Switches the active-stake selection (persists to BOTH storage
+//     tiers, same as the StakeSwitcher click handler) before navigating
+//     home, so the resolver doesn't land back on this bootstrap-only
+//     stake on the next render.
 //   - "Sign out" — always available; the only way out for a pure
 //     bootstrap admin (no other accessible stake) who signed in with
 //     the wrong account.
+//
+// The in-setup-stake exclusion matters because `accessibleStakes(principal)`
+// is not static here: the auto-add effect above (`useEnsureBootstrapAdmin`)
+// mints a manager claim on THIS stake in-session on first wizard load. Left
+// unfiltered, "Back to my stake" would either point a pure bootstrap admin
+// straight back into the wizard they're trying to escape, or — for a
+// dual-role admin whose bootstrap stake sorts alphabetically first — send
+// them to the bootstrap stake instead of the other stake they actually
+// wanted. `useActiveStake()` reports the same stake the wizard's own data
+// hooks read from (`hooks.ts`), so filtering it out here always excludes
+// the right one.
 function WizardEscapeBar() {
   const principal = usePrincipal();
   const navigate = useNavigate();
   const switchStake = useActiveStakeSwitcher();
-  const otherStakes = useMemo(() => accessibleStakes(principal), [principal]);
+  const activeStakeId = useActiveStake();
+  const otherStakes = useMemo(
+    () => accessibleStakes(principal).filter((stakeId) => stakeId !== activeStakeId),
+    [principal, activeStakeId],
+  );
   const [signingOut, setSigningOut] = useState(false);
 
   function backToStakes() {
