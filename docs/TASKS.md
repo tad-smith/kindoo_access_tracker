@@ -29,9 +29,15 @@ On the record before more managers opt in. Since PR #253 the poll makes **two** 
 What makes it worth a note rather than nothing: the volume scales with **open tabs**, not with request volume, so it does not shrink at 1–2 requests/week and it grows with every manager who opts in and every second Kindoo window they leave open. Nothing needs doing yet. If it ever does, the cheap moves in order are a longer visible poll period; then folding the two reads into one `status in ['queued','running']` query, which also removes the hazard the fixed read order exists to dodge (one snapshot cannot miss a job mid-transition) but needs the gate's and the claim's differing uses of the two pages untangled first; and only then anything push-shaped, which D27 rejected for reasons that have not changed.
 
 ## [T-87] Spec §5.4 + changelog describe the pre-autofill Stake ID field
-Status: pending
+Status: done (2026-08-08 — `feat/create-stake-custom-slug`, against the folded form at `8d72181`)
 Owner: @docs-keeper
 Phase: create-stake custom slug (PR #259)
+
+**Done.** All three contradictions plus `firebase-schema.md` §4.1, which had the same "operator-typed … when the form supplied one" framing.
+
+- `spec.md` §5.4 — the two stale paragraphs replaced by four: the field *is* the slug (no preview line, hint text quoted); detach on edit / re-attach on clear, with the blur-not-change timing and the per-open ref that resets with the fields; the two slug rules, why a trailing hyphen has to survive mid-word, and the `buildingSlug(sanitizeSlugInput(x)) === buildingSlug(x)` property that makes rewriting the field under the operator safe; and what the callable does with it, including that an ID now rides on essentially every submit and agrees with the name branch by idempotence. The failure-envelope paragraph absorbed the field-attachment rule with the "when the payload carried one" framing and the note that the name branch is in practice `invalid_slug`-on-`###` only. The Stake List bullet no longer calls the field optional.
+- `firebase-schema.md` §4.1 — the doc-ID line now says the form auto-fills and why both branches land on the same ID.
+- `docs/changelog/create-stake-custom-slug.md` — rewritten. The anti-auto-fill design note is now the reversal, recorded with the objection it raised and the mechanism that answers it (the per-open detach ref); new notes on clear-re-attaches / refill-on-blur, the two slug rules, and the caret restore. New non-changes: the callable didn't move for the redesign, `buildingSlug` is untouched and `sanitizeSlugInput` doesn't replace it, and the omit-when-empty path survives for the nameless-name case. New known issue: `invalid_slug` on the ID field and `slug_collision` on the name field are both now unreachable from the SPA and stand as defense-in-depth for non-SDK callers.
 
 The Stake ID field on Create Stake was reworked on `feat/create-stake-custom-slug-autofill` (folding into PR #259) after operator review: it now auto-fills from the stake name, and the separate slug preview line is gone. The spec and changelog prose that landed earlier on the same PR branch (commit `d6a6afe`) states the opposite in so many words and needs rewriting by the same agent that wrote it.
 
