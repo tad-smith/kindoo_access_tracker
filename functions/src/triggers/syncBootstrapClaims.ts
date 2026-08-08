@@ -11,15 +11,40 @@
 // later), so without this signal nothing tells the switcher which
 // stake(s) a freshly-signed-in admin should see.
 //
-// Driven off the before/after snapshots' `(bootstrap_admin_email,
-// setup_complete)` pair, matched into the single lowercased email
-// (or null) that is eligible to be the marker, each side:
-//   - before=null, after=X            → mint on X
-//   - before=X, after=null            → clear on X (setup completed,
-//                                        doc deleted, or the email
-//                                        field was cleared)
-//   - before=X, after=Y (X != Y)      → clear on X, mint on Y
-//   - before=X, after=X               → no-op (nothing changed)
+// Reconciles off the AFTER state, not the before/after transition: on
+// every write, compute the desired marker from `(bootstrap_admin_email,
+// setup_complete)` in `after` and converge the claim toward it. A stake
+// doc's `bootstrap_admin_email` is set once at `createStake` and never
+// cleared, so this runs on every subsequent write to that doc for the
+// rest of its life — including ones that have nothing to do with
+// bootstrap (config changes, `last_over_caps_json`, seat-count churn).
+// That's deliberate: reconciling only on eligibility transitions (the
+// prior design) means a lost update racing a concurrent same-uid claim
+// write, a failed claim write, or a half-completed backfill leaves the
+// marker permanently wrong, with nothing left to heal it. Converging on
+// every write means the very next write to the doc — whatever it is —
+// fixes a stuck marker.
+//
+// This is safe from token churn because `applyBootstrapClaim` (via
+// `applyClaims.ts`'s `loadExistingClaims`/`claimsEqual`) reads the
+// user's current claim block and only calls `setCustomUserClaims` +
+// `revokeRefreshTokens` when the merged result actually differs — so
+// the steady-state cost of reconciling on every write is an extra
+// `getUserByEmail` + claims read, never a write or a revoke. Do NOT
+// short-circuit that read-then-compare step with an early return keyed
+// on "did anything change" — that's exactly the bug this replaced.
+//
+// The prior designated email (`before`'s raw `bootstrap_admin_email`,
+// regardless of its own eligibility) is reconciled toward `false`
+// whenever it differs from `after`'s, so a re-point or a doc delete
+// still clears the old admin's marker even though after-state alone
+// can't see it:
+//   - before=null, after=X            → mint on X (if eligible)
+//   - before=X, after=null            → clear on X (doc deleted or the
+//                                        email field cleared)
+//   - before=X, after=Y (X != Y)      → clear on X, converge Y
+//   - before=X, after=X               → converge X (no-op if already
+//                                        correct)
 //
 // Matches `firestore.rules:157-163` `isBootstrapAdmin`'s equality
 // check exactly: `bootstrap_admin_email` is already
@@ -64,14 +89,37 @@ export const syncBootstrapClaims = onDocumentWritten('stakes/{stakeId}', async (
     ? (event.data.after.data() as Partial<Stake> | undefined)
     : undefined;
 
-  const beforeEmail = bootstrapEmailFor(before);
-  const afterEmail = bootstrapEmailFor(after);
+  const beforeCandidate = candidateEmailFor(before);
+  const afterCandidate = candidateEmailFor(after);
+  const desired = bootstrapEmailFor(after) !== null;
 
-  if (beforeEmail === afterEmail) return;
-
-  if (beforeEmail) await setBootstrapMarker(beforeEmail, stakeId, false);
-  if (afterEmail) await setBootstrapMarker(afterEmail, stakeId, true);
+  // The doc no longer designates `beforeCandidate` (re-point or
+  // delete) — it must not keep holding the marker, and after-state
+  // alone can't see it, so clear it explicitly here.
+  if (beforeCandidate && beforeCandidate !== afterCandidate) {
+    await setBootstrapMarker(beforeCandidate, stakeId, false);
+  }
+  // Converge the currently-designated candidate toward its desired
+  // state on every write — not just eligibility transitions — so a
+  // stuck divergence heals on the next write regardless of cause.
+  if (afterCandidate) {
+    await setBootstrapMarker(afterCandidate, stakeId, desired);
+  }
 });
+
+/**
+ * The stake-doc snapshot's raw `bootstrap_admin_email`, lowercased at
+ * the source and used verbatim — or null if the doc is absent or the
+ * field isn't a non-empty string. Ignores `setup_complete`; this is
+ * "who does the doc designate," not "is that designation live" (see
+ * {@link bootstrapEmailFor} for the latter).
+ */
+function candidateEmailFor(data: Partial<Stake> | undefined): string | null {
+  if (!data) return null;
+  const email = data.bootstrap_admin_email;
+  if (typeof email !== 'string' || email === '') return null;
+  return email;
+}
 
 /**
  * The stake-doc snapshot's bootstrap-eligible email, or null. Eligible
@@ -79,11 +127,8 @@ export const syncBootstrapClaims = onDocumentWritten('stakes/{stakeId}', async (
  * `bootstrap_admin_email` is a non-empty string.
  */
 function bootstrapEmailFor(data: Partial<Stake> | undefined): string | null {
-  if (!data) return null;
-  if (data.setup_complete !== false) return null;
-  const email = data.bootstrap_admin_email;
-  if (typeof email !== 'string' || email === '') return null;
-  return email;
+  if (data?.setup_complete !== false) return null;
+  return candidateEmailFor(data);
 }
 
 /** Look up the Auth user for `email` and mint/clear the marker on `stakeId`'s block. */
