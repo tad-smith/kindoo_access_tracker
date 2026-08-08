@@ -1,9 +1,10 @@
 // Component tests for the Shell layout. The brand bar's promised
-// slots — stake name, user email — render for an authenticated
-// principal at desktop / tablet widths; on phone the email moves
-// into the drawer footer. The shell stays stable when a child
-// route swaps. The brand-text source (stake.stake_name → fallback
-// product name) is exercised here too.
+// slots — stake name, stake-switcher chevron, user email — render for
+// an authenticated principal at desktop / tablet widths; on phone the
+// email moves into the drawer footer. The shell stays stable when a
+// child route swaps. The brand-text source (stake.stake_name → fallback
+// product name) is exercised here too, as is the switcher slot's
+// position: inside the brand group, immediately after the stake name.
 //
 // `usePrincipal`, the `signOut` helper, and the Firestore stake-doc
 // hook are mocked at the module boundary so the test doesn't need a
@@ -44,9 +45,15 @@ vi.mock('../../lib/principal', () => ({
   usePrincipal: () => mockedPrincipal.current,
 }));
 
+// Accessible-stake set drives whether `StakeSwitcher` renders a trigger
+// at all (< 2 entries → it returns null and its brand-bar slot is empty).
+const mockedAccessibleStakes: { current: Array<{ stakeId: string; needsSetup: boolean }> } = {
+  current: [{ stakeId: 'csnorth', needsSetup: false }],
+};
+
 vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
-  useAccessibleStakesWithBootstrap: () => [{ stakeId: 'csnorth', needsSetup: false }],
+  useAccessibleStakesWithBootstrap: () => mockedAccessibleStakes.current,
   useActiveStakeSwitcher: () => () => {},
   useActiveStakeInvalidation: () => null,
 }));
@@ -138,6 +145,7 @@ beforeEach(() => {
   setPrincipal(defaultPrincipal());
   setStakeDocResult({ data: { stake_name: 'CS North Stake' }, isLoading: false });
   setBreakpoint('desktop');
+  mockedAccessibleStakes.current = [{ stakeId: 'csnorth', needsSetup: false }];
 });
 
 describe('Shell — brand bar', () => {
@@ -185,6 +193,36 @@ describe('Shell — brand bar', () => {
     expect(brand).not.toBeNull();
     expect(brand).toHaveTextContent('CS North Stake');
     expect(brand).not.toHaveTextContent('Stake Building Access');
+  });
+
+  it('puts the stake-switcher slot in the brand group, immediately after the stake name', async () => {
+    await renderShell(<p>Hello</p>);
+    const slot = screen.getByTestId('stake-selector-slot');
+    // Regression guard: the slot used to live in `.kd-brandbar-meta`,
+    // which parked the chevron at the far right of a wide header while
+    // the name it belongs to sat at the far left.
+    expect(slot.closest('.kd-brandbar-meta')).toBeNull();
+    expect(slot.closest('.kd-brandbar-brand')).not.toBeNull();
+    expect(slot.previousElementSibling).toHaveClass('kd-brandbar-stake');
+  });
+
+  it('renders the switcher trigger beside the stake name for a multi-stake principal', async () => {
+    mockedAccessibleStakes.current = [
+      { stakeId: 'csnorth', needsSetup: false },
+      { stakeId: 'southstake', needsSetup: false },
+    ];
+    await renderShell(<p>Hello</p>);
+    const trigger = screen.getByTestId('stake-switcher-trigger');
+    expect(trigger.closest('.kd-brandbar-brand')).not.toBeNull();
+    expect(trigger.closest('.kd-brandbar-meta')).toBeNull();
+  });
+
+  it('leaves the switcher slot empty for a single-stake principal', async () => {
+    await renderShell(<p>Hello</p>);
+    // `:empty` collapses the slot in CSS, so an empty slot leaves no gap
+    // between the stake name and whatever follows it.
+    expect(screen.getByTestId('stake-selector-slot')).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('stake-switcher-trigger')).toBeNull();
   });
 
   it('falls back to the product name while the stake doc is loading', async () => {

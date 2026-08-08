@@ -1,4 +1,4 @@
-// Stake-switcher dropdown. Renders immediately to the LEFT of the
+// Stake-switcher dropdown. Renders immediately to the RIGHT of the
 // brand-bar stake name (`Shell.tsx` `.kd-brandbar-stake-slot`, inside
 // `.kd-brandbar-brand`) when the principal's menu source (claim-derived
 // accessible stakes plus any bootstrap-only stakes discovery has found)
@@ -6,7 +6,8 @@
 // a chevron-only affordance — the adjacent stake name already shows
 // WHICH stake the user is on, so the trigger doesn't duplicate the
 // label; the chevron is the "switch" affordance. The menu is
-// left-aligned to the trigger, matching that left-edge placement.
+// start-aligned so it opens rightward from the trigger, away from the
+// name it trails.
 //
 // Click on an option persists the chosen stake to both sessionStorage
 // and localStorage and invalidates per-stake TanStack Query caches so

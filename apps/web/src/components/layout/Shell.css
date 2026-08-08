@@ -82,10 +82,11 @@
   white-space: nowrap;
 }
 
-/* Stake switcher, immediately left of the stake name. `:empty` collapses
+/* Stake switcher, immediately right of the stake name. `:empty` collapses
    the slot (and the brand group's gap around it) when the principal has
    < 2 accessible stakes and the switcher renders nothing. `flex-shrink`
-   keeps the chevron at full size while the name absorbs the truncation. */
+   keeps the chevron at full size and in frame right after the ellipsis
+   while the name absorbs all of the truncation. */
 .kd-brandbar-stake-slot {
   display: flex;
   align-items: center;

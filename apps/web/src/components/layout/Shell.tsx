@@ -17,9 +17,9 @@
 // Brand text. Authenticated principals see their stake's `stake_name`
 // (live from `stakes/{activeStakeId}`). The product name "Stake
 // Building Access" is the fallback while the stake doc loads. The
-// StakeSwitcher chevron sits between the brand icon and the stake
-// name at every breakpoint; its slot collapses when the switcher
-// renders nothing (< 2 accessible stakes).
+// StakeSwitcher chevron trails the stake name at every breakpoint; its
+// slot collapses when the switcher renders nothing (< 2 accessible
+// stakes).
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Menu, X } from 'lucide-react';
@@ -121,12 +121,14 @@ export function Shell({ children }: ShellProps) {
             ) : null}
             <div className="kd-brandbar-brand">
               <BrandIcon size={28} />
-              {/* Switcher sits immediately left of the stake name so the
-                  chevron reads as an affordance on the name itself. */}
+              <strong className="kd-brandbar-stake">{brandText}</strong>
+              {/* Switcher sits immediately right of the stake name so the
+                  chevron reads as an affordance on the name itself. It
+                  never shrinks, so a truncated name keeps it in frame
+                  right after the ellipsis. */}
               <div className="kd-brandbar-stake-slot" data-testid="stake-selector-slot">
                 {principal.isAuthenticated ? <StakeSwitcher activeStakeId={activeStakeId} /> : null}
               </div>
-              <strong className="kd-brandbar-stake">{brandText}</strong>
             </div>
           </div>
           <div className="kd-brandbar-meta">
