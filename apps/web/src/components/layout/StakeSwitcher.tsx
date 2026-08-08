@@ -1,10 +1,12 @@
-// Stake-switcher dropdown. Renders next to the brand-bar stake name
-// when the principal's menu source (claim-derived accessible stakes
-// plus any bootstrap-only stakes discovery has found) has ≥ 2 entries
-// (spec §2.1). Hidden entirely otherwise. The trigger is a chevron-only
-// affordance — the brand bar (`Shell.tsx` `.kd-brandbar-stake`) already
-// shows WHICH stake the user is on, so the switcher trigger doesn't
-// duplicate the label; the chevron is the "switch" affordance.
+// Stake-switcher dropdown. Renders immediately to the LEFT of the
+// brand-bar stake name (`Shell.tsx` `.kd-brandbar-stake-slot`, inside
+// `.kd-brandbar-brand`) when the principal's menu source (claim-derived
+// accessible stakes plus any bootstrap-only stakes discovery has found)
+// has ≥ 2 entries (spec §2.1). Hidden entirely otherwise. The trigger is
+// a chevron-only affordance — the adjacent stake name already shows
+// WHICH stake the user is on, so the trigger doesn't duplicate the
+// label; the chevron is the "switch" affordance. The menu is
+// left-aligned to the trigger, matching that left-edge placement.
 //
 // Click on an option persists the chosen stake to both sessionStorage
 // and localStorage and invalidates per-stake TanStack Query caches so
@@ -63,7 +65,7 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent
-        align="end"
+        align="start"
         sideOffset={6}
         className="min-w-[12rem] p-1"
         data-testid="stake-switcher-menu"

@@ -5,6 +5,8 @@
 //   2. Non-admin signs in against the same stake → SetupInProgress
 //      (distinct from NotAuthorized).
 //   3. Wizard step bar exposes all four steps.
+//   4. Next stays disabled on the buildings/wards steps until each has
+//      a row, and unblocks off the live snapshot; the step tabs don't.
 //
 // Wizard CRUD against the emulator is exercised at the integration
 // layer (`apps/web/src/features/bootstrap/*.test.tsx`); E2E proves the
@@ -246,6 +248,53 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(list.getByText('Maple Ward')).toBeVisible();
     await page.getByTestId('bootstrap-ward-delete-maple-ward').click();
     await expect(list.getByText('Maple Ward')).toHaveCount(0);
+  });
+
+  test('Next unblocks on the buildings step the moment a building is added', async ({ page }) => {
+    const adminEmail = 'admin-gate@example.com';
+    await writeDoc('stakes/csnorth', {
+      stake_name: 'Test Stake',
+      bootstrap_admin_email: adminEmail,
+      setup_complete: false,
+    });
+    const { uid } = await createAuthUser({ email: adminEmail });
+    await setCustomClaims(uid, { canonical: adminEmail, stakes: {} });
+    await page.goto('/?stake=csnorth');
+    await signInViaTestHatch(page, adminEmail, TEST_PASSWORD);
+    await expect(page.getByTestId('bootstrap-wizard')).toBeVisible();
+
+    // Step 1's Next is ungated and lands on the empty buildings step,
+    // where it blocks with a reason.
+    await page.getByTestId('bootstrap-next').click();
+    await expect(page.getByTestId('wizard-step-2')).toBeVisible();
+    await expect(page.getByTestId('bootstrap-next')).toBeDisabled();
+    await expect(page.getByTestId('bootstrap-next-blocker')).toHaveText(
+      /Add at least one building to continue/i,
+    );
+
+    // The tabs remain the escape hatch out of a blocked step.
+    await page.getByTestId('wizard-step-tab-4').click();
+    await expect(page.getByTestId('wizard-step-4')).toBeVisible();
+
+    const step2 = page.getByTestId('wizard-step-2');
+    await page.getByTestId('wizard-step-tab-2').click();
+    await step2.getByLabel(/^Building name$/).fill('Maple Building');
+    await step2.getByLabel(/^Address$/).fill('1 Maple Cir');
+    await step2.getByRole('button', { name: /^Add building$/ }).click();
+    await expect(
+      page.getByTestId('bootstrap-buildings-list').getByText('Maple Building'),
+    ).toBeVisible();
+
+    // Live snapshot flips the gate; Next now advances to the wards step,
+    // which blocks in turn on its own emptiness.
+    await expect(page.getByTestId('bootstrap-next')).toBeEnabled();
+    await expect(page.getByTestId('bootstrap-next-blocker')).toHaveCount(0);
+    await page.getByTestId('bootstrap-next').click();
+    await expect(page.getByTestId('wizard-step-3')).toBeVisible();
+    await expect(page.getByTestId('bootstrap-next')).toBeDisabled();
+    await expect(page.getByTestId('bootstrap-next-blocker')).toHaveText(
+      /Add at least one ward to continue/i,
+    );
   });
 
   test('wizard refuses to delete a building still referenced by a ward', async ({ page }) => {

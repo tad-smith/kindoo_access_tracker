@@ -17,7 +17,10 @@
 //            auto-added on first load.
 //
 // Each step writes to Firestore directly (no client-side pending
-// queue). Navigation between steps is free (no forward-only flow); the
+// queue). The step tabs navigate freely in both directions; only the
+// "Next" button is gated — disabled on step 2 with zero buildings and
+// on step 3 with zero wards, since step 3 can't be filled in without a
+// building and setup can't complete without a ward. The
 // "Complete Setup" button is enabled iff steps 1–3 are valid:
 //   - stake.stake_name + stake_seat_cap set
 //   - ≥1 building
@@ -124,6 +127,7 @@ export function BootstrapWizardPage() {
   const step2Done = (buildings.data?.length ?? 0) > 0;
   const step3Done = (wards.data?.length ?? 0) > 0;
   const canFinish = step1Done && step2Done && step3Done;
+  const nextBlocked = nextBlocker({ step, step2Done, step3Done });
 
   // The outer wrapper carries `data-testid="bootstrap-wizard"`
   // unconditionally so route-routing tests can assert "we landed on the
@@ -185,7 +189,13 @@ export function BootstrapWizardPage() {
             </Button>
           ) : null}
           {step < 4 ? (
-            <Button onClick={() => setStep((s) => (s + 1) as StepNumber)}>Next</Button>
+            <Button
+              onClick={() => setStep((s) => (s + 1) as StepNumber)}
+              disabled={nextBlocked !== null}
+              data-testid="bootstrap-next"
+            >
+              Next
+            </Button>
           ) : null}
           <CompleteSetupButton
             enabled={canFinish}
@@ -197,6 +207,11 @@ export function BootstrapWizardPage() {
             }}
           />
         </div>
+        {nextBlocked ? (
+          <p className="kd-form-hint m-0 text-right" data-testid="bootstrap-next-blocker">
+            {nextBlocked}
+          </p>
+        ) : null}
         <CompleteSetupBlockers missing={completionBlockers({ step1Done, step2Done, step3Done })} />
       </div>
       {/* The wizard renders outside <Shell> so the global toast host
@@ -298,6 +313,21 @@ export function completionBlockers(args: {
   if (!args.step2Done) out.push('Add at least one building (Step 2).');
   if (!args.step3Done) out.push('Add at least one ward (Step 3).');
   return out;
+}
+
+// Why "Next" is disabled on the current step, or null when it's free.
+// Steps 2 and 3 gate on their own data — step 3's form can't be filled
+// without a building, and setup can't complete without a ward — so
+// walking past them empty only produces a dead end. The step tabs stay
+// unrestricted as the escape hatch.
+export function nextBlocker(args: {
+  step: StepNumber;
+  step2Done: boolean;
+  step3Done: boolean;
+}): string | null {
+  if (args.step === 2 && !args.step2Done) return 'Add at least one building to continue.';
+  if (args.step === 3 && !args.step3Done) return 'Add at least one ward to continue.';
+  return null;
 }
 
 interface StepIndicatorProps {
