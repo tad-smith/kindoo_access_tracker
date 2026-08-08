@@ -104,6 +104,10 @@ beforeEach(() => {
     bishopricWards: {},
     isPlatformSuperadmin: false,
     bootstrapStakes: [],
+    // Explicit (not just relying on the module-level initial value) so
+    // a test that flips this to `false` (a settling/bootstrap-only
+    // principal) can't leak it into the next test.
+    isAuthenticated: true,
   });
   // Reset the hook's module-scoped URL + invalidation state so each
   // test starts from the URL set above, not the one that lingered.
@@ -430,5 +434,93 @@ describe('useActiveStake — principal.bootstrapStakes (claims-derived, synchron
     expect(window.location.search).not.toContain('stake=');
     expect(result).toBe('csnorth');
     expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('csnorth');
+  });
+});
+
+describe('useActiveStake — URL-tier consume for a settling (bootstrap-only) principal', () => {
+  // PR #258 reviewer finding: D29(b) argues a URL value can't compound
+  // into a permanent trap because it's consumed exactly once. That
+  // precondition didn't hold for a zero-role, bootstrap-only principal
+  // — `isAuthenticated` deliberately never flips true for `bootstrap`,
+  // so a consume gated on `!principalSettling` alone never ran, and a
+  // stale/invalid `?stake=X` shadowed the `bootstrapStakes` answer for
+  // the tab's lifetime.
+
+  it('a stale ?stake=A does not permanently shadow the bootstrapStakes answer for a zero-role bootstrap-only principal', async () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=foreign');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    // First pass: the URL is explicit, present-tense intent, so it
+    // wins even though 'foreign' isn't in this principal's accessible
+    // or bootstrap set (`isPermissiveUrl` in activeStake.ts).
+    expect(result).toBe('foreign');
+
+    // Simulate the next resolve — a subsequent router-history
+    // navigation re-checking the URL, the same trigger `main.tsx` uses
+    // for SW-notificationclick deep links. The URL was already
+    // stripped; the consumed value must not keep resurrecting
+    // 'foreign' from module state — it must fall through to tier 4's
+    // bootstrapStakes answer instead. Without the fix this stays
+    // 'foreign' forever.
+    await act(async () => {
+      notifyActiveStakeUrlNavigated();
+    });
+    expect(result).toBe('ridgeline');
+  });
+
+  it('a legitimate invite deep-link for a bootstrap-only principal still resolves to that stake on first navigation', () => {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      isAuthenticated: false,
+      bootstrapStakes: ['ridgeline'],
+    });
+    setUrl('/manager/dashboard?stake=ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+  });
+
+  it('existing URL-tier behaviour for a claim-bearing (non-settling) principal is unchanged', () => {
+    setPrincipal({
+      managerStakes: ['csnorth', 'ridgeline'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: [],
+      isAuthenticated: true,
+    });
+    setUrl('/manager/dashboard?stake=ridgeline');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('ridgeline');
+    expect(window.location.search).not.toContain('stake=');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('ridgeline');
+    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('ridgeline');
   });
 });
