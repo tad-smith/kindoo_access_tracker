@@ -11,7 +11,7 @@ Status: closed (fixed)
 Owner: @backend-engineer
 Severity: high (blocks onboarding every stake after the first)
 Phase: post Phase 12 (12.4 regression)
-Branch / PR: `fix/bootstrap-stake-discovery` (+ `fix/bootstrap-stake-discovery-web`, folded together)
+Branch / PR: `fix/bootstrap-admin-wizard-access` (PR #258)
 
 A newly-created stake's bootstrap admin signed in and landed on the **Not Authorized** page instead of the bootstrap wizard.
 
