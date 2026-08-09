@@ -122,7 +122,7 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
 
   it(
     'still applies claims normally when the user exists (no false-positive skip)',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth } = requireEmulators();
       const user = await auth.createUser({ email: 'present@gmail.com' });
@@ -191,7 +191,7 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
 
   it(
     'carries limited: true through the merge without clobbering sibling stakes',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const email = 'multi@gmail.com';
       const uid = await makeSettledUser(email, functionsEmulatorReachable);
@@ -215,7 +215,7 @@ describe.skipIf(!hasEmulators())('applyClaims — limited claim round-trip', () 
 
   it(
     'revokes tokens when limited is added and again when it is removed',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth } = requireEmulators();
       const email = 'flip@gmail.com';
@@ -274,7 +274,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it(
     'mints bootstrap: true on a stake with no prior claim block, and prunes it back out',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const email = 'boot@gmail.com';
       const uid = await makeSettledUser(email, functionsEmulatorReachable);
@@ -296,7 +296,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it(
     'preserves an existing manager/stake block when toggling bootstrap on and off',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const email = 'both@gmail.com';
       const uid = await makeSettledUser(email, functionsEmulatorReachable);
@@ -322,7 +322,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it(
     'survives a subsequent applyStakeClaims wholesale-replace on the same stake',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // `applyStakeClaims` (called by `syncAccessClaims`/`syncManagersClaims`)
       // replaces a stake's whole block from freshly-computed role data,
@@ -349,7 +349,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
 
   it(
     'stays discoverable through mint -> manager auto-add -> manager deactivated, all before setup completes',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // The lockout this guards against: a bootstrap admin (B) is
       // minted `bootstrap: true` while `setup_complete` is still
@@ -387,7 +387,7 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
     },
   );
 
-  it('does not clobber a sibling stake block', { timeout: 30_000 }, async () => {
+  it('does not clobber a sibling stake block', { timeout: 50_000 }, async () => {
     const email = 'multi@gmail.com';
     const uid = await makeSettledUser(email, functionsEmulatorReachable);
 

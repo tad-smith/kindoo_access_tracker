@@ -43,6 +43,9 @@ type V1Runnable = { run: (data: UserRecord, context: unknown) => Promise<unknown
 async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
   if (await hasFunctionsEmulator()) {
     const { auth } = requireEmulators();
+    // 40s for the same reason `makeSettledUser` uses it — same predicate,
+    // same delivery, and 20s sits tighter than the budget
+    // `syncSuperadminClaims.e2e.test.ts` already rejected as flake-prone.
     const settled = await waitFor(async () => {
       let u: UserRecord;
       try {
@@ -55,7 +58,7 @@ async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
       }
       const claims = (u.customClaims ?? {}) as { canonical?: string };
       return typeof claims.canonical === 'string';
-    }, 20_000);
+    }, 40_000);
     // Assert rather than discard: a timed-out wait means the in-process
     // run below is racing the deployed trigger again, and the assertion
     // that then fails would point at the handler rather than the wait.
@@ -87,7 +90,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     resetStakeIdsCache();
   });
 
-  it('writes userIndex and stamps an empty-roles claim block', { timeout: 30_000 }, async () => {
+  it('writes userIndex and stamps an empty-roles claim block', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const user = await auth.createUser({ email: 'plain@example.org' });
 
@@ -107,7 +110,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'seeds manager claim when kindooManagers/{canonical} pre-exists with active=true',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       await db
@@ -127,7 +130,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'does NOT set the manager claim when kindooManagers active=false',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       await db.doc('stakes/csnorth/kindooManagers/mgroff@gmail.com').set({ active: false });
@@ -143,7 +146,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'seeds stake claim from access doc with importer_callings on stake scope',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       await db.doc('stakes/csnorth/access/stk@gmail.com').set({
@@ -163,7 +166,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'seeds ward claims from access doc with multi-ward grants (alphabetical)',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       await db.doc('stakes/csnorth/access/bish@gmail.com').set({
@@ -187,7 +190,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'canonicalises typed-form Gmail variants when matching pre-existing role data',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // Pre-existing role data stored under canonical form `firstlast@gmail.com`.
       const { auth, db } = requireEmulators();
@@ -217,7 +220,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     },
   );
 
-  it('seeds claims across multiple stakes discovered at runtime', { timeout: 30_000 }, async () => {
+  it('seeds claims across multiple stakes discovered at runtime', { timeout: 50_000 }, async () => {
     // Exercises the runtime stake-ID discovery path (T-13): the seed
     // helper walks every stake doc under `stakes/`, not a hardcoded
     // list. Three stakes are created (one via a doc set on the stake
@@ -250,7 +253,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     expect(claims.stakes['south']).toEqual({ manager: false, stake: false, wards: ['GE'] });
   });
 
-  it('revokes refresh tokens after stamping non-empty claims', { timeout: 30_000 }, async () => {
+  it('revokes refresh tokens after stamping non-empty claims', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     await db.doc('stakes/csnorth/kindooManagers/mgrrev@gmail.com').set({ active: true });
     const user = await auth.createUser({ email: 'mgrrev@gmail.com' });
@@ -268,7 +271,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'seeds the bootstrap marker for the admin of an in-setup stake at first sign-in',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // Models the common ordering: `createStake` writes the stake doc
       // (and its `bootstrap_admin_email`) before the admin has ever
@@ -294,7 +297,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
   it(
     'does NOT seed the bootstrap marker for the admin of a completed stake',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       await db.doc('stakes/done-stake').set({
@@ -314,7 +317,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     },
   );
 
-  it('no-ops gracefully when the user has no email', { timeout: 30_000 }, async () => {
+  it('no-ops gracefully when the user has no email', { timeout: 50_000 }, async () => {
     // Users created without an email (phone-only flows) shouldn't crash
     // the trigger. We simulate by passing a minimal UserRecord-shaped
     // object — we can't actually `auth.createUser()` without an email

@@ -48,14 +48,17 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
 //
 // Budget sized to observed Eventarc latency (~14.7s on this runner), since
 // recovering means waiting on phase two's own delivery. See the fuller
-// docblock on `stakeBlockClears` in `syncManagersClaims.test.ts`,
-// including the narrow case where that recovery itself short-circuits.
-async function stakeBlockClears(uid: string): Promise<boolean> {
+// docblock on `claimsAfterClear` in `syncManagersClaims.test.ts`,
+// including the narrow case where that recovery itself short-circuits and
+// why this returns the last-read claims instead of a boolean.
+async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown } | undefined> {
   const { auth } = requireEmulators();
-  return waitFor(async () => {
-    const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
-    return claims?.stakes === undefined;
+  let last: { stakes?: unknown } | undefined;
+  await waitFor(async () => {
+    last = (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
+    return last?.stakes === undefined;
   }, 25_000);
+  return last;
 }
 
 /** Manual grant carrying the D25 limited marker. */
@@ -76,7 +79,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it(
     'writes stake claim when access doc exists with stake-scope grant',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       const uid = await makeSettledUser('a@gmail.com', functionsEmulatorReachable);
@@ -99,7 +102,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it(
     'writes ward claims for multi-ward access (deduped, sorted)',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       const uid = await makeSettledUser('b@gmail.com', functionsEmulatorReachable);
@@ -121,7 +124,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     },
   );
 
-  it('clears the stake block when the access doc goes away', { timeout: 60_000 }, async () => {
+  it('clears the stake block when the access doc goes away', { timeout: 75_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('c@gmail.com', functionsEmulatorReachable);
     await db
@@ -139,13 +142,13 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     // Delete + re-fire trigger. Stake block goes away.
     await db.doc('stakes/csnorth/access/c@gmail.com').delete();
     await runSync('csnorth', 'c@gmail.com');
-    // Polled, not read once — see `stakeBlockClears`.
-    expect(await stakeBlockClears(uid)).toBe(true);
+    // Polled, not read once — see `claimsAfterClear`.
+    expect((await claimsAfterClear(uid))?.stakes).toBeUndefined();
   });
 
   it(
     'preserves the manager bit when access changes (stake block recomputed in full)',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // A user can be both a manager AND a stake-scope grant holder. A
       // write to access shouldn't clobber the manager flag (which lives
@@ -186,7 +189,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it(
     'mints limited: true end-to-end for an all-limited access doc',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
       const uid = await makeSettledUser('ltd@gmail.com', functionsEmulatorReachable);

@@ -185,10 +185,17 @@ export async function makeSettledUser(
     // compare against the same canonical form so a mixed-case `email`
     // (e.g. a test distinguishing `adminA@`/`adminB@`) still settles.
     const wantCanonical = canonicalEmail(email);
+    // 40s, matching `syncSuperadminClaims.e2e.test.ts` — it polls a
+    // byte-identical predicate and its docblock rejects a 25s budget as
+    // flake-prone against the ~14.7s delivery measured on this runner
+    // (~60% used). 20s would be 74% used, i.e. tighter than the number
+    // already rejected, across the ~40 waits a CI integration run makes.
+    // Callers size their `timeout:` above this; the poll exits as soon as
+    // the claim lands, so the happy path stays sub-second.
     const seeded = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       return ((u.customClaims ?? {}) as { canonical?: string }).canonical === wantCanonical;
-    }, 20_000);
+    }, 40_000);
     expect(seeded).toBe(true);
   }
   return user.uid;

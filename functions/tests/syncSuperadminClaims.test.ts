@@ -39,7 +39,7 @@ describe.skipIf(!hasEmulators())('syncSuperadminClaims', () => {
     await clearEmulators();
   });
 
-  it('sets isPlatformSuperadmin=true on doc create', { timeout: 30_000 }, async () => {
+  it('sets isPlatformSuperadmin=true on doc create', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('super-add@gmail.com', functionsEmulatorReachable);
     await db
@@ -53,7 +53,7 @@ describe.skipIf(!hasEmulators())('syncSuperadminClaims', () => {
     ).toBe(true);
   });
 
-  it('clears isPlatformSuperadmin on doc delete', { timeout: 30_000 }, async () => {
+  it('clears isPlatformSuperadmin on doc delete', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('super-del@gmail.com', functionsEmulatorReachable);
     await db

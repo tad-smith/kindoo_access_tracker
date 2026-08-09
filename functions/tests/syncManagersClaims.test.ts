@@ -49,8 +49,12 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
 //
 // Budget: sized to observed Eventarc latency on this runner (~14.7s, see
 // `syncSuperadminClaims.e2e.test.ts`), not to the sub-second happy path —
-// waiting on D2 means waiting a full delivery. Callers raise their own
-// timeout to cover this on top of `makeSettledUser`'s 20s.
+// waiting on D2 means waiting a full delivery. Callers size their own
+// `timeout:` to cover this on top of `makeSettledUser`'s 40s.
+//
+// Returns the LAST claims object read, so the caller asserts on a value
+// rather than on a bare boolean: `expect(false).toBe(true)` says nothing,
+// and the claims object is what made T-95 diagnosable in the first place.
 //
 // NOT a guarantee, and the flake it leaves is not one polling can fix: if
 // D2 loads `existing` after `runSync` cleared the block but before D1
@@ -60,12 +64,14 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
 // corner; it is written down rather than closed because closing it means
 // settling D1 before phase two, and D1's write is byte-identical to the
 // in-process one that precedes it — there is nothing to observe.
-async function stakeBlockClears(uid: string): Promise<boolean> {
+async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown } | undefined> {
   const { auth } = requireEmulators();
-  return waitFor(async () => {
-    const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
-    return claims?.stakes === undefined;
+  let last: { stakes?: unknown } | undefined;
+  await waitFor(async () => {
+    last = (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
+    return last?.stakes === undefined;
   }, 25_000);
+  return last;
 }
 
 describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
@@ -79,7 +85,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     await clearEmulators();
   });
 
-  it('flips manager claim on when active=true', { timeout: 30_000 }, async () => {
+  it('flips manager claim on when active=true', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-on@gmail.com', functionsEmulatorReachable);
     await db
@@ -95,7 +101,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     });
   });
 
-  it('flips manager claim off when active=false', { timeout: 60_000 }, async () => {
+  it('flips manager claim off when active=false', { timeout: 75_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-off@gmail.com', functionsEmulatorReachable);
     await db
@@ -111,10 +117,10 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
     await db.doc('stakes/csnorth/kindooManagers/m-off@gmail.com').set({ active: false });
     await runSync('csnorth', 'm-off@gmail.com');
-    expect(await stakeBlockClears(uid)).toBe(true);
+    expect((await claimsAfterClear(uid))?.stakes).toBeUndefined();
   });
 
-  it('clears manager when the doc is deleted entirely', { timeout: 60_000 }, async () => {
+  it('clears manager when the doc is deleted entirely', { timeout: 75_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-del@gmail.com', functionsEmulatorReachable);
     await db
@@ -125,7 +131,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
     await db.doc('stakes/csnorth/kindooManagers/m-del@gmail.com').delete();
     await runSync('csnorth', 'm-del@gmail.com');
-    expect(await stakeBlockClears(uid)).toBe(true);
+    expect((await claimsAfterClear(uid))?.stakes).toBeUndefined();
   });
 
   it('no-ops when the user has no userIndex entry yet', async () => {
@@ -134,7 +140,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     await expect(runSync('csnorth', 'ghost@gmail.com')).resolves.toBeUndefined();
   });
 
-  it('revokes refresh tokens after a real claim flip', { timeout: 30_000 }, async () => {
+  it('revokes refresh tokens after a real claim flip', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('rev@gmail.com', functionsEmulatorReachable);
     await db
