@@ -382,7 +382,7 @@ async function applyKindooOnly(
     // (read-time fallback classifies it, matching `markRequestComplete`'s
     // missing-ward precedent); `null` ⇒ home ward, leave absent; a string ⇒
     // foreign site, stamp it. Kind: `undefined` ⇒ unresolved, which only an
-    // auto seat cares about (it refuses below rather than defaulting).
+    // auto seat cares about (an unreadable doc defaults to ward below).
     //
     // This block used to sit BELOW the auto bookkeeping, so the app-access
     // set was chosen before the unit's name existed and every unit scope
