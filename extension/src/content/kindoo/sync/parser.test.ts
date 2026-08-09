@@ -496,6 +496,73 @@ describe('pickPrimarySegment', () => {
   });
 });
 
+// ---- Branch scopes ---------------------------------------------------
+//
+// A branch's app-access set is chosen from the segment's OWN scope text
+// (`rawScopeName` → `unitType`), not from `segment.scope`, which is a
+// `ward_code` slug an app-access lookup cannot read a unit kind out of.
+// Kindoo renders a branch verbatim (D31(c)), so the description string
+// these tests use is the one Church Access Automation would write.
+
+describe('pickPrimarySegment — branch scopes', () => {
+  const UNITS = [...WARDS, { ward_code: 'peterson-branch', ward_name: 'Peterson Branch' }];
+
+  it('prefers a branch app-access segment over a non-app-access stake segment', () => {
+    // The case that motivates the change: without the per-segment unit
+    // kind, `Branch President` is looked up in the WARD set, matches
+    // nothing, and the stake segment silently steals primary.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Branch President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('peterson-branch');
+  });
+
+  it('does not grant app access for a branch calling held at a ward scope', () => {
+    // Same calling, ward scope → the ward set has no counterpart, so no
+    // segment grants and stake-first ordering applies.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Branch President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('stake');
+  });
+
+  it('still prefers a ward app-access segment when a branch exists in the stake', () => {
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Bishop)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('CO');
+  });
+
+  it('prefers the EQ President branch segment when the stake opts in', () => {
+    // The stake gate rides alongside the derived unit kind: Elders
+    // Quorum President joins the BRANCH set, not just the ward one.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Elders Quorum President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed, { eqPresidentAccess: true })?.scope).toBe('peterson-branch');
+    expect(pickPrimarySegment(parsed, { eqPresidentAccess: false })?.scope).toBe('stake');
+  });
+
+  it('does not grant app access for a ward-only calling held at a branch scope', () => {
+    // The branch set is not the ward set renamed — it has no counterpart
+    // to Ward Executive Secretary.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Ward Executive Secretary)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('stake');
+  });
+});
+
 // ---- Ignored wards ---------------------------------------------------
 //
 // `stake.kindoo_ignored_wards` names wards of a neighbouring SBA stake
