@@ -122,7 +122,34 @@ describe('configuration duplicateWardNameBlocker', () => {
 
   it('blocks a new ward whose name matches a legacy 2-letter-coded ward', () => {
     const msg = duplicateWardNameBlocker('Maple', wards, undefined);
-    expect(msg).toContain('Ward names must be unique');
+    expect(msg).toContain('Ward and branch names must be unique');
+  });
+
+  it('blocks "Maple" against a stored "Maple Ward" and says why', () => {
+    // Same unit under the optional suffix. A verbatim string compare
+    // let the pair coexist, and the parser then keyed both `maple` and
+    // `maple ward` to whichever ward was registered last.
+    const suffixed = [ward({ ward_code: 'CO', ward_name: 'Maple Ward' })];
+    const msg = duplicateWardNameBlocker('Maple', suffixed, undefined);
+    expect(msg).toContain('are the same ward');
+    expect(msg).toContain('" Ward" suffix is optional');
+  });
+
+  it('blocks "Maple Ward" against a stored bare "Maple"', () => {
+    expect(duplicateWardNameBlocker('Maple Ward', wards, undefined)).not.toBeNull();
+  });
+
+  it('blocks a ward that shadows a branch of the same place name', () => {
+    // "Olive Branch" (a branch) and "Olive Branch Ward" have different
+    // canonical names, so a canonical-name compare would allow the
+    // pair — but both answer to "olive branch" in the parser.
+    const branch = [ward({ ward_code: 'OB', ward_name: 'Olive Branch' })];
+    const msg = duplicateWardNameBlocker('Olive Branch Ward', branch, undefined);
+    expect(msg).toContain('reads both as "Olive Branch"');
+  });
+
+  it('leaves a branch alone when no ward shares its place name', () => {
+    expect(duplicateWardNameBlocker('Limon Branch', wards, undefined)).toBeNull();
   });
 
   it('blocks a rename onto another existing ward name', () => {
@@ -994,7 +1021,7 @@ describe('useUpsertWardMutation', () => {
         seat_cap: 20,
         existingWards: [ward({ ward_code: 'CO', ward_name: 'Maple' })],
       }),
-    ).rejects.toThrow(/Ward names must be unique/i);
+    ).rejects.toThrow(/Ward and branch names must be unique/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 
@@ -1013,7 +1040,7 @@ describe('useUpsertWardMutation', () => {
           ward({ ward_code: 'PR', ward_name: 'Prairie' }),
         ],
       }),
-    ).rejects.toThrow(/Ward names must be unique/i);
+    ).rejects.toThrow(/Ward and branch names must be unique/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 

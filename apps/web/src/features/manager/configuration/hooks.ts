@@ -20,7 +20,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { canonicalEmail, buildingSlug } from '@kindoo/shared';
+import { canonicalEmail, buildingSlug, unitNameCollisionMessage } from '@kindoo/shared';
 import type {
   AccessRequest,
   BackfillEqPresidentAccessInput,
@@ -166,23 +166,25 @@ export interface WardInput {
 
 /**
  * Pure guard: returns a user-facing error message when another ward (a
- * different `ward_code`) already uses `name`, or `null` when the name is
- * free. Case-insensitive, trimmed — symmetric with
- * `duplicateBuildingNameBlocker`. `selfWardCode` is the doc id being
- * edited (undefined on create) so a ward doesn't conflict with itself.
+ * different `ward_code`) collides with `name`, or `null` when the name
+ * is free. `selfWardCode` is the doc id being edited (undefined on
+ * create) so a ward doesn't conflict with itself.
+ *
+ * Collision is variant-set intersection, not string equality: `"Maple"`
+ * and `"Maple Ward"` are the same unit, and a ward `"Olive Branch Ward"`
+ * shadows a branch `"Olive Branch"` in the description parser. The rule
+ * and its copy live in `unitNameCollisionMessage` so the bootstrap
+ * wizard's Step 3 enforces exactly the same thing.
  */
 export function duplicateWardNameBlocker(
   name: string,
   wards: ReadonlyArray<Ward>,
   selfWardCode: string | undefined,
 ): string | null {
-  const wanted = name.trim().toLowerCase();
-  if (!wanted) return null;
-  const clash = wards.find(
-    (w) => w.ward_code !== selfWardCode && w.ward_name.trim().toLowerCase() === wanted,
+  return unitNameCollisionMessage(
+    name,
+    wards.filter((w) => w.ward_code !== selfWardCode).map((w) => w.ward_name),
   );
-  if (!clash) return null;
-  return `Another ward already uses the name "${clash.ward_name}". Ward names must be unique.`;
 }
 
 export function useUpsertWardMutation() {

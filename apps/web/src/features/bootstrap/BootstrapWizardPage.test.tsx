@@ -634,6 +634,13 @@ describe('<BootstrapWizardPage />', () => {
     expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
     expect(WARD_NAME_HINT).toMatch(/“ Ward” suffix is optional/);
     expect(WARD_NAME_HINT).toMatch(/A branch must end in “ Branch”, e\.g\. “Limon Branch”\./);
+    // The trap: a ward in a place called Olive Branch is classified as a
+    // branch unless the operator stores the suffix. The hint must say so.
+    expect(WARD_NAME_HINT).toMatch(/“Olive Branch Ward”, not “Olive Branch”/);
+    // And it must not also claim the name is whatever Kindoo displays —
+    // for a bare-stored ward Kindoo shows the SUFFIXED form, so that
+    // sentence contradicted the suffix-is-optional half.
+    expect(WARD_NAME_HINT).not.toMatch(/as Kindoo shows it/);
   });
 
   it('writes both building_id and building_name when a ward is added', async () => {
@@ -687,7 +694,64 @@ describe('<BootstrapWizardPage />', () => {
     await user.type(screen.getByLabelText(/^Ward or branch name$/), 'maple ward');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
-    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    expect(await screen.findByText(/already uses the name "Maple Ward"/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('blocks adding "Maple" when "Maple Ward" is already in the list and explains the suffix', async () => {
+    // The optional " Ward" suffix makes these one unit. Letting both in
+    // gave the description parser two units answering to `maple`, and
+    // the later registration silently shadowed the earlier ward.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'maple-ward',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    expect(await screen.findByText(/are the same ward/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('blocks adding "Olive Branch Ward" when the branch "Olive Branch" is already in the list', async () => {
+    // Different canonical names, one shared variant — a canonical-name
+    // comparison would let this pair through.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'olive-branch',
+          ward_name: 'Olive Branch',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Olive Branch Ward');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    expect(await screen.findByText(/reads both as "Olive Branch"/i)).toBeInTheDocument();
     expect(addWardMutate).not.toHaveBeenCalled();
   });
 
