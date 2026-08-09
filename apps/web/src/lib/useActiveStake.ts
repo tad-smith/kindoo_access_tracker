@@ -741,6 +741,40 @@ export function useActiveStake(): string | null {
   return resolved.stakeId;
 }
 
+/**
+ * The active stake, but only when the principal may actually READ that
+ * stake's member data (`seats`, `requests`, `access`) — otherwise
+ * `null`, which leaves the DIY data hooks disabled.
+ *
+ * The predicate is `accessibleStakes(principal).includes(stakeId)`, the
+ * client mirror of the rules' `isAnyMember`. Two identities resolve an
+ * active stake without satisfying it: a platform superadmin holding no
+ * role on the stake (T-91 — the nav's `isManager` short-circuits on the
+ * superadmin claim, so they see the whole manager section), and a
+ * bootstrap admin mid-setup. Both would otherwise open a subscription
+ * the rules deny on every mount.
+ *
+ * A denied subscribe is not merely noisy. The common path is handled —
+ * the hook logs and reports an error state — but `useFirestoreDoc`'s
+ * header documents the SDK's internal-assertion panic (`Unexpected
+ * state ID: ca9` / `b815`), which throws from inside the SDK's own
+ * microtask, bypasses our callback, and reaches `RootErrorBoundary` as
+ * a full-page "Something went wrong". Rare per subscribe, but these
+ * mount on every visit to those pages, so it is worth not sampling.
+ *
+ * Callers that read stake CONFIG (wards, buildings, kindooSites,
+ * organizations, kindooManagers) keep using `useActiveStake()` — a
+ * superadmin may read those (T-91).
+ */
+export function useMemberDataStake(): string | null {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  return useMemo(() => {
+    if (activeStakeId === null) return null;
+    return accessibleStakes(principal).includes(activeStakeId) ? activeStakeId : null;
+  }, [principal, activeStakeId]);
+}
+
 /** A stake in the StakeSwitcher's menu source. */
 export interface AccessibleStakeEntry {
   stakeId: string;

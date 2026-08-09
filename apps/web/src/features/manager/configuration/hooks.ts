@@ -50,7 +50,7 @@ import {
   wardRef,
   wardsCol,
 } from '../../../lib/docs';
-import { useActiveStake } from '../../../lib/useActiveStake';
+import { useActiveStake, useMemberDataStake } from '../../../lib/useActiveStake';
 import { usePrincipal } from '../../../lib/principal';
 import type { Principal } from '../../../lib/principal';
 
@@ -102,15 +102,31 @@ export function useKindooSites() {
 // snapshots pointing at the old name, so the Buildings tab subscribes to
 // both and blocks a rename while any active seat or pending request
 // references the current name.
+// Seats + requests feed the Buildings rename/delete guards and the
+// Organizations delete guard — nothing else on this page. They are
+// keyed on `useMemberDataStake()`, not `useActiveStake()`: a platform
+// superadmin holding no role on the stake reaches Configuration (T-91)
+// but cannot read member data, so subscribing would open a listener the
+// rules deny on every mount of those two tabs. The guards those feed are
+// unusable for that persona either way — the buttons stay disabled — so
+// the only thing the subscription could add is a denied listener, and
+// `useFirestoreDoc`'s header documents the SDK panic that a denied
+// subscribe can escalate into a full-page error boundary.
 export function useSeats() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(() => (activeStakeId ? seatsCol(db, activeStakeId) : null), [activeStakeId]);
+  const memberDataStakeId = useMemberDataStake();
+  const q = useMemo(
+    () => (memberDataStakeId ? seatsCol(db, memberDataStakeId) : null),
+    [memberDataStakeId],
+  );
   return useFirestoreCollection<Seat>(q);
 }
 
 export function useRequests() {
-  const activeStakeId = useActiveStake();
-  const q = useMemo(() => (activeStakeId ? requestsCol(db, activeStakeId) : null), [activeStakeId]);
+  const memberDataStakeId = useMemberDataStake();
+  const q = useMemo(
+    () => (memberDataStakeId ? requestsCol(db, memberDataStakeId) : null),
+    [memberDataStakeId],
+  );
   return useFirestoreCollection<AccessRequest>(q);
 }
 
