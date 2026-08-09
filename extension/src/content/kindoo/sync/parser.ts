@@ -23,14 +23,17 @@ import {
   unitType,
   type AppAccessOptions,
   type Stake,
+  type UnitType,
   type Ward,
 } from '@kindoo/shared';
 
 /**
  * Per-stake app-access gates as a caller may supply them. `unitType` is
- * excluded deliberately: it is a property of the individual segment, not
- * of the description, and a single description routinely names a ward
- * and a branch at once. `segmentGrantsAppAccess` derives it per segment.
+ * excluded deliberately: it is a property of the individual unit a
+ * segment resolved to — a single description routinely names a ward and
+ * a branch at once — and it is resolved from the stake's unit catalogue
+ * at parse time, so it is never something a caller is in a position to
+ * supply. See {@link ParsedSegment.unitKind}.
  */
 export type SegmentAppAccessOptions = Omit<AppAccessOptions, 'unitType'>;
 
@@ -40,6 +43,20 @@ export interface ParsedSegment {
   rawScopeName: string;
   /** `'stake'` or a `ward_code` once the name resolves; `null` when unresolved. */
   scope: 'stake' | string | null;
+  /**
+   * Kind of the unit this segment resolved to, from `unitType` of that
+   * unit's stored `ward_name`. `null` when the segment names no unit —
+   * an unresolved scope, or the stake.
+   *
+   * Resolved here rather than re-derived downstream because
+   * `rawScopeName` and the stored name can disagree about the kind, and
+   * only the stored name is authoritative. D31(b) makes the `" Ward"`
+   * suffix optional in BOTH directions, so a ward stored
+   * `"Olive Branch Ward"` also answers to the bare `"Olive Branch"` —
+   * text that reads as a branch on its own. `scope` cannot serve either:
+   * a `ward_code` is a slug, not a name.
+   */
+  unitKind: UnitType | null;
   /** Free-text inside the parens, untrimmed of internal commas. */
   calling: string;
   /** `true` when `rawScopeName` matched a known ward or the stake. */
@@ -69,9 +86,18 @@ function normalise(s: string): string {
 /** Collision signatures already warned about — see `buildWardLookup`. */
 const warnedCollisions = new Set<string>();
 
+/** What a matched variant key identifies: the unit, and its kind. */
+interface UnitMatch {
+  ward_code: string;
+  /** `unitType(ward_name)` — of the STORED name, not of the key that
+   *  matched. A ward registers a key its own name's suffix contradicts;
+   *  see {@link ParsedSegment.unitKind}. */
+  unitKind: UnitType;
+}
+
 /**
- * Normalised variant → `ward_code`, registered in **`ward_code` order**
- * with **first registration winning**.
+ * Normalised variant → the unit it names, registered in **`ward_code`
+ * order** with **first registration winning**.
  *
  * Two units in one stake can produce overlapping variant sets: `"Maple"`
  * and `"Maple Ward"` both yield `maple` + `maple ward`, and a branch
@@ -96,8 +122,10 @@ const warnedCollisions = new Set<string>();
  * Kindoo user per Sync pass, and a name collision persists for the whole
  * run — one line per contested pair, not several hundred.
  */
-function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): Map<string, string> {
-  const lookup = new Map<string, string>();
+function buildWardLookup(
+  wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>,
+): Map<string, UnitMatch> {
+  const lookup = new Map<string, UnitMatch>();
   // Code-unit compare, not `localeCompare`: collation can rank two
   // distinct ids equal, which would put array order back in the
   // tie-break. Sorted on a copy — `wards` belongs to the caller.
@@ -105,22 +133,24 @@ function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): M
     a.ward_code < b.ward_code ? -1 : a.ward_code > b.ward_code ? 1 : 0,
   );
   for (const w of ordered) {
+    const match: UnitMatch = { ward_code: w.ward_code, unitKind: unitType(w.ward_name) };
     for (const key of kindooScopeNameVariants(w.ward_name)) {
       const owner = lookup.get(key);
       if (owner === undefined) {
-        lookup.set(key, w.ward_code);
+        lookup.set(key, match);
         continue;
       }
       // The variants list is de-duplicated, but a unit re-registering
       // its own key is still not a collision.
-      if (owner === w.ward_code) continue;
-      const signature = `${key}|${owner}|${w.ward_code}`;
+      if (owner.ward_code === w.ward_code) continue;
+      const signature = `${key}|${owner.ward_code}|${w.ward_code}`;
       if (warnedCollisions.has(signature)) continue;
       warnedCollisions.add(signature);
       console.warn(
         `[sba-ext] parseDescription: unit name collision on "${key}" — units ` +
-          `${owner} and ${w.ward_code} both claim it. Keeping ${owner}; descriptions ` +
-          `naming "${key}" will not resolve to ${w.ward_code}. Rename one unit in SBA.`,
+          `${owner.ward_code} and ${w.ward_code} both claim it. Keeping ${owner.ward_code}; ` +
+          `descriptions naming "${key}" will not resolve to ${w.ward_code}. ` +
+          `Rename one unit in SBA.`,
       );
     }
   }
@@ -148,6 +178,11 @@ function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): M
  * contest a key; the lower `ward_code` keeps it — independent of the
  * order `wards` arrives in — and the collision is warned about. See
  * `buildWardLookup`.
+ *
+ * A resolved unit segment also carries that unit's kind
+ * ({@link ParsedSegment.unitKind}), taken from the catalogue entry it
+ * matched. This is the only point where both the description text and
+ * the stored name are in hand, and they can disagree about the kind.
  *
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or
@@ -197,6 +232,7 @@ export function parseDescription(
       pushSegment({
         rawScopeName: rawSeg.trim(),
         scope: null,
+        unitKind: null,
         calling: '',
         resolvedScope: false,
       });
@@ -207,19 +243,21 @@ export function parseDescription(
     const key = normalise(rawScopeName);
 
     let scope: 'stake' | string | null = null;
+    let unitKind: UnitType | null = null;
     let resolvedScope = false;
     if (key === stakeKey && stakeKey.length > 0) {
       scope = 'stake';
       resolvedScope = true;
     } else {
-      const wardCode = wardLookup.get(key);
-      if (wardCode !== undefined) {
-        scope = wardCode;
+      const match = wardLookup.get(key);
+      if (match !== undefined) {
+        scope = match.ward_code;
+        unitKind = match.unitKind;
         resolvedScope = true;
       }
     }
 
-    pushSegment({ rawScopeName, scope, calling, resolvedScope });
+    pushSegment({ rawScopeName, scope, unitKind, calling, resolvedScope });
   }
 
   const unparseable = segments.every((s) => !s.resolvedScope);
@@ -245,25 +283,30 @@ export function isFullyIgnored(parsed: ParsedDescription): boolean {
  * the hard-coded app-access lists, plus the stake-gated Elders Quorum
  * President when `opts.eqPresidentAccess`.
  *
- * The unit kind comes from `rawScopeName`, not from `scope`: `scope` is
- * a `ward_code` slug, so `appAccessCallingsForScope` cannot see a branch
- * in it and would silently hand a Branch President the ward set (which
- * holds no branch calling — the fail-closed default, and the bug this
- * derivation fixes). `rawScopeName` is the scope text Kindoo wrote, which
- * is exactly the string `unitType` is defined over (D31): Kindoo renders
- * a branch verbatim, so a resolved branch segment can only have matched
- * the branch's single `" Branch"` variant. Passing it for a `'stake'`
- * segment is harmless — that scope short-circuits ahead of the option.
+ * The unit kind is read off the segment, where `parseDescription`
+ * resolved it from the catalogue. Nothing is re-derived here, because
+ * neither string available at this point can be trusted to answer:
+ * `scope` is a `ward_code` slug, which `appAccessCallingsForScope`
+ * cannot see a branch in at all; and `rawScopeName` is description text
+ * that may name a unit in a form its own name contradicts — a ward
+ * stored `"Olive Branch Ward"` answers to the bare `"Olive Branch"`
+ * under D31(b), and reading THAT as a branch consults a set holding no
+ * `Bishop`. Both mistakes fail the same closed-but-wrong way: the
+ * segment silently grants nothing and loses primary to a segment that
+ * should not have won it.
+ *
+ * `unitKind` is `null` for a stake segment, and none is passed — the
+ * stake scope is answered ahead of the option anyway. It is also `null`
+ * for an unresolved segment, which never reaches the lookup.
  */
 function segmentGrantsAppAccess(segment: ParsedSegment, opts?: SegmentAppAccessOptions): boolean {
   if (!segment.resolvedScope || segment.scope === null) return false;
   const callings = segment.calling.split(',').map((c) => c.trim());
-  return (
-    filterAppAccessCallings(segment.scope, callings, {
-      ...opts,
-      unitType: unitType(segment.rawScopeName),
-    }).length > 0
-  );
+  // Spread rather than `unitType: segment.unitKind ?? undefined`:
+  // `exactOptionalPropertyTypes` rejects an explicit `undefined` here.
+  const gates: AppAccessOptions =
+    segment.unitKind === null ? { ...opts } : { ...opts, unitType: segment.unitKind };
+  return filterAppAccessCallings(segment.scope, callings, gates).length > 0;
 }
 
 /**
