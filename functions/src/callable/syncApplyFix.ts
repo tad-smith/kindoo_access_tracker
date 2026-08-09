@@ -553,7 +553,7 @@ type KindooOnlyMergePlan =
 
 const SLOT_ALREADY_ON_SITE =
   'that grant is already recorded on this Kindoo site — nothing to merge. ' +
-  'If this row keeps coming back, update the extension and re-run Sync.';
+  'Re-run Sync to refresh the report.';
 
 /**
  * True when the matched slot ALREADY resolves to the site the incoming

@@ -2212,6 +2212,65 @@ describe('detect', () => {
     expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum Second Counselor');
   });
 
+  it('B-24: an sba-only row surfaced through a duplicate is flagged and offers no fix', () => {
+    // The normal end of life for a grant B-23 appends: the ward calling
+    // ends, Kindoo revokes the user, but the seat still projects onto the
+    // foreign site through the duplicate. Removing would promote the
+    // revoked grant and destroy the home stake primary.
+    const merged = seat({
+      member_canonical: 'roger@example.com',
+      member_email: 'roger@example.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Lexington Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Elders Quorum Second Counselor'],
+          building_names: ['Pine Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [merged],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.surfacedFromDuplicate).toBe(true);
+    expect(row.reason).toContain('parallel-site grant');
+    expect(fixActionsFor(row)).toEqual([]);
+  });
+
+  it('a primary-surfaced sba-only row keeps its Remove action', () => {
+    const result = detect(
+      mixedInputs({
+        seats: [
+          seat({
+            member_canonical: 'plain@example.com',
+            member_email: 'plain@example.com',
+            scope: 'FT',
+          }),
+        ],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.surfacedFromDuplicate).toBeUndefined();
+    expect(fixActionsFor(row)).toHaveLength(1);
+  });
+
   // ----- T-42 multi-site fan-out -----
   //
   // A Kindoo user whose Description spans home + foreign sites must

@@ -165,6 +165,34 @@ describe('fixActionsFor', () => {
     ).toEqual([]);
   });
 
+  it('withholds the destructive actions on a duplicate-surfaced row (B-16 / B-24)', () => {
+    // Every syncApplyFix handler writes the PRIMARY's fields, so on a row
+    // projected from a duplicate these two destroy a grant the operator
+    // isn't looking at. The row still renders; only the buttons go.
+    for (const code of ['sba-only', 'callings-mismatch'] as const) {
+      expect(
+        fixActionsFor(
+          discrepancy({
+            code,
+            surfacedFromDuplicate: true,
+            sba: { scope: 'CO', type: 'auto', callings: ['Bishop'], buildingNames: [] },
+          }),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it('keeps the reshaping actions on a duplicate-surfaced row', () => {
+    // Same B-16 class, but these change one axis of a grant that still
+    // exists rather than destroying one, and Sync re-emits until it
+    // converges. Withholding them would strand reconciliation outright.
+    for (const code of ['scope-mismatch', 'type-mismatch', 'buildings-mismatch'] as const) {
+      const actions = fixActionsFor(discrepancy({ code, surfacedFromDuplicate: true }));
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({ testId: 'update-sba' });
+    }
+  });
+
   it('any review-severity row returns no actions regardless of code (invariant)', () => {
     // Even a code that is normally actionable yields no buttons when the
     // detector marked the row review.

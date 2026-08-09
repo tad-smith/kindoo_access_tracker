@@ -46,6 +46,34 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // cases, where no SBA-side action can be safely derived, and
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
+  // Second invariant, same shape as the review guard: a row surfaced
+  // through a `duplicate_grants[]` entry offers no DESTRUCTIVE action.
+  // Every `syncApplyFix` handler writes the PRIMARY grant's fields, so
+  // on such a row these two write somewhere the operator isn't looking:
+  //
+  //   - `sba-only` → `applySbaOnlyRemove` promotes `duplicate_grants[0]`
+  //     and drops the primary (B-24). This is the NORMAL end of life for
+  //     every grant B-23's merge appends — the ward calling ends, Kindoo
+  //     revokes, the seat still projects through the duplicate — so one
+  //     click destroys the member's home grant and reaps its app access.
+  //   - `callings-mismatch` → `applyCallingsMismatch` replaces the
+  //     primary's `callings[]` and reconciles ITS scope (B-16), which for
+  //     a stake primary filters to no app-access calling and revokes
+  //     access outright. Trigger is an ordinary calling change.
+  //
+  // The rows still render, with the reason saying why the fix is absent;
+  // only the known-wrong writes are withheld. Lift this once the
+  // `(scope, kindoo_site_id)` threading B-16 and B-24 both need lands and
+  // the handlers target the surfaced grant.
+  //
+  // Deliberately NOT withheld: `scope-mismatch` / `type-mismatch` /
+  // `buildings-mismatch` are B-16's class too, but they reshape one axis
+  // of a grant that still exists rather than destroying one, and Sync
+  // re-emits the row until it converges. Withholding them would strand
+  // reconciliation for the whole population with no data-loss to prevent.
+  if (d.surfacedFromDuplicate && (d.code === 'sba-only' || d.code === 'callings-mismatch')) {
+    return [];
+  }
   switch (d.code) {
     case 'sba-only':
       // Kindoo-authoritative: an SBA seat with no Kindoo presence is an

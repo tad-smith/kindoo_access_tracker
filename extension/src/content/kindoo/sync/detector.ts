@@ -75,6 +75,19 @@ export interface Discrepancy {
   /** Kindoo side block — `null` when the user only exists in SBA. */
   kindoo: KindooBlock | null;
   /**
+   * True when the row was surfaced through a `duplicate_grants[]` entry
+   * rather than the seat's primary grant.
+   *
+   * Every `syncApplyFix` handler writes the PRIMARY's fields, so on such
+   * a row the write would land on a grant the operator isn't looking at
+   * (B-16, B-24). `fixActionsFor` withholds the two actions whose wrong
+   * write destroys data — `sba-only`'s Remove and `callings-mismatch`'s
+   * Update — until the `(scope, kindoo_site_id)` threading both bugs
+   * need is in place. The rows still surface; only the known-wrong
+   * buttons are absent.
+   */
+  surfacedFromDuplicate?: boolean;
+  /**
    * `kindoo-only` rows only. True when SBA DOES hold a seat for this
    * member — just no grant on the active site, so the seat projected to
    * nothing and the row is "missing grant", not "missing member" (B-23).
@@ -286,7 +299,7 @@ function projectSeatForSite(
   wards: Ward[],
   buildings: Building[],
   activeSite: ActiveSite | undefined,
-): SbaBlock | null {
+): { block: SbaBlock; fromDuplicate: boolean } | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
   const wardSite = (wardCode: string): string | null => {
     if (wardCode === 'stake') return null;
@@ -318,7 +331,8 @@ function projectSeatForSite(
   const contributors: Contributor[] = [];
   // Primary first (preserves "primary wins on scope/type" when it
   // matches the active site).
-  if (grantSite(seat.kindoo_site_id, seat.scope) === wantSiteId) {
+  const primaryContributed = grantSite(seat.kindoo_site_id, seat.scope) === wantSiteId;
+  if (primaryContributed) {
     contributors.push({
       scope: seat.scope,
       type: seat.type,
@@ -342,6 +356,12 @@ function projectSeatForSite(
   }
   if (contributors.length === 0) return null;
   const first = contributors[0]!;
+  // Primary is pushed first when it targets the site, so a projection
+  // whose lead contributor is NOT the primary was surfaced through a
+  // `duplicate_grants[]` entry. Every fix handler writes the primary's
+  // fields, so that distinction decides which actions are safe to offer
+  // (B-16 / B-24).
+  const fromDuplicate = !primaryContributed;
   const unioned: string[] = [];
   const seen = new Set<string>();
   for (const c of contributors) {
@@ -352,11 +372,14 @@ function projectSeatForSite(
     }
   }
   return {
-    scope: first.scope,
-    type: first.type,
-    callings: first.callings,
-    reason: first.reason,
-    buildingNames: unioned,
+    block: {
+      scope: first.scope,
+      type: first.type,
+      callings: first.callings,
+      reason: first.reason,
+      buildingNames: unioned,
+    },
+    fromDuplicate,
   };
 }
 
@@ -689,17 +712,23 @@ export function detect(inputs: DetectInputs): DetectResult {
   // `kindoo_site_id` matches; else any same-site duplicate). Seats
   // with no grant on the active site are filtered out — they belong
   // to a different site's manager view.
-  type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock };
+  type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock; fromDuplicate: boolean };
   const projectedSeats: ProjectedSeat[] = [];
   for (const seat of inputs.seats) {
     if (!inputs.activeSite) {
       // No active-site context — preserve pre-T-42 behaviour (don't
       // filter; project against the seat's primary fields directly).
-      projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat) });
+      projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat), fromDuplicate: false });
       continue;
     }
     const projected = projectSeatForSite(seat, inputs.wards, inputs.buildings, inputs.activeSite);
-    if (projected) projectedSeats.push({ seat, sbaBlock: projected });
+    if (projected) {
+      projectedSeats.push({
+        seat,
+        sbaBlock: projected.block,
+        fromDuplicate: projected.fromDuplicate,
+      });
+    }
   }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
     consideredKindooUsers,
@@ -735,6 +764,11 @@ export function detect(inputs: DetectInputs): DetectResult {
     const projected = seatsByEmail.get(canon) ?? null;
     const seat = projected?.seat ?? null;
     const sbaBlock = projected?.sbaBlock ?? null;
+    // The row's grant provenance: a projection led by a duplicate means
+    // every primary-writing handler would write the wrong grant.
+    const fromDup = projected?.fromDuplicate === true;
+    const dupNote =
+      ' This row was surfaced through a parallel-site grant, not the seat’s primary, so the fix is unavailable — applying it would write the primary instead (see B-16 / B-24).';
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
@@ -751,11 +785,14 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'sba-only',
         severity: 'drift',
-        reason: ignoredCanonicals.has(canon)
-          ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
-          : 'SBA has a seat for this member, but the user is not present in Kindoo.',
+        reason:
+          (ignoredCanonicals.has(canon)
+            ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
+            : 'SBA has a seat for this member, but the user is not present in Kindoo.') +
+          (fromDup ? dupNote : ''),
         sba: sbaBlock,
         kindoo: null,
+        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
       });
       continue;
     }
@@ -1087,8 +1124,11 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'callings-mismatch',
           severity: 'drift',
-          reason: `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.`,
+          reason:
+            `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.` +
+            (fromDup ? dupNote : ''),
           sba: sbaBlock,
+          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(
             kuser,
             parsed,
