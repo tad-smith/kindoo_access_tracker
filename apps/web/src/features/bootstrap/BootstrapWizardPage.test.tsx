@@ -316,6 +316,46 @@ describe('<BootstrapWizardPage />', () => {
     expect(navigateMock).toHaveBeenCalled();
   });
 
+  it('surfaces a Complete Setup failure as a toast from a step that renders no blocker list', async () => {
+    // Guards the #260 x step-4-scoping interaction: `useCompleteSetupMutation`
+    // fails closed when the manager claim hasn't landed, and reports it by
+    // throwing. That error's surface is `CompleteSetupButton`'s catch ->
+    // toast + the page-level <ToastHost />, NOT `CompleteSetupBlockers` —
+    // so scoping the blocker list to step 4 must not swallow it. Asserted
+    // from step 2, where the list deliberately does not render.
+    useStakeDocMock.mockReturnValue(
+      stakeResult(makeStake({ stake_name: 'My Stake', stake_seat_cap: 200 })),
+    );
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'main', building_name: 'Main', address: '1 St' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'Main', seat_cap: 20 } as Ward,
+      ]),
+    );
+    completeSetupMutate.mockRejectedValue(
+      new Error('Setup access is still syncing — wait a moment and try Complete Setup again.'),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-2'));
+    expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('bootstrap-complete-setup'));
+
+    await vi.waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Setup access is still syncing'),
+        'error',
+      );
+    });
+    // Fail-closed: no navigation away from the wizard.
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it('switches to step 2 when the Buildings tab is clicked', async () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
