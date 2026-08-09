@@ -7,15 +7,7 @@
 // `SyncPanel.tsx`.
 
 import { canonicalEmail, resolveWardBuilding, resolveWardSite, scopeLabel } from '@kindoo/shared';
-import type {
-  AppAccessOptions,
-  Building,
-  DuplicateGrant,
-  Seat,
-  SeatType,
-  Stake,
-  Ward,
-} from '@kindoo/shared';
+import type { Building, DuplicateGrant, Seat, SeatType, Stake, Ward } from '@kindoo/shared';
 import type { KindooEnvironmentUser } from '../endpoints';
 import {
   isFullyIgnored,
@@ -23,6 +15,7 @@ import {
   pickPrimarySegment,
   type ParsedDescription,
   type ParsedSegment,
+  type SegmentAppAccessOptions,
 } from './parser';
 import type { ActiveSite } from './activeSite';
 
@@ -362,7 +355,7 @@ function pickSegmentForSite(
   wards: Ward[],
   buildings: Building[],
   activeSite: ActiveSite | undefined,
-  opts?: AppAccessOptions,
+  opts?: SegmentAppAccessOptions,
 ): ParsedSegment | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
   const wantSiteId: string | null = activeSite.kind === 'home' ? null : activeSite.siteId;
@@ -602,7 +595,7 @@ export function detect(inputs: DetectInputs): DetectResult {
   // Per-stake app-access gates, read once and threaded through every
   // primary-segment pick. The extension's tiebreaker must agree with
   // the server's; an absent flag is off on both sides.
-  const eqOpts: AppAccessOptions = {
+  const eqOpts: SegmentAppAccessOptions = {
     eqPresidentAccess: inputs.stake.eq_president_app_access === true,
   };
 
@@ -1091,7 +1084,9 @@ function filterKindooUsersByActiveSite(
 ): KindooEnvironmentUser[] {
   if (!activeSite) return users;
   if (activeSite.kind === 'unknown') return [];
-  const eqOpts: AppAccessOptions = { eqPresidentAccess: stake.eq_president_app_access === true };
+  const eqOpts: SegmentAppAccessOptions = {
+    eqPresidentAccess: stake.eq_president_app_access === true,
+  };
   return users.filter((u) => {
     const parsed = parseDescription(u.description, stake, wards);
     // Find ANY segment whose scope sits on the active site.
@@ -1119,7 +1114,7 @@ function buildKindooBlock(
    * REQUIRED, and deliberately placed ahead of the optional params: a
    * trailing optional would let a call site silently fall back to
    * "every gate off" with no compiler error. */
-  opts: AppAccessOptions,
+  opts: SegmentAppAccessOptions,
   /** Grant-derived target type for promote / demote `type-mismatch`
    * rows; carried onto the block so the fix dispatcher sends the
    * observed-provenance target, not the informational `intendedType`. */

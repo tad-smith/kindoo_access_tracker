@@ -20,10 +20,19 @@ import {
   filterAppAccessCallings,
   kindooScopeNameVariants,
   matchesIgnoredWard,
+  unitType,
   type AppAccessOptions,
   type Stake,
   type Ward,
 } from '@kindoo/shared';
+
+/**
+ * Per-stake app-access gates as a caller may supply them. `unitType` is
+ * excluded deliberately: it is a property of the individual segment, not
+ * of the description, and a single description routinely names a ward
+ * and a branch at once. `segmentGrantsAppAccess` derives it per segment.
+ */
+export type SegmentAppAccessOptions = Omit<AppAccessOptions, 'unitType'>;
 
 /** One scope+calling segment within a parsed description. */
 export interface ParsedSegment {
@@ -232,12 +241,29 @@ export function isFullyIgnored(parsed: ParsedDescription): boolean {
 
 /** True iff any calling in `segment.calling` (split on `,`) grants app
  * access for the segment's own scope — ward callings for ward scopes,
- * the stake list for `'stake'`. Uses the hard-coded app-access lists,
- * plus the stake-gated ward calling when `opts.eqPresidentAccess`. */
-function segmentGrantsAppAccess(segment: ParsedSegment, opts?: AppAccessOptions): boolean {
+ * branch callings for branch scopes, the stake list for `'stake'`. Uses
+ * the hard-coded app-access lists, plus the stake-gated Elders Quorum
+ * President when `opts.eqPresidentAccess`.
+ *
+ * The unit kind comes from `rawScopeName`, not from `scope`: `scope` is
+ * a `ward_code` slug, so `appAccessCallingsForScope` cannot see a branch
+ * in it and would silently hand a Branch President the ward set (which
+ * holds no branch calling — the fail-closed default, and the bug this
+ * derivation fixes). `rawScopeName` is the scope text Kindoo wrote, which
+ * is exactly the string `unitType` is defined over (D31): Kindoo renders
+ * a branch verbatim, so a resolved branch segment can only have matched
+ * the branch's single `" Branch"` variant. Passing it for a `'stake'`
+ * segment is harmless — that scope short-circuits ahead of the option.
+ */
+function segmentGrantsAppAccess(segment: ParsedSegment, opts?: SegmentAppAccessOptions): boolean {
   if (!segment.resolvedScope || segment.scope === null) return false;
   const callings = segment.calling.split(',').map((c) => c.trim());
-  return filterAppAccessCallings(segment.scope, callings, opts).length > 0;
+  return (
+    filterAppAccessCallings(segment.scope, callings, {
+      ...opts,
+      unitType: unitType(segment.rawScopeName),
+    }).length > 0
+  );
 }
 
 /**
@@ -255,10 +281,11 @@ function segmentGrantsAppAccess(segment: ParsedSegment, opts?: AppAccessOptions)
  * `opts` carries the per-stake app-access gates (currently just
  * `eqPresidentAccess`). Omitting it means every gate is off, which must
  * match the server's read of an absent `stake.eq_president_app_access`.
+ * It cannot carry `unitType` — see {@link SegmentAppAccessOptions}.
  */
 export function pickPrimarySegment(
   parsed: ParsedDescription,
-  opts?: AppAccessOptions,
+  opts?: SegmentAppAccessOptions,
 ): ParsedSegment | null {
   const resolved = parsed.segments.filter((s) => s.resolvedScope);
   if (resolved.length === 0) return null;
