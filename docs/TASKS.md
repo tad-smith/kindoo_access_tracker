@@ -6,16 +6,24 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-94] Flaky E2E: `ignored-wards.spec.ts` on a cold preview build
-Status: pending
+## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
+Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)
 Owner: @web-engineer
 Phase: cross-cutting
 
-Introduced with [T-88]. Fails intermittently — roughly 1 run in 3 locally — and only as the first test after a cold `vite preview` build; 6/6 green once the server is warm, at ~900ms per run. Every assertion that follows a navigation already carries a 20s timeout, which reduced the rate without eliminating it, so the remaining cause is something slower than the snapshot round-trip rather than the snapshot itself.
+**Done.** Introduced with [T-88]. Retitled: the original entry blamed a cold `vite preview` build, and that premise did not hold.
 
-**Invisible in CI**, which is why it has not shown up on any PR: `playwright.config.ts` sets `retries: 2` on CI and `0` locally. That makes this a local-developer tax rather than a broken gate, but it is still a flake in a test this repo added, and "retried green" is not the same as green.
+**The cold path was never slow.** Measured, page-load after a cold build is 450–800ms, and the failure is *always* the post-reload assertion at the end of the test — never one of the earlier post-navigation ones the 20s timeouts were added for. The recommendation the original entry left behind — a warm-up navigation in `beforeEach` — would not have fixed it.
 
-Worth timing the cold path before adding more timeout — if the first navigation after a build is genuinely slow (bundle served cold, Firestore websocket established for the first time), a single warm-up navigation in `beforeEach` fixes it properly where per-assertion timeouts only paper over it.
+**The actual cause: Firestore's optimistic local echo.** `useUpdateIgnoredWardsMutation` writes with `updateDoc`, and the SDK renders the write into the local snapshot before the server acknowledges it — instrumented, the row appears ~30ms after submit while the round-trip completes nearer ~95ms. `page.reload()` fired inside that window, and because `apps/web/src/lib/firebase.ts` uses plain `getFirestore()` (memory-only persistence, no IndexedDB), the still-queued mutation died with the tab. The ward never landed, and the reloaded page correctly rendered the empty state. A cold run widens the gap because the WebChannel is still settling — which is what made it look like a cold-build problem.
+
+Fixed by polling the emulator for the persisted value before reloading, via the existing `listDocs` fixture. That is also the assertion the test's own name ("persists it to the stake doc") claimed but never made: the rendered row proved nothing about the rules or the stake doc. 8/8 cold, from 1/6.
+
+**Generalisable:** a test that reloads after a client write must wait on server state, not on the rendered echo. The two other `page.reload()` sites in the suite (`bootstrap-wizard-escape`, `queue-remote-apply`) were checked and are safe — both persist through `localStorage`, which is synchronous.
+
+**Found on the way, and fixed in the same PR:** `pnpm test:e2e` failed *wholesale* in an operator's primary checkout. `vite build` runs in mode `production` and so picks up `apps/web/.env.production` — gitignored, pinning `VITE_FIREBASE_PROJECT_ID=kindoo-prod` — leaving the bundle querying an emulator namespace the fixtures never seed. CI and fresh worktrees have no such file and already fell through to `kindoo-staging`, which is why it was invisible on PRs and why nobody hit it from a worktree. `playwright.config.ts` now pins the id on the webServer build, honouring `E2E_FIREBASE_PROJECT` so the isolated-namespace escape hatch still moves the bundle and the fixtures together.
+
+**Invisible in CI** either way: `playwright.config.ts` sets `retries: 2` on CI and `0` locally, so this was a local-developer tax rather than a broken gate. "Retried green" is still not green.
 
 ## [T-93] Editing the home site name re-keys every existing stake-scope Kindoo Description
 Status: closed (2026-08-09 — accepted risk, operator decision; no code change)
