@@ -11,6 +11,7 @@
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react';
 import { cn } from '../../lib/cn';
+import './Popover.css';
 
 export const Popover = PopoverPrimitive.Root;
 export const PopoverTrigger = PopoverPrimitive.Trigger;
@@ -33,7 +34,10 @@ export const PopoverContent = forwardRef<
         align={align}
         sideOffset={sideOffset}
         className={cn(
-          'z-50 rounded border border-kd-border bg-white p-0 shadow-md outline-none',
+          // Layer comes from Popover.css, not a Tailwind `z-` class: it
+          // has to clear the modal positioner (1301), which is outside
+          // Tailwind's scale.
+          'kd-popover-content rounded border border-kd-border bg-white p-0 shadow-md outline-none',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           className,
         )}
