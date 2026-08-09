@@ -3050,13 +3050,20 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         });
       });
 
-      // ----- Unresolvable unit: refuse, never guess -----
+      // ----- Unresolvable unit: refuse only when the kind decides -----
       //
-      // With no readable unit doc there is no evidence for ward or branch,
-      // and both guesses write a seat whose derived access is wrong in a
-      // way nothing downstream can detect — the member just has no access,
-      // which reads as a permissions bug rather than a data one. So the
-      // three grant-deriving paths soft-fail, before any write.
+      // With no readable unit doc there is no evidence for ward or branch.
+      // Where the two kinds disagree about the callings in hand, guessing
+      // writes a seat whose derived access is wrong in a way nothing
+      // downstream can detect — the member just has no access, which reads
+      // as a permissions bug rather than a data one. So the three
+      // grant-deriving paths soft-fail there, before any write.
+      //
+      // Where the two kinds AGREE the doc is irrelevant, and refusing would
+      // strand the seat: unit delete is one unguarded click that reaps no
+      // seats, the drift detector keys on `seat.scope`, and a legacy
+      // 2-letter `ward_code` can't be recreated from the Configuration UI.
+      // Those fixes proceed.
 
       it('kindoo-only auto: refuses a scope that names no readable unit', async () => {
         await seedManager();
@@ -3122,6 +3129,112 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         );
         expect(result).toMatchObject({ success: false });
         expect((await readSeat())?.type).toBe('manual');
+      });
+
+      // The refusal above is narrowed to callings whose grant actually
+      // turns on the unit's kind. `Sunday School President` is in neither
+      // unit set, so ward and branch both derive nothing and the missing
+      // doc changes no outcome. Refusing it was a regression: the seat's
+      // drift row would re-emit and fail forever with no route to recovery.
+      const NEITHER_SET_CALLING = 'Sunday School President';
+
+      it('kindoo-only auto: a calling in NEITHER unit set applies despite an unreadable unit', async () => {
+        await seedManager();
+
+        const result = await syncApplyFix.run(kindooOnly('ZZ', [NEITHER_SET_CALLING]));
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const seat = await readSeat();
+        expect(seat?.scope).toBe('ZZ');
+        expect(seat?.callings).toEqual([NEITHER_SET_CALLING]);
+        // Derives nothing under either kind, so no grant — the same
+        // outcome a readable unit of either kind would have produced.
+        expect(await readAccess()).toBeUndefined();
+      });
+
+      it('callings-mismatch: a replace onto a NEITHER-set calling applies despite an unreadable unit', async () => {
+        await seedManager();
+        await seedSeat({ scope: 'ZZ', type: 'auto', callings: ['Bishop'] });
+        await seedAccess({ importer_callings: { ZZ: ['Bishop'] } });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'callings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL, callings: [NEITHER_SET_CALLING] },
+              },
+            },
+          }),
+        );
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        expect((await readSeat())?.callings).toEqual([NEITHER_SET_CALLING]);
+        // The new target grants nothing as a ward OR as a branch, so the
+        // reap is unambiguous — access doc gone (both maps empty).
+        expect(await readAccess()).toBeUndefined();
+      });
+
+      it('type-mismatch promote: a NEITHER-set calling applies despite an unreadable unit', async () => {
+        await seedManager();
+        await seedSeat({ scope: 'ZZ', type: 'manual', callings: [] });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'type-mismatch',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  newType: 'auto',
+                  callings: [NEITHER_SET_CALLING],
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const seat = await readSeat();
+        expect(seat?.type).toBe('auto');
+        expect(seat?.callings).toEqual([NEITHER_SET_CALLING]);
+        expect(await readAccess()).toBeUndefined();
+      });
+
+      // Elders Quorum President is the one calling in BOTH unit sets, so
+      // the two probes agree in either gate state and the unreadable unit
+      // is never load-bearing. The gate has to reach both probes for that
+      // to hold — a probe pair built without it would differ spuriously
+      // with the gate ON and reinstate the refusal.
+
+      it('kindoo-only auto: Elders Quorum President on an unreadable unit applies — gate ON', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: true });
+
+        const result = await syncApplyFix.run(kindooOnly('ZZ', [EQ_PRESIDENT_CALLING]));
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        // In both unit sets, so the grant is the same either way.
+        const access = await readAccess();
+        expect(access?.importer_callings).toEqual({ ZZ: [EQ_PRESIDENT_CALLING] });
+        expect(access?.importer_limited_callings).toEqual({ ZZ: [EQ_PRESIDENT_CALLING] });
+      });
+
+      it('kindoo-only auto: Elders Quorum President on an unreadable unit applies — gate OFF', async () => {
+        await seedManager();
+        await seedStake({ eqPresidentAccess: false });
+
+        const result = await syncApplyFix.run(kindooOnly('ZZ', [EQ_PRESIDENT_CALLING]));
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        // Out of both sets with the gate off — still unambiguous, still
+        // applied, and still no grant.
+        expect((await readSeat())?.scope).toBe('ZZ');
+        expect(await readAccess()).toBeUndefined();
       });
 
       it('type-mismatch DEMOTE: an unreadable unit is no obstacle — the demote needs no calling set', async () => {
