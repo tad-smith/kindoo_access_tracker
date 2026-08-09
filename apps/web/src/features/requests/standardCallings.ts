@@ -1,16 +1,41 @@
-// Hardcoded canonical calling names used for typeahead on the New
-// Request form's `reason` field. Stake-scoped requests filter against
-// `STAKE_CALLINGS`; ward-scoped against `WARD_CALLINGS`. Free-text
+// Canonical calling names used for typeahead on the New Request / Edit
+// Seat `reason` field. Stake-scoped requests filter against
+// `STAKE_CALLINGS`; unit-scoped against `UNIT_CALLINGS`. Free-text
 // values outside these lists are still accepted on submit; the lists
 // are suggestion hints only.
 //
-// Names + order are the operator's authoritative calling list (the same
-// hierarchy as the compiled sort table in
-// `@kindoo/shared/callingSortOrder`): STAKE_CALLINGS = entries 1–42
-// (Stake President … Patriarch); WARD_CALLINGS = entries 43–85 (Bishop
-// … Technology Specialist), split at the `Bishop` boundary. Order is
-// intentional (organisational hierarchy) — preserve it. Edit by source
-// control; this file is the source of truth for the typeahead.
+// WHY THIS IS A COPY, AND WHAT KEEPS IT HONEST
+//
+// These two lists together reproduce `@kindoo/shared/callingSortOrder`'s
+// table exactly — same names, same order, split at the `Bishop` boundary
+// where the stake band ends and the unit band begins. That is
+// duplication of a churchwide fact, and `packages/shared/CLAUDE.md` says
+// such a fact belongs in `shared`. It is a copy only because the table
+// itself (`CALLING_ORDER`) is module-private there: `callingSortOrder`
+// exports a name→order *lookup*, which cannot be enumerated, so the
+// typeahead has nothing to derive a list from.
+//
+// The fix is to export the ordered table from `packages/shared` and
+// derive both lists from it. Until then `tests/standardCallings.test.ts`
+// pins this file against the shared table: every entry must resolve, the
+// concatenation must be strictly ascending by `callingSortOrder`, and the
+// indices covered must be gap-free. A rename, a reorder, or an insertion
+// in the shared table fails that test instead of silently stranding an
+// entry — which is exactly how the seven branch callings went missing
+// here after they landed in `shared` (T-96).
+//
+// Order is intentional (organisational hierarchy) — preserve it, and
+// keep it in step with the shared table.
+//
+// UNIT_CALLINGS SPANS BOTH KINDS OF UNIT. It carries ward and branch
+// callings interleaved, mirroring the shared table: a scope-specific
+// split (offering a branch only branch-appropriate callings, and vice
+// versa) would need `unitType(ward.ward_name)` threaded to
+// `CallingCombobox`, and — more to the point — a ruling on which ward
+// callings apply to a branch. T-96 enumerated the four families that do
+// but did not make that list exhaustive, so the split is deliberately not
+// built here. Offering a few extra entries costs little: the combobox
+// filters as you type and free text is accepted regardless.
 
 /** Standard stake-level callings. Surfaced when the request scope is `'stake'`. */
 export const STAKE_CALLINGS: readonly string[] = [
@@ -58,17 +83,33 @@ export const STAKE_CALLINGS: readonly string[] = [
   'Patriarch',
 ];
 
-/** Standard ward-level callings. Surfaced when the request scope is a ward. */
-export const WARD_CALLINGS: readonly string[] = [
+/**
+ * Standard unit-level callings — ward and branch alike. Surfaced when the
+ * request scope is a unit (any scope other than `'stake'`). Each branch
+ * calling sits immediately after its ward counterpart, matching the
+ * shared table's unit band.
+ */
+export const UNIT_CALLINGS: readonly string[] = [
   'Bishop',
+  'Branch President',
   'Bishopric First Counselor',
+  'Branch Presidency First Counselor',
   'Bishopric Second Counselor',
+  'Branch Presidency Second Counselor',
+  // No Branch Executive Secretary — branches have no counterpart to
+  // Ward Executive Secretary (T-96, confirmed deliberate).
   'Ward Executive Secretary',
   'Ward Assistant Executive Secretary',
   'Ward Clerk',
+  'Branch Clerk',
   'Ward Assistant Clerk',
+  'Branch Assistant Clerk',
   'Ward Assistant Clerk--Membership',
+  'Branch Assistant Clerk--Membership',
   'Ward Assistant Clerk--Finance',
+  'Branch Assistant Clerk--Finance',
+  // The families below are shared: the same entries name a branch's
+  // people as a ward's.
   'Elders Quorum President',
   'Elders Quorum First Counselor',
   'Elders Quorum Second Counselor',

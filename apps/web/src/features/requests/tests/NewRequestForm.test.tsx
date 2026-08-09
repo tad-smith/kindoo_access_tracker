@@ -756,8 +756,9 @@ describe('<NewRequestForm /> — cross-ward comment-required rule', () => {
 
 describe('<NewRequestForm /> — calling typeahead', () => {
   // The `reason` field is now a scope-aware combobox. Suggestions come
-  // from `WARD_CALLINGS` (ward scope) or `STAKE_CALLINGS` (stake scope);
-  // free-text values outside the lists still submit unchanged.
+  // from `UNIT_CALLINGS` (ward or branch scope) or `STAKE_CALLINGS`
+  // (stake scope); free-text values outside the lists still submit
+  // unchanged.
 
   it('renders the label as "Calling" when type is add_manual', () => {
     render(
@@ -781,10 +782,43 @@ describe('<NewRequestForm /> — calling typeahead', () => {
       />,
     );
     await user.click(screen.getByTestId('new-request-reason'));
-    // Sample two entries from the ward list — exhaustive enumeration
+    // Sample two entries from the unit list — exhaustive enumeration
     // would add no signal.
     expect(await screen.findByText('Bishop')).toBeInTheDocument();
     expect(screen.getByText('Elders Quorum President')).toBeInTheDocument();
+  });
+
+  it('suggests branch callings at a unit scope too', async () => {
+    // The unit list spans both kinds of unit, so a Branch President is
+    // selectable wherever a Bishop is. Without this a branch stake has no
+    // way to name its leaders on a request (T-96).
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'peterson-branch', label: 'Peterson Branch' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'peterson-branch', building_name: 'Maple Building' }])}
+      />,
+    );
+    await user.click(screen.getByTestId('new-request-reason'));
+    expect(await screen.findByText('Branch President')).toBeInTheDocument();
+    expect(screen.getByText('Branch Clerk')).toBeInTheDocument();
+  });
+
+  it('selects a branch calling into the field verbatim', async () => {
+    const user = userEvent.setup();
+    render(
+      <NewRequestForm
+        scopes={[{ value: 'peterson-branch', label: 'Peterson Branch' }]}
+        buildings={buildings()}
+        wards={wards([{ code: 'peterson-branch', building_name: 'Maple Building' }])}
+      />,
+    );
+    const reason = screen.getByTestId('new-request-reason');
+    await user.click(reason);
+    await user.type(reason, 'branch pres');
+    await user.click(await screen.findByText('Branch Presidency First Counselor'));
+    expect(reason).toHaveValue('Branch Presidency First Counselor');
   });
 
   it('suggests stake callings when the scope is stake', async () => {

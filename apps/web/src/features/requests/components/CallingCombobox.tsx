@@ -1,5 +1,5 @@
 // Scope-aware typeahead for the New Request form's `reason` field.
-// Suggests entries from `WARD_CALLINGS` or `STAKE_CALLINGS` based on
+// Suggests entries from `UNIT_CALLINGS` or `STAKE_CALLINGS` based on
 // the current request scope. Free-text outside the suggestion list is
 // still accepted — the lists are hints, not validators.
 //
@@ -27,14 +27,14 @@ import {
 } from '../../../components/ui/Command';
 import { Popover, PopoverAnchor, PopoverContent } from '../../../components/ui/Popover';
 import { cn } from '../../../lib/cn';
-import { STAKE_CALLINGS, WARD_CALLINGS } from '../standardCallings';
+import { STAKE_CALLINGS, UNIT_CALLINGS } from '../standardCallings';
 
 export interface CallingComboboxProps {
   /** Current free-text value (typed or selected). */
   value: string;
   /** Called on every keystroke and on suggestion selection. */
   onChange: (next: string) => void;
-  /** Form scope — `'stake'` picks STAKE_CALLINGS; anything else picks WARD_CALLINGS. */
+  /** Form scope — `'stake'` picks STAKE_CALLINGS; anything else picks UNIT_CALLINGS. */
   scope: string;
   /** Passes through to the underlying `<input>`. */
   id?: string;
@@ -56,9 +56,11 @@ export function CallingCombobox({
   placeholder,
 }: CallingComboboxProps) {
   // Derive the suggestion list on every render so a scope swap reflects
-  // immediately. STAKE only on exact 'stake'; everything else (ward
-  // codes, '') gets the ward list per spec.
-  const suggestions = scope === 'stake' ? STAKE_CALLINGS : WARD_CALLINGS;
+  // immediately. STAKE only on exact 'stake'; everything else (unit
+  // codes, '') gets the unit list per spec. The unit list spans wards and
+  // branches — a `ward_code` is a slug, so the scope alone cannot tell
+  // the two apart.
+  const suggestions = scope === 'stake' ? STAKE_CALLINGS : UNIT_CALLINGS;
 
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
