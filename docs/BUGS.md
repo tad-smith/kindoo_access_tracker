@@ -6,6 +6,23 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
+Status: open (accepted risk)
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found reviewing PR #268
+
+`unitType` reads a trailing `" Branch"` as the discriminator (D31(a)), so a **ward** in a place whose own name ends in "Branch" — Olive Branch, Long Branch — must be stored as `"Olive Branch Ward"`. If the operator types `Olive Branch`, the unit is stored as a branch.
+
+**Why the collision guard does not catch it.** `findUnitNameCollision` compares the candidate against the stake's *existing* unit names, so it fires only when the stake holds **both** `Olive Branch` and `Olive Branch Ward`. The likely shape is a single unit: the stake's only unit in that place is the ward, the operator types `Olive Branch`, nothing else claims the key `olive branch`, the guard returns `null`, and the save goes through. B-20's fix covers the two-unit case and nothing more; it is not a mitigation for this one.
+
+**Consequence.** `resolveScopeName` (`extension/src/content/kindoo/provision.ts:151`) writes a branch's scope name verbatim, so the Description reads `Olive Branch` where Church Access Automation writes `Olive Branch Ward`. The provisioner compares with a strict `!==` (`:764`), so every Sync pass sees a difference and rewrites the church-provisioned Description — indefinitely. The unit also labels as `Branch:` in notification emails (`scopeRowLabel`), and once branch-specific callings land (T-96) it would resolve against the wrong calling table.
+
+**Recovery** is renaming the unit to `Olive Branch Ward` in Configuration → Wards. The rename keeps the original `ward_code` (the doc ID is never re-derived, §5.3), so no seat / request / grant reference is orphaned.
+
+**Status is "accepted risk", not "needs a fix".** The field hint was deliberately kept short — the case is rare enough that spelling it out in `WARD_NAME_HINT` costs more readers than it saves. That is a settled operator decision and this entry does not reopen it; the entry exists so the residual gap is on the record rather than implied to be covered. Note that `apps/web/src/lib/wardCopy.ts`'s `WARD_NAME_HINT` docblock still asserts "`unitNameCollision.ts` still rejects the pair at entry", which overstates the coverage in exactly the way described above.
+
 ## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
 Status: closed (fixed) `[FIXED 2026-08-08]`
 Owner: @web-engineer
@@ -21,7 +38,9 @@ Branch / PR: found while documenting PR #268; fixed in the same PR
 
 The rule is **variant-set intersection**, not equality of `kindooScopeName`. Canonical-name equality catches `Maple` / `Maple Ward` but misses a branch `Olive Branch` (variants `["olive branch"]`) beside a ward `Olive Branch Ward` (variants `["olive branch","olive branch ward"]`): their canonical names differ, yet they collide on `olive branch` and the parser would still shadow one. Intersection is exactly the invariant `parseDescription` needs.
 
-`parseDescription` was hardened alongside it — a variant key already held by a different `ward_code` keeps its incumbent and warns once, so resolution no longer depends on the order Firestore returns wards, and a stake that already holds such a pair is visible in DevTools rather than silently mis-resolving.
+`parseDescription` was hardened alongside it, for the stakes that already hold such a pair. `buildWardLookup` sorts the units by `ward_code` (ascending, code-unit compare on a copy — `localeCompare` can rank two distinct ids equal and would put array order back into the tie-break) before registering variants, and a key already held by a different `ward_code` keeps its incumbent and warns once.
+
+**The sort is what makes resolution independent of the order Firestore returns wards** — not the keep-incumbent rule. First-wins and last-wins are both functions of array position; switching between them only changes which unit a given order picks. Sorting on `ward_code` — the immutable doc ID, so a stable total order — is what fixes the winner: the contested key goes to the lower `ward_code` on every run. First-wins over that sorted list is still preferable to last-wins, because a later unit keeps every variant the earlier one did not claim, so a branch sorting ahead of the ward that shadows it leaves both units resolvable where last-wins would strand the branch. What is guaranteed is determinism, not that the branch wins — that depends on the two `ward_code`s. The `[sba-ext]` warn still fires, and its dedupe signature is now stable across runs since the owner is always the lower code.
 
 ## [B-19] Bootstrap admin of a newly-created stake lands on Not Authorized instead of the wizard
 Status: closed (fixed)
