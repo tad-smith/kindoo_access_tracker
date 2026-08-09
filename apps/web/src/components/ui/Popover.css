@@ -16,10 +16,16 @@
    Regression coverage is e2e/tests/requests/calling-typeahead-edit-seat
    .spec.ts, whose selection assertion clicks an option for real.
 
-   The other two consumers — `TimezoneCombobox`, `StakeSwitcher` — sit
-   on ordinary pages, so this raises them over the toast host too. Both
-   dismiss on outside interaction, so neither can still be open when a
-   modal or a toast arrives. */
+   `TimezoneCombobox` was hit by the same bug and is the reason not to
+   trust "that one's fine" here: `CreateStakeForm` is a Dialog and hosts
+   it, and unlike the calling field it is selection-only — no free-text
+   fallback — so a superadmin could not move a new stake off
+   DEFAULT_TIMEZONE at all. Assuming a consumer was unaffected is the
+   reasoning error that produced B-22; check the host, don't infer it.
+
+   `StakeSwitcher` is genuinely page-level. Raising it over the toast
+   host (1000) is harmless: it dismisses on outside interaction, and the
+   toast host is bottom-left while the trigger is not. */
 
 .kd-popover-content {
   z-index: 1302;
