@@ -12,6 +12,7 @@ import {
   clearEmulators,
   hasEmulators,
   requireEmulators,
+  waitFor,
 } from './lib/emulator.js';
 // CI boots this suite under `--only firestore,auth,functions`, so the
 // `onAuthUserCreate` v1 auth trigger is live and fires (async, via
@@ -35,6 +36,23 @@ const makeEvent = (stakeId: string, memberCanonical: string) =>
 
 async function runSync(stakeId: string, memberCanonical: string): Promise<void> {
   await syncAccessClaims.run(makeEvent(stakeId, memberCanonical));
+}
+
+// Poll the terminal "block is gone" assertion instead of reading once.
+//
+// The seed write in phase one queues a DEPLOYED `syncAccessClaims`
+// delivery. If its role-data READ lands before phase two's delete but its
+// claims WRITE lands after phase two's `runSync`, it restamps the block
+// that was just cleared — `claimsEqual` compares that delivery's own fresh
+// `existing` against its `merged`, so it does not short-circuit. Phase
+// two's own delivery converges to the same end state, so the restamp is
+// transient. Mirrors `stakeBlockClears` in `syncManagersClaims.test.ts`.
+async function stakeBlockClears(uid: string): Promise<boolean> {
+  const { auth } = requireEmulators();
+  return waitFor(async () => {
+    const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
+    return claims?.stakes === undefined;
+  }, 5_000);
 }
 
 /** Manual grant carrying the D25 limited marker. */
@@ -118,8 +136,8 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     // Delete + re-fire trigger. Stake block goes away.
     await db.doc('stakes/csnorth/access/c@gmail.com').delete();
     await runSync('csnorth', 'c@gmail.com');
-    const refreshed = await auth.getUser(uid);
-    expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
+    // Polled, not read once — see `stakeBlockClears`.
+    expect(await stakeBlockClears(uid)).toBe(true);
   });
 
   it(

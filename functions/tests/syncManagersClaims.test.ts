@@ -11,6 +11,7 @@ import {
   clearEmulators,
   hasEmulators,
   requireEmulators,
+  waitFor,
 } from './lib/emulator.js';
 // CI boots this suite under `--only firestore,auth,functions`, so the
 // `onAuthUserCreate` v1 auth trigger is live and fires (async, via
@@ -28,6 +29,26 @@ const makeEvent = (stakeId: string, memberCanonical: string) =>
 
 async function runSync(stakeId: string, memberCanonical: string): Promise<void> {
   await syncManagersClaims.run(makeEvent(stakeId, memberCanonical));
+}
+
+// Poll the terminal "block is gone" assertion instead of reading once.
+//
+// The two-phase tests below have a residual race with the DEPLOYED
+// `syncManagersClaims`, which the `set({ active: true })` in phase one
+// queues. That delivery reads role data, then writes claims. If its READ
+// lands before phase two's `active: false` write but its WRITE lands after
+// phase two's `runSync`, it restamps `manager: true` over the cleared
+// block. `claimsEqual` does not close this: it compares the delivery's own
+// freshly-read `existing` against its `merged`, which differ precisely in
+// that ordering. Phase two's own delivery converges to the same end state,
+// so a transient restamp self-corrects — polling absorbs it, where a
+// single read can catch the gap.
+async function stakeBlockClears(uid: string): Promise<boolean> {
+  const { auth } = requireEmulators();
+  return waitFor(async () => {
+    const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
+    return claims?.stakes === undefined;
+  }, 5_000);
 }
 
 describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
@@ -73,8 +94,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
     await db.doc('stakes/csnorth/kindooManagers/m-off@gmail.com').set({ active: false });
     await runSync('csnorth', 'm-off@gmail.com');
-    const refreshed = await auth.getUser(uid);
-    expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
+    expect(await stakeBlockClears(uid)).toBe(true);
   });
 
   it('clears manager when the doc is deleted entirely', { timeout: 30_000 }, async () => {
@@ -88,8 +108,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
     await db.doc('stakes/csnorth/kindooManagers/m-del@gmail.com').delete();
     await runSync('csnorth', 'm-del@gmail.com');
-    const refreshed = await auth.getUser(uid);
-    expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
+    expect(await stakeBlockClears(uid)).toBe(true);
   });
 
   it('no-ops when the user has no userIndex entry yet', async () => {
