@@ -511,6 +511,16 @@ describe('<EditSeatDialog /> — edit_manual sub-type', () => {
     expect(reasonInput.value).toBe('sub teacher');
   });
 
+  // NOT TESTED HERE: that a branch-scope seat offers the branch calling
+  // list. The dialog is the typeahead's second call site and it does
+  // resolve the kind from its own `useStakeWards()` catalogue, but the
+  // Radix Popover will not open inside the Radix Dialog under jsdom —
+  // focus and click both leave the list unmounted, and no existing test
+  // in this file opens it either. The behaviour is covered by
+  // `callingsForScope` (tests/standardCallings.test.ts) and by the
+  // NewRequestForm typeahead tests, which render the same combobox
+  // outside a modal.
+
   it('submits an edit_manual request with the operator-typed reason + checked buildings', async () => {
     const user = userEvent.setup();
     mockCatalogue(

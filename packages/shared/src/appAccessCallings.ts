@@ -1,14 +1,21 @@
 // Fixed sets of callings that grant in-app access, replacing the
 // per-stake calling-template config. Ward callings apply to every ward
-// scope; stake callings apply to the stake scope. Names match
-// `callingSortOrder.ts` verbatim (typo-guarded by a unit test).
+// scope, branch callings to every branch scope, stake callings to the
+// stake scope. Names match `callingSortOrder.ts` verbatim (typo-guarded
+// by a unit test).
 //
-// The two arrays below are the churchwide base list and are the same for
-// every stake. One further ward calling — Elders Quorum President — is
-// stake-gated rather than hard-coded: it grants access only when the
+// The three arrays below are the churchwide base list and are the same
+// for every stake. One further unit calling — Elders Quorum President —
+// is stake-gated rather than hard-coded: it grants access only when the
 // stake opts in via `stake.eq_president_app_access`, threaded through as
-// `AppAccessOptions.eqPresidentAccess`. The stake set is never affected
-// by the opt-in.
+// `AppAccessOptions.eqPresidentAccess`, and it applies to ward and
+// branch scopes alike. The stake set is never affected by the opt-in.
+//
+// The branch set is not the ward set with names swapped: a branch has no
+// counterpart to Ward Executive Secretary, and no Assistant Clerk of
+// either unit kind grants access.
+
+import type { UnitType } from './unitName.js';
 
 export const WARD_APP_ACCESS_CALLINGS = [
   'Bishop',
@@ -16,6 +23,13 @@ export const WARD_APP_ACCESS_CALLINGS = [
   'Bishopric Second Counselor',
   'Ward Clerk',
   'Ward Executive Secretary',
+] as const;
+
+export const BRANCH_APP_ACCESS_CALLINGS = [
+  'Branch President',
+  'Branch Presidency First Counselor',
+  'Branch Presidency Second Counselor',
+  'Branch Clerk',
 ] as const;
 
 export const STAKE_APP_ACCESS_CALLINGS = [
@@ -27,8 +41,9 @@ export const STAKE_APP_ACCESS_CALLINGS = [
   'Stake High Councilor',
 ] as const;
 
-/** The one stake-gated ward calling. Exact title only — the quorum's
- * counselors and secretary never grant access. */
+/** The one stake-gated unit calling — ward and branch scopes alike.
+ * Exact title only — the quorum's counselors and secretary never grant
+ * access. */
 export const EQ_PRESIDENT_CALLING = 'Elders Quorum President';
 
 /**
@@ -47,13 +62,30 @@ export const EQ_PRESIDENT_CALLING = 'Elders Quorum President';
  * Consequence of storing it: changing this set does NOT re-tier records
  * already written. They keep whatever the writer stamped until that scope
  * is next written.
+ *
+ * Keyed on the calling name alone — not on the scope, and not on the
+ * unit's kind. A branch Elders Quorum President therefore lands on the
+ * limited tier on exactly the same terms as a ward one.
  */
 export const LIMITED_TIER_CALLINGS: ReadonlySet<string> = new Set<string>([EQ_PRESIDENT_CALLING]);
 
 export interface AppAccessOptions {
   /** Pass `stake.eq_president_app_access === true`. Adds Elders Quorum
-   * President to the WARD set only; the stake set is unaffected. */
+   * President to the ward AND branch sets; the stake set is
+   * unaffected. */
   eqPresidentAccess?: boolean;
+  /**
+   * Kind of the unit `scope` names, from `unitType(ward.ward_name)`.
+   * Ignored when `scope === 'stake'`.
+   *
+   * **Absent means `'ward'`** — a `ward_code` is a slug, so the set
+   * cannot be chosen from `scope` alone and a caller that hasn't read
+   * the unit doc has nothing to pass. Defaulting to ward keeps every
+   * pre-branch caller unchanged and fails closed: a branch scope whose
+   * caller forgot the option grants nothing (no branch calling is in the
+   * ward set) rather than handing a Branch President the ward set.
+   */
+  unitType?: UnitType;
 }
 
 // Normalisation key — same scheme as `callingSortOrder.ts` (trim +
@@ -64,28 +96,40 @@ function normalize(calling: string): string {
 
 const LIMITED_TIER_SET: ReadonlySet<string> = new Set([...LIMITED_TIER_CALLINGS].map(normalize));
 const WARD_SET: ReadonlySet<string> = new Set(WARD_APP_ACCESS_CALLINGS.map(normalize));
+const BRANCH_SET: ReadonlySet<string> = new Set(BRANCH_APP_ACCESS_CALLINGS.map(normalize));
 const STAKE_SET: ReadonlySet<string> = new Set(STAKE_APP_ACCESS_CALLINGS.map(normalize));
 const WARD_SET_WITH_EQ: ReadonlySet<string> = new Set(
   [...WARD_APP_ACCESS_CALLINGS, EQ_PRESIDENT_CALLING].map(normalize),
 );
+const BRANCH_SET_WITH_EQ: ReadonlySet<string> = new Set(
+  [...BRANCH_APP_ACCESS_CALLINGS, EQ_PRESIDENT_CALLING].map(normalize),
+);
 
 /**
  * Normalised app-access calling set for a scope. `'stake'` → the stake
- * set; any other scope (a ward_code) → the ward set. With
- * `opts.eqPresidentAccess`, the ward set additionally carries Elders
- * Quorum President; the stake set is returned unchanged either way.
+ * set, whatever `opts.unitType` says. Any other scope (a `ward_code`) →
+ * the branch set when `opts.unitType === 'branch'`, the ward set
+ * otherwise — **including when `unitType` is absent**, which is both
+ * backward-compatible and the fail-closed direction (see
+ * {@link AppAccessOptions.unitType}). With `opts.eqPresidentAccess`,
+ * whichever unit set is chosen additionally carries Elders Quorum
+ * President; the stake set is returned unchanged either way.
  */
 export function appAccessCallingsForScope(
   scope: string,
   opts?: AppAccessOptions,
 ): ReadonlySet<string> {
   if (scope === 'stake') return STAKE_SET;
-  return opts?.eqPresidentAccess === true ? WARD_SET_WITH_EQ : WARD_SET;
+  const withEq = opts?.eqPresidentAccess === true;
+  if (opts?.unitType === 'branch') return withEq ? BRANCH_SET_WITH_EQ : BRANCH_SET;
+  return withEq ? WARD_SET_WITH_EQ : WARD_SET;
 }
 
 /**
  * Subset of `callings` whose normalised form grants app access for the
  * given scope. Original casing is preserved on the returned values.
+ * A non-stake scope needs `opts.unitType` to be read as a branch; see
+ * {@link appAccessCallingsForScope}.
  */
 export function filterAppAccessCallings(
   scope: string,

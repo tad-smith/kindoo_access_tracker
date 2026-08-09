@@ -60,6 +60,8 @@ type ParsedSegment = {
   scope: 'stake' | string;       // resolved: ward_code or 'stake'
   calling: string;               // free-text from parens
   resolvedScope: boolean;        // true if scope name matched a known ward/stake
+  unitKind: UnitType | null;     // from the matched unit's STORED ward_name;
+                                 // null for 'stake' and for anything unresolved
 };
 ```
 

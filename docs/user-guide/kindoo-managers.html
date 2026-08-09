@@ -407,15 +407,18 @@
 
   <!-- 9 -->
   <h2 id="appaccess"><span class="num">9.</span> App access: who can sign in</h2>
-  <p>Whether a person can sign in to the SBA web app depends on their calling. The list is the same across the Church, with <strong>one setting your stake controls</strong> (Elders Quorum Presidents — see below):</p>
+  <p>Whether a person can sign in to the SBA web app depends on their calling and on the kind of unit they hold it in. The lists are the same across the Church, with <strong>one setting your stake controls</strong> (Elders Quorum Presidents — see below):</p>
   <table>
     <thead><tr><th>Scope</th><th>Callings that grant app access</th></tr></thead>
     <tbody>
       <tr><td><strong>Stake</strong></td><td>Stake President · Stake Presidency First Counselor · Stake Presidency Second Counselor · Stake Clerk · Stake Executive Secretary · Stake High Councilor</td></tr>
       <tr><td><strong>Ward</strong></td><td>Bishop · Bishopric First Counselor · Bishopric Second Counselor · Ward Clerk · Ward Executive Secretary · <em>Elders Quorum President — only when your stake's setting is turned on, and at the <span class="badge limited">LIMITED</span> level</em></td></tr>
+      <tr><td><strong>Branch</strong></td><td>Branch President · Branch Presidency First Counselor · Branch Presidency Second Counselor · Branch Clerk · <em>Elders Quorum President — only when your stake's setting is turned on, and at the <span class="badge limited">LIMITED</span> level</em></td></tr>
     </tbody>
   </table>
   <p>Calling-based access is granted and removed automatically by Sync as callings change — these rows are read-only on the <span class="ui">App Access</span> page. For anyone outside that list who genuinely needs to sign in, use <span class="ui">Add manual access</span> and pick the right <strong>access level</strong> — see <a href="#levels">Full and Limited access</a> below.</p>
+
+  <div class="callout"><span class="lbl">A branch's list is shorter, and it isn't the ward list renamed</span><p>A branch gets <strong>four</strong> callings where a ward gets five: there is no Branch Executive Secretary, because branches don't have that calling. Assistant clerks grant no app access in either kind of unit.</p><p>SBA works out whether a unit is a ward or a branch from its <strong>name</strong> — a name ending in &ldquo;Branch&rdquo; is a branch, the same rule used everywhere else (see <a href="#setup">Section 2</a>). So if a branch presidency can't sign in, check the unit's name under <span class="ui">Configuration &rarr; Wards</span> first: a branch stored without &ldquo;Branch&rdquo; on the end is treated as a ward, and a Branch President is not on the ward list.</p></div>
 
   <h3>Elders Quorum Presidents</h3>
   <p>Elders Quorum Presidents can assign temporary access for building cleaning and building lockup assignments. Not every stake works that way, so this one calling is a stake setting rather than a fixed rule. Turn on <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> under <span class="ui">Configuration&nbsp;→&nbsp;Config</span> and every Elders Quorum President in your stake can sign in.</p>
@@ -423,7 +426,7 @@
   <p>Three things to know:</p>
   <ul>
     <li><strong>It's the president only.</strong> Elders Quorum counselors and the quorum secretary never get app access from this setting.</li>
-    <li><strong>It applies to wards, not the stake.</strong> The stake-level list above is unchanged either way.</li>
+    <li><strong>It applies to units, not the stake.</strong> Wards and branches both, on the same terms. The stake-level list above is unchanged either way.</li>
     <li><strong>A full grant outranks it.</strong> Levels are worked out per person per stake, so an Elders Quorum President you also give a full manual grant is full everywhere in the stake.</li>
   </ul>
   <div class="callout imp"><span class="lbl">Turning it off does not remove anyone's access on its own</span><p>The setting decides what happens as callings change from here on. Anyone who already has access keeps it until their callings next change through Sync. That's why saving a change to this switch offers you a second step.</p></div>
@@ -510,6 +513,7 @@
 
   <h4>A leader can't sign in to the web app.</h4>
   <p>Confirm their calling is on the app-access list (<a href="#appaccess">Section 9</a>) and current in Kindoo, then run Sync. For exceptions, grant manual app access.</p>
+  <p>If they lead a <strong>branch</strong>, check the unit's name too. A branch is identified by its name ending in &ldquo;Branch&rdquo;; stored without it, the unit is treated as a ward, and Branch President is not on the ward list. Fix the name under <span class="ui">Configuration &rarr; Wards</span>, then run Sync.</p>
 
   <h4>An Elders Quorum President can't sign in.</h4>
   <p>Check that <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> is on under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, then run Sync so their calling is picked up. If you turned that setting on and skipped the <span class="ui">Grant&nbsp;access&nbsp;now</span> step, a Sync run is what grants them access. Note the setting covers the president only — not quorum counselors or the secretary — and their calling must be current in Kindoo. (See <a href="#appaccess">Section 9</a>.)</p>
@@ -529,7 +533,8 @@
     <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
     <tbody>
       <tr><td><strong>Seat</strong></td><td>One person's access record — the doors they can open in a given scope.</td></tr>
-      <tr><td><strong>Scope</strong></td><td>The stake or a ward. Requests and seats belong to a scope.</td></tr>
+      <tr><td><strong>Scope</strong></td><td>The stake, or one of its units — a ward or a branch. Requests and seats belong to a scope.</td></tr>
+      <tr><td><strong>Unit</strong></td><td>A ward or a branch. They live in the same list and are told apart by the name; see <a href="#setup">Section 2</a>.</td></tr>
       <tr><td><strong>Building</strong></td><td>A physical building with its own set of doors. Seats grant access per building.</td></tr>
       <tr><td><strong>Kindoo Site</strong></td><td>A Kindoo environment that governs a set of buildings' doors. Home or foreign.</td></tr>
       <tr><td><strong>Automatic / Manual / Temporary</strong></td><td>The three seat types — calling-based, ongoing, and time-limited.</td></tr>

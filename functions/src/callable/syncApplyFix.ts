@@ -42,9 +42,16 @@
 // / `applyTypeMismatch` stamp `sort_order` from the canonical churchwide
 // calling order (`@kindoo/shared:seatCallingOrder`) and reconcile the
 // corresponding access doc against the hard-coded app-access calling sets
-// (`filterAppAccessCallings` — ward callings for ward scopes, stake
-// callings for 'stake' scope, plus the stake-gated Elders Quorum
-// President ward calling when `stake.eq_president_app_access` is on).
+// (`filterAppAccessCallings` — stake callings for 'stake' scope, and for
+// a unit scope the ward or branch set according to the unit's kind, plus
+// the stake-gated Elders Quorum President unit calling when
+// `stake.eq_president_app_access` is on).
+//
+// That kind comes from the unit's NAME (D31), so every one of those three
+// handlers has to have read the unit doc before it picks a set — see
+// `appAccessOptsForScope`. An unreadable unit doc falls back to ward
+// (`unitKindOrWard`), warns, and proceeds.
+//
 // Every access write also stamps the scope's access tier (D26) into
 // `importer_limited_callings` (`filterLimitedTierCallings`) in the same
 // write, so the stored tier can never drift from the callings it
@@ -73,13 +80,14 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import type { DocumentReference, Transaction } from 'firebase-admin/firestore';
+import type { DocumentReference, DocumentSnapshot, Transaction } from 'firebase-admin/firestore';
 import {
   canonicalEmail,
   filterAppAccessCallings,
   filterLimitedTierCallings,
   resolveWardSite,
   seatCallingOrder,
+  unitType,
 } from '@kindoo/shared';
 import { assertSeatSiteStamped } from '../lib/wardSites.js';
 import type {
@@ -99,6 +107,7 @@ import type {
   SyncApplyFixInput,
   SyncApplyFixResult,
   TypeMismatchPayload,
+  UnitType,
   Ward,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
@@ -149,6 +158,75 @@ function requireSeatType(value: unknown, field: string): Seat['type'] {
     throw new HttpsError('invalid-argument', `${field} must be 'auto', 'manual', or 'temp'`);
   }
   return value as Seat['type'];
+}
+
+// ---------------------------------------------------------------------------
+// Unit kind (D31) — the input `filterAppAccessCallings` needs for a unit
+// scope. A branch's app-access callings are a different set from a ward's,
+// and the discriminator is the unit's NAME: there is no `unit_type` field,
+// and `ward_code` is a slug (`peterson-branch`, or a legacy `LB`), so the
+// scope string alone can never answer the question. The unit doc is the
+// only source, and it has to be read BEFORE the calling set is chosen.
+// ---------------------------------------------------------------------------
+
+/**
+ * The unit's kind from its own doc; `undefined` when the doc is missing or
+ * carries no usable `ward_name`. Callers resolve `undefined` through
+ * {@link unitKindOrWard}.
+ */
+function unitTypeFromWardSnap(snap: DocumentSnapshot): UnitType | undefined {
+  if (!snap.exists) return undefined;
+  const name = (snap.data() as Partial<Ward> | undefined)?.ward_name;
+  if (typeof name !== 'string' || name.trim().length === 0) return undefined;
+  return unitType(name);
+}
+
+/**
+ * The unit's kind, defaulting to ward when the doc can't be read.
+ *
+ * A branch IS a ward here — same collection, same `ward_code`, same claims,
+ * same rosters — differing only in a few calling names, so ward is right for
+ * nearly every unit and is what this path derived before D32. Refusing
+ * instead would strand a seat whose unit doc was deleted: unit delete reaps
+ * no seats, and a legacy 2-letter `ward_code` can't be recreated from the
+ * Configuration UI. Warn so the missing doc stays visible.
+ *
+ * Passing `'ward'` explicitly rather than leaving `unitType` absent (which
+ * `appAccessCallingsForScope` already reads as ward): the fallback is a
+ * decision, and it should look like one at the call site.
+ */
+function unitKindOrWard(scope: string, kind: UnitType | undefined, fixCode: string): UnitType {
+  if (kind !== undefined) return kind;
+  logger.warn('syncApplyFix: unit doc unreadable; deriving app access as a ward', {
+    fixCode,
+    scope,
+  });
+  return 'ward';
+}
+
+/**
+ * `AppAccessOptions` for `scope` with the unit's kind resolved.
+ *
+ * `'stake'` short-circuits with no read: `appAccessCallingsForScope`
+ * ignores `unitType` there and a stake-scope fix has no unit doc to fetch.
+ * A unit scope costs exactly one `tx.get`, inside the caller's transaction
+ * and before any write.
+ *
+ * `applyKindooOnly` deliberately does NOT call this — it already reads the
+ * unit doc to resolve the seat's Kindoo site, so it feeds that same
+ * snapshot to `unitTypeFromWardSnap`. One read per invocation, and the
+ * kind can never disagree with the site it was resolved alongside.
+ */
+async function appAccessOptsForScope(
+  tx: Transaction,
+  stakeId: string,
+  scope: string,
+  base: AppAccessOptions,
+  fixCode: string,
+): Promise<AppAccessOptions> {
+  if (scope === 'stake') return base;
+  const snap = await tx.get(getDb().doc(`stakes/${stakeId}/wards/${scope}`));
+  return { ...base, unitType: unitKindOrWard(scope, unitTypeFromWardSnap(snap), fixCode) };
 }
 
 export const syncApplyFix = onCall(
@@ -277,9 +355,14 @@ async function applyKindooOnly(
   // `temp` for time-boxed grants), so foreign-ward manual/temp seats are
   // the common case, not an edge. Stake-scope short-circuits to home
   // (field left absent).
+  //
+  // That same unit doc is now double duty: its `ward_name` is what the
+  // unit's kind is derived from (D31), which an AUTO seat needs to pick
+  // between the ward and branch app-access sets. Hence `isUnitScope`
+  // rather than the old `needsSiteResolve` — one read, two consumers.
   const isAuto = type === 'auto';
-  const needsSiteResolve = scope !== 'stake';
-  const wardRef = needsSiteResolve ? db.doc(`stakes/${stakeId}/wards/${scope}`) : null;
+  const isUnitScope = scope !== 'stake';
+  const wardRef = isUnitScope ? db.doc(`stakes/${stakeId}/wards/${scope}`) : null;
   const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
   const actor = syncActor('kindoo-only');
   const dedupedCallings = dedupePreserveOrder(callings);
@@ -294,26 +377,24 @@ async function applyKindooOnly(
       return { success: false, error: 'seat already exists for that member' };
     }
 
-    let sortOrder: number | null = null;
-    let accessCallings: string[] = [];
-    let priorAccess: Access | undefined;
-    if (isAuto) {
-      sortOrder = seatCallingOrder(dedupedCallings);
-      accessCallings = filterAppAccessCallings(scope, dedupedCallings, appAccessOpts);
-      const accessSnap = await tx.get(accessRef);
-      if (accessSnap.exists) priorAccess = accessSnap.data() as Access;
-    }
-
-    // Resolve the ward's site (reads-before-writes). `undefined` ⇒ ward
-    // not found, leave the field absent (read-time fallback classifies it,
-    // matching `markRequestComplete`'s missing-ward precedent); `null` ⇒
-    // home ward, leave absent; a string ⇒ foreign site, stamp it.
+    // Resolve the unit's site AND its kind from ONE read (reads-before-
+    // writes). Site: `undefined` ⇒ unit not found, leave the field absent
+    // (read-time fallback classifies it, matching `markRequestComplete`'s
+    // missing-ward precedent); `null` ⇒ home ward, leave absent; a string ⇒
+    // foreign site, stamp it. Kind: `undefined` ⇒ unresolved, which only an
+    // auto seat cares about (an unreadable doc defaults to ward below).
+    //
+    // This block used to sit BELOW the auto bookkeeping, so the app-access
+    // set was chosen before the unit's name existed and every unit scope
+    // silently got the ward set.
     let wards: Ward[] = [];
     let buildings: Building[] = [];
     let newSeatSite: string | null | undefined;
-    if (needsSiteResolve && wardRef) {
+    let scopeUnitType: UnitType | undefined;
+    if (isUnitScope && wardRef) {
       const [wardSnap, buildingsSnap] = await Promise.all([tx.get(wardRef), tx.get(buildingsRef)]);
       buildings = buildingsSnap.docs.map((d) => d.data() as Building);
+      scopeUnitType = unitTypeFromWardSnap(wardSnap);
       if (wardSnap.exists) {
         const ward = wardSnap.data() as Ward;
         wards = [ward];
@@ -324,6 +405,20 @@ async function applyKindooOnly(
           `syncApplyFix(kindoo-only): ward '${scope}' not found while creating seat for ${canonical}; leaving kindoo_site_id unset (ward-fallback handles classification at read time)`,
         );
       }
+    }
+
+    let sortOrder: number | null = null;
+    let accessCallings: string[] = [];
+    let priorAccess: Access | undefined;
+    if (isAuto) {
+      // A unit scope picks its calling set from the kind resolved above.
+      const opts: AppAccessOptions = isUnitScope
+        ? { ...appAccessOpts, unitType: unitKindOrWard(scope, scopeUnitType, 'kindoo-only') }
+        : appAccessOpts;
+      sortOrder = seatCallingOrder(dedupedCallings);
+      accessCallings = filterAppAccessCallings(scope, dedupedCallings, opts);
+      const accessSnap = await tx.get(accessRef);
+      if (accessSnap.exists) priorAccess = accessSnap.data() as Access;
     }
 
     const now = Timestamp.now();
@@ -464,7 +559,19 @@ async function applyCallingsMismatch(
     // callings against the scope's app-access set, then either rewrite the
     // scope's importer_callings or clear it. Read the access doc before
     // any write.
-    const accessCallings = filterAppAccessCallings(seat.scope, newCallings, appAccessOpts);
+    //
+    // Which app-access set applies turns on the unit's kind (D31), and
+    // `seat.scope` isn't known until the seat read above — so the unit read
+    // belongs here, not with the invocation-level config. One `tx.get`, and
+    // only for a unit scope.
+    const opts = await appAccessOptsForScope(
+      tx,
+      stakeId,
+      seat.scope,
+      appAccessOpts,
+      'callings-mismatch',
+    );
+    const accessCallings = filterAppAccessCallings(seat.scope, newCallings, opts);
     const accessSnap = await tx.get(accessRef);
     if (accessCallings.length > 0) {
       writeAccessForAutoScope(tx, accessRef, {
@@ -638,8 +745,20 @@ async function applyTypeMismatch(
       const newSortOrder = seatCallingOrder(autoCallings);
       update.sort_order = newSortOrder;
       // Promote only. The demote branch below clears the whole scope entry,
-      // which is correct in either toggle state, so it takes no options.
-      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings, appAccessOpts);
+      // which is correct in either toggle state and needs no calling set,
+      // so it takes no options and reads no unit doc.
+      //
+      // `seat.scope` only exists after the seat read above, so the unit read
+      // that resolves its kind (D31) has to happen here — one `tx.get`, and
+      // only for a unit scope.
+      const opts = await appAccessOptsForScope(
+        tx,
+        stakeId,
+        seat.scope,
+        appAccessOpts,
+        'type-mismatch',
+      );
+      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings, opts);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
         const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
@@ -769,8 +888,13 @@ async function applyKindooUnparseable(
       // Firestore's reads-before-writes rule.
       const accessSnap = await tx.get(accessRef);
       const stakeSort = seatCallingOrder([calling]);
-      // Inert: the probe is against the STAKE set, which the Elders Quorum
-      // President opt-in never touches. Passed for uniformity only.
+      // The literal `'stake'` is the whole point of this path: an
+      // unparseable description is treated as a church-wide calling, so the
+      // probe is against the STAKE set. Both option fields are inert there
+      // — the Elders Quorum President opt-in never touches the stake set,
+      // and `appAccessCallingsForScope` ignores `unitType` for `'stake'`.
+      // So this site needs no unit doc and reads none. Passed for
+      // uniformity only.
       const stakeHasGrant = filterAppAccessCallings('stake', [calling], appAccessOpts).length > 0;
       // The seat's `sort_order` comes from the canonical churchwide order
       // (parity with `applyKindooOnly` / `applyCallingsMismatch`); `null`

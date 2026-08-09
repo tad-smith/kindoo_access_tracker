@@ -260,6 +260,64 @@ describe('parseDescription', () => {
   });
 });
 
+// The kind is a property of the unit the segment RESOLVED TO, read off
+// its stored `ward_name`. Deriving it from the description text instead
+// disagrees with the catalogue wherever the two forms differ, which
+// D31(b)'s optional suffix makes reachable in both directions.
+describe('parseDescription — resolved unit kind', () => {
+  it('reads a ward stored with the suffix as a ward', () => {
+    const parsed = parseDescription('Maple Ward (Bishop)', STAKE, WARDS);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'CO', unitKind: 'ward' });
+  });
+
+  it('reads a ward stored without the suffix as a ward', () => {
+    const units = [{ ward_code: 'JC', ward_name: 'Jackson Creek' }];
+    expect(parseDescription('Jackson Creek Ward (Bishop)', STAKE, units).segments[0]).toMatchObject(
+      { scope: 'JC', unitKind: 'ward' },
+    );
+    expect(parseDescription('Jackson Creek (Bishop)', STAKE, units).segments[0]).toMatchObject({
+      scope: 'JC',
+      unitKind: 'ward',
+    });
+  });
+
+  it('reads a branch as a branch', () => {
+    const units = [{ ward_code: 'LB', ward_name: 'Peterson Branch' }];
+    const parsed = parseDescription('Peterson Branch (Branch President)', STAKE, units);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'LB', unitKind: 'branch' });
+  });
+
+  it('reads a ward named "<X> Branch Ward" as a ward through its bare variant', () => {
+    // The case the derivation exists for. `"Olive Branch Ward"` registers
+    // both `olive branch ward` and `olive branch` (D31(b)), so a
+    // hand-typed `"Olive Branch"` resolves to this WARD — but the
+    // description text on its own reads as a branch.
+    const units = [{ ward_code: 'OW', ward_name: 'Olive Branch Ward' }];
+    expect(parseDescription('Olive Branch (Bishop)', STAKE, units).segments[0]).toMatchObject({
+      rawScopeName: 'Olive Branch',
+      scope: 'OW',
+      resolvedScope: true,
+      unitKind: 'ward',
+    });
+  });
+
+  it('leaves the kind null for a stake segment', () => {
+    const parsed = parseDescription('Colorado Springs North Stake (Stake Clerk)', STAKE, WARDS);
+    expect(parsed.segments[0]).toMatchObject({ scope: 'stake', unitKind: null });
+  });
+
+  it('leaves the kind null for an unresolved segment', () => {
+    expect(parseDescription('Springfield Ward (Bishop)', STAKE, WARDS).segments[0]).toMatchObject({
+      resolvedScope: false,
+      unitKind: null,
+    });
+    expect(parseDescription('Random free text', STAKE, WARDS).segments[0]).toMatchObject({
+      resolvedScope: false,
+      unitKind: null,
+    });
+  });
+});
+
 // Two units in one stake can contest a variant key. The web-side
 // uniqueness guard rejects new such pairs, but a stake that already
 // holds one must not be mis-attributed in the meantime. Each test that
@@ -493,6 +551,89 @@ describe('pickPrimarySegment', () => {
     );
     const primary = pickPrimarySegment(parsed, { eqPresidentAccess: true });
     expect(primary?.scope).toBe('stake');
+  });
+});
+
+// ---- Branch scopes ---------------------------------------------------
+//
+// A branch's app-access set is chosen from `segment.unitKind` — the kind
+// of the unit the segment resolved to, taken from its stored
+// `ward_name` at parse time. Not from `segment.scope`, which is a
+// `ward_code` slug an app-access lookup cannot read a unit kind out of;
+// and not from the description text, which under D31(b) can name a ward
+// in a form that reads as a branch.
+
+describe('pickPrimarySegment — branch scopes', () => {
+  const UNITS = [...WARDS, { ward_code: 'peterson-branch', ward_name: 'Peterson Branch' }];
+
+  it('prefers a branch app-access segment over a non-app-access stake segment', () => {
+    // The case that motivates the change: without the per-segment unit
+    // kind, `Branch President` is looked up in the WARD set, matches
+    // nothing, and the stake segment silently steals primary.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Branch President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('peterson-branch');
+  });
+
+  it('does not grant app access for a branch calling held at a ward scope', () => {
+    // Same calling, ward scope → the ward set has no counterpart, so no
+    // segment grants and stake-first ordering applies.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Branch President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('stake');
+  });
+
+  it('still prefers a ward app-access segment when a branch exists in the stake', () => {
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Maple Ward (Bishop)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('CO');
+  });
+
+  it('prefers the EQ President branch segment when the stake opts in', () => {
+    // The stake gate rides alongside the derived unit kind: Elders
+    // Quorum President joins the BRANCH set, not just the ward one.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Elders Quorum President)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed, { eqPresidentAccess: true })?.scope).toBe('peterson-branch');
+    expect(pickPrimarySegment(parsed, { eqPresidentAccess: false })?.scope).toBe('stake');
+  });
+
+  it('does not grant app access for a ward-only calling held at a branch scope', () => {
+    // The branch set is not the ward set renamed — it has no counterpart
+    // to Ward Executive Secretary.
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Peterson Branch (Ward Executive Secretary)',
+      STAKE,
+      UNITS,
+    );
+    expect(pickPrimarySegment(parsed)?.scope).toBe('stake');
+  });
+
+  it('grants ward app access to a ward whose bare variant reads as a branch', () => {
+    // A Kindoo Manager typing `"Olive Branch (Bishop)"` by hand names the
+    // ward `"Olive Branch Ward"` via its bare D31(b) variant. Deriving
+    // the kind from that text consults the BRANCH set, where `Bishop` is
+    // absent, and the non-app-access stake segment steals primary.
+    const units = [...WARDS, { ward_code: 'OW', ward_name: 'Olive Branch Ward' }];
+    const parsed = parseDescription(
+      'Colorado Springs North Stake (Technology Specialist) | Olive Branch (Bishop)',
+      STAKE,
+      units,
+    );
+    expect(parsed.segments[1]?.scope).toBe('OW');
+    expect(pickPrimarySegment(parsed)?.scope).toBe('OW');
   });
 });
 

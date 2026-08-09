@@ -40,7 +40,7 @@ Rewiring `collidesWithOwnWard` onto the shared variants (the third surface above
 - **`ward_code` is still `buildingSlug(ward_name)` verbatim**, not `buildingSlug(kindooScopeName(ward_name))`. So `"Maple"` lands at `maple` and `"Maple Ward"` at `maple-ward` — the doc ID records which form the operator typed. Normalising it would have been a migration on an immutable foreign key by value (D3), and the code is never rendered and never matched against Kindoo, so the divergence is inert.
 - **No `unit_type` field, no schema change at all.** `stakes/{stakeId}/wards/{wardCode}` is byte-identical to before; branches have always been storable, just not distinguishable.
 - **No new collection.** Branches live in `wards`, which is why `firebase-schema.md` §4.2 now says "unit" where it used to say "ward" and the collection name stays.
-- **The calling tables are untouched.** `callingSortOrder.ts` and `appAccessCallings.ts` remain ward/stake only, so a Branch President parses to a valid scope and an unknown calling: bottom of its sort band, no derived app access. Deliberate — see T-96.
+- **The calling tables are untouched** *at the time of this PR*. `callingSortOrder.ts` and `appAccessCallings.ts` remained ward/stake only, so a Branch President parsed to a valid scope and an unknown calling: bottom of its sort band, no derived app access. Deliberate, and deliberately short-lived — **T-96 (PR #270) closed it**, adding the branch sets and `AppAccessOptions.unitType`. See `changelog/branch-callings.md`; this bullet describes the state between the two PRs, not the current one.
 - **No rules change.** Nothing about the unit's kind reaches `firestore.rules`.
 
 ## Rollout note

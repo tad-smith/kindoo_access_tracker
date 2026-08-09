@@ -1,7 +1,8 @@
 // Tests for the compiled `calling → order` table. Pins the canonical
-// priorities at the band boundaries (stake head / tail, ward head /
-// tail), the trim + case-insensitive matching, the unknown → null
-// contract, and the seat-level MIN aggregation.
+// priorities at the band boundaries (stake head / tail, unit head /
+// tail), the ward↔branch interleaving, the trim + case-insensitive
+// matching, the unknown → null contract, and the seat-level MIN
+// aggregation.
 
 import { describe, expect, it } from 'vitest';
 import { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
@@ -13,15 +14,15 @@ describe('callingSortOrder', () => {
     expect(callingSortOrder('Stake President')).toBe(0);
   });
 
-  it('maps the stake-band tail and ward-band head across the boundary', () => {
+  it('maps the stake-band tail and unit-band head across the boundary', () => {
     // 'Patriarch' is the 42nd entry (index 41) — the stake-band tail;
-    // 'Bishop' is the 43rd (index 42) — the ward-band head.
+    // 'Bishop' is the 43rd (index 42) — the unit-band head.
     expect(callingSortOrder('Patriarch')).toBe(41);
     expect(callingSortOrder('Bishop')).toBe(42);
   });
 
-  it('maps the final ward calling to the last index (84)', () => {
-    expect(callingSortOrder('Technology Specialist')).toBe(84);
+  it('maps the final unit calling to the last index (91)', () => {
+    expect(callingSortOrder('Technology Specialist')).toBe(91);
   });
 
   it('places the operator-added stake callings in order', () => {
@@ -36,8 +37,8 @@ describe('callingSortOrder', () => {
   });
 
   it('places the operator-added ward callings in order', () => {
-    expect(callingSortOrder('Valiant Activities Leader')).toBe(76);
-    expect(callingSortOrder('Building Representative')).toBe(81);
+    expect(callingSortOrder('Valiant Activities Leader')).toBe(83);
+    expect(callingSortOrder('Building Representative')).toBe(88);
   });
 
   it('orders Bishop ahead of Elders Quorum President ahead of Primary President', () => {
@@ -46,6 +47,66 @@ describe('callingSortOrder', () => {
     const primaryPres = callingSortOrder('Primary President')!;
     expect(bishop).toBeLessThan(eqPres);
     expect(eqPres).toBeLessThan(primaryPres);
+  });
+
+  it('ranks every branch calling rather than returning null', () => {
+    for (const name of [
+      'Branch President',
+      'Branch Presidency First Counselor',
+      'Branch Presidency Second Counselor',
+      'Branch Clerk',
+      'Branch Assistant Clerk',
+      'Branch Assistant Clerk--Membership',
+      'Branch Assistant Clerk--Finance',
+    ]) {
+      expect(callingSortOrder(name)).not.toBeNull();
+    }
+  });
+
+  it('places each branch calling immediately after its ward counterpart', () => {
+    const pairs: readonly [string, string][] = [
+      ['Bishop', 'Branch President'],
+      ['Bishopric First Counselor', 'Branch Presidency First Counselor'],
+      ['Bishopric Second Counselor', 'Branch Presidency Second Counselor'],
+      ['Ward Clerk', 'Branch Clerk'],
+      ['Ward Assistant Clerk', 'Branch Assistant Clerk'],
+      ['Ward Assistant Clerk--Membership', 'Branch Assistant Clerk--Membership'],
+      ['Ward Assistant Clerk--Finance', 'Branch Assistant Clerk--Finance'],
+    ];
+    for (const [ward, branch] of pairs) {
+      expect(callingSortOrder(branch)).toBe(callingSortOrder(ward)! + 1);
+    }
+  });
+
+  it('keeps the branch hierarchy in order — president, counselors, clerk', () => {
+    const order = [
+      'Branch President',
+      'Branch Presidency First Counselor',
+      'Branch Presidency Second Counselor',
+      'Branch Clerk',
+      'Branch Assistant Clerk',
+    ].map((name) => callingSortOrder(name)!);
+    for (let i = 1; i < order.length; i += 1) {
+      expect(order[i - 1]).toBeLessThan(order[i]!);
+    }
+  });
+
+  it('ranks a Branch President above every shared-family calling', () => {
+    // A branch's Elders Quorum / Relief Society / Primary / Young Women
+    // people use the same entries a ward's do, and sort below leadership.
+    const branchPres = callingSortOrder('Branch President')!;
+    for (const name of [
+      'Elders Quorum President',
+      'Relief Society President',
+      'Primary President',
+      'Young Women President',
+    ]) {
+      expect(branchPres).toBeLessThan(callingSortOrder(name)!);
+    }
+  });
+
+  it('has no Branch Executive Secretary', () => {
+    expect(callingSortOrder('Branch Executive Secretary')).toBeNull();
   });
 
   it('matches case-insensitively', () => {
@@ -66,7 +127,9 @@ describe('callingSortOrder', () => {
 
   it('preserves the double-hyphen calling names verbatim', () => {
     expect(callingSortOrder('Stake Assistant Clerk--Membership')).toBe(7);
-    expect(callingSortOrder('Ward Assistant Clerk--Finance')).toBe(50);
+    expect(callingSortOrder('Ward Assistant Clerk--Finance')).toBe(56);
+    expect(callingSortOrder('Branch Assistant Clerk--Membership')).toBe(55);
+    expect(callingSortOrder('Branch Assistant Clerk--Finance')).toBe(57);
   });
 
   it('returns null for a calling not in the table', () => {
@@ -93,7 +156,7 @@ describe('seatCallingOrder', () => {
   });
 
   it('returns the MIN order across multiple callings', () => {
-    // Bishop (42) wins over Primary President (72).
+    // Bishop (42) wins over Primary President (79).
     expect(seatCallingOrder(['Primary President', 'Bishop'])).toBe(callingSortOrder('Bishop'));
   });
 
