@@ -175,7 +175,9 @@ export interface WardInput {
    * wards must not share a name (a slug-only collision check misses
    * legacy 2-letter-coded wards: a new "Maple" slugs to `maple` and would
    * not collide with the legacy `Maple` at doc id `CO`). Caller passes
-   * the snapshot it just rendered — no extra read.
+   * the snapshot it just rendered — no extra read. Must include the unit
+   * being edited: the guard reads its stored name out of the snapshot to
+   * decide whether the name is actually changing.
    */
   existingWards?: ReadonlyArray<Ward>;
 }
@@ -191,14 +193,29 @@ export interface WardInput {
  * shadows a branch `"Olive Branch"` in the description parser. The rule
  * and its copy live in `unitNameCollisionMessage` so the bootstrap
  * wizard's Step 3 enforces exactly the same thing.
+ *
+ * Runs on CREATE, and on EDIT only when the name actually changes —
+ * symmetric with `buildingRenameBlocker`. A stake can already hold a
+ * colliding pair: the guard postdates the data, and the parser's
+ * collision warn exists precisely because legacy pairs are reachable.
+ * Running unconditionally would hold every OTHER field of both units
+ * hostage — an operator raising the `seat_cap` on "Maple" while a
+ * "Maple Ward" exists would be rejected over a field they never
+ * touched, with renaming as the only escape. Comparison is against the
+ * unit's stored name in `wards`; a self code with no matching row (a
+ * stale snapshot) falls through to running the guard.
  */
 export function duplicateWardNameBlocker(
   name: string,
   wards: ReadonlyArray<Ward>,
   selfWardCode: string | undefined,
 ): string | null {
+  const wanted = name.trim();
+  const self =
+    selfWardCode === undefined ? undefined : wards.find((w) => w.ward_code === selfWardCode);
+  if (self !== undefined && self.ward_name.trim() === wanted) return null;
   return unitNameCollisionMessage(
-    name,
+    wanted,
     wards.filter((w) => w.ward_code !== selfWardCode).map((w) => w.ward_name),
   );
 }
@@ -222,7 +239,9 @@ export function useUpsertWardMutation() {
       // Unique display name — the only visible identifier now. Blocks a
       // new or renamed ward from sharing a name with another ward,
       // including legacy 2-letter-coded wards the slug check can't catch.
-      // Self-excluded via the ward's own code on edit.
+      // Self-excluded via the ward's own code on edit, and skipped
+      // outright on an edit that leaves the name alone so a pre-existing
+      // colliding pair stays editable on its other fields.
       const dupBlocker = duplicateWardNameBlocker(name, input.existingWards ?? [], input.ward_code);
       if (dupBlocker) throw new Error(dupBlocker);
       const ref = wardRef(db, sid, code);
