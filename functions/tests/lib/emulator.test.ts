@@ -4,7 +4,7 @@
 // "Transaction lock timeout" can be produced on demand.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { sweepFirestore } from './emulator.js';
+import { _resetSweepLatch, sweepFirestore } from './emulator.js';
 
 const URL_UNDER_TEST = 'http://127.0.0.1:8080/emulator/v1/projects/p/databases/(default)/documents';
 
@@ -56,12 +56,17 @@ function stubHangingFetch() {
   return calls;
 }
 
-/** Rejects like a transport failure (socket reset), then serves `then`. */
-function stubRejectingFetch(rejections: number, then: () => Response) {
+/** undici's shape for a transport failure: `TypeError` carrying an errno cause. */
+function transportError(code: string) {
+  return new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+}
+
+/** Rejects `rejections` times with `err()`, then serves `then`. */
+function stubRejectingFetch(rejections: number, err: () => Error, then: () => Response) {
   const calls: string[] = [];
   const impl = vi.fn(async () => {
     calls.push('DELETE');
-    if (calls.length <= rejections) throw new TypeError('fetch failed');
+    if (calls.length <= rejections) throw err();
     return then();
   });
   vi.stubGlobal('fetch', impl);
@@ -72,6 +77,9 @@ describe('sweepFirestore (T-97 retry)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    // The give-up latch is module state; a case that exhausts the budget
+    // would otherwise short-circuit every case after it.
+    _resetSweepLatch();
   });
 
   it('does not retry when the sweep succeeds first time', async () => {
@@ -166,15 +174,42 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(String(err)).toMatch(/last response: 409 .*Transaction lock timeout/);
   });
 
-  it('retries a transport failure instead of throwing it raw', async () => {
+  it('retries a dropped connection instead of throwing it raw', async () => {
     // A socket reset rejects rather than returning a status, so it used to
     // bypass the retry entirely and escape as a bare TypeError.
-    const calls = stubRejectingFetch(2, ok);
+    const calls = stubRejectingFetch(2, () => transportError('ECONNRESET'), ok);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await sweepFirestore(URL_UNDER_TEST);
 
     expect(calls).toHaveLength(3);
+  });
+
+  it('fails fast when nothing is listening, rather than paying the backoff', async () => {
+    // The Firestore emulator gone while Auth is still up. Retrying costs
+    // ~700ms per call across ~500 `clearEmulators` calls — ~6 minutes added
+    // to a run that is already red. It must cost one attempt.
+    const calls = stubRejectingFetch(99, () => transportError('ECONNREFUSED'), ok);
+
+    const started = Date.now();
+    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(
+      /failed after 1 attempt\(s\): TypeError: fetch failed/,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  it('fails fast on a programming error, not four times', async () => {
+    // The example the docs used to give for the fail-fast branch was "a 400
+    // from a malformed URL" — but a malformed URL does not produce a 400,
+    // it throws, and before this it was retried four times.
+    const calls = stubRejectingFetch(99, () => new TypeError('Failed to parse URL'), ok);
+
+    await expect(sweepFirestore('not-a-url')).rejects.toThrow(
+      /failed after 1 attempt\(s\): TypeError: Failed to parse URL/,
+    );
+    expect(calls).toHaveLength(1);
   });
 
   it('does not retry a non-transient status', async () => {
@@ -184,5 +219,22 @@ describe('sweepFirestore (T-97 retry)', () => {
       'failed after 1 attempt(s): 400 nope',
     );
     expect(calls).toHaveLength(1);
+  });
+
+  it('short-circuits later sweeps once one has exhausted its budget', async () => {
+    // ~500 calls each paying the full budget against a wedged emulator is
+    // the same runaway the delivery-wait latch exists to stop.
+    stubFetch(aborted);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(/failed after 4 attempt/);
+
+    const calls = stubFetch(aborted);
+    const started = Date.now();
+    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(
+      /skipped: an earlier sweep exhausted its budget/,
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(Date.now() - started).toBeLessThan(50);
   });
 });

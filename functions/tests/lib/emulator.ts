@@ -114,6 +114,39 @@ export async function clearEmulators(): Promise<void> {
 const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
 const SWEEP_ATTEMPTS = 4;
 
+/** `errno` codes that mean the connection dropped, not that nothing is listening. */
+const RETRYABLE_FETCH_CODES = new Set(['ECONNRESET', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT']);
+
+/**
+ * Whether a thrown `fetch` failure is worth another attempt.
+ *
+ * Treating every throw as transient is the expensive mistake here. If the
+ * Firestore emulator is gone while Auth is still up — separate processes,
+ * so the Auth half above succeeds and the sweep is still reached — `fetch`
+ * rejects with `ECONNREFUSED` immediately. Retrying that costs four
+ * attempts and ~700ms per call, and `clearEmulators` runs in
+ * `beforeAll` / `afterEach` / `afterAll` across ~500 integration tests:
+ * ~6 minutes of pure backoff added to a run that is already red, under a
+ * 20-minute job cap. It threw in ~0ms before this helper existed.
+ *
+ * So: retry the deadline abort and connection drops; let everything else —
+ * `ECONNREFUSED`, and programming errors like
+ * `TypeError: Failed to parse URL` — fail on the first attempt.
+ */
+function isRetryableFetchError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === 'TimeoutError' || err.name === 'AbortError') return true;
+  const code = (err as { cause?: { code?: unknown } }).cause?.code;
+  return typeof code === 'string' && RETRYABLE_FETCH_CODES.has(code);
+}
+
+let sweepAbandoned = false;
+
+/** Test-only: clear the {@link sweepFirestore} latch between cases. */
+export function _resetSweepLatch(): void {
+  sweepAbandoned = false;
+}
+
 /**
  * Wall-clock ceiling for a whole `clearEmulators` call, retries included.
  *
@@ -170,6 +203,16 @@ export async function sweepFirestore(
   url: string,
   { deadlineMs = CLEAR_BUDGET_MS }: { deadlineMs?: number } = {},
 ): Promise<void> {
+  // Same reasoning as `waitForDelivery` below: once a sweep has spent its
+  // whole budget, the emulator is not answering and the next ~500 calls
+  // would each pay the same budget to learn the same thing. Every test
+  // still fails, named, and immediately.
+  if (sweepAbandoned) {
+    throw new Error(
+      'clearEmulators(Firestore) skipped: an earlier sweep exhausted its budget — ' +
+        'the emulator is not answering, see the first failure for the response',
+    );
+  }
   const deadline = Date.now() + deadlineMs;
   // An abort is always terminal (it fires AT the deadline, so there is
   // never time for another attempt), and its message says only
@@ -204,10 +247,10 @@ export async function sweepFirestore(
     } catch (err) {
       // The deadline abort, or a transport failure such as a socket reset.
       // Both used to escape this loop and throw raw, with no attempt count
-      // and no context — treat them as transient and let the deadline
-      // check below decide whether there is time to try again.
+      // and no context. `isRetryableFetchError` keeps the fail-fast path
+      // for the ones no amount of waiting fixes.
       detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      retryable = true;
+      retryable = isRetryableFetchError(err);
     }
 
     const backoffMs = 100 * 2 ** (attempt - 1);
@@ -215,6 +258,10 @@ export async function sweepFirestore(
     if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
       const carried =
         lastResponse && lastResponse !== detail ? `; last response: ${lastResponse}` : '';
+      // Latch only on an exhausted budget/attempt ceiling — a fail-fast
+      // classification (a bad URL, a 400) is this call's problem, not
+      // evidence that the emulator has gone away.
+      if (attempt >= SWEEP_ATTEMPTS || outOfTime) sweepAbandoned = true;
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
           `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}${carried}`,
