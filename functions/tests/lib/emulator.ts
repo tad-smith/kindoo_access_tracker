@@ -110,6 +110,24 @@ const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
 const SWEEP_ATTEMPTS = 4;
 
 /**
+ * Wall-clock ceiling for the whole sweep, retries included.
+ *
+ * `clearEmulators` runs in `afterEach`, and vitest's default `hookTimeout`
+ * is 10s — no config here sets one, and no hook overrides it. An
+ * attempt-only bound does not respect that: the thing being retried is by
+ * name a *timeout* (`Transaction lock timeout`), so a failing attempt is
+ * not necessarily fast, and four slow attempts plus backoff could blow the
+ * hook budget. That would report `Hook timed out in 10000ms` against
+ * whatever unrelated test was running — losing the attempt count and body
+ * this retry exists to produce, and landing exactly the misattributed
+ * diagnosis the retry is meant to prevent, one layer up.
+ *
+ * 5s leaves room for the Auth deletion that precedes the sweep in the same
+ * hook, so the informative throw always beats the hook timeout.
+ */
+const SWEEP_DEADLINE_MS = 5_000;
+
+/**
  * `DELETE` the whole document tree, retrying transient contention.
  *
  * The emulator answers the sweep with `409 ABORTED — Transaction lock
@@ -122,15 +140,24 @@ const SWEEP_ATTEMPTS = 4;
  * T-97, seen once in ~6 full runs.
  *
  * `ABORTED` is documented as retryable and the contending write is short,
- * so a few quick attempts clear it: ~700ms of backoff before giving up,
- * which is noise next to a 25s suite.
+ * so a few quick attempts clear it. Bounded twice over — by attempt count
+ * and by {@link SWEEP_DEADLINE_MS} wall-clock, because how long a
+ * *contended* DELETE takes to answer is not known (the one sighting only
+ * bounds it below 10s).
  *
  * Every retry is LOGGED rather than swallowed. A retry hides whatever held
  * the lock, and this sweep runs in `afterEach` of nearly every integration
  * test — if it starts needing three attempts routinely, that is a signal
  * about trigger fan-out, and it should not be invisible.
+ *
+ * `deadlineMs` exists so the deadline path is testable in milliseconds
+ * rather than seconds; production callers use the default.
  */
-export async function sweepFirestore(url: string): Promise<void> {
+export async function sweepFirestore(
+  url: string,
+  { deadlineMs = SWEEP_DEADLINE_MS }: { deadlineMs?: number } = {},
+): Promise<void> {
+  const deadline = Date.now() + deadlineMs;
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(url, { method: 'DELETE' });
     if (res.ok) {
@@ -140,15 +167,18 @@ export async function sweepFirestore(url: string): Promise<void> {
       return;
     }
     const body = await res.text();
-    if (attempt >= SWEEP_ATTEMPTS || !RETRYABLE_SWEEP_STATUSES.has(res.status)) {
+    const backoffMs = 100 * 2 ** (attempt - 1);
+    const outOfTime = Date.now() + backoffMs >= deadline;
+    if (attempt >= SWEEP_ATTEMPTS || outOfTime || !RETRYABLE_SWEEP_STATUSES.has(res.status)) {
       throw new Error(
-        `clearEmulators(Firestore) failed after ${attempt} attempt(s): ${res.status} ${body}`,
+        `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
+          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${res.status} ${body}`,
       );
     }
     console.warn(
       `clearEmulators(Firestore): ${res.status} on attempt ${attempt}, retrying — ${body}`,
     );
-    await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
+    await new Promise((r) => setTimeout(r, backoffMs));
   }
 }
 

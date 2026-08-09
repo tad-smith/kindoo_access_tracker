@@ -36,9 +36,11 @@ Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow
 
 Fixed in `sweepFirestore` (extracted from `clearEmulators` so the retry path is testable without an emulator): up to 4 attempts at 100/200/400ms backoff, retrying only 409 / 429 / 503. A non-transient status — a 400 from a malformed URL — still fails on the first attempt rather than being retried into a slow, confusing failure. The final error names the attempt count and carries the response body.
 
+**Bounded by wall-clock as well as attempt count**, found in review and the sharper half of the fix. `clearEmulators` runs in `afterEach` under vitest's default 10s `hookTimeout` — no config in the repo sets one and no hook overrides it — and the retried condition is *itself* a timeout (`Transaction lock timeout`), so a failing attempt is not necessarily fast. An attempt-only bound could therefore blow the hook budget and report `Hook timed out in 10000ms` against whatever unrelated test was running, losing the attempt count and body the retry exists to produce: the same misattributed diagnosis, one layer up. A 5s deadline now guarantees the informative throw wins. How long a *contended* DELETE actually takes is still unknown — the single sighting only bounds it under 10s — which is exactly why the bound is time-based rather than a tuned attempt count.
+
 **Every retry logs.** The concern recorded above — that a retry masks whatever holds the lock — is real and is why this is not silent: the sweep runs in `afterEach` of nearly every integration test, so if it starts needing three attempts routinely, that is a signal about trigger fan-out, and the warning is the only place it would surface.
 
-Four unit tests in `functions/tests/lib/emulator.test.ts` cover first-try success, retry-then-succeed, bounded give-up (it must not spin forever against a lock that never clears), and no-retry-on-400. They stub `fetch`, so they need no emulator — the transient path a healthy emulator never takes.
+Five unit tests in `functions/tests/lib/emulator.test.ts` cover first-try success, retry-then-succeed, bounded give-up on attempt count, give-up on the wall-clock deadline when responses are slow, and no-retry-on-400. They stub `fetch`, so they need no emulator — the transient path a healthy emulator never takes.
 
 ## [T-96] Branch-specific callings — specified, deliberately not implemented
 Status: pending

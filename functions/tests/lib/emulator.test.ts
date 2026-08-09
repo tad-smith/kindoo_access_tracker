@@ -25,6 +25,18 @@ function stubFetch(...responses: Array<() => Response>) {
   return calls;
 }
 
+/** Like {@link stubFetch}, but each response takes `delayMs` to arrive. */
+function stubSlowFetch(delayMs: number, response: () => Response) {
+  const calls: string[] = [];
+  const impl = vi.fn(async () => {
+    calls.push('DELETE');
+    await new Promise((r) => setTimeout(r, delayMs));
+    return response();
+  });
+  vi.stubGlobal('fetch', impl);
+  return calls;
+}
+
 describe('sweepFirestore (T-97 retry)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -59,6 +71,25 @@ describe('sweepFirestore (T-97 retry)', () => {
     );
     // Bounded: it must not spin forever against a lock that never clears.
     expect(calls).toHaveLength(4);
+  });
+
+  it('gives up on the wall-clock deadline when contended DELETEs are slow', async () => {
+    // The retried condition is itself a *timeout*, so a failing attempt is
+    // not necessarily fast. `clearEmulators` runs in `afterEach` under
+    // vitest's 10s default `hookTimeout`; without a wall-clock bound, four
+    // slow attempts would blow it and report `Hook timed out` against an
+    // unrelated test — losing the attempt count and body entirely.
+    const calls = stubSlowFetch(120, aborted);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const started = Date.now();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(
+      /failed after \d+ attempt\(s\) \(300ms deadline\): 409/,
+    );
+
+    // Stopped early on time, not on the attempt ceiling.
+    expect(calls.length).toBeLessThan(4);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('does not retry a non-transient status', async () => {
