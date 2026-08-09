@@ -25,16 +25,24 @@ import { ApplyFixesMenu } from './ApplyFixesMenu';
 import { useStakes, type StakeWithId } from './hooks';
 
 /**
- * Per-stake landing target. Deep-links into the manager Dashboard
- * with the target stake as `?stake=<slug>`. `useActiveStake()` on
- * the destination's first render reads the param, persists it to both
- * sessionStorage + localStorage, and strips it via `history.replaceState`
- * (spec §2.1). The role gate on `/manager/dashboard` redirects out to
- * the user's actual landing for that stake if they don't hold the
- * manager role there.
+ * Per-stake landing target. Deep-links into manager **Configuration**
+ * with the target stake as `?stake=<slug>`. `useActiveStake()` on the
+ * destination's first render reads the param, persists it to both
+ * sessionStorage + localStorage, and strips it via
+ * `history.replaceState` (spec §2.1).
+ *
+ * Configuration rather than the Dashboard because Configuration is what
+ * a superadmin opening someone else's stake actually wants — the stake's
+ * settings, not its request queue. Both routes admit a superadmin
+ * (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`), so this is
+ * a usefulness change, not an access one.
+ *
+ * For a superadmin holding NO role on the stake neither target renders
+ * usefully yet: no active stake resolves, so the page's reads never
+ * fire. That is T-91, not something this link decides.
  */
 function landingTargetFor(stake: StakeWithId): { to: string; search: { stake: string } } {
-  return { to: '/manager/dashboard', search: { stake: stake.id } };
+  return { to: '/manager/configuration', search: { stake: stake.id } };
 }
 
 function timestampToMillis(value: Stake['created_at']): number {

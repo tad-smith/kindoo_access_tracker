@@ -31,6 +31,9 @@ export const Route = createFileRoute('/_authed/manager/configuration')({
 });
 
 function ConfigurationRoute() {
+  // `holdsAnyRole` short-circuits on `isPlatformSuperadmin`, so a
+  // superadmin already passes this gate — naming the role here would be
+  // a no-op. The superadmin path is not blocked at the route; see T-91.
   const { ready, allowed } = useRequireRole('manager');
   if (!ready) return <LoadingSpinner />;
   if (!allowed) return null;

@@ -317,7 +317,7 @@ export function App({ onPendingCountChange }: AppProps) {
         <div className="sba-body">
           <p className="sba-error" data-testid="sba-no-candidates-message">
             This Kindoo site (EID {stake.eid}) is not configured under any SBA stake you manage.
-            Switch to a configured Kindoo site, or add this one in Configuration → Kindoo Sites on
+            Switch to a configured Kindoo site, or add this one in Configuration → Kindoo Config on
             the SBA web app.
           </p>
           <button

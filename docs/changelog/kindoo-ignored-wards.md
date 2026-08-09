@@ -5,7 +5,7 @@
 
 ## What shipped
 
-A manager can list ward names that appear in one of their Kindoo sites but are managed by a **different SBA stake**, and Sync skips them. Configuration → Kindoo Sites carries the new list under the existing sites list; the extension's Sync strips the description segments naming those wards and reports how many users it dropped.
+A manager can list ward names that appear in one of their Kindoo sites but are managed by a **different SBA stake**, and Sync skips them. Configuration → Kindoo Config carries the new list under the existing sites list; the extension's Sync strips the description segments naming those wards and reports how many users it dropped.
 
 ## Why
 

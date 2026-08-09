@@ -304,7 +304,7 @@ describe('checkRequestSite — ward-scope, foreign site', () => {
   it("refuses with ProvisionForeignSiteMissingError when the ward's building resolves to a site not in the loaded set", () => {
     // The site isn't configured in SBA at all — switching Kindoo sites
     // won't help. Surface the dedicated missing-site error so the card
-    // formatter can direct the operator to Configuration → Kindoo Sites
+    // formatter can direct the operator to Configuration → Kindoo Config
     // rather than telling them to switch sites.
     const stranded: Ward = {
       ...FOREIGN_WARD,

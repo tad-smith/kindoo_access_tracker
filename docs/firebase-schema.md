@@ -329,7 +329,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   // that one records wards of ours living in someone else's Kindoo site, this one
   // records wards of theirs living in one of ours. The extension's Sync strips the
   // description segments naming them, so another stake's members never surface here
-  // as `kindoo-only` drift. Operator-typed on Configuration → Kindoo Sites; matched
+  // as `kindoo-only` drift. Operator-typed on Configuration → Kindoo Config; matched
   // case-insensitively against the scope-name portion of a Kindoo description segment,
   // and only ever against segments that did NOT resolve to one of this stake's own
   // wards. ABSENT or empty ⇒ nothing is ignored. Read by the extension only (it
@@ -376,7 +376,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Sites tab); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Config tab); manager who is also a platform superadmin, via Configuration → Kindoo Config → Home Kindoo Site (`kindoo_expected_site_name` + `kindoo_config`, by dotted path so the wizard's captured `site_name` survives — `spec.md` §15; the superadmin gate there is UI-only, and the superadmin-without-a-manager-role case is T-91); extension configure wizard (`kindoo_config`); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 

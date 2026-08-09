@@ -683,6 +683,17 @@ service cloud.firestore {
       // shape when present; absence is fine. Bootstrap admin path
       // pre-dates the extension and never writes this field, but the
       // validator is no-op when absent so it stays in the predicate.
+      //
+      // NOT widened to platform superadmins. A superadmin editing a
+      // stake's home Kindoo site without holding a role there needs
+      // this branch, and the shape it needs is known — pin
+      // `setup_complete` and `bootstrap_admin_email`, because
+      // `isBootstrapAdmin` is exactly those two fields and an unpinned
+      // grant re-opens the bootstrap hatch on any existing stake. It is
+      // held back with the rest of that path (T-91): the reads it
+      // depends on and the active-stake resolution both need work
+      // first, and shipping the rule alone would be authority with no
+      // consumer.
       allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
         && lastActorMatchesAuth(request.resource.data)
         && validKindooConfig(request.resource.data);
