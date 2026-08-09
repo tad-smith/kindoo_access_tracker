@@ -28,7 +28,8 @@ infra/
 │   ├── resend-api-key-setup.md
 │   ├── custom-domain.md
 │   ├── extension-deploy.md
-│   └── granting-importer-sheet-access.md
+│   ├── granting-importer-sheet-access.md
+│   └── bootstrap-admin-recovery.md
 ├── ci/
 │   └── workflows/
 │       └── test.yml
