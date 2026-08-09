@@ -641,6 +641,67 @@ main.sba-panel {
   word-break: break-word;
 }
 
+/* Stake picker — one selectable row per candidate stake. Card rows, not
+ * primary buttons: this is a list of equal choices, and at panel width a
+ * stake name wraps to two lines, so the name and its match caption have
+ * to stack rather than share a centred line. */
+.sba-stake-picker-list {
+  list-style: none;
+  margin: 0.25rem 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sba-stake-picker-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--sba-border);
+  border-radius: 6px;
+  background: var(--sba-bg);
+  color: var(--sba-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sba-stake-picker-btn:hover:not(:disabled) {
+  background: var(--sba-surface);
+  border-color: var(--sba-primary);
+}
+
+.sba-stake-picker-btn:focus-visible {
+  outline: 2px solid var(--sba-primary);
+  outline-offset: 1px;
+}
+
+.sba-stake-picker-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The row being saved keeps full weight while its siblings dim — with
+ * every row disabled at once, opacity alone doesn't say which was
+ * clicked. */
+.sba-stake-picker-btn[data-pending='true']:disabled {
+  opacity: 1;
+  background: var(--sba-surface);
+  border-color: var(--sba-primary);
+}
+
+.sba-stake-picker-label {
+  font-weight: 600;
+}
+
+.sba-stake-picker-match {
+  font-size: 11px;
+}
+
 /* Tabbed-shell chrome: gray toolbar (email + Sign out) + underline tab
  * bar. Toolbar reuses the visual weight of .sba-header (surface bg +
  * border) so existing panels feel anchored under it. */

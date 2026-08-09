@@ -74,16 +74,17 @@ export function StakePicker({ email, eid, candidates, onPick }: StakePickerProps
             <li key={c.stakeId}>
               <button
                 type="button"
-                className="sba-btn sba-btn-primary sba-stake-picker-btn"
+                className="sba-stake-picker-btn"
                 onClick={() => {
                   void handle(c.stakeId);
                 }}
                 disabled={pending !== null}
+                data-pending={pending === c.stakeId ? 'true' : 'false'}
                 data-testid={`sba-stake-picker-${c.stakeId}`}
               >
                 <span className="sba-stake-picker-label">{c.label}</span>
                 <span className="sba-stake-picker-match sba-muted">
-                  {c.match === 'home' ? '(home site)' : `(foreign site: ${c.siteLabel ?? '?'})`}
+                  {c.match === 'home' ? 'Home site' : `Foreign site: ${c.siteLabel ?? '?'}`}
                 </span>
               </button>
             </li>
