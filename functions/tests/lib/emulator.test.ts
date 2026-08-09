@@ -361,15 +361,28 @@ describe('sweepFirestore (T-97 retry)', () => {
     // `outOfTime` is false and the latch branch is never entered at all —
     // an earlier version of this test used those and therefore could not
     // fail however the guards were written.
+    // Signal-aware, and that matters: once the remaining budget is shorter
+    // than the drop delay the ABORT wins the race, so later attempts
+    // terminate as `TimeoutError` rather than `ECONNRESET`. A stub that
+    // ignored `init.signal` would model a race that cannot happen and hide
+    // whether the guard works at all.
     const slowDrop = () => {
       const calls: string[] = [];
       vi.stubGlobal(
         'fetch',
-        vi.fn(async () => {
-          calls.push('DELETE');
-          await new Promise((r) => setTimeout(r, 160));
-          throw transportError('ECONNRESET');
-        }),
+        vi.fn(
+          (_input: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              calls.push('DELETE');
+              const timer = setTimeout(() => reject(transportError('ECONNRESET')), 160);
+              init?.signal?.addEventListener('abort', () => {
+                clearTimeout(timer);
+                reject(
+                  new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+                );
+              });
+            }),
+        ),
       );
       return calls;
     };
@@ -377,14 +390,13 @@ describe('sweepFirestore (T-97 retry)', () => {
 
     for (let sweep = 1; sweep <= 2; sweep++) {
       slowDrop();
-      await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(
-        /ECONNRESET/,
-      );
+      await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(/failed/);
     }
 
-    // Two budget-eating sweeps, but drops rather than silence: still no latch.
+    // Two budget-eating sweeps, but a connection existed and broke each
+    // time — evidence of life, so no strike however the sweep terminated.
     const third = slowDrop();
-    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(/ECONNRESET/);
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(/failed/);
     expect(third.length).toBeGreaterThan(0);
   });
 

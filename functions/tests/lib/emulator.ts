@@ -188,8 +188,20 @@ function describeFetchError(err: unknown): string {
  * `TypeError: Failed to parse URL` — fail on the first attempt.
  */
 function isRetryableFetchError(err: unknown): boolean {
+  return isDeadlineAbort(err) || isTransportDrop(err);
+}
+
+function isDeadlineAbort(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+}
+
+/**
+ * A connection that existed and then dropped — which, unlike silence, is
+ * evidence the emulator is reachable. {@link sweepFirestore} counts it as
+ * contact for the purpose of not latching.
+ */
+function isTransportDrop(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  if (err.name === 'TimeoutError' || err.name === 'AbortError') return true;
   const code = (err as { cause?: { code?: unknown } }).cause?.code;
   return typeof code === 'string' && RETRYABLE_FETCH_CODES.has(code);
 }
@@ -292,6 +304,7 @@ export async function sweepFirestore(
   // final error still carries the `Transaction lock timeout` body that
   // explains WHY the sweep was slow — the diagnostic this all exists for.
   let lastResponse: string | undefined;
+  let contactedEmulator = false;
   let terminalCause: unknown;
   for (let attempt = 1; ; attempt++) {
     terminalCause = undefined;
@@ -323,6 +336,7 @@ export async function sweepFirestore(
       }
       detail = `${res.status} ${await res.text()}`;
       lastResponse = detail;
+      contactedEmulator = true;
       retryable = RETRYABLE_SWEEP_STATUSES.has(res.status);
     } catch (err) {
       // The deadline abort, or a transport failure such as a socket reset.
@@ -331,6 +345,7 @@ export async function sweepFirestore(
       // for the ones no amount of waiting fixes.
       detail = describeFetchError(err);
       terminalCause = err;
+      if (isTransportDrop(err)) contactedEmulator = true;
       retryable = isRetryableFetchError(err);
     }
 
@@ -343,13 +358,19 @@ export async function sweepFirestore(
       // never answered at all — i.e. the terminal failure is the deadline
       // abort, with no HTTP response anywhere in the attempts.
       //
-      // Both halves matter. A 409 means it answered, just slowly, which is
-      // the T-97 scenario itself: latching there would turn one failed test
-      // into a failed file, all of them claiming "not answering" when it
-      // demonstrably was. And transport drops that eat the whole budget are
-      // a flappy socket rather than a hung emulator — quick drops never
-      // reach here at all, since `outOfTime` excludes them, so it is the
-      // slow ones this guard is actually about.
+      // "Contact" is any sign of life, not just an HTTP response: a 409
+      // means it answered slowly (the T-97 scenario itself), and a
+      // transport drop means a connection existed and broke. Latching on
+      // either would turn one failed test into a failed file, every hook
+      // claiming nothing responded when something demonstrably did.
+      //
+      // Response alone is not enough, and this is subtle: with a
+      // per-attempt `AbortSignal`, a flappy socket usually does NOT
+      // terminate as a drop. Once the remaining budget is shorter than the
+      // drop delay the abort wins the race, so the terminal error is a
+      // `TimeoutError` with no response recorded — indistinguishable from
+      // silence unless the earlier drops are remembered. Hence a sticky
+      // flag rather than a check on the terminal cause.
       //
       // KNOWINGLY NOT BOUNDED: an emulator that 409s every sweep costs
       // ~700ms × ~500 calls ≈ 6 min, the same runaway `ECONNREFUSED` is
@@ -362,10 +383,7 @@ export async function sweepFirestore(
       // failure, replacing N independent named failures with one. Paying
       // ~6 min on an already-red run is the better side of that trade for
       // a case never yet observed. Revisit if it ever is.
-      const abortedOnDeadline =
-        terminalCause instanceof Error &&
-        (terminalCause.name === 'TimeoutError' || terminalCause.name === 'AbortError');
-      if (outOfTime && abortedOnDeadline && lastResponse === undefined) {
+      if (outOfTime && !contactedEmulator) {
         consecutiveSilentSweeps += 1;
       } else {
         consecutiveSilentSweeps = 0;
