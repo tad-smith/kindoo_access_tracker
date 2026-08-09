@@ -61,18 +61,27 @@ function normalise(s: string): string {
 const warnedCollisions = new Set<string>();
 
 /**
- * Normalised variant → `ward_code`, with **first registration winning**.
+ * Normalised variant → `ward_code`, registered in **`ward_code` order**
+ * with **first registration winning**.
  *
  * Two units in one stake can produce overlapping variant sets: `"Maple"`
  * and `"Maple Ward"` both yield `maple` + `maple ward`, and a branch
  * `"Olive Branch"` overlaps a ward `"Olive Branch Ward"` on
- * `olive branch`. Last-write-wins would hand the contested key to
- * whichever unit happened to come later in `wards` and silently
- * attribute the other unit's Kindoo users to it — Sync then proposes
- * seat writes against the wrong unit, which is worse than not resolving
- * at all. First-wins makes the outcome independent of array order; the
- * warn makes the config error visible in DevTools. The real fix is
+ * `olive branch`. Whoever wins the contested key silently absorbs the
+ * other unit's Kindoo users, and Sync then proposes seat writes against
+ * the wrong unit — worse than not resolving at all. So the winner must
+ * not depend on the order Firestore happened to hand `wards` over:
+ * sorting on `ward_code` first — the immutable doc ID, hence a stable
+ * total order — makes the contested key go to the same unit every run.
+ * The warn makes the config error visible in DevTools. The real fix is
  * renaming one of the two units in SBA.
+ *
+ * First-wins rather than last-wins over that sorted list, because a
+ * later unit still keeps every variant the earlier one did not claim.
+ * In the branch/ward shape the branch's key set is a subset of the
+ * ward's, so when the branch sorts first both units still resolve —
+ * last-wins would hand `Olive Branch Ward` both keys and leave the
+ * branch resolving to nothing.
  *
  * The warn is deduped across calls: `parseDescription` runs once per
  * Kindoo user per Sync pass, and a name collision persists for the whole
@@ -80,7 +89,13 @@ const warnedCollisions = new Set<string>();
  */
 function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): Map<string, string> {
   const lookup = new Map<string, string>();
-  for (const w of wards) {
+  // Code-unit compare, not `localeCompare`: collation can rank two
+  // distinct ids equal, which would put array order back in the
+  // tie-break. Sorted on a copy — `wards` belongs to the caller.
+  const ordered = [...wards].sort((a, b) =>
+    a.ward_code < b.ward_code ? -1 : a.ward_code > b.ward_code ? 1 : 0,
+  );
+  for (const w of ordered) {
     for (const key of kindooScopeNameVariants(w.ward_name)) {
       const owner = lookup.get(key);
       if (owner === undefined) {
@@ -121,8 +136,9 @@ function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): M
  * optional in SBA, so a ward stored either way resolves against a
  * description written either way. A branch has one form — Kindoo never
  * renders `"Peterson Branch Ward"`. Two units whose variant sets overlap
- * contest a key; the first one registered keeps it and the collision is
- * warned about — see `buildWardLookup`.
+ * contest a key; the lower `ward_code` keeps it — independent of the
+ * order `wards` arrives in — and the collision is warned about. See
+ * `buildWardLookup`.
  *
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or

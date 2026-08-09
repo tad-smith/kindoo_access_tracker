@@ -273,31 +273,38 @@ describe('parseDescription — unit name collisions', () => {
     vi.restoreAllMocks();
   });
 
-  it('gives a contested key to the first unit registered, not the last', () => {
+  it('gives a contested key to the lower ward_code, not the first registered', () => {
+    // C1 arrives second and still wins: registration is sorted on
+    // ward_code, so the tie-break is a property of the config.
     const units = [
-      { ward_code: 'C1', ward_name: 'Cedar' },
       { ward_code: 'C2', ward_name: 'Cedar Ward' },
+      { ward_code: 'C1', ward_name: 'Cedar' },
     ];
     expect(parseDescription('Cedar Ward (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
     expect(parseDescription('Cedar (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
   });
 
   it('resolves the same way whichever order the colliding units arrive in', () => {
-    const reversed = [
-      { ward_code: 'C2', ward_name: 'Cedar Ward' },
+    // Same pair, both array orders, same winner — the result is a
+    // function of the config rather than of the order Firestore
+    // happened to hand the wards over.
+    const forward = [
       { ward_code: 'C1', ward_name: 'Cedar' },
+      { ward_code: 'C2', ward_name: 'Cedar Ward' },
     ];
-    // Same pair, opposite array order: the winner is whoever is first,
-    // so the result is a function of the config rather than of the
-    // order Firestore happened to hand the wards over.
-    expect(parseDescription('Cedar Ward (Bishop)', STAKE, reversed).segments[0]?.scope).toBe('C2');
-    expect(parseDescription('Cedar (Bishop)', STAKE, reversed).segments[0]?.scope).toBe('C2');
+    const reversed = [...forward].reverse();
+    for (const units of [forward, reversed]) {
+      expect(parseDescription('Cedar Ward (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
+      expect(parseDescription('Cedar (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
+    }
   });
 
   it('keeps the branch on the shared key and leaves the ward its own key', () => {
     // "Olive Branch" yields only `olive branch`; "Olive Branch Ward"
     // yields `olive branch` + `olive branch ward`. They contest the
-    // first; the second is uncontested and must still resolve.
+    // first; the second is uncontested and must still resolve. OB sorts
+    // ahead of OW, so the branch takes the contested key — the shape
+    // where both units resolve.
     const units = [
       { ward_code: 'OB', ward_name: 'Olive Branch' },
       { ward_code: 'OW', ward_name: 'Olive Branch Ward' },
