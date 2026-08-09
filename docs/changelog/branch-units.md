@@ -17,6 +17,10 @@ Four surfaces were rewired onto it: `resolveScopeName` in `extension/src/content
 
 The web copy for the three fields that take a unit name — the bootstrap wizard's Step 3, Configuration → Wards, and Wards to Ignore in Kindoo — is now `Ward or branch name`, from `WARD_NAME_LABEL` in `apps/web/src/lib/wardCopy.ts`. The two fields that *create* a unit also carry `WARD_NAME_HINT`, which states the suffix rule.
 
+**A fifth module is new — the uniqueness guard, `packages/shared/src/unitNameCollision.ts`.** `findUnitNameCollision(name, existingNames)` returns the first existing unit whose `kindooScopeNameVariants` set intersects the candidate's, and `unitNameCollisionMessage` wraps it in the rejection copy. Both surfaces that create a unit consume it: Configuration → Wards through `duplicateWardNameBlocker`, and the wizard's Step 3 directly against its pending list. This is a behaviour change, not a refactor — a create or rename into a collision is now **blocked** where it previously saved. `Maple` beside a stored `Maple Ward` is refused, and so is a branch `Olive Branch` beside a ward `Olive Branch Ward`, whose canonical names differ but which both claim the lookup key `olive branch`. The message names which of the three cases fired, because the latter two read as false positives otherwise. That closes **B-20**, which this PR surfaced and fixed in the same PR.
+
+Rewiring `collidesWithOwnWard` onto the shared variants (the third surface above) flips a result too: `collidesWithOwnWard('Pine', ['Pine Ward'])` was `false` and is now `true`, so Wards to Ignore refuses an entry naming the stake's own unit whichever form either side is spelled in.
+
 ## Why
 
 **The rule already existed; it just existed three times.** The `" Ward"` suffix has always been optional in SBA and mandatory in Kindoo's rendering, and each consumer had solved that for itself. Their comments had drifted into mutual contradiction: `kindooIgnoredWards.ts` asserted SBA "stores `ward_name` without the trailing `" Ward"`", `packages/shared/src/types/ward.ts` documented the field as a display name reading `"3rd Ward"`, and `provision.ts`'s `wardScopeDisplayName` appended conditionally, agreeing with neither. Each was right about its own path and wrong about the others'. That is the invisible-drift failure `packages/shared` exists to prevent (`packages/shared/CLAUDE.md`), and it is why the branch case could not be added by patching any single site — three copies would have become three copies with a branch case each.
@@ -38,15 +42,16 @@ The web copy for the three fields that take a unit name — the bootstrap wizard
 ## Known issues / deferred
 
 - **T-96 — branch-specific callings.** Fully specified and deliberately not implemented: the six branch callings, the 19 ward-family entries that carry over unchanged, and the four that grant app access — Branch President, Branch Presidency First / Second Counselor, Branch Clerk, plus Elders Quorum President when `stake.eq_president_app_access` is on, which the operator confirmed extends to branches. Matching stays exact with no wildcards; the four "families" are the entries already in `callingSortOrder.ts`, not a prefix rule. What remains open is the implementation shape: `AppAccessOptions` needs a `unitType`, and `syncApplyFix.ts` calls `filterAppAccessCallings` at `:302`, before the ward doc is read at `:311`, under a read that is itself conditional — plus three sibling call sites with no ward read at all.
-- **B-20 — `Maple` and `Maple Ward` can both be created.** `duplicateWardNameBlocker` compares raw `ward_name`, so the guard does not know the two forms name the same unit; they slug to different doc IDs, so the transaction backstop misses it too. Low severity (it takes an operator adding the same unit twice under two spellings) but the consequence is silent mis-resolution, since both wards register the same lookup keys and the later one wins.
+- **B-20 — `Maple` and `Maple Ward` could both be created. Fixed in this PR**, by `unitNameCollision.ts` above. Listed here because it was found while documenting the PR, not carried out of it.
+- **B-21 — a lone ward in a place named "…Branch" is silently classified as a branch.** The field hint stops short of the `Olive Branch` / `Olive Branch Ward` case, an accepted operator call to keep it short, and the collision guard does **not** compensate: it needs two units to compare, so it only covers the stake holding both. The single-unit case — the stake's only unit there is a ward, the operator types `Olive Branch`, nothing collides — stores a branch, and the provisioner's strict `!==` then rewrites the church-provisioned Description on every pass. Unmitigated by design for now.
 
 ## Doc edits
 
 - `docs/architecture.md` — new **D31**, the unit-name → Kindoo scope-name contract.
-- `docs/spec.md` — §3.2 wards bullet carries the contract; §5.3 gains the ward-form label + hint and the B-20 caveat; §9's email row label is no longer always `Ward`; §10 Step 3 notes the shared label; §15's two "bare form + `" Ward"`-suffixed form" claims replaced with the variants rule.
+- `docs/spec.md` — §3.2 wards bullet carries the contract; §5.3 gains the ward-form label + hint, the variant-set uniqueness rule, and the B-21 caveat naming what the guard does *not* cover; §9's email row label is no longer always `Ward`; §10 Step 3 states the variant rule against the pending list; §15's two "bare form + `" Ward"`-suffixed form" claims replaced with the variants rule.
 - `docs/firebase-schema.md` — §4.2: `ward_name` field comment, the contract table, and the doc-ID note that the slug is not normalised.
 - `docs/TASKS.md` — new **T-96**; T-88's own-ward-collision claim amended.
-- `docs/BUGS.md` — new **B-20**.
+- `docs/BUGS.md` — **B-20**, filed and closed within this PR; new **B-21**.
 - `docs/user-guide/kindoo-managers.html` — §2 gains a "Naming a ward or a branch" callout.
 - `packages/shared/src/types/ward.ts` — the `ward_name` docstring, which said "Display name (`"3rd Ward"`, etc.)" and contradicted the extension.
 - `packages/shared/CLAUDE.md` — the unit-name rule named alongside the other shared predicates.
