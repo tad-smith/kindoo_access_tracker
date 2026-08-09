@@ -204,9 +204,11 @@ export async function sweepFirestore(
   { deadlineMs = CLEAR_BUDGET_MS }: { deadlineMs?: number } = {},
 ): Promise<void> {
   // Same reasoning as `waitForDelivery` below: once a sweep has spent its
-  // whole budget, the emulator is not answering and the next ~500 calls
-  // would each pay the same budget to learn the same thing. Every test
-  // still fails, named, and immediately.
+  // whole budget without the emulator answering at all, every later hook
+  // in this file would pay the same budget to learn the same thing. Module
+  // state is per test file (vitest isolates modules), so this bounds a
+  // hung emulator at one budget per FILE — not per run. Every test still
+  // fails, named, and immediately.
   if (sweepAbandoned) {
     throw new Error(
       'clearEmulators(Firestore) skipped: an earlier sweep exhausted its budget — ' +
@@ -258,10 +260,16 @@ export async function sweepFirestore(
     if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
       const carried =
         lastResponse && lastResponse !== detail ? `; last response: ${lastResponse}` : '';
-      // Latch only on an exhausted budget/attempt ceiling — a fail-fast
-      // classification (a bad URL, a 400) is this call's problem, not
-      // evidence that the emulator has gone away.
-      if (attempt >= SWEEP_ATTEMPTS || outOfTime) sweepAbandoned = true;
+      // Latch only when the emulator never ANSWERED — hung or absent, the
+      // runaway this guards. A 409 means it answered, just slowly, which is
+      // the T-97 scenario itself: latching there would turn one failed test
+      // into a failed file, all of them claiming "not answering" when it
+      // demonstrably was. A fail-fast classification (a bad URL, a 400)
+      // never latches either — that is this call's problem, not the
+      // emulator's.
+      if ((attempt >= SWEEP_ATTEMPTS || outOfTime) && lastResponse === undefined) {
+        sweepAbandoned = true;
+      }
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
           `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}${carried}`,

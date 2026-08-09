@@ -221,20 +221,35 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('short-circuits later sweeps once one has exhausted its budget', async () => {
-    // ~500 calls each paying the full budget against a wedged emulator is
-    // the same runaway the delivery-wait latch exists to stop.
-    stubFetch(aborted);
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(/failed after 4 attempt/);
+  it('short-circuits later sweeps once a non-answering emulator burned a budget', async () => {
+    // Every hook in the file paying the full budget against a hung
+    // emulator is the runaway the delivery-wait latch also exists to stop.
+    stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 150 })).rejects.toThrow(
+      /failed after 1 attempt/,
+    );
 
-    const calls = stubFetch(aborted);
+    const calls = stubHangingFetch();
     const started = Date.now();
-    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 150 })).rejects.toThrow(
       /skipped: an earlier sweep exhausted its budget/,
     );
 
     expect(calls).toHaveLength(0);
     expect(Date.now() - started).toBeLessThan(50);
+  });
+
+  it('does NOT latch when the emulator answered — the T-97 case itself', async () => {
+    // A slow contended DELETE answers 409 and can still run out of budget.
+    // Latching there would turn one failed test into a failed file, every
+    // one of them claiming "the emulator is not answering" when it was.
+    stubFetch(aborted);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(/failed after 4 attempt/);
+
+    // The next sweep must still make a real request and be able to succeed.
+    const calls = stubFetch(ok);
+    await sweepFirestore(URL_UNDER_TEST);
+    expect(calls).toHaveLength(1);
   });
 });
