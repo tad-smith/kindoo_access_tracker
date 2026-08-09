@@ -194,11 +194,24 @@ export function deliveryWaitsAbandoned(): boolean {
  * just stop paying for a verdict already reached. Module scope means the
  * latch is per test file (vitest isolates modules).
  *
- * Worst case is therefore one settle budget per file, PLUS one budget per
- * non-latching call site (see below) — `syncManagersClaims.test.ts` can
- * spend 3 × 40s, `syncAccessClaims.test.ts` 2 × 40s, so ~6.7 min across
- * the suite rather than ~4.7. Still far inside the 20-minute cap, but this
- * is the number to size against when adding a wait.
+ * The two failure modes do NOT sum, because every test here performs a
+ * latched settle BEFORE any non-latching wait, and a failed `expect`
+ * aborts its test:
+ *
+ * - Delivery stopped → the first settle in each file spends one budget
+ *   and latches; every later settle short-circuits and every test aborts
+ *   before reaching a non-latching wait. ~7 files × 40s ≈ 4.7 min.
+ * - Delivery healthy, a handler regressed → settles pass in milliseconds
+ *   and only the non-latching waits spend anything. At most five are
+ *   reachable (3 × `claimsAfterClear`, plus `flipped` / `minted` in the
+ *   e2e file; `revoked` sits behind `minted`). ≈ 3.3 min.
+ *
+ * So ~4.7 min, well inside the 20-minute cap.
+ *
+ * What is NOT bounded: delivery that is uniformly SLOW rather than
+ * stopped. Nothing latches, because every wait succeeds — just barely —
+ * and ~44 near-budget waits would exceed the cap on their own. The latch
+ * cannot help there; only lowering the budget or raising the cap would.
  *
  * ONLY for predicates whose staying false means "nothing was delivered".
  * A predicate that can legitimately stay false while delivery is healthy
