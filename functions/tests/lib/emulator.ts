@@ -250,6 +250,15 @@ export function _resetSweepLatch(): void {
  * {@link clearEmulators} subtracts the Auth half's actual cost before
  * handing the remainder to {@link sweepFirestore}, so a slow Auth half
  * shrinks the sweep's slice rather than pushing the pair over.
+ *
+ * SCOPE: this bounds the SWEEP, not the hook. The Auth half carries no
+ * deadline of its own — the Admin SDK calls take no signal — and the 1s
+ * floor below means a very slow Auth half cannot shrink the sweep's slice
+ * to nothing. So `clearEmulators` can in principle still overrun the
+ * `hookTimeout` and report `Hook timed out` with no attempt count; what is
+ * guaranteed is only that the SWEEP will not be the half that causes it.
+ * Not treated as urgent because the Auth half measures ≤84ms here, and the
+ * hung-Firestore-with-healthy-Auth case this all targets is unaffected.
  */
 const CLEAR_BUDGET_MS = 8_500;
 
@@ -334,9 +343,16 @@ export async function sweepFirestore(
         consecutiveSilentSweeps = 0;
         return;
       }
+      // Record contact BEFORE reading the body. `res.text()` streams under
+      // the same signal, so a response whose body lands near the deadline
+      // aborts mid-read — and if the flag were set afterwards, an emulator
+      // that demonstrably answered would be counted as silence, which is
+      // the single distinction this design rests on. Keep the status too,
+      // so the final error still names it when the body never arrives.
+      contactedEmulator = true;
+      lastResponse = `${res.status}`;
       detail = `${res.status} ${await res.text()}`;
       lastResponse = detail;
-      contactedEmulator = true;
       retryable = RETRYABLE_SWEEP_STATUSES.has(res.status);
     } catch (err) {
       // The deadline abort, or a transport failure such as a socket reset.

@@ -356,6 +356,58 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(third.length).toBeGreaterThan(0);
   });
 
+  it('counts a response as contact even when its body read aborts', async () => {
+    // `res.text()` streams under the same signal, so a 409 whose body lands
+    // near the deadline aborts mid-read. If contact were recorded after the
+    // read, an emulator that demonstrably answered would count as silence
+    // and two such sweeps would arm the latch.
+    const answerThenStallBody = () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_input: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(
+                  new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+                ),
+              );
+              // Headers arrive; the body never does. The stream errors on
+              // abort, which is how a real fetch body behaves — a
+              // hand-built Response is not wired to the signal otherwise,
+              // and `res.text()` would simply hang forever.
+              resolve(
+                new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      init?.signal?.addEventListener('abort', () =>
+                        controller.error(
+                          new DOMException(
+                            'The operation was aborted due to timeout',
+                            'TimeoutError',
+                          ),
+                        ),
+                      );
+                    },
+                  }),
+                  { status: 409 },
+                ),
+              );
+            }),
+        ),
+      );
+    };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    for (let sweep = 1; sweep <= 3; sweep++) {
+      answerThenStallBody();
+      const err = await sweepFirestore(URL_UNDER_TEST, { deadlineMs: 200 }).catch((e: Error) => e);
+      // Never the latch message: the emulator answered every time.
+      expect(String(err)).not.toMatch(/consecutive sweeps/);
+      expect(String(err)).toMatch(/last response: 409/);
+    }
+  });
+
   it('does NOT latch on transport drops that eat the budget — flappy is not hung', async () => {
     // Must be SLOW drops. Quick ones finish inside the budget, so
     // `outOfTime` is false and the latch branch is never entered at all —
