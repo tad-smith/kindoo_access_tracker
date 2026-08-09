@@ -157,12 +157,17 @@ const RETRYABLE_FETCH_CODES = new Set(['ECONNRESET', 'UND_ERR_SOCKET']);
 function describeFetchError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   const cause = (err as { cause?: { code?: unknown; message?: unknown } }).cause;
-  const extra =
-    typeof cause?.message === 'string'
-      ? cause.message
-      : typeof cause?.code === 'string'
-        ? cause.code
-        : undefined;
+  // The message must be non-EMPTY, not merely a string: resolving through
+  // `localhost` rather than `127.0.0.1` makes undici's cause an
+  // `AggregateError` whose `message` is `''` while `code` still says
+  // `ECONNREFUSED` (measured on Node 22.22.2). Preferring the blank
+  // message there would drop the errno and report `fetch failed` alone —
+  // the regression this function exists to prevent, for one host spelling.
+  // `requireEmulators`'s docblock explicitly allows manual env vars, so
+  // `FIRESTORE_EMULATOR_HOST=localhost:8080` is a supported input.
+  const message = typeof cause?.message === 'string' && cause.message ? cause.message : undefined;
+  const code = typeof cause?.code === 'string' ? cause.code : undefined;
+  const extra = message ?? code;
   return extra ? `${err.name}: ${err.message} (${extra})` : `${err.name}: ${err.message}`;
 }
 
@@ -189,11 +194,25 @@ function isRetryableFetchError(err: unknown): boolean {
   return typeof code === 'string' && RETRYABLE_FETCH_CODES.has(code);
 }
 
-let sweepAbandoned = false;
+/**
+ * Consecutive budget-exhausting sweeps before {@link sweepFirestore} stops
+ * trying. Two, not one, because one is not evidence.
+ *
+ * A single contended DELETE that takes longer than the budget aborts with
+ * no response recorded — indistinguishable, from inside one call, from an
+ * emulator that is hung. Arming on that would red the rest of the file
+ * with a wrong cause, which is the misattribution this task is about, and
+ * the quantity that decides it (how long a contended DELETE takes) is the
+ * one this code openly does not know. Requiring two in a row keeps the
+ * wall-clock bound while making a misfire need two consecutive >8.5s
+ * silences rather than one.
+ */
+const SWEEP_STRIKES = 2;
+let consecutiveSilentSweeps = 0;
 
 /** Test-only: clear the {@link sweepFirestore} latch between cases. */
 export function _resetSweepLatch(): void {
-  sweepAbandoned = false;
+  consecutiveSilentSweeps = 0;
 }
 
 /**
@@ -258,10 +277,12 @@ export async function sweepFirestore(
   // state is per test file (vitest isolates modules), so this bounds a
   // hung emulator at one budget per FILE — not per run. Every test still
   // fails, named, and immediately.
-  if (sweepAbandoned) {
+  if (consecutiveSilentSweeps >= SWEEP_STRIKES) {
+    // Factual, not a diagnosis: it reports what was observed rather than
+    // asserting what is wrong with the emulator.
     throw new Error(
-      'clearEmulators(Firestore) skipped: an earlier sweep exhausted its budget — ' +
-        'the emulator is not answering, see the first failure for the response',
+      `clearEmulators(Firestore) skipped: ${SWEEP_STRIKES} consecutive sweeps ` +
+        'exhausted their budget with no response — see the first failure',
     );
   }
   const deadline = Date.now() + deadlineMs;
@@ -326,7 +347,9 @@ export async function sweepFirestore(
         terminalCause instanceof Error &&
         (terminalCause.name === 'TimeoutError' || terminalCause.name === 'AbortError');
       if (outOfTime && abortedOnDeadline && lastResponse === undefined) {
-        sweepAbandoned = true;
+        consecutiveSilentSweeps += 1;
+      } else {
+        consecutiveSilentSweeps = 0;
       }
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +

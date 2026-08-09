@@ -249,20 +249,56 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('short-circuits later sweeps once a non-answering emulator burned a budget', async () => {
+  it('short-circuits only after TWO consecutive silent sweeps', async () => {
     // Every hook in the file paying the full budget against a hung
-    // emulator is the runaway the delivery-wait latch also exists to stop.
+    // emulator is the runaway this guards. But one silent sweep is not
+    // evidence: a single contended DELETE slower than the budget looks
+    // identical from inside one call, and arming on it would red the file
+    // with a wrong cause.
     stubHangingFetch();
-    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 150 })).rejects.toThrow(
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(
       /failed after 1 attempt/,
     );
 
-    const calls = stubHangingFetch();
-    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 150 })).rejects.toThrow(
-      /skipped: an earlier sweep exhausted its budget/,
+    // Strike one only — this must still make a real request.
+    const second = stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(
+      /failed after 1 attempt/,
     );
+    expect(second).toHaveLength(1);
 
-    expect(calls).toHaveLength(0);
+    // Strike two reached: now it short-circuits.
+    const third = stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(
+      /skipped: 2 consecutive sweeps exhausted their budget with no response/,
+    );
+    expect(third).toHaveLength(0);
+  });
+
+  it('resets the strike count when a sweep succeeds', async () => {
+    stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(/failed/);
+
+    stubFetch(ok);
+    await sweepFirestore(URL_UNDER_TEST);
+
+    // One prior strike must not combine with a later one to short-circuit.
+    stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(
+      /failed after 1 attempt/,
+    );
+  });
+
+  it('reports the errno when the cause message is empty (localhost)', async () => {
+    // Resolving through `localhost` makes undici's cause an AggregateError
+    // whose `message` is '' while `code` still says ECONNREFUSED. Preferring
+    // the blank message drops the errno and reports `fetch failed` alone.
+    const emptyCause = Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' });
+    stubRejectingFetch(99, () => new TypeError('fetch failed', { cause: emptyCause }), ok);
+
+    const err = await sweepFirestore(URL_UNDER_TEST).catch((e: Error) => e);
+
+    expect(String(err)).toContain('ECONNREFUSED');
   });
 
   it('does NOT latch on repeated transport drops — flappy is not hung', async () => {
