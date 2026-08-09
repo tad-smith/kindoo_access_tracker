@@ -30,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { resolveWardBuilding } from '@kindoo/shared';
+import { resolveWardBuilding, unitType } from '@kindoo/shared';
 import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -84,6 +84,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 import { toast } from '../../../lib/store/toast';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../../lib/wardCopy';
 
 export type ConfigTabKey =
   | 'config'
@@ -223,6 +224,13 @@ function WardsTab() {
   // case shows the hint and the populated case enables Add.
   const buildingsReady = buildings.data !== undefined;
   const noBuildings = buildingsReady && buildings.data!.length === 0;
+  // The unique-display-name guard runs against the wards snapshot, and
+  // an empty list reads as "nothing to collide with" — a submit landing
+  // before the snapshot hydrates would save unconditionally, and the
+  // mutation's slug backstop doesn't cover it ("Maple" and "Maple Ward"
+  // slug apart). So Add waits on both catalogues, exactly as
+  // IgnoredWardsSection waits on `wards.data !== undefined`.
+  const ready = buildingsReady && wards.data !== undefined;
 
   return (
     <div className="kd-config-section">
@@ -230,11 +238,11 @@ function WardsTab() {
         title="Wards"
         addLabel="Add Ward"
         onAdd={() => {
-          if (!buildingsReady || noBuildings) return;
+          if (!ready || noBuildings) return;
           setOpenMode('add');
         }}
         testid="config-wards"
-        addDisabled={!buildingsReady || noBuildings}
+        addDisabled={!ready || noBuildings}
         addDisabledHint={noBuildings ? 'Add a building first.' : 'Loading…'}
       />
       {noBuildings ? (
@@ -390,7 +398,10 @@ function WardFormDialog({
     resolver: zodResolver(wardSchema),
     defaultValues: wardFormDefaults(editingWard, buildingOptions),
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { register, handleSubmit, reset, formState, watch } = form;
+
+  // Advisory, not validation — see WARD_NAME_BRANCH_WARNING.
+  const showsBranchWarning = unitType(watch('ward_name') ?? '') === 'branch';
 
   // Keep the latest buildings snapshot in a ref so the reset effect can
   // read it at open-time WITHOUT depending on its identity. The
@@ -431,9 +442,15 @@ function WardFormDialog({
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ward-form">
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
+        <p className="kd-form-hint">{WARD_NAME_HINT}</p>
+        {showsBranchWarning ? (
+          <p role="status" className="kd-form-error" data-testid="config-ward-branch-warning">
+            {WARD_NAME_BRANCH_WARNING}
+          </p>
+        ) : null}
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}
@@ -1046,7 +1063,8 @@ function IgnoredWardsSection() {
         Building Access — typically a neighbouring stake whose wards meet in one of your buildings
         and whose managers provision their own members. Sync skips them, so they aren’t reported as
         members missing a seat. Enter the ward exactly as it appears in Kindoo descriptions, without
-        the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>.
+        the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>, or{' '}
+        <code>Peterson Branch</code> to skip <code>Peterson Branch (Branch President)</code>.
       </p>
 
       <IgnoredWardDialog
@@ -1148,7 +1166,7 @@ function IgnoredWardDialog({
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ignored-ward-form">
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input
             {...register('ward')}
             placeholder="Ward name as Kindoo shows it"

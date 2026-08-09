@@ -108,6 +108,7 @@ vi.mock('../auth/signOut', () => ({
 }));
 
 import { BootstrapWizardPage, nextBlocker } from './BootstrapWizardPage';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT } from '../../lib/wardCopy';
 
 function liveResult<T>(data: T[] | undefined) {
   return {
@@ -120,6 +121,24 @@ function liveResult<T>(data: T[] | undefined) {
     isError: false,
     isFetching: false,
     fetchStatus: 'idle',
+  };
+}
+
+// Pending state for a live hook: the snapshot hasn't arrived yet.
+// Mirrors the envelope `useFirestoreCollection` exposes during its
+// initial load — `liveResult(undefined)` would claim `status: 'success'`,
+// which is not the state under test.
+function loadingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
   };
 }
 
@@ -625,6 +644,86 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  it('tells the manager the " Ward" suffix is optional but a branch must end in " Branch"', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    expect(screen.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+    expect(WARD_NAME_HINT).toMatch(/“ Ward” suffix is optional/);
+    expect(WARD_NAME_HINT).toMatch(/A branch must end in “ Branch”, e\.g\. “Peterson Branch”\./);
+    // Deliberately short: the Olive-Branch-is-really-a-ward case is rare
+    // enough that spelling it out here costs more than it saves. The
+    // uniqueness guard still rejects the colliding pair at entry.
+    expect(WARD_NAME_HINT).not.toMatch(/Olive Branch/);
+    // And it must not claim the name is whatever Kindoo displays —
+    // for a bare-stored ward Kindoo shows the SUFFIXED form, so that
+    // sentence contradicted the suffix-is-optional half.
+    expect(WARD_NAME_HINT).not.toMatch(/as Kindoo shows it/);
+  });
+
+  it('warns under the ward-name field as soon as the typed name reads as a branch', async () => {
+    const user = userEvent.setup();
+    // A building has to exist for Add ward to be enabled at all —
+    // otherwise the enabled-ness assertion below proves nothing.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+
+    await user.type(input, 'Olive Branch');
+    const warning = await screen.findByTestId('bootstrap-ward-branch-warning');
+    expect(warning).toHaveTextContent(WARD_NAME_BRANCH_WARNING);
+    // Advisory only — it must never gate the submit button.
+    expect(screen.getByRole('button', { name: /Add ward/i })).toBeEnabled();
+  });
+
+  it('hides the branch warning again once the name no longer ends in " Branch"', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+
+    await user.type(input, 'Olive Branch');
+    expect(await screen.findByTestId('bootstrap-ward-branch-warning')).toBeInTheDocument();
+
+    await user.type(input, ' Ward');
+    await vi.waitFor(() =>
+      expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull(),
+    );
+
+    await user.clear(input);
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a plain ward name', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a name ending in "Branch" with no preceding space', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    // Mirrors the classifier's /\sbranch$/i — "Branchville" is a ward,
+    // and so is the degenerate single word "Branch".
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+    await user.type(input, 'Branchville');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+
+    await user.clear(input);
+    await user.type(input, 'Branch');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+  });
+
   it('writes both building_id and building_name when a ward is added', async () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
@@ -634,7 +733,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
     // The select value is the immutable slug, not the display name.
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
@@ -673,10 +772,138 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'maple ward');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'maple ward');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
-    expect(await screen.findByText(/already exists/i)).toBeInTheDocument();
+    expect(await screen.findByText(/already uses the name "Maple Ward"/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('blocks adding "Maple" when "Maple Ward" is already in the list and explains the suffix', async () => {
+    // The optional " Ward" suffix makes these one unit. Letting both in
+    // gave the description parser two units answering to `maple`, and
+    // the later registration silently shadowed the earlier ward.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'maple-ward',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    expect(await screen.findByText(/are the same ward/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('blocks adding "Olive Branch Ward" when the branch "Olive Branch" is already in the list', async () => {
+    // Different canonical names, one shared variant — a canonical-name
+    // comparison would let this pair through.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'olive-branch',
+          ward_name: 'Olive Branch',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Olive Branch Ward');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByRole('button', { name: /Add ward/i }));
+    expect(await screen.findByText(/reads both as "Olive Branch"/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('keeps Add ward disabled with a stated reason while the wards snapshot is in flight', async () => {
+    // The inline collision guard reads `wards.data`. An unresolved
+    // snapshot reads as "no wards to collide with", so a submit landing
+    // first would add a duplicate unconditionally — and the mutation's
+    // slug backstop can't catch it, since "Maple" and "Maple Ward" slug
+    // to different doc ids.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+    const submit = screen.getByTestId('bootstrap-ward-submit');
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAttribute('title', 'Loading…');
+    // Buildings are known and non-empty, so the visible reason is the
+    // load — not the wrong "add a building" hint.
+    expect(screen.getByTestId('bootstrap-ward-blocked-hint')).toHaveTextContent('Loading…');
+  });
+
+  it('does not flash "Add a building first" while the buildings snapshot is in flight', async () => {
+    useBuildingsMock.mockReturnValue(loadingResult());
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const hint = screen.getByTestId('bootstrap-ward-blocked-hint');
+    expect(hint).toHaveTextContent('Loading…');
+    expect(hint).not.toHaveTextContent(/Add a building first/i);
+  });
+
+  it('enables Add ward once the wards snapshot resolves and still rejects a colliding name', async () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    const { rerender } = render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    expect(screen.getByTestId('bootstrap-ward-submit')).toBeDisabled();
+
+    // Snapshot lands, carrying the ward that "Maple" collides with.
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'maple-ward',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    rerender(<BootstrapWizardPage />);
+
+    const submit = screen.getByTestId('bootstrap-ward-submit');
+    expect(submit).toBeEnabled();
+    expect(screen.queryByTestId('bootstrap-ward-blocked-hint')).toBeNull();
+
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(submit);
+    expect(await screen.findByText(/are the same ward/i)).toBeInTheDocument();
     expect(addWardMutate).not.toHaveBeenCalled();
   });
 

@@ -74,7 +74,12 @@ import { Switch } from '../../components/ui/Switch';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
-import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
+import {
+  canonicalEmail as canonicalEmailFn,
+  unitNameCollisionMessage,
+  unitType,
+} from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { accessibleStakes } from '../../lib/activeStake';
 import { useActiveStake, useActiveStakeSwitcher } from '../../lib/useActiveStake';
@@ -599,9 +604,24 @@ function Step3Wards() {
     resolver: zodResolver(wardSchema),
     defaultValues: { ward_name: '', building_id: '', seat_cap: 20 },
   });
-  const { register, handleSubmit, reset, setError, formState } = form;
+  const { register, handleSubmit, reset, setError, formState, watch } = form;
+
+  // Advisory, not validation — see WARD_NAME_BRANCH_WARNING.
+  const showsBranchWarning = unitType(watch('ward_name') ?? '') === 'branch';
 
   const buildingOptions = buildings.data ?? [];
+
+  // The collision guard in `onAdd` runs against the wards snapshot, and
+  // an empty list reads as "nothing to collide with" — a submit landing
+  // before the snapshot hydrates would add a colliding ward
+  // unconditionally, and the mutation's slug backstop doesn't cover it
+  // ("Maple" and "Maple Ward" slug apart). Gate the submit rather than
+  // weakening the guard, matching Configuration → Wards.
+  const noBuildings = buildings.data !== undefined && buildingOptions.length === 0;
+  const submitBlocked = wards.data === undefined || buildings.data === undefined || noBuildings;
+  const blockedHint = noBuildings
+    ? 'Add a building first (Step 2) before adding wards.'
+    : 'Loading…';
 
   async function onAdd(input: WardForm) {
     try {
@@ -610,16 +630,17 @@ function Step3Wards() {
       const selected = buildingOptions.find((b) => b.building_id === input.building_id);
       if (!selected) throw new Error('Selected building no longer exists.');
       // The ward name is now the only visible identifier, so reject inline
-      // a name that collides with a ward already added. Match by NAME
-      // (case-insensitive), not by slug — a slug-only check would miss a
-      // legacy 2-letter-coded ward whose name collides but whose doc id
-      // doesn't. The mutation enforces a slug-existence backstop too.
-      const wanted = input.ward_name.trim().toLowerCase();
-      if ((wards.data ?? []).some((w) => w.ward_name.trim().toLowerCase() === wanted)) {
-        setError('ward_name', {
-          type: 'manual',
-          message: `A ward named "${input.ward_name.trim()}" already exists.`,
-        });
+      // a name that collides with a ward already added. Match by NAME, not
+      // by slug — a slug-only check would miss a legacy 2-letter-coded
+      // ward whose name collides but whose doc id doesn't. Same rule and
+      // copy as Configuration → Wards; the mutation enforces a
+      // slug-existence backstop too.
+      const collision = unitNameCollisionMessage(
+        input.ward_name,
+        (wards.data ?? []).map((w) => w.ward_name),
+      );
+      if (collision) {
+        setError('ward_name', { type: 'manual', message: collision });
         return;
       }
       await addMutation.mutateAsync({
@@ -662,9 +683,15 @@ function Step3Wards() {
       </ul>
       <form onSubmit={handleSubmit(onAdd)}>
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
+        <p className="kd-form-hint">{WARD_NAME_HINT}</p>
+        {showsBranchWarning ? (
+          <p role="status" className="kd-form-error" data-testid="bootstrap-ward-branch-warning">
+            {WARD_NAME_BRANCH_WARNING}
+          </p>
+        ) : null}
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}
@@ -696,12 +723,19 @@ function Step3Wards() {
           </p>
         ) : null}
         <div className="form-actions">
-          <Button type="submit" disabled={addMutation.isPending || buildingOptions.length === 0}>
+          <Button
+            type="submit"
+            disabled={addMutation.isPending || submitBlocked}
+            title={submitBlocked ? blockedHint : undefined}
+            data-testid="bootstrap-ward-submit"
+          >
             {addMutation.isPending ? 'Adding…' : 'Add ward'}
           </Button>
         </div>
-        {buildingOptions.length === 0 ? (
-          <p className="kd-form-hint">Add a building first (Step 2) before adding wards.</p>
+        {submitBlocked ? (
+          <p className="kd-form-hint" data-testid="bootstrap-ward-blocked-hint">
+            {blockedHint}
+          </p>
         ) : null}
       </form>
     </div>
