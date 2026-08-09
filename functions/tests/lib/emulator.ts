@@ -192,8 +192,13 @@ export function deliveryWaitsAbandoned(): boolean {
  * So the first exhausted wait latches and later ones return `false`
  * immediately. Every test still fails on its own named assertion; they
  * just stop paying for a verdict already reached. Module scope means the
- * latch is per test file (vitest isolates modules), which bounds the
- * worst case at one full budget per file.
+ * latch is per test file (vitest isolates modules).
+ *
+ * Worst case is therefore one settle budget per file, PLUS one budget per
+ * non-latching call site (see below) — `syncManagersClaims.test.ts` can
+ * spend 3 × 40s, `syncAccessClaims.test.ts` 2 × 40s, so ~6.7 min across
+ * the suite rather than ~4.7. Still far inside the 20-minute cap, but this
+ * is the number to size against when adding a wait.
  *
  * ONLY for predicates whose staying false means "nothing was delivered".
  * A predicate that can legitimately stay false while delivery is healthy

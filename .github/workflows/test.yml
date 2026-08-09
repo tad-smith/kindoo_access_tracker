@@ -179,7 +179,11 @@ jobs:
         #   budget would exceed this job's `timeout-minutes: 20` and turn
         #   a named assertion failure into an unnamed cancellation. So
         #   `waitForDelivery` LATCHES: the first exhausted wait makes the
-        #   rest return immediately. Bounded at one budget per test file.
+        #   rest return immediately. Bounded at one settle budget per test
+        #   file plus one per non-latching call site (~6.7 min suite-wide).
+        #   A wait whose predicate can stay false while delivery is HEALTHY
+        #   — a handler regression, which is what the test is for — must
+        #   not latch, or one real failure mislabels every later settle.
         #
         #   `onAuthUserCreate` is NOT the only late writer. The deployed
         #   role-sync triggers also fire on the Firestore writes these

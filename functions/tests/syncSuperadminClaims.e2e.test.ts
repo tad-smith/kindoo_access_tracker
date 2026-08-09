@@ -29,8 +29,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   clearEmulators,
+  DELIVERY_WAIT_MS,
+  deliveryWaitsAbandoned,
   hasFunctionsEmulator,
   requireEmulators,
+  waitFor,
   waitForDelivery,
 } from './lib/emulator.js';
 
@@ -102,12 +105,18 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       // the superadmin flag `syncSuperadminClaims` is about to add.
       const user = await auth.createUser({ email: typedEmail });
 
+      const wasAbandoned = deliveryWaitsAbandoned();
       const seeded = await waitForDelivery(async () => {
         const u = await auth.getUser(user.uid);
         const claims = (u.customClaims ?? {}) as { canonical?: string };
         return claims.canonical === canonical;
       });
-      expect(seeded).toBe(true);
+      expect(
+        seeded,
+        wasAbandoned
+          ? 'skipped: an earlier delivery wait in this file exhausted its budget'
+          : `onAuthUserCreate never delivered its baseline claim for ${canonical}`,
+      ).toBe(true);
 
       // Fields shadow `firebase-schema.md` §3.2: `email` (typed),
       // `addedAt` (server timestamp), `addedBy` (canonical email of
@@ -118,11 +127,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
         addedBy: 'operator@example.com',
       });
 
-      const flipped = await waitForDelivery(async () => {
+      const flipped = await waitFor(async () => {
         const u = await auth.getUser(user.uid);
         const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
         return claims.isPlatformSuperadmin === true;
-      });
+      }, DELIVERY_WAIT_MS);
 
       expect(flipped).toBe(true);
     },
@@ -140,12 +149,18 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     // single-delivery author that flakes under CI load.
     const user = await auth.createUser({ email: typedEmail });
 
+    const wasAbandoned = deliveryWaitsAbandoned();
     const seeded = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { canonical?: string };
       return claims.canonical === canonical;
     });
-    expect(seeded).toBe(true);
+    expect(
+      seeded,
+      wasAbandoned
+        ? 'skipped: an earlier delivery wait in this file exhausted its budget'
+        : `onAuthUserCreate never delivered its baseline claim for ${canonical}`,
+    ).toBe(true);
 
     await db.doc(`platformSuperadmins/${canonical}`).set({
       email: typedEmail,
@@ -154,11 +169,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     });
 
     // Step 1: wait for the mint to land via `syncSuperadminClaims`.
-    const minted = await waitForDelivery(async () => {
+    const minted = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin === true;
-    });
+    }, DELIVERY_WAIT_MS);
     expect(minted).toBe(true);
 
     // Step 2: delete the doc, wait for the claim to clear. Eventarc
@@ -166,11 +181,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     // that introduced this test; 40s budget matches the mint test
     // for headroom against future runner regression.
     await db.doc(`platformSuperadmins/${canonical}`).delete();
-    const revoked = await waitForDelivery(async () => {
+    const revoked = await waitFor(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin !== true;
-    });
+    }, DELIVERY_WAIT_MS);
     expect(revoked).toBe(true);
   });
 });
