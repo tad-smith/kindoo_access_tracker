@@ -459,32 +459,28 @@ async function applyKindooOnly(
         last_modified_by: actor,
         lastActor: actor,
       });
-      // Per-scope access reconcile, on the APPEND branch only. The scope
-      // is new to the seat there, so `writeAccessForAutoScope`'s wholesale
-      // replace of `importer_callings[scope]` adds an entry rather than
-      // rewriting one, and every other scope's entry is preserved. Nothing
-      // is cleared when the grant earns no access — the seat has no entry
-      // of its own to clear, and clearing one that predates this grant
-      // would revoke access this fix knows nothing about.
+      // A merge writes NO access, on either branch.
       //
-      // A slot HIT is excluded deliberately: there the scope is already on
-      // the seat, and the merge leaves `seat.callings[]` alone (that axis
-      // belongs to `callings-mismatch`). Reconciling access anyway would
-      // re-derive claims from callings the seat doesn't record — access
-      // and seat disagreeing until someone applies the next run's
-      // `callings-mismatch`, which is the write that owns both.
-      if (isAuto && merge.appended && accessCallings.length > 0) {
-        writeAccessForAutoScope(tx, accessRef, {
-          canonical,
-          memberEmail,
-          memberName,
-          scope,
-          callings: accessCallings,
-          sortOrder,
-          priorAccess,
-          actor,
-        });
-      }
+      // The hit branch's reason is that the seat's `callings[]` doesn't
+      // record this grant, so an access doc written from it would assert
+      // something the seat can't corroborate. The APPEND branch has a
+      // harder one: the scope it would write exists ONLY inside
+      // `duplicate_grants[]`, and nothing in the system reaps a
+      // duplicate-only scope. Every reaper targets the PRIMARY's scope —
+      // `applySbaOnlyRemove` (`freshSeat.scope` / `removedScope`),
+      // `applyCallingsMismatch` and `applyTypeMismatch` (`seat.scope`) —
+      // `removeSeatOnRequestComplete` writes no access fields at all, and
+      // clients can't write `importer_callings` (rules). So the grant
+      // would mint a custom claim that survives the calling ending, with
+      // no in-product path to remove it. The withholding in
+      // `fixActionsFor` closes the nearest thing to one.
+      //
+      // Granting a permission nothing can revoke is worse than granting
+      // none: `Stake.eq_president_app_access`'s convention is that
+      // anything conferring access fails closed. So a merged auto grant
+      // confers no app access until the `(scope, kindoo_site_id)`
+      // threading (B-16 / B-24) lets a reaper find it — recorded as a
+      // known limitation in spec §8.
       return { success: true, seatId: canonical };
     }
 

@@ -169,7 +169,7 @@ describe('fixActionsFor', () => {
     // Every syncApplyFix handler writes the PRIMARY's fields, so on a row
     // projected from a duplicate these two destroy a grant the operator
     // isn't looking at. The row still renders; only the buttons go.
-    for (const code of ['sba-only', 'callings-mismatch'] as const) {
+    for (const code of ['sba-only', 'callings-mismatch', 'buildings-mismatch'] as const) {
       expect(
         fixActionsFor(
           discrepancy({
@@ -186,7 +186,7 @@ describe('fixActionsFor', () => {
     // Same B-16 class, but these change one axis of a grant that still
     // exists rather than destroying one, and Sync re-emits until it
     // converges. Withholding them would strand reconciliation outright.
-    for (const code of ['scope-mismatch', 'type-mismatch', 'buildings-mismatch'] as const) {
+    for (const code of ['scope-mismatch', 'type-mismatch'] as const) {
       const actions = fixActionsFor(discrepancy({ code, surfacedFromDuplicate: true }));
       expect(actions).toHaveLength(1);
       expect(actions[0]).toMatchObject({ testId: 'update-sba' });

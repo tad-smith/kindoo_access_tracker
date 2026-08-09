@@ -119,8 +119,11 @@ export interface KindooBlock {
   /** Parsed primary segment's scope (`'stake'` / ward_code / `null`).
    * Computed from the UNFILTERED `pickPrimarySegment`, so on a
    * multi-site Description it can name a segment that doesn't live on
-   * the active site. `scope-mismatch` wants exactly that; a
-   * `kindoo-only` create/merge does not — see {@link createScope}. */
+   * the active site. Treat it as DISPLAY-ONLY: `scope-mismatch` DETECTS
+   * on the site-filtered pick but its payload still sends this unfiltered
+   * one, which is the same detect-one-segment / write-another split
+   * {@link createScope} closes for `kindoo-only` — an open defect there,
+   * scoped out of the change that added `createScope`. */
   primaryScope: 'stake' | string | null;
   /**
    * `kindoo-only` rows only: the scope the created — or merged —

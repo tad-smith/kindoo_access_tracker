@@ -60,18 +60,29 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   //     primary's `callings[]` and reconciles ITS scope (B-16), which for
   //     a stake primary filters to no app-access calling and revokes
   //     access outright. Trigger is an ordinary calling change.
+  //   - `buildings-mismatch` → `applyBuildingsMismatch` replaces the
+  //     PRIMARY's `building_names` wholesale, and on a duplicate-surfaced
+  //     row the incoming set is the FOREIGN site's derived buildings. One
+  //     click rewrites the home grant's buildings with another site's —
+  //     a cross-site wholesale replace, not a reshape. `building_names`
+  //     is not display-only; `provision.ts` reads it.
   //
   // The rows still render, with the reason saying why the fix is absent;
   // only the known-wrong writes are withheld. Lift this once the
   // `(scope, kindoo_site_id)` threading B-16 and B-24 both need lands and
   // the handlers target the surfaced grant.
   //
-  // Deliberately NOT withheld: `scope-mismatch` / `type-mismatch` /
-  // `buildings-mismatch` are B-16's class too, but they reshape one axis
-  // of a grant that still exists rather than destroying one, and Sync
-  // re-emits the row until it converges. Withholding them would strand
-  // reconciliation for the whole population with no data-loss to prevent.
-  if (d.surfacedFromDuplicate && (d.code === 'sba-only' || d.code === 'callings-mismatch')) {
+  // Deliberately NOT withheld: `scope-mismatch` and `type-mismatch` are
+  // B-16's class too, but they move one field of a grant that still
+  // exists rather than destroying a set, and Sync re-emits the row until
+  // it converges. Withholding them would strand reconciliation for the
+  // whole population with no data loss to prevent. That line was first
+  // drawn to include `buildings-mismatch` as well, which was wrong — its
+  // write is a wholesale replace with ANOTHER SITE's building set.
+  if (
+    d.surfacedFromDuplicate &&
+    (d.code === 'sba-only' || d.code === 'callings-mismatch' || d.code === 'buildings-mismatch')
+  ) {
     return [];
   }
   switch (d.code) {

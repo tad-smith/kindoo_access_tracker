@@ -446,7 +446,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(dup.callings).toBeUndefined();
       });
 
-      it('reconciles the merged scope in the access doc, preserving other scopes', async () => {
+      it('writes NO access for a merged auto grant (nothing could ever reap it)', async () => {
         await seedManager();
         await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
         await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
@@ -481,12 +481,13 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         const access = (
           await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
         ).data() as Access;
-        expect(access.importer_callings).toEqual({
-          stake: ['Stake Clerk'],
-          MR: ['Ward Clerk'],
-        });
-        // Both callings rank, so the doc keeps the smaller of the two.
-        expect(access.sort_order).toBe(Math.min(STAKE_CLERK_ORDER!, WARD_CLERK_ORDER!));
+        // The merged scope lives only in `duplicate_grants[]`, and every
+        // reaper targets the PRIMARY's scope — so an entry written here
+        // would mint a claim outliving the calling with no way to remove
+        // it. Fail closed: the pre-existing stake entry is untouched and
+        // the merged scope gets nothing.
+        expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+        expect(access.sort_order).toBe(STAKE_CLERK_ORDER);
       });
 
       it('merges into the matching grant and corrects its stale site stamp', async () => {
