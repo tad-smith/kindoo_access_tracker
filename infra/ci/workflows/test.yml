@@ -145,24 +145,57 @@ jobs:
         #   that assert the real Firestore-write → Eventarc →
         #   `setCustomUserClaims` chain.
         #
-        #   CAVEAT — existing handler tests in `functions/tests/` are
-        #   now timing-sensitive under this env. Suites that
-        #   `auth.createUser(...)` (`onAuthUserCreate.test.ts`,
-        #   `syncSuperadminClaims.test.ts`, `syncAccessClaims.test.ts`,
-        #   `syncManagersClaims.test.ts`) used to rely on
-        #   `KINDOO_SKIP_CLAIM_SYNC=true` short-circuiting the
-        #   `applyClaims.ts` helpers, so the async `onAuthUserCreate`
-        #   trigger was a no-op and could not race their synchronous
-        #   `.run(event)` writes. With the flag unset, that trigger
-        #   now actually calls `setCustomUserClaims` in the background
-        #   — those suites pass today because Eventarc fan-out is
-        #   slower than the synchronous test body (~hundreds of ms
-        #   vs. multi-second delivery). The protection is now
-        #   timing-only. If a new handler test starts flaking around
-        #   claim values shortly after `createUser`, this is the
-        #   first thing to suspect; the fix is to switch to the
-        #   pre-seed-then-createUser pattern used in
-        #   `syncSuperadminClaims.e2e.test.ts`.
+        #   CAVEAT — handler tests in `functions/tests/` are timing-
+        #   sensitive under this env. Suites that `auth.createUser(...)`
+        #   used to rely on `KINDOO_SKIP_CLAIM_SYNC=true` short-
+        #   circuiting the `applyClaims.ts` helpers, so the async
+        #   `onAuthUserCreate` trigger was a no-op and could not race
+        #   their synchronous `.run(event)` writes. With the flag unset
+        #   that trigger really does call `setCustomUserClaims` in the
+        #   background, and its baseline `{ canonical }` block lands
+        #   whenever Eventarc delivers — stamping over a full claims
+        #   object the test wrote milliseconds earlier. T-95 was that
+        #   race, reaching CI as a `stakes`-block-absent assertion
+        #   failure in `syncManagersClaims`.
+        #
+        #   Every suite here now settles that write before touching
+        #   claims — create the user, wait for the baseline, THEN write.
+        #   `makeSettledUser()` in `tests/lib/emulator.ts` does it for
+        #   `applyClaims`, `syncBootstrapClaims`, `syncManagersClaims`,
+        #   `syncAccessClaims` and `syncSuperadminClaims`;
+        #   `onAuthUserCreate.test.ts` and `syncSuperadminClaims.e2e`
+        #   each inline the same order for their own reasons.
+        #
+        #   Those waits run to 20s, so EVERY test containing one carries
+        #   an explicit timeout override: no `testTimeout` is configured
+        #   anywhere, and vitest's 5s default would abort the test long
+        #   before the wait it was written with. Delivery has been
+        #   observed at ~14.7s on this runner (see the note in
+        #   `syncSuperadminClaims.e2e.test.ts`), so 5s is not academic.
+        #
+        #   `onAuthUserCreate` is NOT the only late writer. The deployed
+        #   role-sync triggers also fire on the Firestore writes these
+        #   tests make, and `clearEmulators()` cannot cancel a delivery
+        #   already queued — one from test N lands during test N+1 and
+        #   resolves `uidForCanonical` against whatever `userIndex` says
+        #   at that instant. `syncManagersClaims` / `syncAccessClaims`
+        #   re-read Firestore so they mostly self-heal;
+        #   `syncSuperadminClaims` reads `after.exists` off the event
+        #   payload and does not.
+        #
+        #   So a test that BOTH creates an auth user AND writes a
+        #   claim-sync trigger's own path owns its email outright — no
+        #   sharing with a sibling test. A stale delivery then finds no
+        #   `userIndex` entry for its canonical and no-ops at
+        #   `uidForCanonical`. Emails shared elsewhere are fine and
+        #   plentiful: without a fresh uid behind the same canonical
+        #   there is nothing for a late delivery to mis-resolve.
+        #
+        #   A NEW test must settle, override the timeout, and — if it
+        #   meets that both-conditions bar — own its email. Otherwise it
+        #   is a coin flip on CI and always green locally
+        #   (`test:integration:local` boots no Functions emulator, so
+        #   none of these triggers fire).
         #
         # The Integration step below pins `--project demo-kindoo-tests`
         # so the Functions emulator loads the right env file; the E2E
