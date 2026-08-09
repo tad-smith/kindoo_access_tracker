@@ -2,7 +2,7 @@
 // the picker-primary helper. Wards / stake supplied inline so the tests
 // stay decoupled from real Firestore docs.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isFullyIgnored, parseDescription, pickPrimarySegment } from './parser';
 
 const STAKE = { stake_name: 'Colorado Springs North Stake' };
@@ -257,6 +257,127 @@ describe('parseDescription', () => {
       units,
     );
     expect(parsed.segments.map((s) => s.scope)).toEqual(['LB', 'JC']);
+  });
+});
+
+// Two units in one stake can contest a variant key. The web-side
+// uniqueness guard rejects new such pairs, but a stake that already
+// holds one must not be mis-attributed in the meantime. Each test that
+// asserts on the warn uses its own unit names — the warn is deduped by
+// (key, pair) for the life of the module.
+describe('parseDescription — unit name collisions', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('gives a contested key to the first unit registered, not the last', () => {
+    const units = [
+      { ward_code: 'C1', ward_name: 'Cedar' },
+      { ward_code: 'C2', ward_name: 'Cedar Ward' },
+    ];
+    expect(parseDescription('Cedar Ward (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
+    expect(parseDescription('Cedar (Bishop)', STAKE, units).segments[0]?.scope).toBe('C1');
+  });
+
+  it('resolves the same way whichever order the colliding units arrive in', () => {
+    const reversed = [
+      { ward_code: 'C2', ward_name: 'Cedar Ward' },
+      { ward_code: 'C1', ward_name: 'Cedar' },
+    ];
+    // Same pair, opposite array order: the winner is whoever is first,
+    // so the result is a function of the config rather than of the
+    // order Firestore happened to hand the wards over.
+    expect(parseDescription('Cedar Ward (Bishop)', STAKE, reversed).segments[0]?.scope).toBe('C2');
+    expect(parseDescription('Cedar (Bishop)', STAKE, reversed).segments[0]?.scope).toBe('C2');
+  });
+
+  it('keeps the branch on the shared key and leaves the ward its own key', () => {
+    // "Olive Branch" yields only `olive branch`; "Olive Branch Ward"
+    // yields `olive branch` + `olive branch ward`. They contest the
+    // first; the second is uncontested and must still resolve.
+    const units = [
+      { ward_code: 'OB', ward_name: 'Olive Branch' },
+      { ward_code: 'OW', ward_name: 'Olive Branch Ward' },
+    ];
+    expect(
+      parseDescription('Olive Branch (Branch President)', STAKE, units).segments[0],
+    ).toMatchObject({ scope: 'OB', resolvedScope: true });
+    expect(parseDescription('Olive Branch Ward (Bishop)', STAKE, units).segments[0]).toMatchObject({
+      scope: 'OW',
+      resolvedScope: true,
+    });
+  });
+
+  it('leaves non-colliding units untouched when a colliding pair is present', () => {
+    const units = [
+      { ward_code: 'C1', ward_name: 'Cedar' },
+      { ward_code: 'C2', ward_name: 'Cedar Ward' },
+      { ward_code: 'PC', ward_name: 'Pine Creek Ward' },
+    ];
+    expect(parseDescription('Pine Creek Ward (Bishop)', STAKE, units).segments[0]?.scope).toBe(
+      'PC',
+    );
+    expect(parseDescription('Pine Creek (Bishop)', STAKE, units).segments[0]?.scope).toBe('PC');
+  });
+
+  it('warns naming both ward_codes and the contested key', () => {
+    const units = [
+      { ward_code: 'A1', ward_name: 'Aspen' },
+      { ward_code: 'A2', ward_name: 'Aspen Ward' },
+    ];
+    parseDescription('Aspen Ward (Bishop)', STAKE, units);
+    const messages = vi.mocked(console.warn).mock.calls.map((c) => String(c[0]));
+    expect(messages).toHaveLength(2); // one per contested key: "aspen", "aspen ward"
+    for (const m of messages) {
+      expect(m).toContain('[sba-ext]');
+      expect(m).toContain('A1');
+      expect(m).toContain('A2');
+    }
+    expect(messages.some((m) => m.includes('"aspen"'))).toBe(true);
+    expect(messages.some((m) => m.includes('"aspen ward"'))).toBe(true);
+  });
+
+  it('warns for a branch / ward collision', () => {
+    const units = [
+      { ward_code: 'F1', ward_name: 'Fig Branch' },
+      { ward_code: 'F2', ward_name: 'Fig Branch Ward' },
+    ];
+    parseDescription('Fig Branch (Branch President)', STAKE, units);
+    const messages = vi.mocked(console.warn).mock.calls.map((c) => String(c[0]));
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain('[sba-ext]');
+    expect(messages[0]).toContain('"fig branch"');
+    expect(messages[0]).toContain('F1');
+    expect(messages[0]).toContain('F2');
+  });
+
+  it('warns once per contested pair, not once per parsed description', () => {
+    // parseDescription runs once per Kindoo user per Sync pass; a
+    // per-call warn would emit hundreds of identical lines.
+    const units = [
+      { ward_code: 'B1', ward_name: 'Birch' },
+      { ward_code: 'B2', ward_name: 'Birch Ward' },
+    ];
+    parseDescription('Birch Ward (Bishop)', STAKE, units);
+    parseDescription('Birch (Bishop)', STAKE, units);
+    parseDescription('Birch Ward (Clerk)', STAKE, units);
+    expect(vi.mocked(console.warn).mock.calls).toHaveLength(2); // "birch", "birch ward"
+  });
+
+  it('does not treat a unit re-registering its own key as a collision', () => {
+    // Defensive: the variants list is already de-duplicated, and a
+    // duplicated ward doc names the same unit either way.
+    const units = [
+      { ward_code: 'JC', ward_name: 'Jackson Creek' },
+      { ward_code: 'JC', ward_name: 'Jackson Creek Ward' },
+    ];
+    expect(parseDescription('Jackson Creek Ward (Bishop)', STAKE, units).segments[0]?.scope).toBe(
+      'JC',
+    );
+    expect(vi.mocked(console.warn)).not.toHaveBeenCalled();
   });
 });
 
