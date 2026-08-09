@@ -6,6 +6,27 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-95] Flaky integration test: `syncManagersClaims` — claim read races the trigger
+Status: pending
+Owner: @backend-engineer
+Phase: cross-cutting
+
+Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/` — verified by diff against `main`. The same commit passed the suite locally (520 passed) and passed the previous CI run on the same branch, so the working assumption is a timing flake rather than a regression. Confirm that before changing anything: a second failure on the same commit means it is real.
+
+```
+functions/tests/syncManagersClaims.test.ts:57
+syncManagersClaims › flips manager claim off when active=false
+expected { canonical: 'm@gmail.com' } to match { stakes: { csnorth: { manager: true } } }
+```
+
+The received claims carry `canonical` but **no `stakes` block at all** — not a wrong grant, an absent one. So the assertion ran against a token minted before the manager grant was applied. The test does `await runSync(...)` then reads `auth.getUser()` immediately; if `runSync` resolves before the trigger's claim write has landed, the read is simply early. Worth checking whether `runSync` actually awaits the write or just the invocation, and whether the sibling assertion above it (line 41, the same shape) is passing by luck.
+
+**Two things make this worth real attention rather than a retry.**
+
+It is **invisible in the GitHub UI**. Every step in `test.yml` sets `continue-on-error: true` and a final "Verify all checks passed" step aggregates the true `outcome` values — so the Integration step renders **green** while having failed, and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing this meant reading `steps[].conclusion` off the API and mapping the failing index back to the list in `test.yml`. Anyone hitting a red `test` check will lose the same time; consider echoing the failing step's name in that gate.
+
+And unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. So a flake here fails the branch outright where the equivalent in e2e would be silently absorbed.
+
 ## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
 Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)
 Owner: @web-engineer
