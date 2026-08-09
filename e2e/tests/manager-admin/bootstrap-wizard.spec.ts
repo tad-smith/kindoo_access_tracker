@@ -238,7 +238,7 @@ test.describe('Bootstrap wizard gate', () => {
     await expect(step3.getByRole('option', { name: 'Main Building' })).toHaveCount(1);
     // The ward code is no longer a user input — it's derived from the
     // name (`Maple Ward` → `maple-ward`) and never shown.
-    await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
+    await step3.getByLabel(/^Ward or branch name$/).fill('Maple Ward');
     // The option value is the immutable building_id slug; select by label.
     await step3.locator('select').selectOption({ label: 'Main Building' });
     await step3.getByLabel(/^Seat cap$/).fill('20');
@@ -333,7 +333,7 @@ test.describe('Bootstrap wizard gate', () => {
     const step3 = page.getByTestId('wizard-step-3');
     await expect(step3.getByRole('option', { name: 'Maple Building' })).toHaveCount(1);
     // The ward code is derived from the name (`Maple Ward` → `maple-ward`).
-    await step3.getByLabel(/^Ward name$/).fill('Maple Ward');
+    await step3.getByLabel(/^Ward or branch name$/).fill('Maple Ward');
     // The option value is the immutable building_id slug; select by label.
     await step3.locator('select').selectOption({ label: 'Maple Building' });
     await step3.getByLabel(/^Seat cap$/).fill('20');

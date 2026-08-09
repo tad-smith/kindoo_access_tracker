@@ -84,6 +84,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 import { toast } from '../../../lib/store/toast';
+import { WARD_NAME_HINT, WARD_NAME_LABEL } from '../../../lib/wardCopy';
 
 export type ConfigTabKey =
   | 'config'
@@ -431,9 +432,10 @@ function WardFormDialog({
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ward-form">
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
+        <p className="kd-form-hint">{WARD_NAME_HINT}</p>
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}
@@ -1050,7 +1052,8 @@ function IgnoredWardsSection() {
         Building Access — typically a neighbouring stake whose wards meet in one of your buildings
         and whose managers provision their own members. Sync skips them, so they aren’t reported as
         members missing a seat. Enter the ward exactly as it appears in Kindoo descriptions, without
-        the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>.
+        the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>, or{' '}
+        <code>Limon Branch</code> to skip <code>Limon Branch (Branch President)</code>.
       </p>
 
       <IgnoredWardDialog
@@ -1152,7 +1155,7 @@ function IgnoredWardDialog({
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ignored-ward-form">
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input
             {...register('ward')}
             placeholder="Ward name as Kindoo shows it"
