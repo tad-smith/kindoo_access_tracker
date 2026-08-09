@@ -121,29 +121,32 @@ const SWEEP_ATTEMPTS = 4;
  * Calibrated to what **undici** actually puts on `err.cause.code`, which is
  * not the Node socket errno set it resembles. Measured on Node 22.22.2:
  *
- * | condition                              | `cause.code`             |
- * |----------------------------------------|--------------------------|
- * | connection refused                     | `ECONNREFUSED`           |
- * | RST mid-request                        | `ECONNRESET`             |
- * | graceful FIN mid-request               | `UND_ERR_SOCKET`         |
- * | keep-alive reuse after server closed   | `UND_ERR_HEADERS_TIMEOUT`|
- * | malformed URL                          | `ERR_INVALID_URL`        |
+ * | condition                            | `cause.code`      |
+ * |--------------------------------------|-------------------|
+ * | connection refused                   | `ECONNREFUSED`    |
+ * | RST mid-request                      | `ECONNRESET`      |
+ * | graceful FIN mid-request             | `UND_ERR_SOCKET`  |
+ * | malformed URL                        | `ERR_INVALID_URL` |
  *
- * The last two are the realistic ones here: ~500 sequential DELETEs over a
+ * `UND_ERR_SOCKET` is the realistic one: ~500 sequential DELETEs over a
  * pooled connection to a Java emulator with its own idle timeout is the
  * textbook setup for a closed-socket reuse. An earlier version of this set
  * listed `ECONNABORTED` / `EPIPE` / `ETIMEDOUT`, which undici never emits —
  * coverage that read as thorough and matched nothing.
  *
- * `ECONNREFUSED` and `UND_ERR_CONNECT_TIMEOUT` stay OUT: both mean the
+ * Deliberately NOT listed: undici's own `UND_ERR_HEADERS_TIMEOUT` /
+ * `UND_ERR_BODY_TIMEOUT`. They default to 300s, and every attempt here
+ * carries `AbortSignal.timeout(remainingMs)` with `remainingMs ≤ 8500`, so
+ * the abort always fires first and the rejection is a `TimeoutError`
+ * instead — measured: a keep-alive reuse that yields
+ * `UND_ERR_HEADERS_TIMEOUT` under a bare `fetch` yields `TimeoutError` at
+ * the signal's deadline once the signal is attached. They would only
+ * become reachable if the per-attempt signal were removed.
+ *
+ * `ECONNREFUSED` and `UND_ERR_CONNECT_TIMEOUT` stay out: both mean the
  * connection was never established, so retrying only burns the budget.
  */
-const RETRYABLE_FETCH_CODES = new Set([
-  'ECONNRESET',
-  'UND_ERR_SOCKET',
-  'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_BODY_TIMEOUT',
-]);
+const RETRYABLE_FETCH_CODES = new Set(['ECONNRESET', 'UND_ERR_SOCKET']);
 
 /**
  * undici's own message for a transport failure is the information-free
@@ -309,14 +312,20 @@ export async function sweepFirestore(
     if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
       const carried =
         lastResponse && lastResponse !== detail ? `; last response: ${lastResponse}` : '';
-      // Latch only when the emulator never ANSWERED — hung or absent, the
-      // runaway this guards. A 409 means it answered, just slowly, which is
+      // Latch only on a full budget spent waiting for an emulator that
+      // never answered at all — i.e. the terminal failure is the deadline
+      // abort, with no HTTP response anywhere in the attempts.
+      //
+      // Both halves matter. A 409 means it answered, just slowly, which is
       // the T-97 scenario itself: latching there would turn one failed test
       // into a failed file, all of them claiming "not answering" when it
-      // demonstrably was. A fail-fast classification (a bad URL, a 400)
-      // never latches either — that is this call's problem, not the
-      // emulator's.
-      if ((attempt >= SWEEP_ATTEMPTS || outOfTime) && lastResponse === undefined) {
+      // demonstrably was. And four quick transport drops (~700ms total) are
+      // far weaker evidence than 8.5s of silence — that is a flappy socket,
+      // not a hung emulator, and it would misattribute the same way.
+      const abortedOnDeadline =
+        terminalCause instanceof Error &&
+        (terminalCause.name === 'TimeoutError' || terminalCause.name === 'AbortError');
+      if (outOfTime && abortedOnDeadline && lastResponse === undefined) {
         sweepAbandoned = true;
       }
       throw new Error(

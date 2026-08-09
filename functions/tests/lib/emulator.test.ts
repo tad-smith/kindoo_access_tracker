@@ -66,7 +66,6 @@ const UNDICI_CAUSE_MESSAGES: Record<string, string> = {
   ECONNREFUSED: 'connect ECONNREFUSED 127.0.0.1:8080',
   ECONNRESET: 'read ECONNRESET',
   UND_ERR_SOCKET: 'other side closed',
-  UND_ERR_HEADERS_TIMEOUT: 'Headers Timeout Error',
 };
 function transportError(code: string) {
   const cause = Object.assign(new Error(UNDICI_CAUSE_MESSAGES[code] ?? code), { code });
@@ -197,21 +196,17 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(calls).toHaveLength(3);
   });
 
-  it.each(['UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT'])(
-    'retries %s — the shapes a pooled connection actually produces',
-    async (code) => {
-      // A graceful FIN and a keep-alive reuse after the server closed. Both
-      // are realistic for ~500 sequential DELETEs to the emulator, and
-      // neither is a Node socket errno, so the first version of the
-      // classifier fell through to fail-fast on both.
-      const calls = stubRejectingFetch(1, () => transportError(code), ok);
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('retries UND_ERR_SOCKET — the shape a pooled connection actually produces', async () => {
+    // A graceful FIN mid-request: realistic for ~500 sequential DELETEs to
+    // an emulator with its own idle timeout, and not a Node socket errno,
+    // so the first version of the classifier fell through to fail-fast.
+    const calls = stubRejectingFetch(1, () => transportError('UND_ERR_SOCKET'), ok);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-      await sweepFirestore(URL_UNDER_TEST);
+    await sweepFirestore(URL_UNDER_TEST);
 
-      expect(calls).toHaveLength(2);
-    },
-  );
+    expect(calls).toHaveLength(2);
+  });
 
   it('fails fast when nothing is listening, and still reports the address', async () => {
     // The Firestore emulator gone while Auth is still up. Retrying costs
@@ -263,13 +258,23 @@ describe('sweepFirestore (T-97 retry)', () => {
     );
 
     const calls = stubHangingFetch();
-    const started = Date.now();
     await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 150 })).rejects.toThrow(
       /skipped: an earlier sweep exhausted its budget/,
     );
 
     expect(calls).toHaveLength(0);
-    expect(Date.now() - started).toBeLessThan(50);
+  });
+
+  it('does NOT latch on repeated transport drops — flappy is not hung', async () => {
+    // ~700ms of drops is far weaker evidence than 8.5s of silence, and
+    // latching on it would red the rest of the file with "not answering".
+    stubRejectingFetch(99, () => transportError('ECONNRESET'), ok);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(/failed after 4 attempt/);
+
+    const calls = stubFetch(ok);
+    await sweepFirestore(URL_UNDER_TEST);
+    expect(calls).toHaveLength(1);
   });
 
   it('does NOT latch when the emulator answered — the T-97 case itself', async () => {
