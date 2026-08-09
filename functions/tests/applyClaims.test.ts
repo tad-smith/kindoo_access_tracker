@@ -30,7 +30,6 @@ import {
   hasFunctionsEmulator,
   makeSettledUser,
   requireEmulators,
-  waitFor,
 } from './lib/emulator.js';
 
 // A uid that has never existed in the Auth emulator. `getUser` on it
