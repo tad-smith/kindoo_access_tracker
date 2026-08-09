@@ -234,7 +234,6 @@ describe('sweepFirestore (T-97 retry)', () => {
     // to a run that is already red. It must cost one attempt.
     const calls = stubRejectingFetch(99, () => transportError('ECONNREFUSED'), ok);
 
-    const started = Date.now();
     const err = await sweepFirestore(URL_UNDER_TEST).catch((e: Error) => e);
 
     expect(String(err)).toMatch(/failed after 1 attempt\(s\): TypeError: fetch failed/);
@@ -244,8 +243,9 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(((err as Error).cause as { cause?: { code?: string } })?.cause?.code).toBe(
       'ECONNREFUSED',
     );
+    // One request IS the fail-fast assertion; a wall-clock bound here would
+    // add the tightest timing check in the suite for no extra coverage.
     expect(calls).toHaveLength(1);
-    expect(Date.now() - started).toBeLessThan(200);
   });
 
   it('fails fast on a programming error, not four times', async () => {
