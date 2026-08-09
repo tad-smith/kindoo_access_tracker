@@ -9,11 +9,24 @@ import {
   clearAuth,
   clearFirestore,
   createAuthUser,
+  listDocs,
   setCustomClaims,
   writeDoc,
 } from '../../fixtures/emulator';
 
 const TEST_PASSWORD = 'test-password-12345';
+
+/**
+ * The ignore list as Firestore actually holds it, read straight off the
+ * emulator. The rendered rows are not a substitute: Firestore echoes a
+ * write into the local snapshot before the server has acknowledged it,
+ * so the UI shows the row roughly 30ms after submit while the round-trip
+ * completes nearer 100ms.
+ */
+async function persistedIgnoredWards(): Promise<string[]> {
+  const stake = (await listDocs('stakes')).find((doc) => doc.__id__ === 'csnorth');
+  return (stake?.['kindoo_ignored_wards'] as string[] | undefined) ?? [];
+}
 
 async function signInAsManager(page: Page, email: string): Promise<void> {
   await writeDoc('stakes/csnorth', {
@@ -59,13 +72,10 @@ test.describe('Wards to Ignore in Kindoo', () => {
   });
 
   test('adds a ward, persists it to the stake doc, and removes it again', async ({ page }) => {
-    // Every assertion here that follows a navigation gets a generous
-    // timeout. The list renders off a Firestore snapshot, and a
-    // navigation (first load or the reload below) has to establish the
-    // websocket before one arrives — warm that is ~1s, but on the first
-    // test after a cold `vite preview` build it intermittently exceeded
-    // the 5s default. Timing, not behaviour: the same test passes 6/6
-    // once the server is warm.
+    // Assertions that follow a navigation get a generous timeout: the
+    // list renders off a Firestore snapshot, so the websocket has to be
+    // established before one arrives. Sub-second locally; the headroom
+    // is for a loaded CI runner.
     await signInAsManager(page, 'mgr-ignored@example.com');
     await page.goto('/manager/configuration?tab=kindoo-sites');
 
@@ -92,6 +102,15 @@ test.describe('Wards to Ignore in Kindoo', () => {
     await page.getByTestId('config-ignored-ward-submit').click();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
 
+    // Wait for the write to reach the server before reloading. The row
+    // above is only Firestore's local echo, and the SDK runs without
+    // IndexedDB persistence, so a reload inside that window tears down
+    // the tab with the mutation still queued in memory — the write is
+    // discarded and the ward never lands. This is also the assertion
+    // that the write round-tripped through the rules to the stake doc,
+    // which the rendered row alone never proved.
+    await expect.poll(persistedIgnoredWards).toEqual(['Aspen Grove Ward']);
+
     await page.reload();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible({
       timeout: 20_000,
@@ -99,5 +118,6 @@ test.describe('Wards to Ignore in Kindoo', () => {
 
     await page.getByTestId('config-ignored-ward-delete-Aspen Grove Ward').click();
     await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();
+    await expect.poll(persistedIgnoredWards).toEqual([]);
   });
 });
