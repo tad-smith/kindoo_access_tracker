@@ -6,10 +6,18 @@
 // time from the seat's callings against this canonical, churchwide
 // ordering table.
 //
-// The table is a fixed 85-entry hierarchy (stake callings 1–42, ward
-// callings 43–85). The array index is the priority — lower index sorts
+// The table is a fixed 92-entry hierarchy (stake callings 1–42, unit
+// callings 43–92). The array index is the priority — lower index sorts
 // first. The ordering is global: the calling hierarchy is churchwide,
 // so there is no per-stake customisation (see Stage 1 open question #3).
+//
+// The unit band covers both kinds of unit: each branch calling sits
+// immediately after its ward counterpart (Branch President after Bishop,
+// Branch Clerk after Ward Clerk, …). All Seats spans units, so a mixed
+// list has to rank a branch calling against a ward one; interleaving
+// keeps peers together instead of stranding a Branch President below
+// every ward calling in the band. Within one unit only one of each pair
+// can occur, so the tie-break is unobservable there.
 //
 // Matching is exact, trimmed, case-insensitive — NO wildcards. A
 // calling that isn't in the table resolves to `null` ("unknown"), which
@@ -63,16 +71,28 @@ const CALLING_ORDER: readonly string[] = [
   'Audit Committee Member',
   'Auditor',
   'Patriarch',
-  // ----- Ward callings (43–85) -----
+  // ----- Unit callings (43–92): ward, each branch calling
+  // ----- immediately after its ward counterpart -----
   'Bishop',
+  'Branch President',
   'Bishopric First Counselor',
+  'Branch Presidency First Counselor',
   'Bishopric Second Counselor',
+  'Branch Presidency Second Counselor',
+  // No Branch Executive Secretary — branches have no counterpart to
+  // Ward Executive Secretary.
   'Ward Executive Secretary',
   'Ward Assistant Executive Secretary',
   'Ward Clerk',
+  'Branch Clerk',
   'Ward Assistant Clerk',
+  'Branch Assistant Clerk',
   'Ward Assistant Clerk--Membership',
+  'Branch Assistant Clerk--Membership',
   'Ward Assistant Clerk--Finance',
+  'Branch Assistant Clerk--Finance',
+  // The four families below are shared: the same entries rank a branch's
+  // people as a ward's.
   'Elders Quorum President',
   'Elders Quorum First Counselor',
   'Elders Quorum Second Counselor',
