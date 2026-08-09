@@ -32,7 +32,7 @@ That miss is the lesson. The first pass recorded `TimezoneCombobox` as unaffecte
 **Generalise:** any portal-based primitive dropped into a Dialog inherits the same trap, and the audit question is "which hosts render this?", never "where do I think this appears?". A component test cannot see it; only a browser can.
 
 ## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
-Status: open (accepted risk)
+Status: obsolete (2026-08-09 — the scenario does not occur in practice, and `WARD_NAME_BRANCH_WARNING` covers it at entry)
 Owner: @web-engineer
 Severity: low
 Phase: cross-cutting
@@ -56,7 +56,9 @@ That surfaces as a **`drift` row, not a manual-review row**. Because `segments.l
 
 **Seat repair is cleanup afterward, not a second remediation — and the order is load-bearing.** Once descriptions resolve, any seats already moved to stake scope resurface as ordinary `scope-mismatch` drift rows and repair normally. Doing that repair *before* the rename does not hold: the description still fails to resolve, `unparseableAligned` goes false again, and the same `kindoo-unparseable` row returns proposing stake scope a second time.
 
-**Status is "accepted risk", not "needs a fix".** The field hint was deliberately kept short — the case is rare enough that spelling it out in `WARD_NAME_HINT` costs more readers than it saves. That is a settled operator decision and this entry does not reopen it; the entry exists so the residual gap is on the record rather than implied to be covered. An earlier draft of the `WARD_NAME_HINT` docblock claimed `unitNameCollision.ts` covered this case — it does not, for the reason above, and that claim was removed in the same PR.
+**Obsolete — this should not have been filed.** Operator ruling, 2026-08-09: the situation it describes will not occur in practice. A stake would need a ward in a place whose own name ends in "Branch", entered without the `" Ward"` suffix, and the operator confirmed production holds no such unit before branch support shipped. The analysis above is left intact because the mechanism is real and the recovery steps would apply if it ever did happen — but it was written as though the scenario were likely, and it is not.
+
+**`WARD_NAME_BRANCH_WARNING` is sufficient.** A red label under the ward-name field fires live, off the same `unitType()` the classifier uses, whenever a typed name would be read as a branch — so an operator naming a ward `Olive Branch` is told so before saving. It is advisory rather than blocking, which is the right shape: a genuine branch must still be nameable. That label, not the collision guard, is what closes this. An earlier draft of the `WARD_NAME_HINT` docblock claimed `unitNameCollision.ts` covered the case — it does not, since that guard needs two colliding units and the shape here is one; the claim was removed in the same PR.
 
 ## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
 Status: closed (fixed) `[FIXED 2026-08-08]`
