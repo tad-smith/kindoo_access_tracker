@@ -42,22 +42,27 @@ Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-o
 Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
 
 ## [T-97] `clearEmulators` can 409 on the Firestore blow-away
-Status: pending
+Status: done (2026-08-09 — `fix/clear-emulators-409`)
 Owner: @backend-engineer
 Phase: cross-cutting
 
-Observed once in ~6 full integration runs while verifying [T-95], locally, under the CI emulator config:
+**Done.** Bounded retry around the Firestore sweep, with unit tests for the retry path.
 
-```
-backfillKindooSiteId.test.ts > updates the primary when stored kindoo_site_id explicitly differs from derived
-Error: clearEmulators(Firestore) failed: 409 {"error":{"code":409,"message":"Transaction lock timeout.","status":"ABORTED"}}
-  ❯ clearEmulators tests/lib/emulator.ts:106
-```
+The emulator answers the `DELETE …/documents` blow-away with `409 ABORTED — Transaction lock timeout` rather than blocking when it contends with an in-flight write — almost always a deployed trigger's Eventarc delivery arriving after the test that queued it. Same "delivery outlives the test" family the `clearEmulators` docblock already describes, except this variant takes the *sweep* down: it throws from `afterEach`, failing whichever unrelated test happens to be running, on the one suite with no vitest retry. It surfaced as a `backfillKindooSiteId` failure that had nothing to do with `backfillKindooSiteId`.
 
-Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow-away rather than an assertion. The REST `DELETE …/documents` endpoint contends with an in-flight write, most likely a deployed trigger's, and the emulator returns `ABORTED` instead of blocking. That is the same "delivery outlives the test" family the `clearEmulators` docblock already describes for leftover `auditLog` rows, but this variant takes the *sweep* down rather than leaking a row.
+**Frequency, which this task asked to establish before fixing: one sighting in ~13 runs.** Six full runs under the CI emulator config after the fix logged zero retries. So it ships without the retry ever having been observed to engage — the unit tests prove the loop, not that the loop was needed. Deliberate: the remedy is cheap, and the alternative is someone paying the same misattributed diagnosis a second time.
 
-One sighting is thin evidence and it did not recur in five subsequent runs, so this is recorded rather than fixed. If it shows up on CI: `ABORTED` is the documented retryable status, so a bounded retry around the fetch is the obvious remedy — but confirm the frequency first, and note that a retry masks whatever holds the lock.
+**Shape of the fix** — `sweepFirestore`, extracted from `clearEmulators` so the retry path is testable without an emulator. Up to 4 attempts at 100/200/400ms backoff, bounded also by an 8.5s wall-clock budget enforced per request via `AbortSignal.timeout` (`clearEmulators` subtracts the Auth half's elapsed time first). Retries 409/429/503 and, among thrown failures, only the deadline abort and dropped connections (`ECONNRESET`, `UND_ERR_SOCKET`). `ECONNREFUSED` and programming errors fail on the first attempt. Every retry logs; the final error names the attempt count and carries the response body.
 
+**Three constraints worth keeping in mind if this is ever touched again.** Each cost a round of review to get right, and the reasoning lives beside the code in `functions/tests/lib/emulator.ts`:
+
+- **Budgets are sized against the 10s `hookTimeout`, not against intuition.** No `testTimeout`/`hookTimeout` is configured anywhere in the repo. Overrunning the hook reports `Hook timed out` against an unrelated test with no attempt count — worse than the 409 it replaces. The Auth half measures ≤84ms and an uncontended sweep ≤50ms, so the hook normally finishes in ~0.1s of its 10s.
+- **Error shapes are measured, not recalled.** undici's `cause.code` is not the Node socket errno set it resembles, and its own `UND_ERR_*_TIMEOUT` codes are unreachable here because the per-attempt signal always fires first. A stub that hand-builds a cause, or ignores `init.signal`, will pass while covering nothing.
+- **The give-up latch arms only on two consecutive sweeps with no contact at all** — no HTTP response *and* no transport drop, contact being recorded before the body is read since `res.text()` aborts too. Anything looser lets a slow-but-answering emulator red an entire file with "no response", which is the misattribution this whole task is about, widened.
+
+**Knowingly not bounded, recorded as a decision:** an emulator that 409s every sweep costs ~700ms × ~500 calls ≈ 6 minutes, the same runaway `ECONNREFUSED` is failed fast to avoid, and the latch cannot catch it because a 409 is contact. A strike does not cost the same on both sides — `ECONNREFUSED` is unambiguous, while two contended sweeps in a row are reachable in a healthy run under trigger fan-out, and short-circuiting there would replace N named failures with one. For a case never observed, 6 minutes on an already-red run is the better side of that trade. Revisit if it is ever seen.
+
+Eighteen unit tests in `functions/tests/lib/emulator.test.ts` cover the retry, both bounds, the classification split, the diagnostic content of the final error, and each latch condition. They stub `fetch`, so they need no emulator.
 ## [T-96] Branch-specific callings — specified, deliberately not implemented
 Status: done (2026-08-09 — PR #270)
 Owner: @backend-engineer, @extension-engineer

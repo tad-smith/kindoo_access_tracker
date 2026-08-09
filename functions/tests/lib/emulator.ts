@@ -85,6 +85,7 @@ export function requireEmulators(): { app: App; db: Firestore; auth: Auth } {
  * `markRequestComplete` / `syncApplyFix` audit smoke checks (doc-id reads).
  */
 export async function clearEmulators(): Promise<void> {
+  const startedAt = Date.now();
   const { auth } = requireEmulators();
   // Auth: list+delete in batches.
   let pageToken: string | undefined;
@@ -100,10 +101,314 @@ export async function clearEmulators(): Promise<void> {
   // `host:port` (asserted by `hasEmulators()` above). Project ID is the
   // one Admin SDK already resolved.
   const host = process.env['FIRESTORE_EMULATOR_HOST']!;
-  const url = `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
-  const res = await fetch(url, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(`clearEmulators(Firestore) failed: ${res.status} ${await res.text()}`);
+  // Hand the sweep whatever is left of the hook budget, so a slow Auth
+  // half shrinks the sweep's slice instead of pushing the pair past the
+  // hook timeout.
+  await sweepFirestore(
+    `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
+    { deadlineMs: Math.max(1_000, CLEAR_BUDGET_MS - (Date.now() - startedAt)) },
+  );
+}
+
+/** Statuses the emulator returns for transient contention, not for a bad request. */
+const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
+const SWEEP_ATTEMPTS = 4;
+
+/**
+ * Codes meaning an established connection dropped — not that nothing was
+ * there to begin with.
+ *
+ * Calibrated to what **undici** actually puts on `err.cause.code`, which is
+ * not the Node socket errno set it resembles. Measured on Node 22.22.2:
+ *
+ * | condition                            | `cause.code`      |
+ * |--------------------------------------|-------------------|
+ * | connection refused                   | `ECONNREFUSED`    |
+ * | RST mid-request                      | `ECONNRESET`      |
+ * | graceful FIN mid-request             | `UND_ERR_SOCKET`  |
+ * | malformed URL                        | `ERR_INVALID_URL` |
+ *
+ * `UND_ERR_SOCKET` is the realistic one: ~500 sequential DELETEs over a
+ * pooled connection to a Java emulator with its own idle timeout is the
+ * textbook setup for a closed-socket reuse. An earlier version of this set
+ * listed `ECONNABORTED` / `EPIPE` / `ETIMEDOUT`, which undici never emits —
+ * coverage that read as thorough and matched nothing.
+ *
+ * Deliberately NOT listed: undici's own `UND_ERR_HEADERS_TIMEOUT` /
+ * `UND_ERR_BODY_TIMEOUT`. They default to 300s, and every attempt here
+ * carries `AbortSignal.timeout(remainingMs)` with `remainingMs ≤ 8500`, so
+ * the abort always fires first and the rejection is a `TimeoutError`
+ * instead — measured: a keep-alive reuse that yields
+ * `UND_ERR_HEADERS_TIMEOUT` under a bare `fetch` yields `TimeoutError` at
+ * the signal's deadline once the signal is attached. They would only
+ * become reachable if the per-attempt signal were removed.
+ *
+ * `ECONNREFUSED` and `UND_ERR_CONNECT_TIMEOUT` stay out: both mean the
+ * connection was never established, so retrying only burns the budget.
+ */
+const RETRYABLE_FETCH_CODES = new Set(['ECONNRESET', 'UND_ERR_SOCKET']);
+
+/**
+ * undici's own message for a transport failure is the information-free
+ * `fetch failed`; the address and errno live on `err.cause`. Fold them in,
+ * or the fail-fast path reports strictly less than the raw throw it
+ * replaced (`connect ECONNREFUSED 127.0.0.1:8080` → `fetch failed`).
+ */
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: { code?: unknown; message?: unknown } }).cause;
+  // The message must be non-EMPTY, not merely a string: resolving through
+  // `localhost` rather than `127.0.0.1` makes undici's cause an
+  // `AggregateError` whose `message` is `''` while `code` still says
+  // `ECONNREFUSED` (measured on Node 22.22.2). Preferring the blank
+  // message there would drop the errno and report `fetch failed` alone —
+  // the regression this function exists to prevent, for one host spelling.
+  // `requireEmulators`'s docblock explicitly allows manual env vars, so
+  // `FIRESTORE_EMULATOR_HOST=localhost:8080` is a supported input.
+  const message = typeof cause?.message === 'string' && cause.message ? cause.message : undefined;
+  const code = typeof cause?.code === 'string' ? cause.code : undefined;
+  const extra = message ?? code;
+  return extra ? `${err.name}: ${err.message} (${extra})` : `${err.name}: ${err.message}`;
+}
+
+/**
+ * A connection that existed and then dropped — which, unlike silence, is
+ * evidence the emulator is reachable. Serves two purposes in
+ * {@link sweepFirestore}: it is the only thrown failure worth retrying,
+ * and it counts as contact for the purpose of not latching.
+ *
+ * Treating every throw as transient is the expensive mistake here. If the
+ * Firestore emulator is gone while Auth is still up — separate processes,
+ * so the Auth half above succeeds and the sweep is still reached — `fetch`
+ * rejects with `ECONNREFUSED` immediately. Retrying that costs four
+ * attempts and ~700ms per call, and `clearEmulators` runs in
+ * `beforeAll` / `afterEach` / `afterAll` across ~500 integration tests:
+ * ~6 minutes of pure backoff added to a run that is already red, under a
+ * 20-minute job cap. It threw in ~0ms before this helper existed. So
+ * `ECONNREFUSED`, and programming errors like
+ * `TypeError: Failed to parse URL`, fail on the first attempt.
+ *
+ * The deadline abort is deliberately absent, though it reads like an
+ * omission: the signal fires AT the deadline, so `outOfTime` is already
+ * true by the time the retry decision is made and the loop exits without
+ * consulting this. Classifying it as retryable would be a branch that can
+ * never be taken.
+ */
+function isTransportDrop(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { cause?: { code?: unknown } }).cause?.code;
+  return typeof code === 'string' && RETRYABLE_FETCH_CODES.has(code);
+}
+
+/**
+ * Consecutive budget-exhausting sweeps before {@link sweepFirestore} stops
+ * trying. Two, not one, because one is not evidence.
+ *
+ * A single contended DELETE that takes longer than the budget aborts with
+ * no response recorded — indistinguishable, from inside one call, from an
+ * emulator that is hung. Arming on that would red the rest of the file
+ * with a wrong cause, which is the misattribution this task is about, and
+ * the quantity that decides it (how long a contended DELETE takes) is the
+ * one this code openly does not know. Requiring two in a row keeps the
+ * wall-clock bound while making a misfire need two consecutive >8.5s
+ * silences rather than one.
+ */
+const SWEEP_STRIKES = 2;
+let consecutiveSilentSweeps = 0;
+
+/** Test-only: clear the {@link sweepFirestore} latch between cases. */
+export function _resetSweepLatch(): void {
+  consecutiveSilentSweeps = 0;
+}
+
+/**
+ * Wall-clock ceiling for a whole `clearEmulators` call, retries included.
+ *
+ * It runs in `afterEach`, and vitest's default `hookTimeout` is 10s — no
+ * config here sets one, and no hook overrides it. An attempt-only bound
+ * does not respect that: the thing being retried is by name a *timeout*
+ * (`Transaction lock timeout`), so a failing attempt is not necessarily
+ * fast. Overrunning the hook reports `Hook timed out in 10000ms` against
+ * whatever unrelated test was running — losing the attempt count and body
+ * this retry exists to produce, and landing exactly the misattributed
+ * diagnosis it is meant to prevent, one layer up.
+ *
+ * 8.5s, not a rounder guess, because the budget has to be BIGGER than the
+ * problem it covers. Measured against this emulator: the Auth half costs
+ * ≤84ms and an uncontended sweep ≤50ms, so the hook normally finishes in
+ * ~0.1s of its 10s. A tighter ceiling would convert the very case this
+ * exists for — a sweep that blocks for seconds and then succeeds — from a
+ * pass into a red abort. 8.5s keeps the abort a last resort while leaving
+ * ~1.5s for vitest to report the informative failure.
+ *
+ * {@link clearEmulators} subtracts the Auth half's actual cost before
+ * handing the remainder to {@link sweepFirestore}, so a slow Auth half
+ * shrinks the sweep's slice rather than pushing the pair over.
+ *
+ * SCOPE: this bounds the SWEEP, not the hook. The Auth half carries no
+ * deadline of its own — the Admin SDK calls take no signal — and the 1s
+ * floor below means a very slow Auth half cannot shrink the sweep's slice
+ * to nothing. So `clearEmulators` can in principle still overrun the
+ * `hookTimeout` and report `Hook timed out` with no attempt count; what is
+ * guaranteed is only that the SWEEP will not be the half that causes it.
+ * Not treated as urgent because the Auth half measures ≤84ms here, and the
+ * hung-Firestore-with-healthy-Auth case this all targets is unaffected.
+ */
+const CLEAR_BUDGET_MS = 8_500;
+
+/**
+ * `DELETE` the whole document tree, retrying transient contention.
+ *
+ * The emulator answers the sweep with `409 ABORTED — Transaction lock
+ * timeout` rather than blocking when it contends with an in-flight write.
+ * In this suite that write is almost always a deployed trigger's Eventarc
+ * delivery arriving after the test that queued it — the same
+ * "delivery outlives the test" family the {@link clearEmulators} docblock
+ * describes, except this variant takes the SWEEP down (a thrown `afterEach`,
+ * failing whichever test happens to be running) instead of leaking a row.
+ * T-97: seen ONCE in ~13 full runs, and never observed to engage since —
+ * six runs after this landed logged zero retries. That frequency is the
+ * whole justification for the machinery below, so it is worth knowing
+ * before extending it.
+ *
+ * `ABORTED` is documented as retryable and the contending write is short,
+ * so a few quick attempts clear it. Bounded twice over — by attempt count
+ * and by {@link CLEAR_BUDGET_MS} wall-clock, because how long a
+ * *contended* DELETE takes to answer is not known (the one sighting only
+ * bounds it below 10s).
+ *
+ * Every retry is LOGGED rather than swallowed. A retry hides whatever held
+ * the lock, and this sweep runs in `afterEach` of nearly every integration
+ * test — if it starts needing three attempts routinely, that is a signal
+ * about trigger fan-out, and it should not be invisible.
+ *
+ * `deadlineMs` exists so the deadline path is testable in milliseconds
+ * rather than seconds; production callers use the default.
+ */
+export async function sweepFirestore(
+  url: string,
+  { deadlineMs = CLEAR_BUDGET_MS }: { deadlineMs?: number } = {},
+): Promise<void> {
+  // Same reasoning as `waitForDelivery` below: once a sweep has spent its
+  // whole budget without the emulator answering at all, every later hook
+  // in this file would pay the same budget to learn the same thing. Module
+  // state is per test file (vitest isolates modules), so this bounds a
+  // hung emulator at one budget per FILE — not per run. Every test still
+  // fails, named, and immediately.
+  if (consecutiveSilentSweeps >= SWEEP_STRIKES) {
+    // Factual, not a diagnosis: it reports what was observed rather than
+    // asserting what is wrong with the emulator.
+    throw new Error(
+      `clearEmulators(Firestore) skipped: ${SWEEP_STRIKES} consecutive sweeps ` +
+        'exhausted their budget with no response — see the first failure',
+    );
+  }
+  const deadline = Date.now() + deadlineMs;
+  // An abort is always terminal (it fires AT the deadline, so there is
+  // never time for another attempt), and its message says only
+  // "aborted due to timeout". Keeping the last real response means the
+  // final error still carries the `Transaction lock timeout` body that
+  // explains WHY the sweep was slow — the diagnostic this all exists for.
+  let lastResponse: string | undefined;
+  let contactedEmulator = false;
+  let terminalCause: unknown;
+  for (let attempt = 1; ; attempt++) {
+    terminalCause = undefined;
+    // Bound the ATTEMPT, not merely the decision to start another one.
+    // The premise here is that a contended DELETE's duration is unknown,
+    // so an unbounded `fetch` would let a single slow answer overrun the
+    // hook budget no matter how few attempts were made.
+    const remainingMs = Math.max(1, deadline - Date.now());
+    let detail: string;
+    let retryable: boolean;
+    try {
+      const res = await fetch(url, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      if (res.ok) {
+        if (attempt > 1) {
+          console.warn(
+            `clearEmulators(Firestore): swept on attempt ${attempt} of ${SWEEP_ATTEMPTS}`,
+          );
+        }
+        // A sweep that answered is the clearest evidence the emulator is
+        // alive. Without this the counter means "silent sweeps ever seen in
+        // this file" rather than "in a row", and two slow sweeps any
+        // distance apart would arm the latch — the exact widening the
+        // two-strike rule exists to prevent.
+        consecutiveSilentSweeps = 0;
+        return;
+      }
+      // Record contact BEFORE reading the body. `res.text()` streams under
+      // the same signal, so a response whose body lands near the deadline
+      // aborts mid-read — and if the flag were set afterwards, an emulator
+      // that demonstrably answered would be counted as silence, which is
+      // the single distinction this design rests on. Keep the status too,
+      // so the final error still names it when the body never arrives.
+      contactedEmulator = true;
+      lastResponse = `${res.status}`;
+      detail = `${res.status} ${await res.text()}`;
+      lastResponse = detail;
+      retryable = RETRYABLE_SWEEP_STATUSES.has(res.status);
+    } catch (err) {
+      // The deadline abort, or a transport failure such as a socket reset.
+      // Both used to escape this loop and throw raw, with no attempt count
+      // and no context. `isTransportDrop` keeps the fail-fast path for
+      // the ones no amount of waiting fixes.
+      detail = describeFetchError(err);
+      terminalCause = err;
+      if (isTransportDrop(err)) contactedEmulator = true;
+      retryable = isTransportDrop(err);
+    }
+
+    const backoffMs = 100 * 2 ** (attempt - 1);
+    const outOfTime = Date.now() + backoffMs >= deadline;
+    if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
+      const carried =
+        lastResponse && lastResponse !== detail ? `; last response: ${lastResponse}` : '';
+      // Latch only on a full budget spent waiting for an emulator that
+      // never answered at all — i.e. the terminal failure is the deadline
+      // abort, with no HTTP response anywhere in the attempts.
+      //
+      // "Contact" is any sign of life, not just an HTTP response: a 409
+      // means it answered slowly (the T-97 scenario itself), and a
+      // transport drop means a connection existed and broke. Latching on
+      // either would turn one failed test into a failed file, every hook
+      // claiming nothing responded when something demonstrably did.
+      //
+      // Response alone is not enough, and this is subtle: with a
+      // per-attempt `AbortSignal`, a flappy socket usually does NOT
+      // terminate as a drop. Once the remaining budget is shorter than the
+      // drop delay the abort wins the race, so the terminal error is a
+      // `TimeoutError` with no response recorded — indistinguishable from
+      // silence unless the earlier drops are remembered. Hence a sticky
+      // flag rather than a check on the terminal cause.
+      //
+      // KNOWINGLY NOT BOUNDED: an emulator that 409s every sweep costs
+      // ~700ms × ~500 calls ≈ 6 min, the same runaway `ECONNREFUSED` is
+      // failed fast to avoid. It is left unbounded because the two are not
+      // symmetric in what a strike would cost. `ECONNREFUSED` is
+      // unambiguous — nothing is listening, every later call is certain to
+      // fail the same way. Two contended sweeps in a row are not: trigger
+      // fan-out bursts make that reachable in a healthy run, and
+      // short-circuiting there would convert a transient into a file-wide
+      // failure, replacing N independent named failures with one. Paying
+      // ~6 min on an already-red run is the better side of that trade for
+      // a case never yet observed. Revisit if it ever is.
+      if (outOfTime && !contactedEmulator) {
+        consecutiveSilentSweeps += 1;
+      } else {
+        consecutiveSilentSweeps = 0;
+      }
+      throw new Error(
+        `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
+          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}${carried}`,
+        terminalCause === undefined ? undefined : { cause: terminalCause },
+      );
+    }
+    console.warn(`clearEmulators(Firestore): ${detail} on attempt ${attempt}, retrying`);
+    await new Promise((r) => setTimeout(r, backoffMs));
   }
 }
 
