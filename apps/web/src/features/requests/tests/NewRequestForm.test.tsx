@@ -69,14 +69,21 @@ function liveSeatResult(seat: Seat | undefined) {
 }
 
 function wards(
-  opts: { code: string; building_name: string; kindoo_site_id?: string | null }[] = [],
+  opts: {
+    code: string;
+    building_name: string;
+    kindoo_site_id?: string | null;
+    /** Overrides the derived name. Needed for branches — the calling
+     *  typeahead reads the unit kind off the name, never the code. */
+    name?: string;
+  }[] = [],
 ): Ward[] {
   const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
   return opts.map(
-    ({ code, building_name, kindoo_site_id }) =>
+    ({ code, building_name, kindoo_site_id, name }) =>
       ({
         ward_code: code,
-        ward_name: `Ward ${code}`,
+        ward_name: name ?? `Ward ${code}`,
         building_name,
         seat_cap: 20,
         ...(kindoo_site_id !== undefined ? { kindoo_site_id } : {}),
@@ -788,32 +795,59 @@ describe('<NewRequestForm /> — calling typeahead', () => {
     expect(screen.getByText('Elders Quorum President')).toBeInTheDocument();
   });
 
-  it('suggests branch callings at a unit scope too', async () => {
-    // The unit list spans both kinds of unit, so a Branch President is
-    // selectable wherever a Bishop is. Without this a branch stake has no
-    // way to name its leaders on a request (T-96).
+  const branchScope = [{ value: 'peterson-branch', label: 'Peterson Branch' }];
+  const branchWards = () =>
+    wards([{ code: 'peterson-branch', building_name: 'Maple Building', name: 'Peterson Branch' }]);
+
+  it('suggests branch callings when the scope is a branch', async () => {
+    // Without this a branch stake has no way to name its leaders on a
+    // request (T-96).
     const user = userEvent.setup();
-    render(
-      <NewRequestForm
-        scopes={[{ value: 'peterson-branch', label: 'Peterson Branch' }]}
-        buildings={buildings()}
-        wards={wards([{ code: 'peterson-branch', building_name: 'Maple Building' }])}
-      />,
-    );
+    render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
     await user.click(screen.getByTestId('new-request-reason'));
     expect(await screen.findByText('Branch President')).toBeInTheDocument();
     expect(screen.getByText('Branch Clerk')).toBeInTheDocument();
   });
 
-  it('selects a branch calling into the field verbatim', async () => {
+  it('hides the ward-only callings when the scope is a branch', async () => {
+    const user = userEvent.setup();
+    render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
+    await user.click(screen.getByTestId('new-request-reason'));
+    await screen.findByText('Branch President');
+    expect(screen.queryByText('Bishop')).toBeNull();
+    expect(screen.queryByText('Ward Clerk')).toBeNull();
+    expect(screen.queryByText('Ward Executive Secretary')).toBeNull();
+  });
+
+  it('still suggests the shared callings when the scope is a branch', async () => {
+    const user = userEvent.setup();
+    render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
+    await user.click(screen.getByTestId('new-request-reason'));
+    expect(await screen.findByText('Relief Society President')).toBeInTheDocument();
+    expect(screen.getByText('Sunday School President')).toBeInTheDocument();
+  });
+
+  it('hides the branch callings when the scope is a ward', async () => {
     const user = userEvent.setup();
     render(
       <NewRequestForm
-        scopes={[{ value: 'peterson-branch', label: 'Peterson Branch' }]}
+        scopes={[{ value: 'CO', label: 'Ward CO' }]}
         buildings={buildings()}
-        wards={wards([{ code: 'peterson-branch', building_name: 'Maple Building' }])}
+        wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
       />,
     );
+    await user.click(screen.getByTestId('new-request-reason'));
+    await screen.findByText('Bishop');
+    expect(screen.queryByText('Branch President')).toBeNull();
+    expect(screen.queryByText('Branch Clerk')).toBeNull();
+    // The shared entries are still there.
+    expect(screen.getByText('Relief Society President')).toBeInTheDocument();
+    expect(screen.getByText('Sunday School President')).toBeInTheDocument();
+  });
+
+  it('selects a branch calling into the field verbatim', async () => {
+    const user = userEvent.setup();
+    render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
     const reason = screen.getByTestId('new-request-reason');
     await user.click(reason);
     await user.type(reason, 'branch pres');

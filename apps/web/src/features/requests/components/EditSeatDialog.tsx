@@ -392,6 +392,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
                       value={field.value ?? ''}
                       onChange={field.onChange}
                       scope={seat.scope}
+                      wards={wards}
                       name={field.name}
                       data-testid="edit-seat-reason"
                     />

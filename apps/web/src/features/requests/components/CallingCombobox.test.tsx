@@ -20,7 +20,7 @@ afterEach(() => {
 
 function renderCombobox() {
   const result = render(
-    <CallingCombobox value="" onChange={() => {}} scope="CO" data-testid="reason" />,
+    <CallingCombobox value="" onChange={() => {}} scope="CO" wards={[]} data-testid="reason" />,
   );
   return { ...result, input: screen.getByTestId('reason') };
 }

@@ -1,7 +1,8 @@
 // Scope-aware typeahead for the New Request form's `reason` field.
-// Suggests entries from `UNIT_CALLINGS` or `STAKE_CALLINGS` based on
-// the current request scope. Free-text outside the suggestion list is
-// still accepted — the lists are hints, not validators.
+// `callingsForScope` picks the suggestion list from the current scope
+// and the unit catalogue — stake, ward, or branch. Free-text outside the
+// suggestion list is still accepted — the lists are hints, not
+// validators.
 //
 // Behavioural notes:
 //   - The component is controlled (`value` / `onChange`) so it slots
@@ -27,15 +28,20 @@ import {
 } from '../../../components/ui/Command';
 import { Popover, PopoverAnchor, PopoverContent } from '../../../components/ui/Popover';
 import { cn } from '../../../lib/cn';
-import { STAKE_CALLINGS, UNIT_CALLINGS } from '../standardCallings';
+import type { Ward } from '@kindoo/shared';
+import { callingsForScope } from '../standardCallings';
 
 export interface CallingComboboxProps {
   /** Current free-text value (typed or selected). */
   value: string;
   /** Called on every keystroke and on suggestion selection. */
   onChange: (next: string) => void;
-  /** Form scope — `'stake'` picks STAKE_CALLINGS; anything else picks UNIT_CALLINGS. */
+  /** Form scope — `'stake'`, or a unit's `ward_code`. */
   scope: string;
+  /** Unit catalogue, used to resolve a unit scope to ward or branch by
+   *  name. Pass the live query result; mid-load the typeahead falls back
+   *  to the combined unit list. */
+  wards: readonly Ward[];
   /** Passes through to the underlying `<input>`. */
   id?: string;
   /** Test selector — matches the previous `new-request-reason` id. */
@@ -50,17 +56,15 @@ export function CallingCombobox({
   value,
   onChange,
   scope,
+  wards,
   id,
   'data-testid': testId,
   name,
   placeholder,
 }: CallingComboboxProps) {
   // Derive the suggestion list on every render so a scope swap reflects
-  // immediately. STAKE only on exact 'stake'; everything else (unit
-  // codes, '') gets the unit list per spec. The unit list spans wards and
-  // branches — a `ward_code` is a slug, so the scope alone cannot tell
-  // the two apart.
-  const suggestions = scope === 'stake' ? STAKE_CALLINGS : UNIT_CALLINGS;
+  // immediately.
+  const suggestions = callingsForScope(scope, wards);
 
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);

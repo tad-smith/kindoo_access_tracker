@@ -532,6 +532,7 @@ export function NewRequestForm({
                 value={field.value ?? ''}
                 onChange={field.onChange}
                 scope={watchedScope}
+                wards={wards}
                 name={field.name}
                 data-testid="new-request-reason"
               />
