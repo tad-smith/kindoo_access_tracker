@@ -6,6 +6,29 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-25] A door the church missed makes Sync read a church-provisioned member as `manual`
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @extension-engineer
+Severity: high (silently mislabels seat provenance, and actively proposes demoting working `auto` seats)
+Phase: cross-cutting
+Branch / PR: `fix/b-25-partial-church-coverage`
+
+**Symptom (operator-reported, production).** In one ward the Church Access Automation granted a group of members access to two of a building's three doors and missed the third. A Kindoo Manager granted that third door directly — a permanent per-user grant, not an AccessRule. Sync then classified those members' seats as `manual` instead of `auto`.
+
+**Cause — the predicate is stated in doors and computed in buildings.** `isChurchBacked` / `grantsBackAuto` test `directGrantBuildings.length > 0`, documented as "≥1 church-direct grant". But `directGrantBuildings` was `derivedBuildingNames(deriveEffectiveRuleIds(direct, ruleDoorMap))`, and `deriveEffectiveRuleIds` is a **strict subset**: a building is claimed only when *every* door in its rule is present. Over the church-only door subset that means the church must have granted the building's entire rule.
+
+So for these members: `all = {D1, D2, D3}` claims the rule → `derivedBuildings = [Building]`, but `direct = {D1, D2}` claims nothing → `directGrantBuildings = []` — the identical value produced by a member the church grants **nothing at all**.
+
+**Two consequences, the second worse.** New seats minted `manual`; and members who already held `auto` seats hit the demote branch, so Sync raised drift rows proposing `auto → manual` on correctly-classified seats. Building access was unaffected (`derivedBuildings` sees the union), so no `buildings-mismatch` row accompanied it — the type flip was the only visible symptom.
+
+**Provenance.** PR #189 relaxed the OUTER predicate (from "every seat building is church-granted" to "non-empty") and left the INNER strict subset in place, so full-coverage semantics survived one level down wearing the relaxed rule's name. `sync-design.md` recorded the two as equivalent — "non-empty (≥1 church-direct door)" — which they only are when the church happens to cover a whole rule.
+
+**Why the tests were green.** Both layers were covered and both were individually correct. `buildingsFromDoors.test.ts` asserted the strict behaviour *on purpose* ("partial church coverage does NOT claim the rule … (strict subset)"), written when the outer predicate still wanted full coverage and never revisited when PR #189 changed what the caller meant. Every detector test passes `directGrantBuildings` in as a literal, so none could observe the derivation. The defect lived only in the composition.
+
+**Fix.** `deriveOverlappingRuleIds` — claim a rule on **one** shared door — and `directGrantBuildings` derives through it. Access asks "can they open this building" and needs every door; provenance asks "is the church provisioning this member" and needs one. `derivedBuildings` keeps the strict subset. A church grant on a door in no SBA-mapped rule still counts for nothing (operator's ruling). Regression coverage runs the real derivation into `detect`, at the seam, in both directions: promote fires, and an existing `auto` seat is left alone.
+
+---
+
 ## [B-22] Every Popover inside a modal rendered behind it and could not be used
 Status: closed (fixed) `[FIXED 2026-08-09]`
 Owner: @web-engineer

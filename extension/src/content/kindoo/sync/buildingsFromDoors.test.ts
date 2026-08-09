@@ -1,6 +1,7 @@
 // Tests for the door-grant → buildings derivation helpers.
-// Pure-function tests exercise strict-subset semantics directly; the
-// I/O wrappers mock the fetch boundary via the existing fetchImpl
+// Pure-function tests exercise the two rule predicates directly —
+// strict subset for access, any-overlap for provenance; the I/O
+// wrappers mock the fetch boundary via the existing fetchImpl
 // injection pattern.
 
 import { describe, expect, it, vi } from 'vitest';
@@ -10,6 +11,7 @@ import {
   buildRuleDoorMap,
   derivedBuildingNames,
   deriveEffectiveRuleIds,
+  deriveOverlappingRuleIds,
   enrichUsersWithDerivedBuildings,
   getUserDoorGrants,
   getUserDoorIds,
@@ -88,6 +90,45 @@ describe('deriveEffectiveRuleIds', () => {
     ]);
     const out = deriveEffectiveRuleIds(userDoors, ruleMap);
     expect(out).toEqual(new Set([6248, 6250]));
+  });
+});
+
+describe('deriveOverlappingRuleIds', () => {
+  it('claims a rule on a SINGLE shared door — the case strict subset rejects', () => {
+    const userDoors = new Set([1]);
+    const ruleMap = new Map<number, Set<number>>([[6248, new Set([1, 2, 3])]]);
+    expect(deriveOverlappingRuleIds(userDoors, ruleMap)).toEqual(new Set([6248]));
+    // The predicate the access path uses, for contrast.
+    expect(deriveEffectiveRuleIds(userDoors, ruleMap)).toEqual(new Set());
+  });
+
+  it('does not claim a rule the user shares no door with', () => {
+    const userDoors = new Set([9]);
+    const ruleMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    expect(deriveOverlappingRuleIds(userDoors, ruleMap)).toEqual(new Set());
+  });
+
+  it('never claims a rule with an empty door set', () => {
+    // `every` on an empty set is vacuously true; this predicate has the
+    // opposite failure mode but the same requirement — no phantom claim.
+    const userDoors = new Set([1, 2]);
+    const ruleMap = new Map<number, Set<number>>([[6248, new Set()]]);
+    expect(deriveOverlappingRuleIds(userDoors, ruleMap)).toEqual(new Set());
+  });
+
+  it('returns an empty set for an empty user door set', () => {
+    const ruleMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    expect(deriveOverlappingRuleIds(new Set(), ruleMap)).toEqual(new Set());
+  });
+
+  it('claims every rule the door set touches, including a shared door', () => {
+    const userDoors = new Set([1]);
+    const ruleMap = new Map<number, Set<number>>([
+      [6248, new Set([1, 2])],
+      [6249, new Set([1, 3])], // shares door 1 — both claimed
+      [6250, new Set([7, 8])],
+    ]);
+    expect(deriveOverlappingRuleIds(userDoors, ruleMap)).toEqual(new Set([6248, 6249]));
   });
 });
 
@@ -376,10 +417,13 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
   });
 
-  it('partial church coverage does NOT claim the rule for directGrantBuildings (strict subset)', async () => {
-    // Maple needs doors [1,2]. The user holds door 1 church + door 2
-    // via rule only. derivedBuildings claims Maple (both doors present);
-    // directGrantBuildings does NOT (door 2 is not church-granted).
+  it('partial church coverage DOES claim the rule for directGrantBuildings (B-25)', async () => {
+    // Maple needs doors [1,2]. The church granted door 1 and missed
+    // door 2, which a Kindoo Manager then granted by hand. Both sets
+    // claim Maple: derivedBuildings because the member can open both
+    // doors, directGrantBuildings because one church grant is proof the
+    // church provisions this member. Requiring full church coverage
+    // here is what read these members as `manual`.
     const users = [ku({ userId: 'u1', username: 'partial@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
     const buildings = [building('Maple Building', 6248)];
@@ -401,7 +445,28 @@ describe('enrichUsersWithDerivedBuildings', () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
-    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+    expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
+  });
+
+  it('a church door the member cannot complete claims provenance but NOT access', async () => {
+    // The other half of B-25: the church granted door 1, nobody granted
+    // door 2. The member can't open Maple (no derivedBuildings), but the
+    // church is still provisioning them, so the seat stays church-backed
+    // and must not be demoted to manual.
+    const users = [ku({ userId: 'u1', username: 'incomplete@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 1, church: true }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
   });
 
   it('sets BOTH derivedBuildings and directGrantBuildings to null when a per-user call throws', async () => {

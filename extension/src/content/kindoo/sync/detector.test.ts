@@ -12,6 +12,7 @@ import {
   parseKindooCallings,
 } from './detector';
 import { fixActionsFor } from './fix';
+import { enrichUsersWithDerivedBuildings } from './buildingsFromDoors';
 
 describe('isChurchBacked', () => {
   it('true when the member holds ANY church-direct grant', () => {
@@ -2551,5 +2552,95 @@ describe('detect — stake.kindoo_ignored_wards', () => {
     });
     expect(result.discrepancies).toEqual([]);
     expect(result.ignoredCount).toBe(1);
+  });
+});
+
+// B-25 — the seam between `buildingsFromDoors` and the type decision.
+// Both sides were individually correct and composed into the wrong
+// answer: the derivation projected the church-only door set through a
+// STRICT subset, so a member the church grants two of three doors
+// arrived here as `directGrantBuildings: []` — indistinguishable from a
+// member the church grants nothing. Every other detector test hands
+// `directGrantBuildings` in as a literal, which is exactly why none of
+// them could see it. These two run the real derivation.
+describe('detect + real door-grant derivation (B-25)', () => {
+  const CHURCH_GRANTOR = {
+    DisplayName: 'Church Access Automation',
+    Username: 'sentry@groups.churchofjesuschrist.org',
+    IsSuperApi: true,
+  };
+  const MANAGER_GRANTOR = { DisplayName: 'A Manager', IsSuperApi: false };
+
+  /** Maple's rule is doors [1,2,3]. The church granted 1 and 2 and
+   * missed 3; a Kindoo Manager granted 3 by hand — direct, not via an
+   * AccessRule, so its grantor is the manager. */
+  async function enrichPartiallyCovered(): Promise<KindooEnvironmentUser> {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          CurrentNumberOfRows: 3,
+          TotalRecordNumber: 3,
+          RulesList: [
+            { DoorID: 1, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR },
+            { DoorID: 2, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR },
+            { DoorID: 3, AccessScheduleID: 6248, GrantedBy: MANAGER_GRANTOR },
+          ],
+        }),
+        { status: 200 },
+      );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      { token: 'sess', eid: 27994 },
+      27994,
+      [kuser({ description: 'Maple Ward (Sunday School Teacher)' })],
+      new Map([[6248, new Set([1, 2, 3])]]),
+      BUILDINGS,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    return enriched[0]!;
+  }
+
+  it('promotes the manual seat — two church doors are still church provisioning', async () => {
+    const enriched = await enrichPartiallyCovered();
+    expect(enriched.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched.directGrantBuildings).toEqual(['Maple Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('auto');
+    expect(typeRows[0]?.reason).toContain('Promote to auto');
+  });
+
+  it('leaves an already-auto seat alone — no demotion row', async () => {
+    // The worse half of the defect: these members mostly already HAD
+    // auto seats, so the empty church set fired the demote branch and
+    // Sync proposed flipping working auto seats to manual.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [await enrichPartiallyCovered()],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
   });
 });

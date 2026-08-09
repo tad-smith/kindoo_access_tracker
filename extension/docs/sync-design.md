@@ -156,7 +156,8 @@ To reconcile auto users, the Sync run derives each user's effective building set
 1. **`buildRuleDoorMap`** — one `KindooGetEnvRuleWithEntryPointsFormatted` call per AccessRule referenced by an SBA building (csnorth has 4 → 4 calls). Each rule's response carries every door in the environment with `IsSelected: true` on the doors belonging to the queried rule. The map: `RuleID → Set<DoorID>`.
 2. **`getUserDoorIds`** — one `KindooGetUserAccessRulesLightWithTotalNumberOfRecordsWithEntryPoints` call per Kindoo user (313 calls in csnorth). Paginated with `start += 40`. Every row carries a `DoorID` regardless of grant origin (rule-derived vs church direct grant from the Church Access Automation). The flattened, deduplicated set is the user's effective door set.
 3. **`deriveEffectiveRuleIds`** — pure function. A user "effectively holds" a rule iff EVERY DoorID in that rule's door set is present in the user's door set. Strict subset; partial overlap does not claim the rule. Empty rule door sets are explicitly guarded against (would otherwise vacuously match every empty rule).
-4. **`derivedBuildingNames`** — pure function. Map effective RuleIDs to SBA building names via `building.kindoo_rule.rule_id`. Returns a deduplicated, alphabetically-sorted array.
+4. **`deriveOverlappingRuleIds`** — pure function, and the counterpart to (3): a rule is claimed iff the user's door set shares **at least one** door with it. Used for `directGrantBuildings` **only**. Access and provenance are different questions and take different predicates — see "Two door subsets" below.
+5. **`derivedBuildingNames`** — pure function. Map claimed RuleIDs to SBA building names via `building.kindoo_rule.rule_id`. Returns a deduplicated, alphabetically-sorted array. Runs once per door subset.
 
 The `SyncPanel` orchestrates the per-user loop with a concurrency cap (4 in flight) and a throttled progress text ("Reading Kindoo user N of M…", updated every 10 users so the React reconciler stays responsive). Each user's `KindooEnvironmentUser` is enriched with `derivedBuildings: string[] | null` BEFORE the detector runs. On per-user failure the field is set to `null` and the loop continues — one user's network blip does not fail the whole sync. Consequence: a `null` (per-user door-read blip) can surface a manual/temp `buildings-mismatch` row whose "Update SBA" button is disabled (it refuses to source from the AccessSchedules fallback); the resolution is to re-run Sync.
 
@@ -437,6 +438,29 @@ an SBA rule covers the same doors).
 > grants (`directGrantBuildings`) and still drives `buildings-mismatch`; only the type predicate that
 > reads it changed from subset-of-seat-buildings to non-empty.
 
+> **Two door subsets, two predicates (B-25).** The note above says "≥1 church-direct **door**" and
+> "non-empty `directGrantBuildings`" as if they were the same statement. They were not. PR #189
+> relaxed the OUTER test (subset-of-seat-buildings → non-empty) and left the INNER one alone:
+> `directGrantBuildings` was still `deriveEffectiveRuleIds(direct, ruleDoorMap)`, a **strict
+> subset**, so a building only appeared once the church had granted **every** door of its rule. Full
+> coverage survived one level down, wearing the name of the relaxed rule.
+>
+> In production the Church Access Automation granted a ward's members two of a building's three
+> doors and missed the third, which a Kindoo Manager then granted by hand. Those members hold two
+> church-direct grants; the strict subset claimed no rule from the church-only door set, so
+> `directGrantBuildings` came back `[]` — the exact value produced by a member the church grants
+> **nothing**. New seats minted `manual`, and the ones that already existed hit the demote branch, so
+> Sync proposed flipping working `auto` seats to `manual`. `derivedBuildings` reads the union of
+> doors, so those members' building sets were right and no `buildings-mismatch` row hinted at it.
+>
+> `directGrantBuildings` is now `deriveOverlappingRuleIds(direct, ruleDoorMap)` — a building is
+> claimed on **one** shared church-granted door. **Access** asks "can they open this building" and
+> needs every door; **provenance** asks "is the church provisioning this member" and needs one.
+> `derivedBuildings` keeps the strict subset; only the direct set changed. A church grant on a door
+> in no mapped rule still counts for nothing — the operator's ruling: provenance is read through the
+> buildings SBA models, not through Kindoo's door list at large. The residual is over-claim where two
+> rules share a door, which widens the promote row's reason text and never changes its verdict.
+
 **Confirmed — the data was already in hand, no fresh capture needed.** (b)+(c) shipped against the
 existing capture; nothing was pending. (The grantor field is already requested via
 `FetchGrantedByData: 'true'`.)
@@ -453,14 +477,17 @@ existing capture; nothing was pending. (The grantor field is already requested v
   church-granted from rule-derived rather than collapsing to `doorId` alone — see the
   "Prefer-church door dedup" implementation note below for the as-built dedup.
 
-**Algorithm** (mirrors the existing strict-subset `deriveEffectiveRuleIds`, restricted to
-church-granted doors):
+**Algorithm** (`deriveOverlappingRuleIds`, restricted to church-granted doors — deliberately NOT the
+strict-subset `deriveEffectiveRuleIds` the access path uses):
 
 1. `churchDoorIds = { r.doorId | r.churchGranted }` for the member.
-2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **church-granted** iff
-   **every** door of `R_X` ∈ `churchDoorIds` (strict subset; partial coverage ⇒ that building isn't
-   added to `directGrantBuildings` — conservative, matches the existing rule-derivation convention).
-   The set of all such buildings is `directGrantBuildings`.
+2. A building X (→ rule `R_X`, door set from `buildRuleDoorMap`) is **church-granted** iff **at
+   least one** door of `R_X` ∈ `churchDoorIds`. The set of all such buildings is
+   `directGrantBuildings`. ~~every door of `R_X` ∈ `churchDoorIds` (strict subset; partial coverage
+   ⇒ that building isn't added)~~ — the strict subset was **wrong here** (B-25): the church
+   routinely leaves a door ungranted, a Kindoo Manager fills it by hand, and full coverage then
+   reports zero church grants for a member who plainly has them. Empty rule door sets are still
+   never claimed.
 3. **Guest seat-type decision (PR #189):** a Guest is `auto` iff `directGrantBuildings` is
    **non-empty** (≥1 church-direct building), `manual` iff `[]`, unchanged iff `null`. ~~A seat is
    church-backed iff every one of its `building_names` is church-granted~~ — the all-buildings subset
@@ -580,9 +607,10 @@ church grant**: if ANY row for a door is church-granted (`isChurchGrantedRow` �
 Church Access Automation account or `IsSuperApi`), the collapsed row carries `churchGranted: true`.
 Without this, a rule row arriving before the church row would mask the church grant (the overlap/lag
 case) since the old dedup kept first-seen. `directGrantBuildings` is then
-`derivedBuildingNames(deriveEffectiveRuleIds(churchDoorIds, ruleDoorMap), buildings)` over the
-church-granted door subset; `enrichUsersWithDerivedBuildings` computes both sets from a single
-fetch (`getUserDoorGrants`) and nulls BOTH on a per-user error.
+`derivedBuildingNames(deriveOverlappingRuleIds(churchDoorIds, ruleDoorMap), buildings)` over the
+church-granted door subset (any-overlap, not the strict subset `derivedBuildings` uses — B-25);
+`enrichUsersWithDerivedBuildings` computes both sets from a single fetch (`getUserDoorGrants`) and
+nulls BOTH on a per-user error.
 
 **`isChurchBacked` / `grantsBackAuto` (c) — corrected (PR #189).** Both now take a single argument
 and reduce to **"any church-direct grant"**: `isChurchBacked(directGrantBuildings) =
@@ -593,6 +621,11 @@ directGrantBuildings`~~ — the all-buildings strict-subset predicate (and the v
 zero-building edge case it carried) is **gone**. `null` direct set ⇒ not auto (can't determine,
 leave unchanged); `[]` ⇒ manual; non-empty ⇒ auto. This is the Guest path only — Admin/Manager seats
 are forced `auto` and never call these (see "Kindoo role").
+
+Both predicates are only as good as how `directGrantBuildings` was derived: "non-empty" is a
+faithful reading of "≥1 church-direct grant" **only** because the derivation is now any-overlap
+(B-25). Restore a strict subset upstream and these two functions silently mean "the church covers a
+whole building's rule" again, with nothing here to show for it.
 
 **Promote/demote target carrier (c).** The grant-derived target type rides on
 `KindooBlock.grantTargetType` (`'auto'` for promote, `'manual'` for demote; also set on
