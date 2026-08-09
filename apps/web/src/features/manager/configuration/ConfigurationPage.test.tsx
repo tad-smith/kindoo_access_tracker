@@ -16,6 +16,7 @@ import type {
   Stake,
   Ward,
 } from '@kindoo/shared';
+import { unitNameCollisionMessage } from '@kindoo/shared';
 
 const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
@@ -330,6 +331,65 @@ describe('<ConfigurationPage />', () => {
     expect(btn).toHaveAttribute('title', 'Loading…');
     // The known-empty hint must NOT show while loading.
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
+  });
+
+  it('gates Add Ward until the wards snapshot arrives, then feeds the guard the real list', async () => {
+    // The unique-display-name guard runs against `wards.data`. While the
+    // snapshot is unresolved an empty list reads as "nothing to collide
+    // with", so a submit landing first would save unconditionally — and
+    // the mutation's slug backstop can't catch it, since "Maple" and
+    // "Maple Ward" slug to different doc ids. Same gate
+    // IgnoredWardsSection uses on its own Add.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    const { rerender } = render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+
+    const gated = screen.getByTestId('config-wards-add-button');
+    expect(gated).toBeDisabled();
+    expect(gated).toHaveAttribute('title', 'Loading…');
+    // Buildings are known and non-empty, so the reason shown is the
+    // load — not the wrong empty-catalogue hint.
+    expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
+    await user.click(gated);
+    expect(screen.queryByTestId('config-ward-submit')).toBeNull();
+
+    // Snapshot lands, carrying the ward that "Maple" collides with.
+    const existingWards = [
+      {
+        ward_code: 'maple-ward',
+        ward_name: 'Maple Ward',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+        seat_cap: 20,
+      } as Ward,
+    ];
+    useWardsMock.mockReturnValue(liveResult<Ward>(existingWards));
+    rerender(<ConfigurationPage initialTab="wards" />);
+
+    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByTestId('config-ward-submit'));
+
+    // The guard (inside the mutation — see `duplicateWardNameBlocker`)
+    // now receives the hydrated catalogue rather than an empty stand-in.
+    await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
+    expect(upsertWardMock.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({ ward_name: 'Maple', existingWards }),
+    );
+    // And that list is what makes the rule bite: the real shared rule
+    // rejects "Maple" against the hydrated names, and stays silent
+    // against the empty stand-in the un-gated code would have passed.
+    const names = existingWards.map((w) => w.ward_name);
+    expect(unitNameCollisionMessage('Maple', names)).toMatch(/are the same ward/i);
+    expect(unitNameCollisionMessage('Maple', [])).toBeNull();
   });
 
   it('shows ward-form validation error on empty submit (modal-driven)', async () => {

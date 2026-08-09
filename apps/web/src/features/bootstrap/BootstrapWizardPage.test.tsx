@@ -124,6 +124,24 @@ function liveResult<T>(data: T[] | undefined) {
   };
 }
 
+// Pending state for a live hook: the snapshot hasn't arrived yet.
+// Mirrors the envelope `useFirestoreCollection` exposes during its
+// initial load — `liveResult(undefined)` would claim `status: 'success'`,
+// which is not the state under test.
+function loadingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
 function stakeResult(data: Partial<Stake> | undefined) {
   return {
     data,
@@ -815,6 +833,77 @@ describe('<BootstrapWizardPage />', () => {
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
     expect(await screen.findByText(/reads both as "Olive Branch"/i)).toBeInTheDocument();
+    expect(addWardMutate).not.toHaveBeenCalled();
+  });
+
+  it('keeps Add ward disabled with a stated reason while the wards snapshot is in flight', async () => {
+    // The inline collision guard reads `wards.data`. An unresolved
+    // snapshot reads as "no wards to collide with", so a submit landing
+    // first would add a duplicate unconditionally — and the mutation's
+    // slug backstop can't catch it, since "Maple" and "Maple Ward" slug
+    // to different doc ids.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+    const submit = screen.getByTestId('bootstrap-ward-submit');
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAttribute('title', 'Loading…');
+    // Buildings are known and non-empty, so the visible reason is the
+    // load — not the wrong "add a building" hint.
+    expect(screen.getByTestId('bootstrap-ward-blocked-hint')).toHaveTextContent('Loading…');
+  });
+
+  it('does not flash "Add a building first" while the buildings snapshot is in flight', async () => {
+    useBuildingsMock.mockReturnValue(loadingResult());
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const hint = screen.getByTestId('bootstrap-ward-blocked-hint');
+    expect(hint).toHaveTextContent('Loading…');
+    expect(hint).not.toHaveTextContent(/Add a building first/i);
+  });
+
+  it('enables Add ward once the wards snapshot resolves and still rejects a colliding name', async () => {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    const { rerender } = render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    expect(screen.getByTestId('bootstrap-ward-submit')).toBeDisabled();
+
+    // Snapshot lands, carrying the ward that "Maple" collides with.
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        {
+          ward_code: 'maple-ward',
+          ward_name: 'Maple Ward',
+          building_name: 'Maple Building',
+          seat_cap: 20,
+        } as Ward,
+      ]),
+    );
+    rerender(<BootstrapWizardPage />);
+
+    const submit = screen.getByTestId('bootstrap-ward-submit');
+    expect(submit).toBeEnabled();
+    expect(screen.queryByTestId('bootstrap-ward-blocked-hint')).toBeNull();
+
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(submit);
+    expect(await screen.findByText(/are the same ward/i)).toBeInTheDocument();
     expect(addWardMutate).not.toHaveBeenCalled();
   });
 
