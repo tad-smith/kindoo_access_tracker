@@ -75,7 +75,7 @@ import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
 import { WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
-import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
+import { canonicalEmail as canonicalEmailFn, unitNameCollisionMessage } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { accessibleStakes } from '../../lib/activeStake';
 import { useActiveStake, useActiveStakeSwitcher } from '../../lib/useActiveStake';
@@ -611,16 +611,17 @@ function Step3Wards() {
       const selected = buildingOptions.find((b) => b.building_id === input.building_id);
       if (!selected) throw new Error('Selected building no longer exists.');
       // The ward name is now the only visible identifier, so reject inline
-      // a name that collides with a ward already added. Match by NAME
-      // (case-insensitive), not by slug — a slug-only check would miss a
-      // legacy 2-letter-coded ward whose name collides but whose doc id
-      // doesn't. The mutation enforces a slug-existence backstop too.
-      const wanted = input.ward_name.trim().toLowerCase();
-      if ((wards.data ?? []).some((w) => w.ward_name.trim().toLowerCase() === wanted)) {
-        setError('ward_name', {
-          type: 'manual',
-          message: `A ward named "${input.ward_name.trim()}" already exists.`,
-        });
+      // a name that collides with a ward already added. Match by NAME, not
+      // by slug — a slug-only check would miss a legacy 2-letter-coded
+      // ward whose name collides but whose doc id doesn't. Same rule and
+      // copy as Configuration → Wards; the mutation enforces a
+      // slug-existence backstop too.
+      const collision = unitNameCollisionMessage(
+        input.ward_name,
+        (wards.data ?? []).map((w) => w.ward_name),
+      );
+      if (collision) {
+        setError('ward_name', { type: 'manual', message: collision });
         return;
       }
       await addMutation.mutateAsync({
