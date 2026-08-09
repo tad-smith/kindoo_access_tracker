@@ -533,6 +533,11 @@ vi.mock('../../../lib/principal', () => ({
 
 vi.mock('../../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
+  // Member-data reads are gated separately (T-91): a superadmin holding
+  // no role on the stake reaches this page but cannot read seats /
+  // requests. These suites exercise the manager case, where both
+  // resolve to the same stake.
+  useMemberDataStake: () => 'csnorth',
 }));
 
 import {

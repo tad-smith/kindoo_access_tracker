@@ -6,6 +6,27 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-95] Flaky integration test: `syncManagersClaims` — claim read races the trigger
+Status: pending
+Owner: @backend-engineer
+Phase: cross-cutting
+
+Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/` — verified by diff against `main`. The same commit passed the suite locally (520 passed) and passed the previous CI run on the same branch, so the working assumption is a timing flake rather than a regression. Confirm that before changing anything: a second failure on the same commit means it is real.
+
+```
+functions/tests/syncManagersClaims.test.ts:57
+syncManagersClaims › flips manager claim off when active=false
+expected { canonical: 'm@gmail.com' } to match { stakes: { csnorth: { manager: true } } }
+```
+
+The received claims carry `canonical` but **no `stakes` block at all** — not a wrong grant, an absent one. So the assertion ran against a token minted before the manager grant was applied. The test does `await runSync(...)` then reads `auth.getUser()` immediately; if `runSync` resolves before the trigger's claim write has landed, the read is simply early. Worth checking whether `runSync` actually awaits the write or just the invocation, and whether the sibling assertion above it (line 41, the same shape) is passing by luck.
+
+**Two things make this worth real attention rather than a retry.**
+
+It is **invisible in the GitHub UI**. Every step in `test.yml` sets `continue-on-error: true` and a final "Verify all checks passed" step aggregates the true `outcome` values — so the Integration step renders **green** while having failed, and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing this meant reading `steps[].conclusion` off the API and mapping the failing index back to the list in `test.yml`. Anyone hitting a red `test` check will lose the same time; consider echoing the failing step's name in that gate.
+
+And unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. So a flake here fails the branch outright where the equivalent in e2e would be silently absorbed.
+
 ## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
 Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)
 Owner: @web-engineer
@@ -67,28 +88,21 @@ Two follow-ups from PR #263's review, both on the edit path added in [T-90]. **D
 **Still open, deliberately — see [T-93].** The same review flagged that editing the *site name* re-keys existing stake-scope Kindoo Descriptions. That is the same class as the EID (a value the extension only ever moved as a set), but write-once does not fix it, so it needs its own decision.
 
 ## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
-Status: pending
+Status: done (2026-08-09 — `fix/superadmin-active-stake`)
 Owner: @web-engineer, @backend-engineer
 Phase: Kindoo Sites (§15)
 
-Split out of [T-90], where it was built, found not to work end to end, and removed before merge. The Home Kindoo Site editor ships manager-only; this is the case it was originally for — a platform superadmin configuring a stake they hold no role on, which is how a stake whose home EID was never recorded gets un-stranded (see T-90 and `spec.md` §15 for why the extension panel cannot do it).
+**Done.** Split out of [T-90], where it was built and removed because it never worked end to end. Three layers, all shipped, plus the E2E that would have caught the original breakage.
 
-**Three layers, all required. Shipping any one alone is authority or UI with no consumer.**
+**1. Active-stake resolution — the real blocker, and not where two rounds of investigation looked.** It was never a race, a router rewrite, or the claims-timing gate. It was a contradiction between two deliberate rules: the URL tier is superadmin-permissive and **persists** what it resolves, while the storage tiers deliberately are **not** (a stale stake must invalidate rather than silently resume). Together those wrote the value into a slot this identity could never read back — the deep link worked for whichever hook instance consumed the URL and returned `null` for every one after it. And `usePrincipal` is **per-instance state with its own async claims read**, so "an instance that mounts later" is the ordinary case on a real page, not a race. Invisible for every other principal, because tier 4 answers with the same stake.
 
-1. **Active-stake resolution.** The blocker, and still open. Findings from an instrumented run, so the next attempt starts past the dead ends:
+   Fixed with provenance rather than permissiveness: `resolveActiveStake` takes `urlDerivedSessionStake`, the stake *this tab's own URL tier* persisted, and the session tier honours it for a superadmin only when it matches. Residue the tab did not write still fails the check and still invalidates — two existing tests assert exactly that and both still pass. Scoped to `sessionStorage`; `localStorage` is the cross-session sticky default that the narrowing was written to protect, and it stays non-permissive.
 
-   - **The pure resolver is fine.** `resolveActiveStake(superadminPrincipal, 'highplains', null, null)` returns `{ stakeId: 'highplains', source: 'url' }`. Verified directly. Its superadmin-permissive URL tier works.
-   - **`principalSettling` is not the cause.** `principalFromClaims` gives a zero-role superadmin `isAuthenticated: true`, so the settling gate is false and the side effects are not deferred.
-   - **The actual symptom: `urlStakeParam` is `null` on every resolve.** The `?stake=` value never reaches the module-scoped reader at all — so the resolver is asked the right question with the wrong input. Meanwhile the landed URL keeps `?tab=kindoo-sites` and has lost `?stake=`, and our own strip cannot be responsible because it only runs after a successful URL-tier resolve, which never happens. **Prime suspect: TanStack Router rewriting the URL from its validated search schema on mount, before `refreshModuleUrlStakeParamFromUrl` reads `window.location.search`.** The Configuration route does declare `stake` optional in `searchSchema`, so confirm what the router actually serialises rather than assuming it round-trips.
-   - **A real, separate defect found on the way** — worth fixing here even though it is not sufficient alone. The URL-tier persist calls `persistChoiceCore(...)` but **not** `notifyActiveStakeStorageChanged()`, which the switcher does call after its storage write for exactly this reason (same-tab writes emit no `storage` event). Any hook instance that already resolved `null`, and whose `principalSignature` / `urlStakeParam` do not change afterwards, keeps that stale answer for the tab's lifetime. Invisible for any principal with a tier-4 fallback — tier 4 returns the same stake — so it bites precisely the identity with no tier 4. Left out of PR #265 because it is an unverified change to a load-bearing module in a PR about the EID guard.
+**2. Sub-collection reads.** `isPlatformSuperadmin()` added to exactly five: `wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`. **Not `seats`, not `requests`** — member names and emails, and widening them would hand every superadmin the roster of every stake (operator decision). Accepted consequence: guards keyed on seats/requests (building rename + delete, organization delete) never hydrate for this persona and their buttons stay disabled — safe, and those are writes the rules deny them anyway.
 
-   **Methodology, because it cost hours:** `playwright.config.ts` sets `reuseExistingServer: !isCI`, so a `vite preview` left running from an earlier invocation is reused and **source edits silently never reach the browser** — instrumentation appears to produce nothing, and behaviour changes appear to have no effect. Kill whatever holds port 4173 before any instrumented run, and confirm the build actually contains your change (`grep` the bundle) before believing a negative result.
-2. **Sub-collection reads.** Widen read to `isPlatformSuperadmin()` on exactly five: `wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`. **Not `seats`, not `requests`** — those carry member names and emails, and widening them hands every superadmin the roster of every stake (operator decision, 2026-08-09). Consequence to accept: guards keyed on seats/requests (building rename + delete, organization delete) never hydrate for this persona and their buttons stay disabled — safe, and those are writes rules deny them anyway.
-3. **`stakes/{stakeId}` update.** Add `isPlatformSuperadmin()` **pinning `setup_complete` and `bootstrap_admin_email`**. Not optional: `isBootstrapAdmin` is exactly those two fields, so an unpinned grant re-opens the bootstrap hatch on any existing stake and `syncManagersClaims` turns it into a real manager claim. Ship with tests for both escalation attempts and one proving the pin doesn't narrow the manager path the wizard's own flip uses.
+**3. `stakes/{stakeId}` update.** Superadmin branch **pinning `setup_complete` and `bootstrap_admin_email`**. Not optional: `isBootstrapAdmin` is exactly those two fields, so an unpinned grant re-opens the bootstrap hatch on any existing stake and `syncManagersClaims` turns it into a real manager claim. The UI gate dropped its manager half to match.
 
-Two false leads, recorded so they aren't re-derived: the **route gate is not a blocker** (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`, so a superadmin already passes every manager-gated route), and the Stake List link therefore never "bounced a superadmin out" of the Dashboard — it failed on data reads.
-
-Verification this needs and T-90 lacked: an E2E for a token carrying **only** `isPlatformSuperadmin` (no `stakes` block) that reaches Kindoo Config from the Stake List, sees the foreign-sites list actually populated (a denied read renders the *empty state*, which would tell an operator a site they're about to collide with doesn't exist), and saves a home EID. Unit tests mock Firestore and rules tests don't render, so nothing below E2E catches this.
+**Method note, worth more than the fix.** Two rounds of Playwright instrumentation produced ambiguous readings and cost hours, partly because `reuseExistingServer` silently serves a stale bundle. What actually solved it was reproducing in the existing jsdom hook test — two `useActiveStake` consumers, the second mounting after the first — which failed in **4ms** and became the regression test. Reach for that harness first; e2e is for proving the layers meet, not for diagnosis.
 
 ## [T-90] Kindoo Config tab — Home Kindoo Site, section renames, Sync pre-filter
 Status: done (2026-08-08 — `feat/kindoo-config-tab`)

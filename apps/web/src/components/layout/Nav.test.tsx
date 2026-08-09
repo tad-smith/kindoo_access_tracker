@@ -127,9 +127,40 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     }
   });
 
-  it('platform superadmin without explicit manager claim still sees Settings', () => {
+  it('platform superadmin with no role on the stake sees no manager sections', () => {
+    // Reversed deliberately (T-91). The nav used to treat a superadmin
+    // as a manager everywhere, which surfaced Settings / Quick Links /
+    // Rosters for a stake they hold no role on — and every page behind
+    // those subscribes `seats` / `requests` / `access`, which the rules
+    // deny for them. The pages have nothing to show that identity; the
+    // one that does (Configuration, for the Home Kindoo Site editor) is
+    // reached from the Stake List, and its route still admits them.
     const sections = navSectionsForPrincipal(
       makePrincipal({ isPlatformSuperadmin: true }),
+      STAKE_ID,
+    );
+    const keys = sections.map((s) => s.key);
+    expect(keys).not.toContain('settings');
+    expect(keys).not.toContain('quick-links');
+    expect(keys).not.toContain('rosters');
+    // Super Admin stays — gated on the literal claim, not on stake role.
+    expect(keys).toContain('superadmin');
+  });
+
+  it('platform superadmin with no role on the stake can still sign out', () => {
+    // Logout keys off signed-in-ness, not stake role. Hiding the manager
+    // sections must not strand this identity with no way out of the app.
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ isPlatformSuperadmin: true }),
+      STAKE_ID,
+    );
+    const account = sections.find((s) => s.key === 'account');
+    expect(account?.items.map((i) => i.key)).toContain('logout');
+  });
+
+  it('platform superadmin who IS a manager of the stake still sees Settings', () => {
+    const sections = navSectionsForPrincipal(
+      makePrincipal({ isPlatformSuperadmin: true, managerStakes: [STAKE_ID] }),
       STAKE_ID,
     );
     expect(sections.map((s) => s.key)).toContain('settings');
@@ -144,11 +175,20 @@ describe('navSectionsForPrincipal — section visibility by role', () => {
     expect(superadmin).toBeDefined();
     expect(superadmin?.label).toBe('Super Admin');
     expect(superadmin?.items.map((i) => i.label)).toEqual(['Stake List']);
-    // Per `navigation-redesign.md` §8, Super Admin sits between Settings and Account.
+    // Per `navigation-redesign.md` §8, Super Admin sits between Settings
+    // and Account. A zero-role superadmin has no Settings section at all
+    // (T-91), so the ordering is asserted against Account, and against
+    // Settings in the manager case below.
     const keys = sections.map((s) => s.key);
-    const superIdx = keys.indexOf('superadmin');
-    expect(superIdx).toBeGreaterThan(keys.indexOf('settings'));
-    expect(superIdx).toBeLessThan(keys.indexOf('account'));
+    expect(keys.indexOf('superadmin')).toBeLessThan(keys.indexOf('account'));
+
+    const asManager = navSectionsForPrincipal(
+      makePrincipal({ isPlatformSuperadmin: true, managerStakes: [STAKE_ID] }),
+      STAKE_ID,
+    );
+    const mgrKeys = asManager.map((s) => s.key);
+    expect(mgrKeys.indexOf('superadmin')).toBeGreaterThan(mgrKeys.indexOf('settings'));
+    expect(mgrKeys.indexOf('superadmin')).toBeLessThan(mgrKeys.indexOf('account'));
   });
 
   it('Superadmin section is hidden for a Kindoo Manager who is not a superadmin', () => {

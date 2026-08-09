@@ -584,3 +584,127 @@ describe('useActiveStake — URL-tier consume for a settling (bootstrap-only) pr
     expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('ridgeline');
   });
 });
+
+// T-91. A platform superadmin holding no role on any stake is the one
+// identity with NO tier-4 fallback: `accessibleStakes()` is empty, so
+// the URL tier is its only route to an active stake. Every ordering
+// hazard the other tiers paper over is load-bearing for it.
+describe('useActiveStake — zero-role platform superadmin (T-91)', () => {
+  function asZeroRoleSuperadmin() {
+    setPrincipal({
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+      bootstrapStakes: [],
+      isPlatformSuperadmin: true,
+      isAuthenticated: true,
+      firebaseAuthSignedIn: true,
+    });
+  }
+
+  it('resolves ?stake=X and persists it', () => {
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains&tab=kindoo-sites');
+    let result: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          result = v;
+        }}
+      />,
+    );
+    expect(result).toBe('highplains');
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('highplains');
+  });
+
+  it('an instance mounted after the URL tier resolved still sees the stake', () => {
+    // The real page mounts this hook many times (Shell, the route gate,
+    // every per-stake data hook) and `usePrincipal` is PER-INSTANCE
+    // state with its own async claims read — so instances settle at
+    // different moments. An instance arriving after the first one
+    // consumed the URL value has only storage to read, and the memo
+    // that reads storage is keyed on `storageTick`, which nothing bumps
+    // when the URL tier persists.
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains&tab=kindoo-sites');
+
+    let first: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          first = v;
+        }}
+      />,
+    );
+    expect(first).toBe('highplains');
+
+    // Second consumer mounts afterwards — URL already stripped+consumed.
+    let second: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          second = v;
+        }}
+      />,
+    );
+    expect(second).toBe('highplains');
+  });
+
+  it('survives a page reload', () => {
+    // A reload is: module state gone, sessionStorage kept, URL already
+    // stripped. If provenance lives only in module scope it dies with
+    // the JS context, and the surviving session value looks exactly like
+    // the stale residue `activeStake.test.ts` asserts must invalidate —
+    // false toast, both keys cleared, back to the em-dash page.
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains');
+    render(<Probe onResult={() => {}} />);
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('highplains');
+
+    // Simulate F5: drop the module state, keep storage, keep the
+    // post-strip URL.
+    __resetActiveStakeModuleForTests();
+    let afterReload: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          afterReload = v;
+        }}
+      />,
+    );
+    expect(afterReload).toBe('highplains');
+  });
+
+  it('does not write the local tier, which can never resolve for this identity', () => {
+    // The local tier stays non-permissive for a superadmin by design, so
+    // a local write only survives into the next fresh tab to fire a
+    // false "no longer available" invalidation and clear both keys.
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains');
+    render(<Probe onResult={() => {}} />);
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('highplains');
+    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBeNull();
+  });
+
+  it('keeps the stake across a re-render once the URL value is gone', () => {
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains');
+    let latest: string | null = null;
+    const { rerender } = render(
+      <Probe
+        onResult={(v) => {
+          latest = v;
+        }}
+      />,
+    );
+    expect(latest).toBe('highplains');
+    rerender(
+      <Probe
+        onResult={(v) => {
+          latest = v;
+        }}
+      />,
+    );
+    expect(latest).toBe('highplains');
+  });
+});

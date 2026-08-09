@@ -76,6 +76,33 @@ function isManager(p: Principal, stakeId: string | null): boolean {
   return stakeId !== null && p.managerStakes.includes(stakeId);
 }
 
+/**
+ * Does the principal hold an actual manager CLAIM on this stake?
+ *
+ * Distinct from `isManager`, which treats a platform superadmin as one
+ * everywhere — right for routing questions like `wardRosterPathFor`
+ * ("where would this person's Ward Roster live"), wrong for deciding
+ * what to put in the nav. A superadmin on a stake they hold no role on
+ * was shown the entire manager section, and every page in it subscribes
+ * `seats` / `requests` / `access`, which the rules deny for them. That
+ * looks harmless — the lists render empty, the buttons sit disabled —
+ * but each denied subscribe is a chance at the SDK's internal-assertion
+ * panic, which reaches `RootErrorBoundary` as a full-page error rather
+ * than anything the hooks can catch (see `useFirestoreDoc`'s header and
+ * `useMemberDataStake`).
+ *
+ * Hiding those items costs that identity nothing it could use: the
+ * pages have no data to show it. The one page that DOES work —
+ * Configuration, for the Home Kindoo Site editor (§15) — is reached
+ * from the Stake List row link, its documented entry point (T-91), and
+ * the route still admits them (`holdsAnyRole` keeps its own superadmin
+ * short-circuit). The Super Admin nav section is gated separately on
+ * the literal claim and is unaffected.
+ */
+function hasManagerClaim(p: Principal, stakeId: string | null): boolean {
+  return stakeId !== null && p.managerStakes.includes(stakeId);
+}
+
 function isStake(p: Principal, stakeId: string | null): boolean {
   return stakeId !== null && p.stakeMemberStakes.includes(stakeId);
 }
@@ -104,10 +131,17 @@ export function navSectionsForPrincipal(
   principal: Principal,
   stakeId: string | null,
 ): NavSection[] {
-  const manager = isManager(principal, stakeId);
+  const manager = hasManagerClaim(principal, stakeId);
   const stake = isStake(principal, stakeId);
   const bishopric = isBishopric(principal, stakeId);
   const anyRole = manager || stake || bishopric;
+  // Logout keys off this, NOT `anyRole`. Signing out must never depend
+  // on holding a role on the active stake: a platform superadmin
+  // viewing a stake they hold none on would otherwise be left with no
+  // way out of the app from the nav. That worked before only because
+  // `isManager` short-circuited on the superadmin claim, which is
+  // exactly what `hasManagerClaim` stops doing.
+  const canSignOut = anyRole || principal.isPlatformSuperadmin;
 
   const quickLinks: NavItem[] = [];
   if (manager) {
@@ -220,7 +254,7 @@ export function navSectionsForPrincipal(
       icon: Bell,
     });
   }
-  if (anyRole) {
+  if (canSignOut) {
     account.push({
       kind: 'action',
       key: 'logout',

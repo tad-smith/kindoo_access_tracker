@@ -45,9 +45,12 @@ import {
   ACTIVE_STAKE_LOCAL_KEY,
   ACTIVE_STAKE_SESSION_KEY,
   accessibleStakes,
+  markSessionStakeUrlDerived,
   persistActiveStakeChoice as persistChoiceCore,
+  persistSessionStakeOnly,
   readLocalStake,
   readSessionStake,
+  readUrlDerivedSessionStake,
   resolveActiveStake,
 } from './activeStake';
 import { FIRESTORE_QUERY_KEY_PREFIX } from './data/queryKeys';
@@ -497,7 +500,14 @@ export function useActiveStake(): string | null {
   // render — they can change out from under us (the switcher writes on
   // click; the URL tier writes via the effect below).
   const resolved = useMemo(
-    () => resolveActiveStake(principal, urlStakeParam, readSessionStake(), readLocalStake()),
+    () =>
+      resolveActiveStake(
+        principal,
+        urlStakeParam,
+        readSessionStake(),
+        readLocalStake(),
+        readUrlDerivedSessionStake(),
+      ),
     // `principalSignature` carries the accessible-stake + bootstrap-
     // stake fingerprint; `urlStakeParam` is state; `storageTick` bumps
     // on switcher click. Storage reads happen inside; not in the dep
@@ -627,7 +637,33 @@ export function useActiveStake(): string | null {
       lastPersistedUrlStakeIdRef.current !== resolved.stakeId
     ) {
       lastPersistedUrlStakeIdRef.current = resolved.stakeId;
-      persistChoiceCore(resolved.stakeId);
+      // Session only for an identity with no accessible stakes — a
+      // zero-role platform superadmin. The LOCAL tier stays
+      // non-permissive for them by design (it is the cross-session
+      // sticky default, the stale-residue case the narrowing protects),
+      // so a local write can never resolve; all it can do is fire a
+      // false "no longer available" invalidation in the next fresh tab
+      // and clear both keys. Everyone else keeps the symmetric write.
+      const sessionOnly =
+        principal.isPlatformSuperadmin && accessibleStakes(principal).length === 0;
+      if (sessionOnly) {
+        persistSessionStakeOnly(resolved.stakeId);
+      } else {
+        persistChoiceCore(resolved.stakeId);
+      }
+      // Record that THIS tab's URL tier is what put the value in
+      // sessionStorage, so the session tier can honour it for a
+      // superadmin who has no other tier to fall back on, without
+      // honouring residue it did not write. Stored in `sessionStorage`
+      // alongside the value, not in module scope: module scope is
+      // per-JS-context and dies on reload, which would leave the
+      // surviving session value indistinguishable from stale residue.
+      markSessionStakeUrlDerived(resolved.stakeId);
+      // Same bus the switcher pings after its own storage write: a
+      // same-tab write emits no `storage` event, and the `resolved` memo
+      // reads storage but is keyed on `storageTick`. Instances that have
+      // already resolved need a nudge or they hold a stale answer.
+      notifyActiveStakeStorageChanged();
       invalidatePerStakeQueries();
     }
 
@@ -703,6 +739,40 @@ export function useActiveStake(): string | null {
   ]);
 
   return resolved.stakeId;
+}
+
+/**
+ * The active stake, but only when the principal may actually READ that
+ * stake's member data (`seats`, `requests`, `access`) — otherwise
+ * `null`, which leaves the DIY data hooks disabled.
+ *
+ * The predicate is `accessibleStakes(principal).includes(stakeId)`, the
+ * client mirror of the rules' `isAnyMember`. Two identities resolve an
+ * active stake without satisfying it: a platform superadmin holding no
+ * role on the stake (T-91 — the nav's `isManager` short-circuits on the
+ * superadmin claim, so they see the whole manager section), and a
+ * bootstrap admin mid-setup. Both would otherwise open a subscription
+ * the rules deny on every mount.
+ *
+ * A denied subscribe is not merely noisy. The common path is handled —
+ * the hook logs and reports an error state — but `useFirestoreDoc`'s
+ * header documents the SDK's internal-assertion panic (`Unexpected
+ * state ID: ca9` / `b815`), which throws from inside the SDK's own
+ * microtask, bypasses our callback, and reaches `RootErrorBoundary` as
+ * a full-page "Something went wrong". Rare per subscribe, but these
+ * mount on every visit to those pages, so it is worth not sampling.
+ *
+ * Callers that read stake CONFIG (wards, buildings, kindooSites,
+ * organizations, kindooManagers) keep using `useActiveStake()` — a
+ * superadmin may read those (T-91).
+ */
+export function useMemberDataStake(): string | null {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  return useMemo(() => {
+    if (activeStakeId === null) return null;
+    return accessibleStakes(principal).includes(activeStakeId) ? activeStakeId : null;
+  }, [principal, activeStakeId]);
 }
 
 /** A stake in the StakeSwitcher's menu source. */

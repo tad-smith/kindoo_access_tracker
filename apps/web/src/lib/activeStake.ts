@@ -57,9 +57,16 @@
 import type { Principal } from './principal-derive';
 
 const SESSION_KEY = 'kindoo.activeStake';
+// Companion to SESSION_KEY: the value the URL tier itself wrote, so
+// provenance survives a reload. `sessionStorage` is the per-TAB store,
+// which is the semantic this needs — module scope is per-JS-context and
+// dies on F5, leaving a session value that looks exactly like the stale
+// residue the storage narrowing must reject (T-91).
+const SESSION_URL_SOURCE_KEY = 'kindoo.activeStake.fromUrl';
 const LOCAL_KEY = 'kindoo.activeStake';
 
 export const ACTIVE_STAKE_SESSION_KEY = SESSION_KEY;
+export const ACTIVE_STAKE_SESSION_URL_SOURCE_KEY = SESSION_URL_SOURCE_KEY;
 export const ACTIVE_STAKE_LOCAL_KEY = LOCAL_KEY;
 
 /**
@@ -117,6 +124,28 @@ export function resolveActiveStake(
   urlParam: string | null,
   sessionValue: string | null,
   localValue: string | null,
+  /**
+   * The stake this tab's own URL tier persisted to `sessionStorage`
+   * during this page's lifetime, or `null`. Provenance, not a value —
+   * `sessionValue` alone cannot say whether it is a deep link this tab
+   * just consumed or residue from an earlier navigation.
+   *
+   * It exists for the one identity that has no tier 4 to fall back on:
+   * a platform superadmin holding no role on any stake. The URL tier is
+   * superadmin-permissive and persists what it resolves, but the
+   * storage tiers deliberately are NOT (a stale stake must invalidate
+   * rather than silently resume — see `isPermissiveStorage`). Those two
+   * rules together meant the value was written into a slot this
+   * identity could never read back: the deep link worked for whichever
+   * hook instance consumed the URL and returned `null` for every one
+   * after it. `usePrincipal` is per-instance state with its own async
+   * claims read, so "an instance that mounts later" is the ordinary
+   * case on a real page, not a race (T-91).
+   *
+   * Matching on the value keeps the protection intact: residue this tab
+   * did not write still fails the check and still invalidates.
+   */
+  urlDerivedSessionStake: string | null = null,
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
   const bootstrapStakeIds = principal.bootstrapStakes;
@@ -160,7 +189,10 @@ export function resolveActiveStake(
   // the URL tier's different treatment.
   //
   // Platform superadmins (the `isPlatformSuperadmin === true` flag) are
-  // treated permissively at the URL TIER ONLY. Per spec §5.4 + F19 the
+  // treated permissively at the URL TIER, and at the SESSION tier only
+  // for the value that URL tier itself just persisted (see
+  // `urlDerivedSessionStake` — without that, the deep link resolved for
+  // one hook instance and `null` for every later one, T-91). Per spec §5.4 + F19 the
   // rules permit them to read every stake's parent doc, so a Stake-List
   // click landing on `/manager/dashboard?stake=X` is an explicit
   // deep-link the resolver honours. Storage tiers (session / local)
@@ -193,6 +225,16 @@ export function resolveActiveStake(
   // `bootstrapStakes`. See the file header + the comment above
   // `isBootstrapCandidate` for why this is narrower than the URL tier.
   const isPermissiveStorage = isBootstrapCandidate && bootstrapStakeIds.length === 0;
+  // Session tier, superadmin only, and only for the exact value this
+  // tab's URL tier persisted — see `urlDerivedSessionStake`. Scoped to
+  // the SESSION tier because `localStorage` is the cross-session sticky
+  // default, which is precisely the stale-residue case the storage
+  // narrowing protects; it stays non-permissive.
+  const isPermissiveSession =
+    isPermissiveStorage ||
+    (isPlatformSuperadmin &&
+      urlDerivedSessionStake !== null &&
+      sessionValue === urlDerivedSessionStake);
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
@@ -215,6 +257,7 @@ export function resolveActiveStake(
       bootstrapStakeIds,
       isPlatformSuperadmin,
       isPermissiveStorage,
+      isPermissiveSession,
     );
     return { ...fallback, invalidatedTier: 'url' };
   }
@@ -228,6 +271,7 @@ export function resolveActiveStake(
     bootstrapStakeIds,
     isPlatformSuperadmin,
     isPermissiveStorage,
+    isPermissiveSession,
   );
 }
 
@@ -239,13 +283,15 @@ function resolveStorageTiers(
   bootstrapStakeIds: string[],
   isPlatformSuperadmin: boolean,
   isPermissive: boolean = accessible.length === 0 && bootstrapStakeIds.length === 0,
+  /** Session tier only — see `isPermissiveSession` in `resolveActiveStake`. */
+  isPermissiveSession: boolean = isPermissive,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
   if (sessionValue !== null && sessionValue.length > 0) {
     if (accessSet.has(sessionValue)) {
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
-    if (isPermissive) {
+    if (isPermissiveSession) {
       // Permissive paths (bootstrap-admin / superadmin) — see
       // `resolveActiveStake`.
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
@@ -359,6 +405,45 @@ export function persistActiveStakeChoice(stakeId: string): void {
     window.localStorage.setItem(LOCAL_KEY, stakeId);
   } catch {
     // Same.
+  }
+}
+
+/**
+ * Write only the per-tab tier. For an identity whose LOCAL tier can
+ * never resolve (a zero-role platform superadmin — see
+ * `isPermissiveSession`), the symmetric write leaves a value behind
+ * that only ever fires a false invalidation in the next fresh tab.
+ */
+export function persistSessionStakeOnly(stakeId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(SESSION_KEY, stakeId);
+  } catch {
+    // Private-browsing modes; the URL tier still works for this load.
+  }
+}
+
+/**
+ * Record that the URL tier is what put `stakeId` in `sessionStorage`.
+ * Read back by `readUrlDerivedSessionStake` — see
+ * `resolveActiveStake`'s `urlDerivedSessionStake` parameter.
+ */
+export function markSessionStakeUrlDerived(stakeId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(SESSION_URL_SOURCE_KEY, stakeId);
+  } catch {
+    // Private-browsing modes; the URL tier still works for this load.
+  }
+}
+
+/** The stake this tab's URL tier persisted, or `null`. */
+export function readUrlDerivedSessionStake(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(SESSION_URL_SOURCE_KEY);
+  } catch {
+    return null;
   }
 }
 
