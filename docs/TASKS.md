@@ -16,9 +16,11 @@ Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-o
 Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
 
 ## [T-97] `clearEmulators` can 409 on the Firestore blow-away
-Status: pending
+Status: done (2026-08-09 — `fix/clear-emulators-409`)
 Owner: @backend-engineer
 Phase: cross-cutting
+
+**Done.** Bounded retry with backoff, plus unit tests for the retry path.
 
 Observed once in ~6 full integration runs while verifying [T-95], locally, under the CI emulator config:
 
@@ -30,7 +32,13 @@ Error: clearEmulators(Firestore) failed: 409 {"error":{"code":409,"message":"Tra
 
 Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow-away rather than an assertion. The REST `DELETE …/documents` endpoint contends with an in-flight write, most likely a deployed trigger's, and the emulator returns `ABORTED` instead of blocking. That is the same "delivery outlives the test" family the `clearEmulators` docblock already describes for leftover `auditLog` rows, but this variant takes the *sweep* down rather than leaking a row.
 
-One sighting is thin evidence and it did not recur in five subsequent runs, so this is recorded rather than fixed. If it shows up on CI: `ABORTED` is the documented retryable status, so a bounded retry around the fetch is the obvious remedy — but confirm the frequency first, and note that a retry masks whatever holds the lock.
+**Frequency, as asked before fixing: still one sighting, now in ~13 runs.** Six further full runs under the CI emulator config after the fix landed logged **zero** retries. So the retry is shipping without ever having been seen to engage in the wild — the unit tests prove the loop, not that the loop was needed. That is a deliberate call rather than an oversight: the failure mode is a thrown `afterEach` that fails whichever unrelated test happens to be running, on a suite with no vitest retry, and the remedy costs ~700ms of worst-case backoff against a ~30s suite. Cheap insurance for a red herring that would otherwise cost someone the same diagnosis twice.
+
+Fixed in `sweepFirestore` (extracted from `clearEmulators` so the retry path is testable without an emulator): up to 4 attempts at 100/200/400ms backoff, retrying only 409 / 429 / 503. A non-transient status — a 400 from a malformed URL — still fails on the first attempt rather than being retried into a slow, confusing failure. The final error names the attempt count and carries the response body.
+
+**Every retry logs.** The concern recorded above — that a retry masks whatever holds the lock — is real and is why this is not silent: the sweep runs in `afterEach` of nearly every integration test, so if it starts needing three attempts routinely, that is a signal about trigger fan-out, and the warning is the only place it would surface.
+
+Four unit tests in `functions/tests/lib/emulator.test.ts` cover first-try success, retry-then-succeed, bounded give-up (it must not spin forever against a lock that never clears), and no-retry-on-400. They stub `fetch`, so they need no emulator — the transient path a healthy emulator never takes.
 
 ## [T-96] Branch-specific callings — specified, deliberately not implemented
 Status: pending

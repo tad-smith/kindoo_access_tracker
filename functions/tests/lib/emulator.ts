@@ -100,10 +100,55 @@ export async function clearEmulators(): Promise<void> {
   // `host:port` (asserted by `hasEmulators()` above). Project ID is the
   // one Admin SDK already resolved.
   const host = process.env['FIRESTORE_EMULATOR_HOST']!;
-  const url = `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
-  const res = await fetch(url, { method: 'DELETE' });
-  if (!res.ok) {
-    throw new Error(`clearEmulators(Firestore) failed: ${res.status} ${await res.text()}`);
+  await sweepFirestore(
+    `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
+  );
+}
+
+/** Statuses the emulator returns for transient contention, not for a bad request. */
+const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
+const SWEEP_ATTEMPTS = 4;
+
+/**
+ * `DELETE` the whole document tree, retrying transient contention.
+ *
+ * The emulator answers the sweep with `409 ABORTED — Transaction lock
+ * timeout` rather than blocking when it contends with an in-flight write.
+ * In this suite that write is almost always a deployed trigger's Eventarc
+ * delivery arriving after the test that queued it — the same
+ * "delivery outlives the test" family the {@link clearEmulators} docblock
+ * describes, except this variant takes the SWEEP down (a thrown `afterEach`,
+ * failing whichever test happens to be running) instead of leaking a row.
+ * T-97, seen once in ~6 full runs.
+ *
+ * `ABORTED` is documented as retryable and the contending write is short,
+ * so a few quick attempts clear it: ~700ms of backoff before giving up,
+ * which is noise next to a 25s suite.
+ *
+ * Every retry is LOGGED rather than swallowed. A retry hides whatever held
+ * the lock, and this sweep runs in `afterEach` of nearly every integration
+ * test — if it starts needing three attempts routinely, that is a signal
+ * about trigger fan-out, and it should not be invisible.
+ */
+export async function sweepFirestore(url: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, { method: 'DELETE' });
+    if (res.ok) {
+      if (attempt > 1) {
+        console.warn(`clearEmulators(Firestore): swept on attempt ${attempt} of ${SWEEP_ATTEMPTS}`);
+      }
+      return;
+    }
+    const body = await res.text();
+    if (attempt >= SWEEP_ATTEMPTS || !RETRYABLE_SWEEP_STATUSES.has(res.status)) {
+      throw new Error(
+        `clearEmulators(Firestore) failed after ${attempt} attempt(s): ${res.status} ${body}`,
+      );
+    }
+    console.warn(
+      `clearEmulators(Firestore): ${res.status} on attempt ${attempt}, retrying — ${body}`,
+    );
+    await new Promise((r) => setTimeout(r, 100 * 2 ** (attempt - 1)));
   }
 }
 
