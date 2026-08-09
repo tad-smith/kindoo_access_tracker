@@ -11,7 +11,11 @@
 // existing SBA seat to track Kindoo's state. Every code below flows
 // through this callable:
 //
-//   - `kindoo-only`            → create a new SBA seat.
+//   - `kindoo-only`            → create a new SBA seat, or — when the
+//                                member already holds one whose grants
+//                                all live on other Kindoo sites — merge
+//                                the grant onto it as a parallel-site
+//                                `duplicate_grants[]` entry (B-23).
 //   - `callings-mismatch`      → REPLACE an auto seat's `callings[]` with
 //                                Kindoo's parsed calling(s) (Kindoo is
 //                                authoritative; a renamed calling replaces
@@ -41,7 +45,9 @@
 
 import type { SeatType } from './seat.js';
 
-/** Payload for the `kindoo-only` discrepancy fix. Creates a new SBA seat. */
+/** Payload for the `kindoo-only` discrepancy fix. Creates a new SBA
+ * seat, or merges the grant onto the member's existing seat when one is
+ * already there (B-23). */
 export type KindooOnlyPayload = {
   /** Raw (typed) email — server canonicalizes. */
   memberEmail: string;
@@ -152,8 +158,8 @@ export type SyncApplyFixInput = {
 };
 
 /** Soft-failure envelope. The callable returns `{ success: false }` for
- * domain-level misses (no matching seat, seat already exists) and throws
- * an `HttpsError` for auth / shape errors. */
+ * domain-level misses (no matching seat) and throws an `HttpsError` for
+ * auth / shape errors. */
 export type SyncApplyFixResult =
   | { success: true; seatId: string }
   | { success: false; error: string };

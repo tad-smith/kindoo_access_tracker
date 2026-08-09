@@ -6,6 +6,36 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
+Status: open
+Owner: @backend-engineer
+Severity: high (the drift row is unfixable — Sync re-reports it on every run and the operator has no in-product remedy)
+Phase: cross-cutting
+Branch / PR: `fix/b-23-kindoo-only-merge-existing-seat`
+
+**Symptom.** On a **foreign**-site Sync run, a member whose only SBA grant lives on the **home** site surfaces as `kindoo-only` drift. Clicking **Create SBA seat** fails with the inline error `seat already exists for that member`. The row cannot be fixed, and it re-emits on every subsequent Sync run.
+
+**Reported repro (production).** CS North configures High Plains's Kindoo site as a foreign site to reach the Black Forest building. Kettle Creek is a CS North ward that meets in Black Forest, so its scope lives on that foreign site. Roger is a Kettle Creek member with a **stake** calling, so his SBA seat is `scope: 'stake'` — home site, Lexington building. Church Access Automation then grants him Black Forest access in the High Plains Kindoo site for a new ward calling (Elders Quorum Second Counselor). Syncing the foreign site emits `kindoo-only` for him; the fix fails.
+
+**Mechanism.** Two correct behaviours meet at a path that only knows how to create.
+
+1. `projectSeatForSite` (`extension/src/content/kindoo/sync/detector.ts`) projects each seat onto the active site: a seat contributes only when its primary — or one of its `duplicate_grants[]` — carries that site. Roger's seat is stake-scope ⇒ home, so on the foreign run it projects to `null`, he is absent from `seatsByEmail`, and the `!seat && kuser` branch emits `kindoo-only`. That detection is **right**: the member genuinely has no grant on this site.
+2. `applyKindooOnly` (`functions/src/callable/syncApplyFix.ts:376`) opens with `if (seatSnap.exists) return { success: false, error: 'seat already exists for that member' }`. Seats are keyed by canonical email (one per member per stake, per Q3), so the *doc* exists even though the *grant* doesn't. The guard reads doc-existence as grant-existence and refuses.
+
+The data model already has the right home for this grant: `DuplicateGrant` with a differing `kindoo_site_id` is defined (`packages/shared/src/types/seat.ts`) as a **parallel-site grant** — "a legitimate independent grant on another Kindoo site" (T-42) — and `markRequestComplete`'s `planAddMerge` already appends exactly that shape when an add lands on a member who already has a seat. `applyKindooOnly` is the one grant-creating path that never learned to merge.
+
+**Scope of the failure.** Any member holding grants on two Kindoo sites where SBA learned about them in the order (other site first, this site second). Guaranteed for a stake-calling holder in a foreign-site unit — the stake grant is home-only by policy (spec §15), so it can never satisfy a foreign-site row. The seat cap is not implicated: `scope` (primary) is what counts toward utilization, and a duplicate grant is informational, so merging does not consume a second licence.
+
+**Two rows also lie.** The `kindoo-only` reason reads "Kindoo has a user for this email, but SBA has no seat for them," and the button reads **Create SBA seat**. Both are false for this member — SBA has a seat, on another site.
+
+**Fix (this branch).**
+- `applyKindooOnly` merges when the seat doc exists rather than soft-failing. Slot resolution mirrors `planAddMerge`: match `(scope, type)` against the primary, then `duplicate_grants[]`; on a hit union `building_names` and re-stamp the slot's `kindoo_site_id` to the site the row was surfaced from; on a miss append a `DuplicateGrant` carrying the incoming scope / type / callings / reason / dates / buildings / site. The primary grant's identity is never modified. Auto grants reconcile `importer_callings[scope]` through the same `writeAccessForAutoScope` the create path uses, which is already per-scope merge-safe.
+- The site re-stamp on a slot hit is what makes the fix converge. The row exists precisely because no grant on the seat targeted the active site, so a merge that leaves the stale site in place would clear nothing and the operator would re-click forever.
+- Callings are deliberately **not** rewritten on a slot hit: `callings-mismatch` is the code that owns that axis, and it fires on the next run once the grant is visible on the site.
+- Detector + panel: when the member has a seat that projected to no grant on the active site, the row says so and the button reads **Add SBA grant**.
+
+**Not fixed here.** B-16 (per-row fixes write the primary's fields even when the row was surfaced through a projected duplicate) is adjacent and still open. This entry adds a grant rather than editing one, and targets by `(scope, type)` rather than assuming the primary, so it does not widen B-16.
+
 ## [B-22] Every Popover inside a modal rendered behind it and could not be used
 Status: closed (fixed) `[FIXED 2026-08-09]`
 Owner: @web-engineer

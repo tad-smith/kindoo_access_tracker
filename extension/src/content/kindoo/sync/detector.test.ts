@@ -2128,6 +2128,62 @@ describe('detect', () => {
     expect(result.kindooCount).toBe(0);
   });
 
+  // ----- B-23 kindoo-only onto an existing seat -----
+
+  it('B-23: flags a foreign-site kindoo-only row whose member already holds a home-site seat', () => {
+    // The production shape: a stake-calling holder in a foreign-site ward.
+    // Stake-scope grants are home-only (§15), so the seat can never project
+    // onto the foreign site — the row is a missing GRANT, not a missing
+    // member, and the backend merges rather than creating a second seat.
+    const result = detect(
+      mixedInputs({
+        seats: [
+          seat({
+            member_canonical: 'roger@example.com',
+            member_email: 'roger@example.com',
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Lexington Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'roger@example.com',
+            description: 'Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.mergesOntoExistingSeat).toBe(true);
+    expect(row.reason).toContain('existing seat');
+  });
+
+  it('B-23: leaves the flag off when the member genuinely has no seat', () => {
+    const result = detect(
+      mixedInputs({
+        seats: [],
+        kindooUsers: [
+          kuser({
+            username: 'newcomer@example.com',
+            description: 'Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]!.mergesOntoExistingSeat).toBeUndefined();
+    expect(result.discrepancies[0]!.reason).toBe(
+      'Kindoo has a user for this email, but SBA has no seat for them.',
+    );
+  });
+
   // ----- T-42 multi-site fan-out -----
   //
   // A Kindoo user whose Description spans home + foreign sites must

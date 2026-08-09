@@ -53,7 +53,18 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
       // Kindoo-side "Provision in Kindoo" write before the shift.)
       return [{ side: 'sba', label: 'Remove From SBA', testId: 'remove-sba', variant: 'danger' }];
     case 'kindoo-only':
-      return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
+      // B-23: the member may already hold a seat whose grants all sit on
+      // other Kindoo sites. The callable merges the grant onto it rather
+      // than creating a second seat (seats are keyed by canonical email),
+      // so the label has to name the write that actually happens. Same
+      // payload, same `testId` — one code, one action, two wordings.
+      return [
+        {
+          side: 'sba',
+          label: d.mergesOntoExistingSeat ? 'Add SBA grant' : 'Create SBA seat',
+          testId: 'create-sba',
+        },
+      ];
     case 'callings-mismatch':
       // Auto seats only by construction (the detector suppresses this
       // code for manual / temp). The `syncApplyFix` path REPLACES the

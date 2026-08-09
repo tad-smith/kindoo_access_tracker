@@ -330,37 +330,258 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.last_modified_by).toEqual(seat.lastActor);
     });
 
-    it('returns soft failure when a seat already exists for the canonical email', async () => {
-      await seedManager();
-      await seedSeat({});
-      const result = await syncApplyFix.run(
-        callableReq({
-          auth: { email: MANAGER_EMAIL },
-          data: {
-            stakeId: STAKE_ID,
-            fix: {
-              code: 'kindoo-only',
-              payload: {
-                memberEmail: MEMBER_EMAIL,
-                memberName: 'Alice',
-                scope: 'CO',
-                type: 'manual',
-                callings: [],
-                buildingNames: ['Maple Building'],
-                isTempUser: false,
+    // B-23 — an existing seat DOC is not a collision. `kindoo-only` means
+    // "no grant on the ACTIVE Kindoo site", and seats are keyed by
+    // canonical email (one per member per stake), so a member whose only
+    // grant lives on another site still has a doc. The grant merges onto
+    // it as a parallel-site `duplicate_grants[]` entry.
+    describe('merge onto an existing seat (B-23)', () => {
+      it('appends a parallel-site grant, leaving the home-site primary untouched', async () => {
+        await seedManager();
+        // The production repro: Kettle Creek meets in Black Forest, which
+        // a foreign Kindoo site governs. The member's seat is stake-scope
+        // — home-only by policy (§15) — so it can never satisfy a
+        // foreign-site row, and the foreign run reports `kindoo-only`.
+        await seedWard({
+          ward_code: 'KC',
+          ward_name: 'Kettle Creek Ward',
+          building_name: 'Black Forest',
+        });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'high-plains' });
+        await seedSeat({
+          scope: 'stake',
+          type: 'auto',
+          callings: ['Stake Clerk'],
+          building_names: ['Lexington Building'],
+        });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'KC',
+                  type: 'auto',
+                  callings: ['Elders Quorum Second Counselor'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
               },
             },
-          },
-        }),
-      );
-      expect(result).toEqual({
-        success: false,
-        error: 'seat already exists for that member',
+          }),
+        );
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        // Primary identity is never modified by a merge.
+        expect(seat.scope).toBe('stake');
+        expect(seat.type).toBe('auto');
+        expect(seat.callings).toEqual(['Stake Clerk']);
+        expect(seat.building_names).toEqual(['Lexington Building']);
+        expect(seat.kindoo_site_id).toBeUndefined();
+        // The Kindoo grant lands as a duplicate carrying its OWN site.
+        expect(seat.duplicate_grants).toHaveLength(1);
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.scope).toBe('KC');
+        expect(dup.type).toBe('auto');
+        expect(dup.callings).toEqual(['Elders Quorum Second Counselor']);
+        expect(dup.building_names).toEqual(['Black Forest']);
+        expect(dup.kindoo_site_id).toBe('high-plains');
+        expect(dup.detected_at).toBeDefined();
+        expect(seat.duplicate_scopes).toEqual(['KC']);
+        expect(seat.lastActor).toEqual({
+          email: 'SyncActor:kindoo-only',
+          canonical: 'SyncActor:kindoo-only',
+        });
       });
-      // Original seat untouched.
-      const { db } = requireEmulators();
-      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
-      expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
+
+      it('carries reason + dates onto a merged temp grant', async () => {
+        await seedManager();
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'stake', type: 'manual', building_names: ['Lexington Building'] });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'temp',
+                  callings: [],
+                  buildingNames: ['Black Forest'],
+                  reason: 'Scout camp setup',
+                  startDate: '2026-08-01',
+                  endDate: '2026-08-31',
+                  isTempUser: true,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        const dup = seat.duplicate_grants[0]!;
+        expect(dup.type).toBe('temp');
+        expect(dup.reason).toBe('Scout camp setup');
+        expect(dup.start_date).toBe('2026-08-01');
+        expect(dup.end_date).toBe('2026-08-31');
+        // §6.1: temp grants carry the calling in `reason`, not `callings`.
+        expect(dup.callings).toBeUndefined();
+      });
+
+      it('reconciles the merged scope in the access doc, preserving other scopes', async () => {
+        await seedManager();
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'stake', type: 'auto', callings: ['Stake Clerk'] });
+        await seedAccess({
+          importer_callings: { stake: ['Stake Clerk'] },
+          sort_order: STAKE_CLERK_ORDER,
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'auto',
+                  callings: ['Ward Clerk'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const { db } = requireEmulators();
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({
+          stake: ['Stake Clerk'],
+          MR: ['Ward Clerk'],
+        });
+        // Both callings rank, so the doc keeps the smaller of the two.
+        expect(access.sort_order).toBe(Math.min(STAKE_CLERK_ORDER!, WARD_CLERK_ORDER!));
+      });
+
+      it('merges into the matching grant and corrects its stale site stamp', async () => {
+        await seedManager();
+        // A primary that already names this scope but carries a stale HOME
+        // stamp: the detector could not project it onto the foreign site,
+        // so the row came back as `kindoo-only`. Merging has to correct the
+        // stamp — otherwise the identical row re-emits on every run.
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'MR', type: 'manual', building_names: ['Maple Building'] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ kindoo_site_id: null });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'manual',
+                  callings: [],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Maple Building', 'Black Forest']);
+        expect(seat.kindoo_site_id).toBe('east-stake');
+        // Matched in place — no second grant for the same (scope, type).
+        expect(seat.duplicate_grants).toEqual([]);
+      });
+
+      it('merges into a matching duplicate grant and rebuilds the scope mirror', async () => {
+        await seedManager();
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'stake', type: 'auto', callings: ['Stake Clerk'] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+          duplicate_grants: [
+            {
+              scope: 'MR',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              kindoo_site_id: null,
+              detected_at: Timestamp.now(),
+            },
+          ],
+          duplicate_scopes: ['MR'],
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'manual',
+                  callings: [],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants).toHaveLength(1);
+        expect(seat.duplicate_grants[0]!.building_names).toEqual([
+          'Maple Building',
+          'Black Forest',
+        ]);
+        expect(seat.duplicate_grants[0]!.kindoo_site_id).toBe('east-stake');
+        expect(seat.duplicate_scopes).toEqual(['MR']);
+      });
     });
 
     it('canonicalizes the typed memberEmail (gmail dots + casing)', async () => {

@@ -74,6 +74,17 @@ export interface Discrepancy {
   sba: SbaBlock | null;
   /** Kindoo side block — `null` when the user only exists in SBA. */
   kindoo: KindooBlock | null;
+  /**
+   * `kindoo-only` rows only. True when SBA DOES hold a seat for this
+   * member — just no grant on the active site, so the seat projected to
+   * nothing and the row is "missing grant", not "missing member" (B-23).
+   * The backend merges the grant onto that seat rather than creating a
+   * second one (seats are keyed by canonical email), so the row's reason
+   * and its button say "add a grant", not "create a seat".
+   *
+   * Undefined on every other code, and on a genuinely seatless member.
+   */
+  mergesOntoExistingSeat?: boolean;
 }
 
 export interface SbaBlock {
@@ -680,6 +691,10 @@ export function detect(inputs: DetectInputs): DetectResult {
 
   const seatsByEmail = new Map<string, ProjectedSeat>();
   for (const p of projectedSeats) seatsByEmail.set(p.seat.member_canonical, p);
+  // Every member with a seat DOC, projected or not. A `kindoo-only` row
+  // for one of these is a missing GRANT on this site, not a missing
+  // member — the backend merges onto the existing seat (B-23).
+  const seatDocCanonicals = new Set(inputs.seats.map((s) => s.member_canonical));
   const kindooByEmail = indexKindooUsers(filteredKindooUsers);
 
   const allCanonical = new Set<string>([...seatsByEmail.keys(), ...kindooByEmail.keys()]);
@@ -776,14 +791,23 @@ export function detect(inputs: DetectInputs): DetectResult {
         });
         continue;
       }
+      // B-23: the member may already hold a seat whose grants all live on
+      // other Kindoo sites — a stake-scope seat is home-only by policy
+      // (§15), so it can never satisfy a foreign-site row. Saying "SBA has
+      // no seat for them" there is false, and "Create SBA seat" describes
+      // a write the backend won't make (it merges).
+      const mergeTarget = seatDocCanonicals.has(canon);
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'kindoo-only',
         severity: 'drift',
-        reason: 'Kindoo has a user for this email, but SBA has no seat for them.',
+        reason: mergeTarget
+          ? 'Kindoo grants this member access on this site, but their SBA seat holds no grant here — it will be added to their existing seat.'
+          : 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, createdType),
+        ...(mergeTarget ? { mergesOntoExistingSeat: true } : {}),
       });
       continue;
     }

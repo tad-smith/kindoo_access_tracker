@@ -68,7 +68,26 @@ describe('fixActionsFor', () => {
   it('kindoo-only returns one Create SBA seat action', () => {
     const actions = fixActionsFor(discrepancy({ code: 'kindoo-only' }));
     expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'create-sba',
+      label: 'Create SBA seat',
+    });
+  });
+
+  it('kindoo-only onto an existing seat reads Add SBA grant (B-23)', () => {
+    // The member already holds a seat; the callable merges the grant onto
+    // it rather than creating a second one. Same action, same payload —
+    // only the label changes, so `testId` stays `create-sba`.
+    const actions = fixActionsFor(
+      discrepancy({ code: 'kindoo-only', mergesOntoExistingSeat: true }),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'create-sba',
+      label: 'Add SBA grant',
+    });
   });
 
   it('callings-mismatch returns one Update SBA action (auto-only by construction)', () => {
