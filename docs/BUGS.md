@@ -6,6 +6,27 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-22] The calling typeahead rendered behind the modal and could not be used
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @web-engineer
+Severity: high (the suggestion list was unreachable in every dialog that hosts it, including New Request)
+Phase: cross-cutting
+Branch / PR: found by T-100's Playwright spec; fixed in the same PR
+
+`CallingCombobox`'s suggestion list was invisible and unclickable in both dialogs that host it — `EditSeatDialog` and `NewRequestForm` inside `NewRequestDialog`. A manager saw a focused, empty-looking box and no suggestions, so the field silently degraded to free text. Of roughly fifty rows, exactly one was visible, poking out below the dialog's bottom edge.
+
+**Cause.** `PopoverContent` carried shadcn's default `z-50` while `.kd-modal-positioner` is `z-index: 1301` with an opaque `.kd-modal-inner`. Radix mirrors the content's computed z-index onto its portal wrapper, so the popper sat at 50, underneath the dialog panel that had just opened it.
+
+**Evidence.** `document.elementFromPoint` at the centre of the "Branch President" row returned a `<label>` from inside the dialog; Playwright's click retried for 30s with "subtree intercepts pointer events"; the popper wrapper's computed z-index read `50`.
+
+**Not new, and not branch-specific.** The ward list was equally unreachable. It dates to whenever `CallingCombobox` was first placed inside a Dialog — T-96 merely produced the first test that opens the list in a real browser. `GrantStakeAccessDialog` was never affected: its reason is free text and it imports no combobox.
+
+**Why nothing caught it.** `toBeVisible` is DOM visibility, not occlusion, so three assertions passed green against a list no user could reach. Only a real click hit-tests. If that selection assertion is ever softened to a keyboard selection to make a flake go away, this bug becomes invisible again — that is the one thing not to do to this spec.
+
+**Fix.** `apps/web/src/components/ui/Popover.css` at `z-index: 1302`, colocated with `Dialog.css` / `Toast.css` and commented with the whole scale (30 / 40 / 1000 toast / 1300 overlay / 1301 positioner / 1302 popover). The other two Popover consumers — `TimezoneCombobox` and `StakeSwitcher` — sit on ordinary pages and cannot be open when a modal or toast arrives, since a Popover dismisses on outside interaction, so the raise is inert for them.
+
+**Generalise:** any portal-based primitive dropped into these dialogs inherits the same trap. A component test cannot see it; only a browser can.
+
 ## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
 Status: open (accepted risk)
 Owner: @web-engineer
