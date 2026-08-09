@@ -30,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { resolveWardBuilding } from '@kindoo/shared';
+import { resolveWardBuilding, unitType } from '@kindoo/shared';
 import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -84,7 +84,7 @@ import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 import { toast } from '../../../lib/store/toast';
-import { WARD_NAME_HINT, WARD_NAME_LABEL } from '../../../lib/wardCopy';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../../lib/wardCopy';
 
 export type ConfigTabKey =
   | 'config'
@@ -391,7 +391,10 @@ function WardFormDialog({
     resolver: zodResolver(wardSchema),
     defaultValues: wardFormDefaults(editingWard, buildingOptions),
   });
-  const { register, handleSubmit, reset, formState } = form;
+  const { register, handleSubmit, reset, formState, watch } = form;
+
+  // Advisory, not validation — see WARD_NAME_BRANCH_WARNING.
+  const showsBranchWarning = unitType(watch('ward_name') ?? '') === 'branch';
 
   // Keep the latest buildings snapshot in a ref so the reset effect can
   // read it at open-time WITHOUT depending on its identity. The
@@ -436,6 +439,11 @@ function WardFormDialog({
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
         <p className="kd-form-hint">{WARD_NAME_HINT}</p>
+        {showsBranchWarning ? (
+          <p role="status" className="kd-form-error" data-testid="config-ward-branch-warning">
+            {WARD_NAME_BRANCH_WARNING}
+          </p>
+        ) : null}
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}

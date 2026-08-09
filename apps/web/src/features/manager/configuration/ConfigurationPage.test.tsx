@@ -100,7 +100,7 @@ vi.mock('../../../lib/useActiveStake', () => ({
 }));
 
 import { ConfigurationPage } from './ConfigurationPage';
-import { WARD_NAME_HINT } from '../../../lib/wardCopy';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT } from '../../../lib/wardCopy';
 
 function liveResult<T>(data: T[]) {
   return {
@@ -452,6 +452,65 @@ describe('<ConfigurationPage />', () => {
     const dialog = within(screen.getByTestId('config-ward-form'));
     expect(dialog.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
     expect(dialog.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+  });
+
+  /** Render the Wards tab with one building and open the Add ward dialog. */
+  async function openWardDialog(user: ReturnType<typeof userEvent.setup>) {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    return screen.getByLabelText(/^Ward or branch name$/);
+  }
+
+  it('warns under the ward-name field as soon as the typed name reads as a branch', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+
+    await user.type(input, 'Olive Branch');
+    const warning = await screen.findByTestId('config-ward-branch-warning');
+    expect(warning).toHaveTextContent(WARD_NAME_BRANCH_WARNING);
+    // Advisory only — it must never gate the submit button.
+    expect(screen.getByTestId('config-ward-submit')).toBeEnabled();
+  });
+
+  it('hides the branch warning again once the name no longer ends in " Branch"', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+
+    await user.type(input, 'Olive Branch');
+    expect(await screen.findByTestId('config-ward-branch-warning')).toBeInTheDocument();
+
+    await user.type(input, ' Ward');
+    await waitFor(() => expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull());
+
+    await user.clear(input);
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a plain ward name', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    await user.type(input, 'Maple');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a name ending in "Branch" with no preceding space', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    // Mirrors the classifier's /\sbranch$/i — "Branchville" is a ward,
+    // and so is the degenerate single word "Branch".
+    await user.type(input, 'Branchville');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+
+    await user.clear(input);
+    await user.type(input, 'Branch');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
   });
 
   it('writes both building_id and building_name when a ward is saved', async () => {
@@ -892,6 +951,17 @@ describe('Wards to Ignore in Kindoo (Kindoo Config tab)', () => {
     // optional here — the create-ward hint would be wrong guidance.
     expect(screen.getByPlaceholderText('Ward name as Kindoo shows it')).toBeInTheDocument();
     expect(screen.queryByText(WARD_NAME_HINT)).toBeNull();
+  });
+
+  it('stays silent when an ignored-ward entry names a branch', async () => {
+    const user = userEvent.setup();
+    renderTab(undefined, [mkWard('Maple')]);
+    // A neighbouring stake's branch is an ordinary entry here — the
+    // create-ward branch warning would be noise, and it names the wrong
+    // remedy (the " Ward" suffix is not optional on this field).
+    await openAndType(user, 'Peterson Branch');
+    expect(screen.queryByText(WARD_NAME_BRANCH_WARNING)).toBeNull();
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
   });
 
   it('renders under the Foreign Kindoo Sites list with the empty state', () => {

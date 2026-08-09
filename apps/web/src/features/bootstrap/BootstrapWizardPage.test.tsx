@@ -108,7 +108,7 @@ vi.mock('../auth/signOut', () => ({
 }));
 
 import { BootstrapWizardPage, nextBlocker } from './BootstrapWizardPage';
-import { WARD_NAME_HINT } from '../../lib/wardCopy';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT } from '../../lib/wardCopy';
 
 function liveResult<T>(data: T[] | undefined) {
   return {
@@ -642,6 +642,68 @@ describe('<BootstrapWizardPage />', () => {
     // for a bare-stored ward Kindoo shows the SUFFIXED form, so that
     // sentence contradicted the suffix-is-optional half.
     expect(WARD_NAME_HINT).not.toMatch(/as Kindoo shows it/);
+  });
+
+  it('warns under the ward-name field as soon as the typed name reads as a branch', async () => {
+    const user = userEvent.setup();
+    // A building has to exist for Add ward to be enabled at all —
+    // otherwise the enabled-ness assertion below proves nothing.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as Building,
+      ]),
+    );
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+
+    await user.type(input, 'Olive Branch');
+    const warning = await screen.findByTestId('bootstrap-ward-branch-warning');
+    expect(warning).toHaveTextContent(WARD_NAME_BRANCH_WARNING);
+    // Advisory only — it must never gate the submit button.
+    expect(screen.getByRole('button', { name: /Add ward/i })).toBeEnabled();
+  });
+
+  it('hides the branch warning again once the name no longer ends in " Branch"', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+
+    await user.type(input, 'Olive Branch');
+    expect(await screen.findByTestId('bootstrap-ward-branch-warning')).toBeInTheDocument();
+
+    await user.type(input, ' Ward');
+    await vi.waitFor(() =>
+      expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull(),
+    );
+
+    await user.clear(input);
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a plain ward name', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a name ending in "Branch" with no preceding space', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    // Mirrors the classifier's /\sbranch$/i — "Branchville" is a ward,
+    // and so is the degenerate single word "Branch".
+    const input = screen.getByLabelText(/^Ward or branch name$/);
+    await user.type(input, 'Branchville');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
+
+    await user.clear(input);
+    await user.type(input, 'Branch');
+    expect(screen.queryByTestId('bootstrap-ward-branch-warning')).toBeNull();
   });
 
   it('writes both building_id and building_name when a ward is added', async () => {
