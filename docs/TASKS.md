@@ -6,16 +6,55 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+## [T-94] Flaky E2E: `ignored-wards.spec.ts` on a cold preview build
 Status: pending
+Owner: @web-engineer
+Phase: cross-cutting
+
+Introduced with [T-88]. Fails intermittently — roughly 1 run in 3 locally — and only as the first test after a cold `vite preview` build; 6/6 green once the server is warm, at ~900ms per run. Every assertion that follows a navigation already carries a 20s timeout, which reduced the rate without eliminating it, so the remaining cause is something slower than the snapshot round-trip rather than the snapshot itself.
+
+**Invisible in CI**, which is why it has not shown up on any PR: `playwright.config.ts` sets `retries: 2` on CI and `0` locally. That makes this a local-developer tax rather than a broken gate, but it is still a flake in a test this repo added, and "retried green" is not the same as green.
+
+Worth timing the cold path before adding more timeout — if the first navigation after a build is genuinely slow (bundle served cold, Firestore websocket established for the first time), a single warm-up navigation in `beforeEach` fixes it properly where per-assertion timeouts only paper over it.
+
+## [T-93] Editing the home site name re-keys every existing stake-scope Kindoo Description
+Status: pending — needs an operator decision
 Owner: @web-engineer
 Phase: Kindoo Sites (§15)
 
-Two follow-ups from PR #263's review. Neither blocks; both are about the edit path added in [T-90].
+Found by review on PR #263's merged head, after the EID half was settled as write-once ([T-92]). Same class of defect — a value the extension previously only ever moved as a set — but **write-once does not fix this one**, which is why it is filed separately rather than folded in.
 
-**Changing an existing home EID strands every home building's `kindoo_rule`.** The extension's configure wizard writes the EID and the per-building rule rows in one batch, so the two have never moved apart; this form is the first writer that moves the EID alone. Afterwards, provisioning applies the *old* environment's rule ids against the *new* environment. The usual safety net — "a building with no `kindoo_rule` forces the wizard" — does not fire, because the mappings are present, just wrong. Options: clear `kindoo_rule` on the home-site buildings when `site_id` actually changes (forcing a wizard re-run), or warn on the confirm and leave it to the operator. Prefer the former; a silently wrong rule id is the worse failure.
+`stake.kindoo_expected_site_name` is not merely what the wizard compares a Kindoo site header against. It is the **key for stake-scope Descriptions in both directions**:
 
-**Edit is not gated on the stake doc having loaded.** `useForm` captures `defaultValues` once at mount, so opening the editor before `stake.data` lands prefills `''` / `0`; saving then overwrites an existing `kindoo_expected_site_name` with whatever was typed against the empty form. Same clash-class T-90 just fixed for `kindoo_config.site_name`. Narrow window, and the component already gates two other things on snapshots arriving — gate the Edit button on `stake.data !== undefined` the same way.
+- `resolveScopeName` (`extension/src/content/kindoo/provision.ts:162`) writes `kindoo_expected_site_name || stake_name` into the Kindoo Description of every stake-scope grant.
+- `parseDescription` (`extension/src/content/kindoo/sync/parser.ts`) matches those Descriptions back with the same `kindoo_expected_site_name || stake_name` key.
+
+So changing the field leaves every already-provisioned stake-scope Description carrying the *old* string while Sync now looks for the *new* one. Those members stop resolving and surface as `kindoo-unparseable` drift on the next run — whose one-click **Update SBA** writes the raw description text into the seat's calling / reason. The Home Kindoo Site form is the field's first writer.
+
+**Why write-once is not the answer here.** With the field unset the effective key is `stake_name`, so existing Descriptions already carry the stake name. Setting the override for the *first* time to anything different re-keys them just as surely as changing it later would. A write-once rule would forbid the correction while still permitting the initial break.
+
+Options, roughly in order of how much they preserve:
+
+1. **Drop the name field.** The EID alone breaks the extension deadlock the surface exists for (§15). The row can still *display* the effective name read-only. Smallest surface; gives up an operator-settable override that currently has no other writer.
+2. **Warn and document.** Keep the field, confirm on change naming the consequence, and state the coupling in §15. Leaves the footgun loaded but visible.
+3. **Re-key on write.** Change the field and rewrite the affected Kindoo Descriptions. Correct in principle, far the largest — it is a bulk Kindoo write from the SPA, which has no such path today (all Kindoo writes go through the extension).
+
+Recommend (1) unless the override turns out to be needed: it is the only option with no residual hazard, and nothing else writes the field.
+
+## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+Status: done (2026-08-09 — `fix/home-eid-write-once`)
+Owner: @web-engineer
+Phase: Kindoo Sites (§15)
+
+Two follow-ups from PR #263's review, both on the edit path added in [T-90]. **Done**, plus one more the same review found on the merged head.
+
+**The home EID is now write-once** — settable while absent, never changeable here. Recorded options were to clear `kindoo_rule` on the home buildings when `site_id` changes, or to warn; the operator chose a third that removes the failure mode instead of compensating for it. The wizard writes the EID and every home building's `kindoo_rule` in one batch, so the two have never moved apart; refusing the change keeps it that way, and re-pointing a stake at a different environment stays a wizard re-run. Enforced in the mutation, with the field rendering `readOnly` once set so the rule is visible rather than met as an error.
+
+**Edit is gated on the stake snapshot** (`stake.data !== undefined`), closing the window where `useForm` captured empty defaults and a save wrote them over a real `kindoo_expected_site_name`.
+
+**`kindoo_config.site_name` is no longer seeded with the `stake_name` fallback.** It is seeded only when the operator supplied a name distinct from `stake_name`; otherwise the empty string, which is falsy so `homeSiteName()` falls through to the live chain. Seeding the fallback froze the value the override guard exists to avoid, and `homeSiteName()` ranks the capture *above* `kindoo_expected_site_name`, so it outranked the thing it was standing in for.
+
+**Still open, deliberately — see [T-93].** The same review flagged that editing the *site name* re-keys existing stake-scope Kindoo Descriptions. That is the same class as the EID (a value the extension only ever moved as a set), but write-once does not fix it, so it needs its own decision.
 
 ## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
 Status: pending

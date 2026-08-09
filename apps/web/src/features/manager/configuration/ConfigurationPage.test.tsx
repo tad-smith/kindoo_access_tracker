@@ -786,6 +786,46 @@ describe('Home Kindoo Site (Kindoo Config tab)', () => {
     expect(updateHomeKindooSiteMock).not.toHaveBeenCalled();
   });
 
+  it('locks the EID field once it is set, and says why', async () => {
+    // Write-once (T-92). The mutation enforces it; this keeps the
+    // operator from meeting the rule as an error.
+    const user = userEvent.setup();
+    renderTab({ kindoo_config: { site_id: 27994 } } as Partial<Stake>, true);
+    await user.click(screen.getByTestId('config-home-kindoo-site-edit'));
+    expect(screen.getByTestId('config-home-site-eid-input')).toHaveAttribute('readonly');
+    expect(screen.getByTestId('config-home-site-eid-locked')).toHaveTextContent(
+      /Configure Kindoo wizard/,
+    );
+    // The name stays editable — only the EID is write-once.
+    expect(screen.getByTestId('config-home-site-name-input')).not.toHaveAttribute('readonly');
+  });
+
+  it('leaves the EID editable while it is unset', async () => {
+    const user = userEvent.setup();
+    renderTab({}, true);
+    await user.click(screen.getByTestId('config-home-kindoo-site-edit'));
+    expect(screen.getByTestId('config-home-site-eid-input')).not.toHaveAttribute('readonly');
+    expect(screen.queryByTestId('config-home-site-eid-locked')).toBeNull();
+  });
+
+  it('withholds Edit until the stake snapshot arrives', () => {
+    // `useForm` captures defaults once; opening before the doc lands
+    // prefills empty and a save then overwrites a real
+    // `kindoo_expected_site_name`.
+    useStakeDocMock.mockReturnValue(loadingResult());
+    usePrincipalMock.mockReturnValue({
+      email: 'sa@example.com',
+      canonical: 'sa@example.com',
+      isAuthenticated: true,
+      isPlatformSuperadmin: true,
+      managerStakes: ['csnorth'],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+    });
+    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+    expect(screen.queryByTestId('config-home-kindoo-site-edit')).toBeNull();
+  });
+
   it('cancels back to the read-only rows without writing', async () => {
     const user = userEvent.setup();
     renderTab({}, true);
