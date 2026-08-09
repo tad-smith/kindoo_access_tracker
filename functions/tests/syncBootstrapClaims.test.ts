@@ -90,13 +90,13 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
     { timeout: 50_000 },
     async () => {
       const { auth } = requireEmulators();
-      const uid = await makeSettledUser('admin@example.com', functionsEmulatorReachable);
+      const uid = await makeSettledUser('bootstrapadmin1@example.com', functionsEmulatorReachable);
 
       await syncBootstrapClaims.run(
         makeEvent({
           stakeId: 'new-stake',
           before: null,
-          after: { bootstrap_admin_email: 'admin@example.com', setup_complete: false },
+          after: { bootstrap_admin_email: 'bootstrapadmin1@example.com', setup_complete: false },
         }),
       );
 

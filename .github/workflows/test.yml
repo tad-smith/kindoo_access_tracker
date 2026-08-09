@@ -203,6 +203,15 @@ jobs:
         #   plentiful: without a fresh uid behind the same canonical
         #   there is nothing for a late delivery to mis-resolve.
         #
+        #   `syncBootstrapClaims` is the EXCEPTION and needs the stricter
+        #   rule: it resolves via `auth.getUserByEmail`, deliberately not
+        #   `uidForCanonical` (it matches `bootstrap_admin_email` verbatim
+        #   to mirror `firestore.rules` `isBootstrapAdmin`). No `userIndex`
+        #   entry is consulted, so the no-op above never fires — any Auth
+        #   user holding that address, created by any test in any file, is
+        #   a live target. For bootstrap emails, uniqueness is the ONLY
+        #   defence, and it must hold across files, not just within one.
+        #
         #   A NEW test must settle, override the timeout, and — if it
         #   meets that both-conditions bar — own its email. Otherwise it
         #   is a coin flip on CI and always green locally
