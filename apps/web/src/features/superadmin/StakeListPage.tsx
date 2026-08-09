@@ -25,16 +25,26 @@ import { ApplyFixesMenu } from './ApplyFixesMenu';
 import { useStakes, type StakeWithId } from './hooks';
 
 /**
- * Per-stake landing target. Deep-links into the manager Dashboard
- * with the target stake as `?stake=<slug>`. `useActiveStake()` on
- * the destination's first render reads the param, persists it to both
- * sessionStorage + localStorage, and strips it via `history.replaceState`
- * (spec §2.1). The role gate on `/manager/dashboard` redirects out to
- * the user's actual landing for that stake if they don't hold the
- * manager role there.
+ * Per-stake landing target. Deep-links into manager **Configuration**
+ * with the target stake as `?stake=<slug>`. `useActiveStake()` on the
+ * destination's first render reads the param, persists it to both
+ * sessionStorage + localStorage, and strips it via
+ * `history.replaceState` (spec §2.1).
+ *
+ * Configuration, not the Dashboard: every viewer of this page is a
+ * platform superadmin, and `/manager/dashboard` gates on the manager
+ * role alone — so for a superadmin holding no role on the stake, the
+ * old target bounced straight back out. Configuration admits
+ * `manager || platformSuperadmin` and is where the superadmin-only
+ * surface lives (Home Kindoo Site — spec §15), which is the reason to
+ * open a stake you don't manage in the first place.
+ *
+ * The `?stake=` param is load-bearing here rather than cosmetic: a
+ * zero-role superadmin has no active stake of their own, and only the
+ * URL tier of `resolveActiveStake` is superadmin-permissive.
  */
 function landingTargetFor(stake: StakeWithId): { to: string; search: { stake: string } } {
-  return { to: '/manager/dashboard', search: { stake: stake.id } };
+  return { to: '/manager/configuration', search: { stake: stake.id } };
 }
 
 function timestampToMillis(value: Stake['created_at']): number {
@@ -114,20 +124,6 @@ function StakeRow({ stake }: StakeRowProps) {
       </div>
       <div className="flex items-center gap-3 sm:justify-end">
         <SetupPill complete={setupComplete} />
-        {/* The only entry point to Configuration for a superadmin who
-            holds no role on this stake: the route needs an active stake,
-            and `resolveActiveStake` honours `?stake=` for a superadmin
-            but has no storage or fallback tier that would. Deep-links to
-            Kindoo Config because the Home Kindoo Site editor there is
-            the superadmin-only surface (spec §15). */}
-        <Link
-          to="/manager/configuration"
-          search={{ stake: stake.id, tab: 'kindoo-sites' as const }}
-          className="text-sm text-[color:var(--kd-primary)] hover:underline"
-          data-testid={`superadmin-stake-kindoo-config-${stake.id}`}
-        >
-          Kindoo Config
-        </Link>
         <ApplyFixesMenu stake={stake} />
       </div>
     </li>

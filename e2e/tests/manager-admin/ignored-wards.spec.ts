@@ -83,8 +83,14 @@ test.describe('Wards to Ignore in Kindoo', () => {
     await page.getByTestId('config-ignored-ward-submit').click();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
 
+    // Longer timeout than the default 5s: a reload drops the Firestore
+    // websocket, and the SDK occasionally logs one "could not reach
+    // backend" retry before the stake-doc snapshot re-lands. The row is
+    // rendered from that snapshot, so the assertion races the reconnect.
     await page.reload();
-    await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
+    await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible({
+      timeout: 20_000,
+    });
 
     await page.getByTestId('config-ignored-ward-delete-Aspen Grove Ward').click();
     await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();
