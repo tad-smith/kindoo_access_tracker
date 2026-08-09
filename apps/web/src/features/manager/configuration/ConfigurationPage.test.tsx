@@ -738,10 +738,11 @@ describe('Home Kindoo Site (Kindoo Config tab)', () => {
     expect(screen.queryByTestId('config-home-kindoo-site-edit')).toBeNull();
   });
 
-  it('offers no Edit button to a superadmin who does not manage this stake', () => {
-    // The write needs `isManager` (T-91 holds back the superadmin rules
-    // branch), so the superadmin claim alone would render a button whose
-    // save dies on permission-denied.
+  it('offers Edit to a superadmin who holds no role on this stake', () => {
+    // T-91: the rule admits them now (with `setup_complete` and
+    // `bootstrap_admin_email` pinned), so the manager half of the old
+    // gate is no longer what the write requires — and this persona is
+    // the one the surface exists for.
     useStakeDocMock.mockReturnValue(stakeDocResult());
     usePrincipalMock.mockReturnValue({
       email: 'sa@example.com',
@@ -754,7 +755,7 @@ describe('Home Kindoo Site (Kindoo Config tab)', () => {
     });
     render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-home-kindoo-site')).toBeInTheDocument();
-    expect(screen.queryByTestId('config-home-kindoo-site-edit')).toBeNull();
+    expect(screen.getByTestId('config-home-kindoo-site-edit')).toBeInTheDocument();
   });
 
   it('lets a platform superadmin edit and save both values', async () => {

@@ -117,6 +117,28 @@ export function resolveActiveStake(
   urlParam: string | null,
   sessionValue: string | null,
   localValue: string | null,
+  /**
+   * The stake this tab's own URL tier persisted to `sessionStorage`
+   * during this page's lifetime, or `null`. Provenance, not a value —
+   * `sessionValue` alone cannot say whether it is a deep link this tab
+   * just consumed or residue from an earlier navigation.
+   *
+   * It exists for the one identity that has no tier 4 to fall back on:
+   * a platform superadmin holding no role on any stake. The URL tier is
+   * superadmin-permissive and persists what it resolves, but the
+   * storage tiers deliberately are NOT (a stale stake must invalidate
+   * rather than silently resume — see `isPermissiveStorage`). Those two
+   * rules together meant the value was written into a slot this
+   * identity could never read back: the deep link worked for whichever
+   * hook instance consumed the URL and returned `null` for every one
+   * after it. `usePrincipal` is per-instance state with its own async
+   * claims read, so "an instance that mounts later" is the ordinary
+   * case on a real page, not a race (T-91).
+   *
+   * Matching on the value keeps the protection intact: residue this tab
+   * did not write still fails the check and still invalidates.
+   */
+  urlDerivedSessionStake: string | null = null,
 ): ResolveActiveStakeResult {
   const accessible = accessibleStakes(principal);
   const bootstrapStakeIds = principal.bootstrapStakes;
@@ -160,7 +182,10 @@ export function resolveActiveStake(
   // the URL tier's different treatment.
   //
   // Platform superadmins (the `isPlatformSuperadmin === true` flag) are
-  // treated permissively at the URL TIER ONLY. Per spec §5.4 + F19 the
+  // treated permissively at the URL TIER, and at the SESSION tier only
+  // for the value that URL tier itself just persisted (see
+  // `urlDerivedSessionStake` — without that, the deep link resolved for
+  // one hook instance and `null` for every later one, T-91). Per spec §5.4 + F19 the
   // rules permit them to read every stake's parent doc, so a Stake-List
   // click landing on `/manager/dashboard?stake=X` is an explicit
   // deep-link the resolver honours. Storage tiers (session / local)
@@ -193,6 +218,16 @@ export function resolveActiveStake(
   // `bootstrapStakes`. See the file header + the comment above
   // `isBootstrapCandidate` for why this is narrower than the URL tier.
   const isPermissiveStorage = isBootstrapCandidate && bootstrapStakeIds.length === 0;
+  // Session tier, superadmin only, and only for the exact value this
+  // tab's URL tier persisted — see `urlDerivedSessionStake`. Scoped to
+  // the SESSION tier because `localStorage` is the cross-session sticky
+  // default, which is precisely the stale-residue case the storage
+  // narrowing protects; it stays non-permissive.
+  const isPermissiveSession =
+    isPermissiveStorage ||
+    (isPlatformSuperadmin &&
+      urlDerivedSessionStake !== null &&
+      sessionValue === urlDerivedSessionStake);
 
   // Tier 1: URL.
   if (urlParam !== null && urlParam.length > 0) {
@@ -215,6 +250,7 @@ export function resolveActiveStake(
       bootstrapStakeIds,
       isPlatformSuperadmin,
       isPermissiveStorage,
+      isPermissiveSession,
     );
     return { ...fallback, invalidatedTier: 'url' };
   }
@@ -228,6 +264,7 @@ export function resolveActiveStake(
     bootstrapStakeIds,
     isPlatformSuperadmin,
     isPermissiveStorage,
+    isPermissiveSession,
   );
 }
 
@@ -239,13 +276,15 @@ function resolveStorageTiers(
   bootstrapStakeIds: string[],
   isPlatformSuperadmin: boolean,
   isPermissive: boolean = accessible.length === 0 && bootstrapStakeIds.length === 0,
+  /** Session tier only — see `isPermissiveSession` in `resolveActiveStake`. */
+  isPermissiveSession: boolean = isPermissive,
 ): ResolveActiveStakeResult {
   // Tier 2: sessionStorage.
   if (sessionValue !== null && sessionValue.length > 0) {
     if (accessSet.has(sessionValue)) {
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };
     }
-    if (isPermissive) {
+    if (isPermissiveSession) {
       // Permissive paths (bootstrap-admin / superadmin) — see
       // `resolveActiveStake`.
       return { stakeId: sessionValue, source: 'session', invalidatedTier: null };

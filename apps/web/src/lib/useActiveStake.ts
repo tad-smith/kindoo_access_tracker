@@ -120,6 +120,13 @@ function notifyActiveStakeStorageChanged(): void {
 // on subsequent reads.
 let moduleUrlStakeParam: string | null = null;
 let moduleUrlStakeParamConsumed = false;
+// The stake THIS tab's URL tier persisted to sessionStorage. Module
+// scope because it is a property of the tab, not of any one hook
+// instance, and every instance must agree on it. Read back by
+// `resolveActiveStake` to tell a deep link this tab just consumed from
+// stale residue it did not write — see that function's
+// `urlDerivedSessionStake` parameter (T-91).
+let moduleUrlDerivedSessionStake: string | null = null;
 const urlStakeParamSubscribers = new Set<() => void>();
 
 // Module-scoped invalidated-tier dedupe. The hook is mounted by every
@@ -229,6 +236,7 @@ moduleUrlStakeParam = readStakeParamFromUrl();
 export function __resetActiveStakeModuleForTests(): void {
   moduleUrlStakeParam = readStakeParamFromUrl();
   moduleUrlStakeParamConsumed = false;
+  moduleUrlDerivedSessionStake = null;
   lastInvalidationKey = null;
   lastInvalidationContext = null;
   activeStakeInvalidation = null;
@@ -497,7 +505,14 @@ export function useActiveStake(): string | null {
   // render — they can change out from under us (the switcher writes on
   // click; the URL tier writes via the effect below).
   const resolved = useMemo(
-    () => resolveActiveStake(principal, urlStakeParam, readSessionStake(), readLocalStake()),
+    () =>
+      resolveActiveStake(
+        principal,
+        urlStakeParam,
+        readSessionStake(),
+        readLocalStake(),
+        moduleUrlDerivedSessionStake,
+      ),
     // `principalSignature` carries the accessible-stake + bootstrap-
     // stake fingerprint; `urlStakeParam` is state; `storageTick` bumps
     // on switcher click. Storage reads happen inside; not in the dep
@@ -628,6 +643,16 @@ export function useActiveStake(): string | null {
     ) {
       lastPersistedUrlStakeIdRef.current = resolved.stakeId;
       persistChoiceCore(resolved.stakeId);
+      // Record that THIS tab's URL tier is what put the value in
+      // sessionStorage, so the session tier can honour it for a
+      // superadmin who has no other tier to fall back on, without
+      // honouring residue it did not write.
+      moduleUrlDerivedSessionStake = resolved.stakeId;
+      // Same bus the switcher pings after its own storage write: a
+      // same-tab write emits no `storage` event, and the `resolved` memo
+      // reads storage but is keyed on `storageTick`. Instances that have
+      // already resolved need a nudge or they hold a stale answer.
+      notifyActiveStakeStorageChanged();
       invalidatePerStakeQueries();
     }
 
