@@ -49,7 +49,8 @@
 //
 // That kind comes from the unit's NAME (D31), so every one of those three
 // handlers has to have read the unit doc before it picks a set — see
-// `appAccessOptsForScope`.
+// `appAccessOptsForScope`. An unreadable unit doc falls back to ward
+// (`unitKindOrWard`), warns, and proceeds.
 //
 // Every access write also stamps the scope's access tier (D26) into
 // `importer_limited_callings` (`filterLimitedTierCallings`) in the same
@@ -170,13 +171,8 @@ function requireSeatType(value: unknown, field: string): Seat['type'] {
 
 /**
  * The unit's kind from its own doc; `undefined` when the doc is missing or
- * carries no usable `ward_name`.
- *
- * `undefined` is not a synonym for `'ward'`. `appAccessCallingsForScope`
- * reads an ABSENT `unitType` as ward, so forwarding it for an unreadable
- * unit would hand a branch the ward set — which matches no branch calling
- * and grants nothing, with no error and no log. Callers turn `undefined`
- * into {@link unresolvedUnitResult}.
+ * carries no usable `ward_name`. Callers resolve `undefined` through
+ * {@link unitKindOrWard}.
  */
 function unitTypeFromWardSnap(snap: DocumentSnapshot): UnitType | undefined {
   if (!snap.exists) return undefined;
@@ -186,8 +182,30 @@ function unitTypeFromWardSnap(snap: DocumentSnapshot): UnitType | undefined {
 }
 
 /**
- * `AppAccessOptions` for `scope` with the unit's kind resolved, or `null`
- * when the unit doc can't be read and the caller must not proceed.
+ * The unit's kind, defaulting to ward when the doc can't be read.
+ *
+ * A branch IS a ward here — same collection, same `ward_code`, same claims,
+ * same rosters — differing only in a few calling names, so ward is right for
+ * nearly every unit and is what this path derived before D32. Refusing
+ * instead would strand a seat whose unit doc was deleted: unit delete reaps
+ * no seats, and a legacy 2-letter `ward_code` can't be recreated from the
+ * Configuration UI. Warn so the missing doc stays visible.
+ *
+ * Passing `'ward'` explicitly rather than leaving `unitType` absent (which
+ * `appAccessCallingsForScope` already reads as ward): the fallback is a
+ * decision, and it should look like one at the call site.
+ */
+function unitKindOrWard(scope: string, kind: UnitType | undefined, fixCode: string): UnitType {
+  if (kind !== undefined) return kind;
+  logger.warn('syncApplyFix: unit doc unreadable; deriving app access as a ward', {
+    fixCode,
+    scope,
+  });
+  return 'ward';
+}
+
+/**
+ * `AppAccessOptions` for `scope` with the unit's kind resolved.
  *
  * `'stake'` short-circuits with no read: `appAccessCallingsForScope`
  * ignores `unitType` there and a stake-scope fix has no unit doc to fetch.
@@ -204,37 +222,11 @@ async function appAccessOptsForScope(
   stakeId: string,
   scope: string,
   base: AppAccessOptions,
-): Promise<AppAccessOptions | null> {
+  fixCode: string,
+): Promise<AppAccessOptions> {
   if (scope === 'stake') return base;
   const snap = await tx.get(getDb().doc(`stakes/${stakeId}/wards/${scope}`));
-  const kind = unitTypeFromWardSnap(snap);
-  return kind === undefined ? null : { ...base, unitType: kind };
-}
-
-/**
- * Soft-fail for a fix whose scope names a unit we can't read — the same
- * `{ success: false, error }` envelope the extension already renders inline
- * for `seat not found` / `seat already exists`.
- *
- * Refusing is the point. With the doc gone there is no evidence for ward or
- * for branch, and both guesses write a seat whose derived access is wrong
- * in a way nothing downstream can detect: the member simply has no app
- * access, which reads as a permissions bug rather than a data one. The
- * `ward_code` cannot stand in for the name — D31(e) keeps it deliberately
- * un-normalised, and the realistic case is a legacy 2-letter code (`LB`)
- * that carries no name at all. The refusal lands before any write, so the
- * operator can restore the unit and re-click; the drift row re-emits on the
- * next Sync run regardless.
- *
- * Manual / temp seats never reach here: they derive no app access, so they
- * keep the pre-existing tolerance for an unresolvable unit (T-42 — the site
- * is left unstamped and the read-time ward fallback classifies it).
- */
-function unresolvedUnitResult(scope: string): SyncApplyFixResult {
-  return {
-    success: false,
-    error: `unit '${scope}' not found — cannot tell whether it is a ward or a branch, so no app access can be derived`,
-  };
+  return { ...base, unitType: unitKindOrWard(scope, unitTypeFromWardSnap(snap), fixCode) };
 }
 
 export const syncApplyFix = onCall(
@@ -419,12 +411,10 @@ async function applyKindooOnly(
     let accessCallings: string[] = [];
     let priorAccess: Access | undefined;
     if (isAuto) {
-      // A unit scope must know its kind before it can pick a calling set.
-      let opts: AppAccessOptions = appAccessOpts;
-      if (isUnitScope) {
-        if (scopeUnitType === undefined) return unresolvedUnitResult(scope);
-        opts = { ...appAccessOpts, unitType: scopeUnitType };
-      }
+      // A unit scope picks its calling set from the kind resolved above.
+      const opts: AppAccessOptions = isUnitScope
+        ? { ...appAccessOpts, unitType: unitKindOrWard(scope, scopeUnitType, 'kindoo-only') }
+        : appAccessOpts;
       sortOrder = seatCallingOrder(dedupedCallings);
       accessCallings = filterAppAccessCallings(scope, dedupedCallings, opts);
       const accessSnap = await tx.get(accessRef);
@@ -574,8 +564,13 @@ async function applyCallingsMismatch(
     // `seat.scope` isn't known until the seat read above — so the unit read
     // belongs here, not with the invocation-level config. One `tx.get`, and
     // only for a unit scope.
-    const opts = await appAccessOptsForScope(tx, stakeId, seat.scope, appAccessOpts);
-    if (!opts) return unresolvedUnitResult(seat.scope);
+    const opts = await appAccessOptsForScope(
+      tx,
+      stakeId,
+      seat.scope,
+      appAccessOpts,
+      'callings-mismatch',
+    );
     const accessCallings = filterAppAccessCallings(seat.scope, newCallings, opts);
     const accessSnap = await tx.get(accessRef);
     if (accessCallings.length > 0) {
@@ -756,8 +751,13 @@ async function applyTypeMismatch(
       // `seat.scope` only exists after the seat read above, so the unit read
       // that resolves its kind (D31) has to happen here — one `tx.get`, and
       // only for a unit scope.
-      const opts = await appAccessOptsForScope(tx, stakeId, seat.scope, appAccessOpts);
-      if (!opts) return unresolvedUnitResult(seat.scope);
+      const opts = await appAccessOptsForScope(
+        tx,
+        stakeId,
+        seat.scope,
+        appAccessOpts,
+        'type-mismatch',
+      );
       const accessCallings = filterAppAccessCallings(seat.scope, autoCallings, opts);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
