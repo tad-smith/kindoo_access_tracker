@@ -483,9 +483,11 @@ The limited-app-access feature branch was cut before PR #240 merged, so its auth
 Sweep `D24` → `D25` in the limited-app-access comments only — do not touch comments that legitimately cite the manager-authority decision. Known sites: `firestore/firestore.rules` (`isLimited`, the limited helper block, the create-predicate clause), `functions/src/lib/seedClaims.ts`, `packages/shared/src/types/auth.ts`, `packages/shared/src/types/access.ts`, `packages/shared/src/tempWindow.ts`, `apps/web/src/features/requests/scopeOptions.ts`, `apps/web/src/features/requests/schemas.ts`, `apps/web/src/features/requests/components/NewRequestForm.tsx`, `apps/web/src/features/requests/components/EditSeatDialog.tsx`, `apps/web/src/features/requests/hooks.ts`, `apps/web/src/styles/pages.css`, and the commit subjects on the sub-branches (already written; leave those). `grep -rn 'D24' --include='*.ts' --include='*.tsx' --include='*.rules' --include='*.css'` finds them all. Docs are already correct.
 
 ## [T-74] `buildingRenameBlocker` does not count ward references
-Status: open
+Status: done (2026-08-09 — write-through, not a block)
 Owner: @web-engineer
 Phase: cross-cutting
+
+**Done.** Resolved as a **write-through**, not by adding wards to the blocker — the option this entry listed second. Counting wards would have blocked essentially every building rename (every ward references some building) in exchange for a staleness that id-first resolution already tolerates. `buildingRenameBlocker`'s seat / pending-request behaviour is unchanged, because those carry no id and a rename really does orphan them. The building upsert's existing `runTransaction` now also sets `building_name` on each ward that `resolveWardBuilding` maps to the renamed building, against the **pre-rename** buildings snapshot so the old name still resolves. The legacy name-only ward — the one case that was a true orphan, not just a stale string — gets `building_id` backfilled in the same write. See `spec.md` §5.3.
 
 `buildingRenameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts`) blocks a building rename while an active **seat** or a **pending request** references the building's current display name, because `seat.building_names` / `request.building_names` are display-name snapshots (§3.2). It does **not** count **wards**, even though `ward.building_name` is the same kind of snapshot — so a ward with no seats can have its building renamed out from under it and keep a stale `building_name` indefinitely.
 
