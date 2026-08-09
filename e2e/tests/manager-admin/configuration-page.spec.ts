@@ -10,6 +10,7 @@ import {
   clearAuth,
   clearFirestore,
   createAuthUser,
+  listDocs,
   setCustomClaims,
   writeDoc,
 } from '../../fixtures/emulator';
@@ -158,6 +159,83 @@ test.describe('Manager admin pages (Phase 7)', () => {
     await expect(list.getByText('Oak Building')).toBeVisible();
     await expect(page.getByTestId('config-building-edit-maple-building')).toBeVisible();
     await expect(page.getByTestId('config-building-edit-oak-building')).toHaveCount(0);
+  });
+
+  test('renaming a building rewrites its wards’ building_name and backfills a legacy ward’s building_id (T-74)', async ({
+    page,
+  }) => {
+    // Wards are written through by the rename, not blocked by it. This
+    // runs through the real rules, so it also proves a manager may
+    // update ward docs as part of the building save — a denial would
+    // roll back the whole transaction and leave the building renamed
+    // nowhere.
+    await signInAsManager(page, 'mgr-bldg-wards@example.com');
+    const stamp = {
+      created_at: new Date().toISOString(),
+      last_modified_at: new Date().toISOString(),
+      lastActor: { email: 'seed@example.com', canonical: 'seed@example.com' },
+    };
+    await writeDoc('stakes/csnorth/buildings/maple-building', {
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      address: '123 Main',
+      ...stamp,
+    });
+    await writeDoc('stakes/csnorth/buildings/pine-building', {
+      building_id: 'pine-building',
+      building_name: 'Pine Building',
+      address: '456 Pine',
+      ...stamp,
+    });
+    // Slug-bearing ward — only its display-name snapshot goes stale.
+    await writeDoc('stakes/csnorth/wards/CO', {
+      ward_code: 'CO',
+      ward_name: 'Maple 1st',
+      building_id: 'maple-building',
+      building_name: 'Maple Building',
+      seat_cap: 20,
+      ...stamp,
+    });
+    // Legacy ward — name is its ONLY reference, so the rename would
+    // orphan it outright.
+    await writeDoc('stakes/csnorth/wards/LG', {
+      ward_code: 'LG',
+      ward_name: 'Maple 2nd',
+      building_name: 'Maple Building',
+      seat_cap: 20,
+      ...stamp,
+    });
+    // A different building's ward — must not be touched.
+    await writeDoc('stakes/csnorth/wards/PN', {
+      ward_code: 'PN',
+      ward_name: 'Pine 1st',
+      building_id: 'pine-building',
+      building_name: 'Pine Building',
+      seat_cap: 20,
+      ...stamp,
+    });
+
+    await page.goto('/manager/configuration?tab=buildings');
+    await page.getByTestId('config-building-edit-maple-building').click();
+    await page.getByLabel(/^Name$/).fill('Oak Building');
+    await page.getByTestId('config-building-submit').click();
+    await expect(page.getByTestId('config-buildings-list').getByText('Oak Building')).toBeVisible();
+
+    // Assert on what actually landed in Firestore — the UI resolves a
+    // ward's building id-first, so it would render the new name even if
+    // the snapshot were still stale.
+    await expect
+      .poll(async () => {
+        const wards = await listDocs('stakes/csnorth/wards');
+        return Object.fromEntries(
+          wards.map((w) => [w['__id__'], [w['building_id'], w['building_name']]]),
+        );
+      })
+      .toEqual({
+        CO: ['maple-building', 'Oak Building'],
+        LG: ['maple-building', 'Oak Building'], // building_id backfilled
+        PN: ['pine-building', 'Pine Building'], // untouched
+      });
   });
 
   test('blocks a building rename that collides with another building name (T-67)', async ({

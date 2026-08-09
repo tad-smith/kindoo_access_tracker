@@ -1497,12 +1497,53 @@ describe('Buildings tab rename ref-guard', () => {
     expect(screen.getByTestId('config-building-edit-black-forest')).toBeDisabled();
   });
 
-  it('enables Edit once seats + requests snapshots are loaded (even when empty)', () => {
+  it('disables Edit while the wards snapshot is loading', () => {
+    // Wards are written through by a rename (T-74), so an un-hydrated
+    // wards snapshot would silently leave every ward's `building_name`
+    // stale — the mirror image of the seats / requests block.
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    useWardsMock.mockReturnValue(loadingResult());
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-building-edit-black-forest')).toBeDisabled();
+  });
+
+  it('enables Edit once seats + requests + wards snapshots are loaded (even when empty)', () => {
     useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
     useSeatsMock.mockReturnValue(liveResult<Seat>([]));
     useRequestsMock.mockReturnValue(liveResult<AccessRequest>([]));
+    useWardsMock.mockReturnValue(liveResult<Ward>([]));
     render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-building-edit-black-forest')).not.toBeDisabled();
+  });
+
+  it('hands the rename the live wards snapshot to write through', async () => {
+    const user = userEvent.setup();
+    installRealisticUpsert();
+    useBuildingsMock.mockReturnValue(liveResult<Building>([mkBuilding()]));
+    const wards = [
+      {
+        ward_code: 'CO',
+        ward_name: 'Maple',
+        building_id: 'black-forest',
+        building_name: 'Black Forest',
+        seat_cap: 20,
+      } as Ward,
+    ];
+    useWardsMock.mockReturnValue(liveResult<Ward>(wards));
+    render(<ConfigurationPage initialTab="buildings" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-building-edit-black-forest'));
+    const nameInput = screen.getByLabelText(/^Name$/i);
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Schwarzwald');
+    await user.click(screen.getByTestId('config-building-submit'));
+    await vi.waitFor(() => expect(upsertBuildingMock).toHaveBeenCalled());
+    expect(upsertBuildingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        building_name: 'Schwarzwald',
+        previousBuildingName: 'Black Forest',
+        wards,
+      }),
+    );
   });
 
   it('blocks the rename and toasts when an active seat references the building', async () => {
