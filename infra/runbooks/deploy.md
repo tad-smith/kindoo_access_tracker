@@ -352,12 +352,18 @@ and nothing is fetched or checked out — `git branch --show-current` is unchang
 3. **Verify the marker landed**, from your laptop, against the affected project:
 
    ```bash
-   out=$(mktemp)
+   out=$(mktemp).json
    firebase auth:export "$out" --project prod   # or: --project staging
    jq --arg email "<bootstrap_admin_email, exactly as stored>" \
      '.users[] | select(.email==$email) | .customAttributes' "$out"
    rm -f "$out"
    ```
+
+   `firebase auth:export` infers the export format from the target file's
+   extension and errors out before exporting anything if it can't
+   (`firebase-tools/lib/accountExporter.js`'s `validateOptions`) — a bare
+   `$(mktemp)` has no extension, so the `.json` suffix above is load-bearing,
+   not decorative.
 
    Expected: a JSON string with `"bootstrap":true` nested under the affected stake's id, e.g.:
 
