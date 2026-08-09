@@ -56,8 +56,8 @@ The cost of that optional shape is worth stating plainly: a forgotten option is 
 
 ## Known issues / deferred
 
-- **T-97 — export the ordered calling table from `packages/shared`.** The web typeahead still duplicates all 92 names, blocked only by `CALLING_ORDER` being module-private: `callingSortOrder` exports a lookup, and a lookup cannot be enumerated. Until then a conformance suite pins the copy against the shared table. It catches an insertion or a rename — the exact shape of the bug this PR fixed — but **not an append to the very end**, because the gap check bounds its range at the copy's own maximum index.
-- **T-98 — Playwright coverage for the calling typeahead inside `EditSeatDialog`.** Radix Popover will not open inside Radix Dialog under jsdom, so the branch list there is unverified. A test was removed rather than contorted; faking the open state would assert against a tree the browser never produces, which reads as coverage without being any.
+- **T-99 — export the ordered calling table from `packages/shared`.** The web typeahead still duplicates all 92 names, blocked only by `CALLING_ORDER` being module-private: `callingSortOrder` exports a lookup, and a lookup cannot be enumerated. Until then a conformance suite pins the copy against the shared table. It catches an insertion or a rename — the exact shape of the bug this PR fixed — but **not an append to the very end**, because the gap check bounds its range at the copy's own maximum index.
+- **T-100 — Playwright coverage for the calling typeahead inside `EditSeatDialog`.** Radix Popover will not open inside Radix Dialog under jsdom, so the branch list there is unverified. A test was removed rather than contorted; faking the open state would assert against a tree the browser never produces, which reads as coverage without being any.
 - **Test-suite rot this surfaced, fixed in the same PR.** The unit-band shift broke 8 integration assertions carrying hardcoded sort indices, and 13 more index literals that survived by luck were re-derived through `callingSortOrder(...)`. One (`Bishopric First Counselor` = 43) had already gone stale silently because it sat in a seed rather than an assertion. Two fixture traps went with them: `wards()` in `NewRequestForm.test.tsx` hardcoded `ward_name: \`Ward ${code}\``, making every fixture a ward, and ~25 `functions` tests scoped seats to a `CO` unit doc that was never seeded.
 
 ## Doc edits
@@ -65,7 +65,7 @@ The cost of that optional shape is worth stating plainly: a forgotten option is 
 - `docs/architecture.md` — new **D32**. Amends D17(a) (two-way list → three-way), extends D23's opt-in to branches, adds three consumers to D31(d)'s four.
 - `docs/spec.md` — §6 gains the calling typeahead (it was undocumented); §8's app-access block gains the branch set, the three-way resolution and its fail-closed default, and the `syncApplyFix` ward default; the roster sort-order paragraph gains the interleaving; the `callings-mismatch`, `kindoo-unparseable`, Elders Quorum President opt-in, and `backfillEqPresidentAccess` paragraphs corrected.
 - `docs/firebase-schema.md` — §4.1 `eq_president_app_access` and §4.5 `importer_callings` / `importer_limited_callings` / the two Admin-SDK writers; §4.8-9 removal note; the `backfillEqPresidentAccess` row in the Cloud Functions table.
-- `docs/TASKS.md` — T-96 closed, its six-calling list reconciled to seven; T-97 and T-98 filed.
+- `docs/TASKS.md` — T-96 closed, its six-calling list reconciled to seven; T-99 and T-100 filed.
 - `docs/user-guide/kindoo-managers.html` — §9's app-access table gains a Branch row; the Elders Quorum President bullet reads "units, not the stake".
 - `packages/shared/CLAUDE.md` — the app-access convention names three arrays and distinguishes the two kinds of gate on the bag.
 - `CLAUDE.md` — the T-96 follow-up bullet closed.

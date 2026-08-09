@@ -6,7 +6,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-98] Playwright coverage for the calling typeahead inside `EditSeatDialog`
+## [T-100] Playwright coverage for the calling typeahead inside `EditSeatDialog`
 Status: pending
 Owner: @web-engineer
 Phase: cross-cutting
@@ -17,7 +17,7 @@ The branch calling list is unverified in the one place it renders inside a modal
 
 Worth doing alongside any other `EditSeatDialog` E2E work rather than as a lone spec — the fixture cost (a stake with a branch unit, a seat on it) is the bulk of the effort and is reusable.
 
-## [T-97] Export the ordered calling table from `packages/shared`
+## [T-99] Export the ordered calling table from `packages/shared`
 Status: pending
 Owner: @web-engineer
 Phase: cross-cutting
@@ -27,6 +27,32 @@ Phase: cross-cutting
 **It is blocked on one thing: `CALLING_ORDER` is module-private.** `callingSortOrder` exports a name → order *lookup*, and a lookup cannot be enumerated, so the typeahead has nothing to derive a list from. Export the ordered array (or a `callingsInOrder()` accessor) and both web lists become projections of it: `STAKE_CALLINGS` is the slice before `Bishop`, `UNIT_CALLINGS` the slice from `Bishop` on, and the existing ward / branch subtraction sets keep working unchanged on top.
 
 The copy is currently machine-checked against the shared table by a conformance suite (`apps/web/src/features/requests/tests/standardCallings.test.ts`): every entry must resolve, the concatenation must be strictly ascending by `callingSortOrder`, and the indices it covers must be gap-free. **That catches an insertion or a rename but not an append to the very end** — the gap check bounds its range at `Math.max(...orders) + 1`, computed from the copy's own entries, so a new entry appended past the copy's last index leaves no hole to find. T-96 is the case that motivates this: seven callings landed in `shared` and silently did not reach the typeahead, which is exactly the shape the test now catches, and the append case is the one hole left in it.
+
+## [T-98] CI's "Verify all checks passed" gate does not name the step that failed
+Status: pending
+Owner: @infra-engineer
+Phase: cross-cutting
+
+Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-on-error: true` and a final gate aggregates the true `outcome` values — so a failing step renders **green** in the GitHub UI and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing T-95 meant reading `steps[].conclusion` off the API and mapping the failing index back to the step list in the workflow. Echo the failing step's name in that gate.
+
+Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
+
+## [T-97] `clearEmulators` can 409 on the Firestore blow-away
+Status: pending
+Owner: @backend-engineer
+Phase: cross-cutting
+
+Observed once in ~6 full integration runs while verifying [T-95], locally, under the CI emulator config:
+
+```
+backfillKindooSiteId.test.ts > updates the primary when stored kindoo_site_id explicitly differs from derived
+Error: clearEmulators(Firestore) failed: 409 {"error":{"code":409,"message":"Transaction lock timeout.","status":"ABORTED"}}
+  ❯ clearEmulators tests/lib/emulator.ts:106
+```
+
+Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow-away rather than an assertion. The REST `DELETE …/documents` endpoint contends with an in-flight write, most likely a deployed trigger's, and the emulator returns `ABORTED` instead of blocking. That is the same "delivery outlives the test" family the `clearEmulators` docblock already describes for leftover `auditLog` rows, but this variant takes the *sweep* down rather than leaking a row.
+
+One sighting is thin evidence and it did not recur in five subsequent runs, so this is recorded rather than fixed. If it shows up on CI: `ABORTED` is the documented retryable status, so a bounded retry around the fetch is the obvious remedy — but confirm the frequency first, and note that a retry masks whatever holds the lock.
 
 ## [T-96] Branch-specific callings — specified, deliberately not implemented
 Status: done (2026-08-09 — PR #270)
@@ -72,12 +98,14 @@ Implementation note — still open, and the reason this is `pending` rather than
 
 **Resolved as built (2026-08-09).** `unitType` did land on `AppAccessOptions`, absent reading as ward. `:302`'s existing site read was hoisted above the calling-set choice and `needsSiteResolve` became `isUnitScope`, so one snapshot feeds both. `:467` and `:642` each take one `tx.get`, unit scopes only. `:774` was confirmed inert and reads nothing. An unresolvable unit is treated as a ward, with a structured warning (D31(f)); an intermediate revision refused the fix instead and was reverted. The count above reads "three further call sites" but exempts `:774` in the same sentence — two of the three actually needed work.
 
-## [T-95] Flaky integration test: `syncManagersClaims` — claim read races the trigger
-Status: pending
+## [T-95] Flaky integration test: `syncManagersClaims` — the trigger clobbers the test, not the reverse
+Status: done (2026-08-09 — `fix/syncmanagers-claims-flake`)
 Owner: @backend-engineer
 Phase: cross-cutting
 
-Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/` — verified by diff against `main`. The same commit passed the suite locally (520 passed) and passed the previous CI run on the same branch, so the working assumption is a timing flake rather than a regression. Confirm that before changing anything: a second failure on the same commit means it is real.
+**Done.** Retitled: the original entry read the failure backwards.
+
+Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/`.
 
 ```
 functions/tests/syncManagersClaims.test.ts:57
@@ -85,13 +113,28 @@ syncManagersClaims › flips manager claim off when active=false
 expected { canonical: 'm@gmail.com' } to match { stakes: { csnorth: { manager: true } } }
 ```
 
-The received claims carry `canonical` but **no `stakes` block at all** — not a wrong grant, an absent one. So the assertion ran against a token minted before the manager grant was applied. The test does `await runSync(...)` then reads `auth.getUser()` immediately; if `runSync` resolves before the trigger's claim write has landed, the read is simply early. Worth checking whether `runSync` actually awaits the write or just the invocation, and whether the sibling assertion above it (line 41, the same shape) is passing by luck.
+**The read was not early — the write was overwritten.** The original guess was that `auth.getUser()` ran before the trigger's claim write had landed. It is the other way round: `runSync` invokes the handler directly (`await syncManagersClaims.run(...)`), so the test's own write is fully synchronous and complete before the assertion. What lands late is the **deployed `onAuthUserCreate`** v1 auth trigger, which CI's `--only firestore,auth,functions` config keeps live. It fires asynchronously via Eventarc on every `auth.createUser(...)` and its `applyFullClaims` baseline write stamps `{ canonical }` over whatever the test had already written. That is why the received object has `canonical` present and the `stakes` block *absent* — it is not a token minted too early, it is the trigger's baseline, whole.
 
-**Two things make this worth real attention rather than a retry.**
+Reproduced deterministically under the CI emulator config: `createUser` → write full claims → read back immediately shows `{canonical, stakes}`; read back 5s later shows `{canonical}`. The suites pass most of the time only because the synchronous test body normally finishes before Eventarc delivers; slow CI, or a neighbouring test's delivery landing mid-body, loses the race.
 
-It is **invisible in the GitHub UI**. Every step in `test.yml` sets `continue-on-error: true` and a final "Verify all checks passed" step aggregates the true `outcome` values — so the Integration step renders **green** while having failed, and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing this meant reading `steps[].conclusion` off the API and mapping the failing index back to the list in `test.yml`. Anyone hitting a red `test` check will lose the same time; consider echoing the failing step's name in that gate.
+**Invisible locally by construction.** `test:integration:local` boots only firestore + auth, so the trigger never fires and the test's write is the only one. Same class as #226.
 
-And unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. So a flake here fails the branch outright where the equivalent in e2e would be silently absorbed.
+**`onAuthUserCreate` is not the only late writer** — found in review, and worth as much as the first finding. Under the same config the **deployed** role-sync triggers fire on the very Firestore writes these tests make (`syncManagersClaims` on `stakes/{stakeId}/kindooManagers/{memberCanonical}`, with `KINDOO_SKIP_CLAIM_SYNC` unset). Intra-test that is *usually* benign — same code, recomputed from the same Firestore. But not always, and the first draft of this entry wrongly recorded it as impossible: `claimsEqual` compares the delivery's own freshly-read `existing` against its `merged`, so it short-circuits only when the delivery's role-data read and its claims write fall on the same side of the test's second `runSync`. Straddle them — read before the `active: false` write, write after the `runSync` that cleared the block — and it restamps `manager: true` and the terminal assertion fails. Narrower than the `onAuthUserCreate` race (~5 emulator round-trips against the test's ~7, so it normally finishes first), same class, and in the very test that was flaking. Narrowed — not closed — by polling the terminal assertion via `stakeBlockClears`, budgeted at 25s to match observed Eventarc latency (~14.7s on this runner) rather than the sub-second happy path, since recovering means waiting on the second write's own delivery. A residual corner survives and is documented at the helper rather than papered over: if that recovering delivery loads `existing` after `runSync` cleared the block but before the straddling one restamps it, `claimsEqual` short-circuits, it writes nothing, and the restamp is terminal. No poll budget fixes that; closing it would mean settling the first delivery before phase two, and its write is byte-identical to the in-process one preceding it, so there is nothing to observe. Cross-test it is worse: `clearEmulators()` cannot cancel an in-flight delivery (the same caveat its own docblock records for leftover `auditLog` rows), and three tests reused `m@gmail.com` with a fresh uid each. A delivery queued by test N lands during test N+1, resolves `uidForCanonical` against the `userIndex` doc N+1 just re-pointed, and — if it reads between the `userIndex` write and the `kindooManagers` write — computes null and stamps `{ canonical }` with no `stakes` block. **Byte-identical to the reported failure.** So the reproduction proves the `onAuthUserCreate` race is real; it does not prove which of the two produced the CI red.
+
+Fixed on both paths:
+
+- The three unguarded suites route through the existing `makeSettledUser(email, functionsEmulatorReachable)`, which waits out `onAuthUserCreate`'s single baseline write. `applyClaims.test.ts` and `syncBootstrapClaims.test.ts` already used it; `syncManagersClaims`, `syncAccessClaims` and `syncSuperadminClaims` (11 `createUser` sites) did not. No new helper — the first cut added a near-duplicate `createUserSettled`, dropped in favour of the established one, which also asserts the settle where the duplicate swallowed its own timeout.
+- **Every test that both creates an auth user and writes a claim-sync trigger's own path now owns its email**, so a leftover delivery finds no `userIndex` entry for the canonical it was queued on and no-ops at `uidForCanonical`. `syncAccessClaims` already did this; `syncManagersClaims`, `syncSuperadminClaims`, `syncSuperadminClaims.e2e` and `onAuthUserCreate` (three tests on `mgr@gmail.com`, writing `kindooManagers` docs) did not. The e2e file matters most: `syncSuperadminClaims` reads `after.exists` off the event payload instead of re-reading Firestore, so a stale delivery is not self-healing the way the other two are — the `clearEmulators()` delete after its mint test queues an `exists=false` that would clear the flag its revoke test is waiting to see set. Sharing elsewhere is fine and plentiful (`alice@gmail.com` across 18 tests in `auditTrigger`): without a fresh uid behind the same canonical there is nothing to mis-resolve. `applyClaims` shares `multi@gmail.com` and is safe for that reason — it writes no `stakes/` paths at all.
+- **An explicit timeout on every test that waits.** The waits run to 20s; no `testTimeout` is configured anywhere, so vitest's 5s default aborts the test before its own budget — trading a rare clobber for a rare timeout, on the one suite with no retry. Delivery has been observed at ~14.7s on this runner (recorded in `syncSuperadminClaims.e2e.test.ts`), so 5s is not academic. Found in review: **16 pre-existing tests were already exposed** — all 11 in `onAuthUserCreate.test.ts` and 5 of the 8 waiter-bearing tests in `applyClaims.test.ts`. The earlier claim here that the two prior callers carried the override "on all 13 of their sites" was wrong; 13 counted occurrences of the literal, not tests that needed one. All are now guarded.
+- **`runOnAuthUserCreate` asserts its wait** instead of discarding the boolean — the same defect this task rejected `createUserSettled` for.
+- **The waits latch, because raising the budget introduced a worse failure than the one being fixed.** At 40s across the ~44 waits a run makes — and the suite is strictly serial (`fileParallelism: false`, `maxWorkers: 1`) — a dead trigger means ~31 minutes of waiting against `test.yml`'s `timeout-minutes: 20`. The job is then cancelled naming no test at all, which is worse than the T-95 red this began with, and reachable from something as ordinary as `KINDOO_SKIP_CLAIM_SYNC` landing in the wrong heredoc. `waitForDelivery` latches per file: the first exhausted wait makes the rest return immediately, every test still fails on its own named assertion, and the worst case is one budget per file. `claimsAfterClear` deliberately does **not** latch — its predicate stays false when the clear path is genuinely broken, which is the thing those tests exist to catch, so latching on it would blame `onAuthUserCreate` for every later settle in the file. Callers record whether the latch was already set, so a short-circuited wait reports "skipped" instead of naming a trigger that was working.
+- **No general-case cost**, measured rather than assumed: every poll exits as soon as the claim lands, so a budget is only spent when something is broken. Three runs each way, same emulator, swapping only `functions/tests`: 13.5–24.6s on the branch against 12.1–27.7s on `main`. Run-to-run variance on one machine exceeds the difference.
+
+The `.github/workflows/test.yml` build step had **predicted the first path precisely**, naming all four at-risk suites and calling the protection "timing-only". That comment now records what is covered and how.
+
+**Generalisable, and broader than `createUser`:** under this config every write a test makes to a trigger's own Firestore path has a second, asynchronous writer whose delivery outlives the test. Settle what you can; make what you can't settle unaddressable, by never sharing an identity between tests.
+
+Left open, split out as [T-98]: the failure is invisible in the GitHub UI, because every step in `test.yml` sets `continue-on-error: true` and only the aggregator turns red.
 
 ## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
 Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)

@@ -87,16 +87,16 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     'mints bootstrap: true on create when setup_complete is false',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       const { auth } = requireEmulators();
-      const uid = await makeSettledUser('admin@example.com', functionsEmulatorReachable);
+      const uid = await makeSettledUser('bootstrapadmin1@example.com', functionsEmulatorReachable);
 
       await syncBootstrapClaims.run(
         makeEvent({
           stakeId: 'new-stake',
           before: null,
-          after: { bootstrap_admin_email: 'admin@example.com', setup_complete: false },
+          after: { bootstrap_admin_email: 'bootstrapadmin1@example.com', setup_complete: false },
         }),
       );
 
@@ -117,7 +117,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('clears the marker when setup_complete flips to true', { timeout: 30_000 }, async () => {
+  it('clears the marker when setup_complete flips to true', { timeout: 50_000 }, async () => {
     const { auth } = requireEmulators();
     const uid = await makeSettledUser('admin2@example.com', functionsEmulatorReachable);
 
@@ -147,7 +147,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     're-points the marker when bootstrap_admin_email changes mid-setup',
-    { timeout: 30_000 },
+    { timeout: 90_000 },
     async () => {
       const { auth } = requireEmulators();
       const uidA = await makeSettledUser('adminA@example.com', functionsEmulatorReachable);
@@ -177,7 +177,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
     },
   );
 
-  it('clears the marker when the stake doc is deleted', { timeout: 30_000 }, async () => {
+  it('clears the marker when the stake doc is deleted', { timeout: 50_000 }, async () => {
     const { auth } = requireEmulators();
     const uid = await makeSettledUser('admin3@example.com', functionsEmulatorReachable);
 
@@ -202,7 +202,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
     expect(bootstrapFlag(refreshed.customClaims, 'deleted-stake')).toBeUndefined();
   });
 
-  it('does NOT mint when setup_complete is absent', { timeout: 30_000 }, async () => {
+  it('does NOT mint when setup_complete is absent', { timeout: 50_000 }, async () => {
     const { auth } = requireEmulators();
     const email = 'noflag@example.com';
     const uid = await makeSettledUser(email, functionsEmulatorReachable);
@@ -238,7 +238,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
     expect(claimsOf(await auth.getUser(uid))).toEqual({ canonical: email });
   });
 
-  it('does NOT mint when setup_complete is a non-boolean value', { timeout: 30_000 }, async () => {
+  it('does NOT mint when setup_complete is a non-boolean value', { timeout: 50_000 }, async () => {
     const { auth } = requireEmulators();
     const email = 'stringflag@example.com';
     const uid = await makeSettledUser(email, functionsEmulatorReachable);
@@ -262,7 +262,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     'no-ops when the doc write does not change bootstrap eligibility',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // Unrelated field (e.g. stake_seat_cap) changes while
       // bootstrap_admin_email/setup_complete stay the same — must not
@@ -293,7 +293,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     'no-ops on ordinary writes to an already-complete stake (steady state)',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // The common case for the lifetime of a stake: setup finished
       // long ago, `bootstrap_admin_email` is still on the doc (it's
@@ -339,7 +339,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     'heals a claim stuck at bootstrap: true after setup already completed',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // Models the durability gap directly: the doc is already past
       // setup, but the claim never got cleared — a lost update racing
@@ -374,7 +374,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     'heals a claim stuck missing bootstrap: true while still mid-setup',
-    { timeout: 30_000 },
+    { timeout: 50_000 },
     async () => {
       // The inverse divergence: the doc is still eligible but the
       // claim never got minted. An unrelated write must heal it too.
