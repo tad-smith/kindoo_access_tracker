@@ -15,6 +15,12 @@ import { cn } from '../../lib/cn';
 export const Popover = PopoverPrimitive.Root;
 export const PopoverTrigger = PopoverPrimitive.Trigger;
 export const PopoverAnchor = PopoverPrimitive.Anchor;
+// Dismisses the popover. A Popover has no item semantics (unlike
+// DropdownMenu), so a plain button inside the content does NOT close it
+// — wrap such a button in `<PopoverClose asChild>` when selecting it
+// should dismiss. Radix composes the handlers and returns focus to the
+// trigger on close.
+export const PopoverClose = PopoverPrimitive.Close;
 
 export const PopoverContent = forwardRef<
   ElementRef<typeof PopoverPrimitive.Content>,

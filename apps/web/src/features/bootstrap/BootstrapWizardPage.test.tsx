@@ -2,9 +2,13 @@
 // hooks + mutations so the component renders without a live emulator.
 // Coverage:
 //   - Initial render shows step 1.
-//   - Complete-Setup button is disabled until steps 1–3 all have data
-//     and surfaces helper text listing the remaining prerequisites.
+//   - Complete-Setup button is disabled until steps 1–3 all have data.
+//     Its helper text listing the remaining prerequisites renders on
+//     step 4 only; steps 1–3 carry the step-scoped Next hint instead.
 //   - Switching tabs renders the matching step pane.
+//   - Next is disabled (with a reason) on step 2 with zero buildings
+//     and step 3 with zero wards; step 1's Next, Back, and the step
+//     tabs stay unrestricted.
 //   - Step 1 form: form validation surfaces errors on empty submit.
 //   - Step indicator turns green for steps whose validation passes.
 //   - Bootstrap admin row hides both deactivate + delete actions
@@ -103,7 +107,7 @@ vi.mock('../auth/signOut', () => ({
   signOut: () => signOutMock(),
 }));
 
-import { BootstrapWizardPage } from './BootstrapWizardPage';
+import { BootstrapWizardPage, nextBlocker } from './BootstrapWizardPage';
 
 function liveResult<T>(data: T[] | undefined) {
   return {
@@ -312,6 +316,46 @@ describe('<BootstrapWizardPage />', () => {
     expect(navigateMock).toHaveBeenCalled();
   });
 
+  it('surfaces a Complete Setup failure as a toast from a step that renders no blocker list', async () => {
+    // Guards the #260 x step-4-scoping interaction: `useCompleteSetupMutation`
+    // fails closed when the manager claim hasn't landed, and reports it by
+    // throwing. That error's surface is `CompleteSetupButton`'s catch ->
+    // toast + the page-level <ToastHost />, NOT `CompleteSetupBlockers` —
+    // so scoping the blocker list to step 4 must not swallow it. Asserted
+    // from step 2, where the list deliberately does not render.
+    useStakeDocMock.mockReturnValue(
+      stakeResult(makeStake({ stake_name: 'My Stake', stake_seat_cap: 200 })),
+    );
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        { building_id: 'main', building_name: 'Main', address: '1 St' } as Building,
+      ]),
+    );
+    useWardsMock.mockReturnValue(
+      liveResult<Ward>([
+        { ward_code: 'CO', ward_name: 'Maple', building_name: 'Main', seat_cap: 20 } as Ward,
+      ]),
+    );
+    completeSetupMutate.mockRejectedValue(
+      new Error('Setup access is still syncing — wait a moment and try Complete Setup again.'),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-2'));
+    expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('bootstrap-complete-setup'));
+
+    await vi.waitFor(() => {
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Setup access is still syncing'),
+        'error',
+      );
+    });
+    // Fail-closed: no navigation away from the wizard.
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
   it('switches to step 2 when the Buildings tab is clicked', async () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
@@ -338,15 +382,50 @@ describe('<BootstrapWizardPage />', () => {
     expect(await screen.findByText(/Stake name is required/i)).toBeInTheDocument();
   });
 
-  it('lists missing prerequisites under the Complete Setup button when disabled', () => {
+  it('lists missing prerequisites under the Complete Setup button on step 4', async () => {
+    const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
     const blockers = screen.getByTestId('bootstrap-complete-blockers');
     expect(blockers).toHaveTextContent(/Fill in stake name/);
     expect(blockers).toHaveTextContent(/at least one building/);
     expect(blockers).toHaveTextContent(/at least one ward/);
   });
 
-  it('drops the helper-text blockers list once every prerequisite is met', () => {
+  it('keeps the full checklist on step 4 even for blockers the earlier steps own', async () => {
+    // Step 4 is the only place the whole list renders, so it must still
+    // name the building and ward gaps the step-2/3 Next hints covered.
+    useStakeDocMock.mockReturnValue(
+      stakeResult(makeStake({ stake_name: 'My Stake', stake_seat_cap: 200 })),
+    );
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
+    const blockers = screen.getByTestId('bootstrap-complete-blockers');
+    expect(blockers).not.toHaveTextContent(/Fill in stake name/);
+    expect(blockers).toHaveTextContent(/at least one building \(Step 2\)/);
+    expect(blockers).toHaveTextContent(/at least one ward \(Step 3\)/);
+  });
+
+  it('does not repeat the checklist on steps 1-3, where the Next hint speaks instead', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    // Step 1: nothing to say beyond the step's own Save.
+    expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+
+    for (const step of [2, 3]) {
+      await user.click(screen.getByTestId(`wizard-step-tab-${step}`));
+      expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
+      // The step-scoped hint is what explains the blocked Next there.
+      expect(screen.getByTestId('bootstrap-next-blocker')).toBeInTheDocument();
+    }
+
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
+    expect(screen.getByTestId('bootstrap-complete-blockers')).toBeInTheDocument();
+    expect(screen.queryByTestId('bootstrap-next-blocker')).not.toBeInTheDocument();
+  });
+
+  it('drops the helper-text blockers list on step 4 once every prerequisite is met', async () => {
     useStakeDocMock.mockReturnValue(
       stakeResult(
         makeStake({
@@ -363,7 +442,9 @@ describe('<BootstrapWizardPage />', () => {
         { ward_code: 'CO', ward_name: 'Maple', building_name: 'B', seat_cap: 1 } as Ward,
       ]),
     );
+    const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-4'));
     expect(screen.queryByTestId('bootstrap-complete-blockers')).not.toBeInTheDocument();
   });
 
@@ -623,6 +704,120 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  describe('Next-button gating on the buildings and wards steps', () => {
+    const building = { building_id: 'b1', building_name: 'B', address: '' } as Building;
+    const ward = {
+      ward_code: 'CO',
+      ward_name: 'Maple',
+      building_name: 'B',
+      seat_cap: 1,
+    } as Ward;
+
+    it('leaves Next enabled on step 1 regardless of buildings and wards', async () => {
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('bootstrap-next')).not.toBeDisabled();
+      expect(screen.queryByTestId('bootstrap-next-blocker')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('bootstrap-next'));
+      expect(screen.getByTestId('wizard-step-2')).toBeInTheDocument();
+    });
+
+    it('disables Next on the buildings step until a building exists, and says why', async () => {
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-2'));
+
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+      expect(screen.getByTestId('bootstrap-next-blocker')).toHaveTextContent(
+        /Add at least one building to continue/i,
+      );
+    });
+
+    it('enables Next on the buildings step once a building exists', async () => {
+      useBuildingsMock.mockReturnValue(liveResult<Building>([building]));
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-2'));
+
+      expect(screen.getByTestId('bootstrap-next')).not.toBeDisabled();
+      expect(screen.queryByTestId('bootstrap-next-blocker')).not.toBeInTheDocument();
+
+      await user.click(screen.getByTestId('bootstrap-next'));
+      expect(screen.getByTestId('wizard-step-3')).toBeInTheDocument();
+    });
+
+    it('points at the missing building, not the ward, when step 3 is reached with step 2 empty', async () => {
+      // The tabs make this reachable, and `Step3Wards` disables its own
+      // Add-ward button here — so "add a ward" would name an impossible
+      // action.
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+      expect(screen.getByTestId('bootstrap-next-blocker')).toHaveTextContent(
+        /Add a building \(Step 2\) before adding wards/i,
+      );
+      expect(screen.getByTestId('bootstrap-next-blocker')).not.toHaveTextContent(/one ward/i);
+    });
+
+    it('disables Next on the wards step until a ward exists, and says why', async () => {
+      // Buildings populated so the block is unambiguously the ward one.
+      useBuildingsMock.mockReturnValue(liveResult<Building>([building]));
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+      expect(screen.getByTestId('bootstrap-next-blocker')).toHaveTextContent(
+        /Add at least one ward to continue/i,
+      );
+    });
+
+    it('enables Next on the wards step once a ward exists', async () => {
+      useBuildingsMock.mockReturnValue(liveResult<Building>([building]));
+      useWardsMock.mockReturnValue(liveResult<Ward>([ward]));
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-3'));
+
+      expect(screen.getByTestId('bootstrap-next')).not.toBeDisabled();
+
+      await user.click(screen.getByTestId('bootstrap-next'));
+      expect(screen.getByTestId('wizard-step-4')).toBeInTheDocument();
+    });
+
+    it('keeps the step tabs freely clickable while Next is blocked', async () => {
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+
+      // Zero buildings and zero wards — Next is blocked on 2 and 3, but
+      // the tabs are the deliberate escape hatch and skip straight past.
+      await user.click(screen.getByTestId('wizard-step-tab-2'));
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+
+      await user.click(screen.getByTestId('wizard-step-tab-4'));
+      expect(screen.getByTestId('wizard-step-4')).toBeInTheDocument();
+
+      await user.click(screen.getByTestId('wizard-step-tab-3'));
+      expect(screen.getByTestId('wizard-step-3')).toBeInTheDocument();
+
+      await user.click(screen.getByTestId('wizard-step-tab-1'));
+      expect(screen.getByTestId('wizard-step-1')).toBeInTheDocument();
+    });
+
+    it('keeps Back working out of a step whose Next is blocked', async () => {
+      const user = userEvent.setup();
+      render(<BootstrapWizardPage />, { wrapper: Wrapper });
+      await user.click(screen.getByTestId('wizard-step-tab-2'));
+      expect(screen.getByTestId('bootstrap-next')).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: /^Back$/ }));
+      expect(screen.getByTestId('wizard-step-1')).toBeInTheDocument();
+    });
+  });
+
   describe('escape bar (PR #258 finding: "Setup needed" was a one-way door)', () => {
     it('offers a way back to other accessible stakes and does not bounce back into the wizard', async () => {
       // Simulate the precondition that created the one-way door: the
@@ -734,13 +929,35 @@ describe('<BootstrapWizardPage />', () => {
       expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBe('zzz-real-stake');
     });
 
-    it('does not gate the wizard step-through: Next still advances steps with the escape bar present', async () => {
+    it('does not itself gate step-through: the ungated step-1 Next and the step tabs still move', async () => {
       const user = userEvent.setup();
       render(<BootstrapWizardPage />, { wrapper: Wrapper });
       expect(screen.getByTestId('wizard-escape-sign-out')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: /^Next$/ }));
+      // Step 1's Next is ungated (only steps 2 and 3 gate on their own
+      // data — see the Next-button gating block above).
+      await user.click(screen.getByTestId('bootstrap-next'));
       expect(screen.getByTestId('wizard-step-2')).toBeInTheDocument();
+
+      // And the tabs stay free even from a step whose Next is blocked.
+      await user.click(screen.getByTestId('wizard-step-tab-4'));
+      expect(screen.getByTestId('wizard-step-4')).toBeInTheDocument();
     });
+  });
+});
+
+describe('nextBlocker()', () => {
+  it('blocks only step 2 without buildings and step 3 without wards', () => {
+    expect(nextBlocker({ step: 1, step2Done: false, step3Done: false })).toBeNull();
+    expect(nextBlocker({ step: 2, step2Done: false, step3Done: false })).toMatch(/one building/i);
+    expect(nextBlocker({ step: 2, step2Done: true, step3Done: false })).toBeNull();
+    expect(nextBlocker({ step: 3, step2Done: true, step3Done: false })).toMatch(/one ward/i);
+    // Step 3 reached via the tabs with step 2 still empty: naming the
+    // ward would instruct an action the step's own form disables.
+    expect(nextBlocker({ step: 3, step2Done: false, step3Done: false })).toMatch(
+      /building \(Step 2\)/i,
+    );
+    expect(nextBlocker({ step: 3, step2Done: true, step3Done: true })).toBeNull();
+    expect(nextBlocker({ step: 4, step2Done: false, step3Done: false })).toBeNull();
   });
 });

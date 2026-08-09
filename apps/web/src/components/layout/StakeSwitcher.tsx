@@ -1,14 +1,21 @@
-// Stake-switcher dropdown. Renders next to the brand-bar stake name
-// when the principal's menu source (claim-derived accessible stakes
-// plus any bootstrap-only stakes discovery has found) has ≥ 2 entries
-// (spec §2.1). Hidden entirely otherwise. The trigger is a chevron-only
-// affordance — the brand bar (`Shell.tsx` `.kd-brandbar-stake`) already
-// shows WHICH stake the user is on, so the switcher trigger doesn't
-// duplicate the label; the chevron is the "switch" affordance.
+// Stake-switcher dropdown. Renders immediately to the RIGHT of the
+// brand-bar stake name (`Shell.tsx` `.kd-brandbar-stake-slot`, inside
+// `.kd-brandbar-brand`) when the principal's menu source (claim-derived
+// accessible stakes plus any bootstrap-only stakes discovery has found)
+// has ≥ 2 entries (spec §2.1). Hidden entirely otherwise. The trigger is
+// a chevron-only affordance — the adjacent stake name already shows
+// WHICH stake the user is on, so the trigger doesn't duplicate the
+// label; the chevron is the "switch" affordance. The menu is
+// start-aligned so it opens rightward from the trigger, away from the
+// name it trails.
 //
 // Click on an option persists the chosen stake to both sessionStorage
-// and localStorage and invalidates per-stake TanStack Query caches so
-// downstream subscriptions refetch against the newly-selected stake.
+// and localStorage, invalidates per-stake TanStack Query caches so
+// downstream subscriptions refetch against the newly-selected stake,
+// and dismisses the menu. The dismissal is `PopoverClose`, not local
+// state: `switchStake` neither navigates nor remounts this component,
+// so nothing closes the menu on its own — a Popover, unlike a
+// DropdownMenu, doesn't treat a click inside its content as a select.
 //
 // Each menu item is labelled with the stake's `stake_name` (read live
 // from `stakes/{stakeId}`); the doc-id slug appears as a smaller
@@ -28,7 +35,7 @@ import { stakeRef } from '../../lib/docs';
 import { useAccessibleStakesWithBootstrap, useActiveStakeSwitcher } from '../../lib/useActiveStake';
 import { cn } from '../../lib/cn';
 import { Badge } from '../ui/Badge';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/Popover';
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '../ui/Popover';
 
 interface StakeSwitcherProps {
   /**
@@ -63,7 +70,7 @@ export function StakeSwitcher({ activeStakeId }: StakeSwitcherProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent
-        align="end"
+        align="start"
         sideOffset={6}
         className="min-w-[12rem] p-1"
         data-testid="stake-switcher-menu"
@@ -98,29 +105,36 @@ function StakeSwitcherItem({ stakeId, isActive, needsSetup, onSelect }: StakeSwi
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={cn(
-          'flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-gray-100',
-          isActive && 'font-semibold',
-        )}
-        data-testid={`stake-switcher-item-${stakeId}`}
-        data-active={isActive ? 'true' : 'false'}
-      >
-        <span className="flex flex-col">
-          <span className="flex items-center gap-1.5">
-            {stakeName}
-            {needsSetup ? (
-              <Badge variant="warning" data-testid={`stake-switcher-setup-badge-${stakeId}`}>
-                Setup needed
-              </Badge>
+      {/* `PopoverClose` is what dismisses the menu on pick — a bare
+          button inside `PopoverContent` leaves it open, since a Popover
+          has no item semantics. It also hands focus back to the trigger. */}
+      <PopoverClose asChild>
+        <button
+          type="button"
+          onClick={onSelect}
+          className={cn(
+            'flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-gray-100',
+            isActive && 'font-semibold',
+          )}
+          data-testid={`stake-switcher-item-${stakeId}`}
+          data-active={isActive ? 'true' : 'false'}
+        >
+          <span className="flex flex-col">
+            <span className="flex items-center gap-1.5">
+              {stakeName}
+              {needsSetup ? (
+                <Badge variant="warning" data-testid={`stake-switcher-setup-badge-${stakeId}`}>
+                  Setup needed
+                </Badge>
+              ) : null}
+            </span>
+            {stakeName !== stakeId ? (
+              <span className="text-xs text-gray-500">{stakeId}</span>
             ) : null}
           </span>
-          {stakeName !== stakeId ? <span className="text-xs text-gray-500">{stakeId}</span> : null}
-        </span>
-        {isActive ? <Check size={14} aria-hidden="true" /> : null}
-      </button>
+          {isActive ? <Check size={14} aria-hidden="true" /> : null}
+        </button>
+      </PopoverClose>
     </li>
   );
 }

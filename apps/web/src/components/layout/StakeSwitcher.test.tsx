@@ -5,6 +5,8 @@
 //   - Bootstrap-only entries (discovery found a not-yet-setup stake the
 //     principal has no claim-derived role on) carry a "Setup needed"
 //     badge.
+//   - Picking a stake dismisses the menu and returns focus to the
+//     trigger; Escape still dismisses without switching.
 //
 // `useAccessibleStakesWithBootstrap` is the menu source (claim-derived
 // stakes + bootstrap-discovery stakes, each flagged `needsSetup`),
@@ -12,7 +14,7 @@
 // at the module boundary so the test can drive them deterministically.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AccessibleStakeEntry } from '../../lib/useActiveStake';
 
@@ -151,5 +153,84 @@ describe('StakeSwitcher click handler', () => {
     await user.click(screen.getByTestId('stake-switcher-trigger'));
     await user.click(screen.getByTestId('stake-switcher-item-ridgeline'));
     expect(switcherSpy).toHaveBeenCalledWith('ridgeline');
+  });
+});
+
+describe('StakeSwitcher dismissal', () => {
+  it('closes the menu after a stake is selected', async () => {
+    entriesSpy.current = [claimEntry('csnorth'), claimEntry('ridgeline')];
+    const user = userEvent.setup();
+    render(<StakeSwitcher activeStakeId="csnorth" />);
+    await user.click(screen.getByTestId('stake-switcher-trigger'));
+    expect(screen.getByTestId('stake-switcher-menu')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('stake-switcher-item-ridgeline'));
+
+    // The menu content itself is gone — the operator shouldn't need a
+    // second click to dismiss what they just picked from.
+    await waitFor(() => {
+      expect(screen.queryByTestId('stake-switcher-menu')).toBeNull();
+    });
+    expect(screen.queryByTestId('stake-switcher-item-ridgeline')).toBeNull();
+  });
+
+  it('closes the menu when the already-active stake is re-selected', async () => {
+    entriesSpy.current = [claimEntry('csnorth'), claimEntry('ridgeline')];
+    const user = userEvent.setup();
+    render(<StakeSwitcher activeStakeId="csnorth" />);
+    await user.click(screen.getByTestId('stake-switcher-trigger'));
+    await user.click(screen.getByTestId('stake-switcher-item-csnorth'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('stake-switcher-menu')).toBeNull();
+    });
+    expect(switcherSpy).toHaveBeenCalledWith('csnorth');
+  });
+
+  it('returns focus to the trigger after selecting, so keyboard users are not stranded', async () => {
+    entriesSpy.current = [claimEntry('csnorth'), claimEntry('ridgeline')];
+    const user = userEvent.setup();
+    render(<StakeSwitcher activeStakeId="csnorth" />);
+    const trigger = screen.getByTestId('stake-switcher-trigger');
+    await user.click(trigger);
+    await user.click(screen.getByTestId('stake-switcher-item-ridgeline'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('stake-switcher-menu')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(trigger);
+    });
+  });
+
+  it('still dismisses on Escape without selecting a stake', async () => {
+    entriesSpy.current = [claimEntry('csnorth'), claimEntry('ridgeline')];
+    const user = userEvent.setup();
+    render(<StakeSwitcher activeStakeId="csnorth" />);
+    await user.click(screen.getByTestId('stake-switcher-trigger'));
+    expect(screen.getByTestId('stake-switcher-menu')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('stake-switcher-menu')).toBeNull();
+    });
+    // Escape is a dismissal, not a choice — no stake switch fired.
+    expect(switcherSpy).not.toHaveBeenCalled();
+  });
+
+  it('opens and selects by keyboard alone', async () => {
+    entriesSpy.current = [claimEntry('csnorth'), claimEntry('ridgeline')];
+    const user = userEvent.setup();
+    render(<StakeSwitcher activeStakeId="csnorth" />);
+    screen.getByTestId('stake-switcher-trigger').focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByTestId('stake-switcher-menu')).toBeInTheDocument();
+
+    await user.tab();
+    await user.keyboard('{Enter}');
+
+    expect(switcherSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.queryByTestId('stake-switcher-menu')).toBeNull();
+    });
   });
 });
