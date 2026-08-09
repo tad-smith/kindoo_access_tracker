@@ -6,7 +6,20 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { syncAccessClaims } from '../src/triggers/syncAccessClaims.js';
 import { computeStakeClaims, scopesFromAccessDoc } from '../src/lib/seedClaims.js';
-import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
+import {
+  hasFunctionsEmulator,
+  makeSettledUser,
+  clearEmulators,
+  hasEmulators,
+  requireEmulators,
+} from './lib/emulator.js';
+// CI boots this suite under `--only firestore,auth,functions`, so the
+// `onAuthUserCreate` v1 auth trigger is live and fires (async, via
+// Eventarc) on every `auth.createUser(...)` — its `applyFullClaims`
+// write a few hundred ms later races the in-process claim write each
+// test makes right after. Snapshot once at module load: the emulator
+// is or isn't up for the suite's lifetime.
+const functionsEmulatorReachable = await hasFunctionsEmulator();
 
 // Minimal event payload shape — the trigger only consults
 // `event.params`; the doc body is reread from Firestore by
@@ -42,10 +55,10 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it('writes stake claim when access doc exists with stake-scope grant', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'a@gmail.com' });
+    const uid = await makeSettledUser('a@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/a@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'a@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'a@gmail.com', lastSignIn: new Date() });
 
     await db.doc('stakes/csnorth/access/a@gmail.com').set({
       importer_callings: { stake: ['Stake President'] },
@@ -53,7 +66,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     });
     await runSync('csnorth', 'a@gmail.com');
 
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect(refreshed.customClaims).toMatchObject({
       stakes: { csnorth: { stake: true, manager: false, wards: [] } },
     });
@@ -61,10 +74,10 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it('writes ward claims for multi-ward access (deduped, sorted)', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'b@gmail.com' });
+    const uid = await makeSettledUser('b@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/b@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'b@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'b@gmail.com', lastSignIn: new Date() });
 
     await db.doc('stakes/csnorth/access/b@gmail.com').set({
       importer_callings: { GE: ['Bishop'] },
@@ -72,7 +85,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     });
     await runSync('csnorth', 'b@gmail.com');
 
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     const claims = refreshed.customClaims as {
       stakes: { csnorth: { wards: string[] } };
     };
@@ -81,23 +94,23 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it('clears the stake block when the access doc goes away', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'c@gmail.com' });
+    const uid = await makeSettledUser('c@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/c@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'c@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'c@gmail.com', lastSignIn: new Date() });
     // Stake-scope grant first; stake claim flips on.
     await db
       .doc('stakes/csnorth/access/c@gmail.com')
       .set({ importer_callings: { stake: ['Counselor'] } });
     await runSync('csnorth', 'c@gmail.com');
     expect(
-      ((await auth.getUser(user.uid)).customClaims as { stakes?: Record<string, unknown> })?.stakes,
+      ((await auth.getUser(uid)).customClaims as { stakes?: Record<string, unknown> })?.stakes,
     ).toBeDefined();
 
     // Delete + re-fire trigger. Stake block goes away.
     await db.doc('stakes/csnorth/access/c@gmail.com').delete();
     await runSync('csnorth', 'c@gmail.com');
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
 
@@ -107,10 +120,10 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     // in a different collection). `computeStakeClaims` reads both so
     // the merged block is always self-consistent.
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'mix@gmail.com' });
+    const uid = await makeSettledUser('mix@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/mix@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'mix@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'mix@gmail.com', lastSignIn: new Date() });
     await db.doc('stakes/csnorth/kindooManagers/mix@gmail.com').set({ active: true });
     // Now an access write fires. The trigger recomputes from both;
     // manager flag survives.
@@ -119,7 +132,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
       .set({ importer_callings: { stake: ['HC'] } });
     await runSync('csnorth', 'mix@gmail.com');
 
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect(refreshed.customClaims).toMatchObject({
       stakes: { csnorth: { manager: true, stake: true, wards: [] } },
     });
@@ -140,10 +153,10 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
 
   it('mints limited: true end-to-end for an all-limited access doc', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'ltd@gmail.com' });
+    const uid = await makeSettledUser('ltd@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/ltd@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'ltd@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'ltd@gmail.com', lastSignIn: new Date() });
 
     await db.doc('stakes/csnorth/access/ltd@gmail.com').set({
       importer_callings: {},
@@ -151,7 +164,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     });
     await runSync('csnorth', 'ltd@gmail.com');
 
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect(refreshed.customClaims).toMatchObject({
       stakes: { csnorth: { manager: false, stake: false, wards: ['GE'], limited: true } },
     });

@@ -6,12 +6,14 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-95] Flaky integration test: `syncManagersClaims` — claim read races the trigger
-Status: pending
+## [T-95] Flaky integration test: `syncManagersClaims` — the trigger clobbers the test, not the reverse
+Status: done (2026-08-09 — `fix/syncmanagers-claims-flake`)
 Owner: @backend-engineer
 Phase: cross-cutting
 
-Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/` — verified by diff against `main`. The same commit passed the suite locally (520 passed) and passed the previous CI run on the same branch, so the working assumption is a timing flake rather than a regression. Confirm that before changing anything: a second failure on the same commit means it is real.
+**Done.** Retitled: the original entry read the failure backwards.
+
+Observed failing CI on PR #267 (`57234a2`), on a branch that touches **nothing** in `functions/` or `packages/shared/`.
 
 ```
 functions/tests/syncManagersClaims.test.ts:57
@@ -19,13 +21,28 @@ syncManagersClaims › flips manager claim off when active=false
 expected { canonical: 'm@gmail.com' } to match { stakes: { csnorth: { manager: true } } }
 ```
 
-The received claims carry `canonical` but **no `stakes` block at all** — not a wrong grant, an absent one. So the assertion ran against a token minted before the manager grant was applied. The test does `await runSync(...)` then reads `auth.getUser()` immediately; if `runSync` resolves before the trigger's claim write has landed, the read is simply early. Worth checking whether `runSync` actually awaits the write or just the invocation, and whether the sibling assertion above it (line 41, the same shape) is passing by luck.
+**The read was not early — the write was overwritten.** The original guess was that `auth.getUser()` ran before the trigger's claim write had landed. It is the other way round: `runSync` invokes the handler directly (`await syncManagersClaims.run(...)`), so the test's own write is fully synchronous and complete before the assertion. What lands late is the **deployed `onAuthUserCreate`** v1 auth trigger, which CI's `--only firestore,auth,functions` config keeps live. It fires asynchronously via Eventarc on every `auth.createUser(...)` and its `applyFullClaims` baseline write stamps `{ canonical }` over whatever the test had already written. That is why the received object has `canonical` present and the `stakes` block *absent* — it is not a token minted too early, it is the trigger's baseline, whole.
 
-**Two things make this worth real attention rather than a retry.**
+Reproduced deterministically under the CI emulator config: `createUser` → write full claims → read back immediately shows `{canonical, stakes}`; read back 5s later shows `{canonical}`. The suites pass most of the time only because the synchronous test body normally finishes before Eventarc delivers; slow CI, or a neighbouring test's delivery landing mid-body, loses the race.
 
-It is **invisible in the GitHub UI**. Every step in `test.yml` sets `continue-on-error: true` and a final "Verify all checks passed" step aggregates the true `outcome` values — so the Integration step renders **green** while having failed, and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing this meant reading `steps[].conclusion` off the API and mapping the failing index back to the list in `test.yml`. Anyone hitting a red `test` check will lose the same time; consider echoing the failing step's name in that gate.
+**Invisible locally by construction.** `test:integration:local` boots only firestore + auth, so the trigger never fires and the test's write is the only one. Same class as #226.
 
-And unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. So a flake here fails the branch outright where the equivalent in e2e would be silently absorbed.
+Fixed by routing the three unguarded suites through the existing `makeSettledUser(email, functionsEmulatorReachable)` helper, which waits out the trigger's single baseline write before returning, making the test's write unambiguously last. `applyClaims.test.ts` and `syncBootstrapClaims.test.ts` already used it; `syncManagersClaims`, `syncAccessClaims` and `syncSuperadminClaims` (11 `createUser` sites between them) did not. No new helper — the first cut added a near-duplicate `createUserSettled`, which was dropped in favour of the established one; it also swallowed its own timeout, where `makeSettledUser` asserts the settle.
+
+The `.github/workflows/test.yml` build step had **predicted this precisely**, naming all four at-risk suites and calling the protection "timing-only". That comment is now updated to record which suites are covered and how.
+
+**Generalisable:** any integration test that writes custom claims shortly after `auth.createUser` must settle the trigger first. The CI config makes every `createUser` a two-writer race.
+
+Left open, split out as [T-96]: the failure is invisible in the GitHub UI, because every step in `test.yml` sets `continue-on-error: true` and only the aggregator turns red.
+
+## [T-96] CI's "Verify all checks passed" gate does not name the step that failed
+Status: pending
+Owner: @infra-engineer
+Phase: cross-cutting
+
+Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-on-error: true` and a final gate aggregates the true `outcome` values — so a failing step renders **green** in the GitHub UI and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing T-95 meant reading `steps[].conclusion` off the API and mapping the failing index back to the step list in the workflow. Echo the failing step's name in that gate.
+
+Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
 
 ## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
 Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)

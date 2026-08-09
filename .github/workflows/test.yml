@@ -145,24 +145,29 @@ jobs:
         #   that assert the real Firestore-write → Eventarc →
         #   `setCustomUserClaims` chain.
         #
-        #   CAVEAT — existing handler tests in `functions/tests/` are
-        #   now timing-sensitive under this env. Suites that
-        #   `auth.createUser(...)` (`onAuthUserCreate.test.ts`,
-        #   `syncSuperadminClaims.test.ts`, `syncAccessClaims.test.ts`,
-        #   `syncManagersClaims.test.ts`) used to rely on
-        #   `KINDOO_SKIP_CLAIM_SYNC=true` short-circuiting the
-        #   `applyClaims.ts` helpers, so the async `onAuthUserCreate`
-        #   trigger was a no-op and could not race their synchronous
-        #   `.run(event)` writes. With the flag unset, that trigger
-        #   now actually calls `setCustomUserClaims` in the background
-        #   — those suites pass today because Eventarc fan-out is
-        #   slower than the synchronous test body (~hundreds of ms
-        #   vs. multi-second delivery). The protection is now
-        #   timing-only. If a new handler test starts flaking around
-        #   claim values shortly after `createUser`, this is the
-        #   first thing to suspect; the fix is to switch to the
-        #   pre-seed-then-createUser pattern used in
-        #   `syncSuperadminClaims.e2e.test.ts`.
+        #   CAVEAT — handler tests in `functions/tests/` are timing-
+        #   sensitive under this env. Suites that `auth.createUser(...)`
+        #   used to rely on `KINDOO_SKIP_CLAIM_SYNC=true` short-
+        #   circuiting the `applyClaims.ts` helpers, so the async
+        #   `onAuthUserCreate` trigger was a no-op and could not race
+        #   their synchronous `.run(event)` writes. With the flag unset
+        #   that trigger really does call `setCustomUserClaims` in the
+        #   background, and its baseline `{ canonical }` block lands
+        #   whenever Eventarc delivers — stamping over a full claims
+        #   object the test wrote milliseconds earlier. T-95 was that
+        #   race, reaching CI as a `stakes`-block-absent assertion
+        #   failure in `syncManagersClaims`.
+        #
+        #   Every suite here now settles that write before touching
+        #   claims: `makeSettledUser()` in `tests/lib/emulator.ts`
+        #   (`applyClaims`, `syncBootstrapClaims`, `syncManagersClaims`,
+        #   `syncAccessClaims`, `syncSuperadminClaims`), the local
+        #   variant in `onAuthUserCreate.test.ts`, and the pre-seed-
+        #   then-createUser pattern in `syncSuperadminClaims.e2e`.
+        #   A NEW test that writes claims shortly after `createUser`
+        #   must do the same, or it is a coin flip on CI and always
+        #   green locally (`test:integration:local` boots no Functions
+        #   emulator, so the trigger never fires).
         #
         # The Integration step below pins `--project demo-kindoo-tests`
         # so the Functions emulator loads the right env file; the E2E

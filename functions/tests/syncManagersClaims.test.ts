@@ -5,7 +5,20 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { syncManagersClaims } from '../src/triggers/syncManagersClaims.js';
-import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.js';
+import {
+  hasFunctionsEmulator,
+  makeSettledUser,
+  clearEmulators,
+  hasEmulators,
+  requireEmulators,
+} from './lib/emulator.js';
+// CI boots this suite under `--only firestore,auth,functions`, so the
+// `onAuthUserCreate` v1 auth trigger is live and fires (async, via
+// Eventarc) on every `auth.createUser(...)` — its `applyFullClaims`
+// write a few hundred ms later races the in-process claim write each
+// test makes right after. Snapshot once at module load: the emulator
+// is or isn't up for the suite's lifetime.
+const functionsEmulatorReachable = await hasFunctionsEmulator();
 
 const makeEvent = (stakeId: string, memberCanonical: string) =>
   ({
@@ -30,15 +43,15 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
   it('flips manager claim on when active=true', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'm@gmail.com' });
+    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/m@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
 
     await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
     await runSync('csnorth', 'm@gmail.com');
 
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect(refreshed.customClaims).toMatchObject({
       stakes: { csnorth: { manager: true, stake: false, wards: [] } },
     });
@@ -46,36 +59,36 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
   it('flips manager claim off when active=false', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'm@gmail.com' });
+    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/m@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
 
     // Manager toggled on, then off.
     await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
     await runSync('csnorth', 'm@gmail.com');
-    expect((await auth.getUser(user.uid)).customClaims).toMatchObject({
+    expect((await auth.getUser(uid)).customClaims).toMatchObject({
       stakes: { csnorth: { manager: true } },
     });
 
     await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: false });
     await runSync('csnorth', 'm@gmail.com');
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
 
   it('clears manager when the doc is deleted entirely', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'm@gmail.com' });
+    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/m@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
+      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
     await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
     await runSync('csnorth', 'm@gmail.com');
 
     await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').delete();
     await runSync('csnorth', 'm@gmail.com');
-    const refreshed = await auth.getUser(user.uid);
+    const refreshed = await auth.getUser(uid);
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
 
@@ -87,16 +100,16 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
 
   it('revokes refresh tokens after a real claim flip', async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'rev@gmail.com' });
+    const uid = await makeSettledUser('rev@gmail.com', functionsEmulatorReachable);
     await db
       .doc('userIndex/rev@gmail.com')
-      .set({ uid: user.uid, typedEmail: 'rev@gmail.com', lastSignIn: new Date() });
-    const before = (await auth.getUser(user.uid)).tokensValidAfterTime;
+      .set({ uid, typedEmail: 'rev@gmail.com', lastSignIn: new Date() });
+    const before = (await auth.getUser(uid)).tokensValidAfterTime;
 
     await db.doc('stakes/csnorth/kindooManagers/rev@gmail.com').set({ active: true });
     await runSync('csnorth', 'rev@gmail.com');
 
-    const after = (await auth.getUser(user.uid)).tokensValidAfterTime;
+    const after = (await auth.getUser(uid)).tokensValidAfterTime;
     if (before && after) {
       expect(new Date(after).getTime()).toBeGreaterThanOrEqual(new Date(before).getTime());
     }
