@@ -53,46 +53,54 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     await clearEmulators();
   });
 
-  it('writes stake claim when access doc exists with stake-scope grant', async () => {
-    const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('a@gmail.com', functionsEmulatorReachable);
-    await db
-      .doc('userIndex/a@gmail.com')
-      .set({ uid, typedEmail: 'a@gmail.com', lastSignIn: new Date() });
+  it(
+    'writes stake claim when access doc exists with stake-scope grant',
+    { timeout: 30_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      const uid = await makeSettledUser('a@gmail.com', functionsEmulatorReachable);
+      await db
+        .doc('userIndex/a@gmail.com')
+        .set({ uid, typedEmail: 'a@gmail.com', lastSignIn: new Date() });
 
-    await db.doc('stakes/csnorth/access/a@gmail.com').set({
-      importer_callings: { stake: ['Stake President'] },
-      manual_grants: {},
-    });
-    await runSync('csnorth', 'a@gmail.com');
+      await db.doc('stakes/csnorth/access/a@gmail.com').set({
+        importer_callings: { stake: ['Stake President'] },
+        manual_grants: {},
+      });
+      await runSync('csnorth', 'a@gmail.com');
 
-    const refreshed = await auth.getUser(uid);
-    expect(refreshed.customClaims).toMatchObject({
-      stakes: { csnorth: { stake: true, manager: false, wards: [] } },
-    });
-  });
+      const refreshed = await auth.getUser(uid);
+      expect(refreshed.customClaims).toMatchObject({
+        stakes: { csnorth: { stake: true, manager: false, wards: [] } },
+      });
+    },
+  );
 
-  it('writes ward claims for multi-ward access (deduped, sorted)', async () => {
-    const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('b@gmail.com', functionsEmulatorReachable);
-    await db
-      .doc('userIndex/b@gmail.com')
-      .set({ uid, typedEmail: 'b@gmail.com', lastSignIn: new Date() });
+  it(
+    'writes ward claims for multi-ward access (deduped, sorted)',
+    { timeout: 30_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      const uid = await makeSettledUser('b@gmail.com', functionsEmulatorReachable);
+      await db
+        .doc('userIndex/b@gmail.com')
+        .set({ uid, typedEmail: 'b@gmail.com', lastSignIn: new Date() });
 
-    await db.doc('stakes/csnorth/access/b@gmail.com').set({
-      importer_callings: { GE: ['Bishop'] },
-      manual_grants: { CO: [{ grant_id: 'g1' }], GE: [{ grant_id: 'g2' }] },
-    });
-    await runSync('csnorth', 'b@gmail.com');
+      await db.doc('stakes/csnorth/access/b@gmail.com').set({
+        importer_callings: { GE: ['Bishop'] },
+        manual_grants: { CO: [{ grant_id: 'g1' }], GE: [{ grant_id: 'g2' }] },
+      });
+      await runSync('csnorth', 'b@gmail.com');
 
-    const refreshed = await auth.getUser(uid);
-    const claims = refreshed.customClaims as {
-      stakes: { csnorth: { wards: string[] } };
-    };
-    expect(claims.stakes.csnorth.wards).toEqual(['CO', 'GE']);
-  });
+      const refreshed = await auth.getUser(uid);
+      const claims = refreshed.customClaims as {
+        stakes: { csnorth: { wards: string[] } };
+      };
+      expect(claims.stakes.csnorth.wards).toEqual(['CO', 'GE']);
+    },
+  );
 
-  it('clears the stake block when the access doc goes away', async () => {
+  it('clears the stake block when the access doc goes away', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('c@gmail.com', functionsEmulatorReachable);
     await db
@@ -114,29 +122,33 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
 
-  it('preserves the manager bit when access changes (stake block recomputed in full)', async () => {
-    // A user can be both a manager AND a stake-scope grant holder. A
-    // write to access shouldn't clobber the manager flag (which lives
-    // in a different collection). `computeStakeClaims` reads both so
-    // the merged block is always self-consistent.
-    const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('mix@gmail.com', functionsEmulatorReachable);
-    await db
-      .doc('userIndex/mix@gmail.com')
-      .set({ uid, typedEmail: 'mix@gmail.com', lastSignIn: new Date() });
-    await db.doc('stakes/csnorth/kindooManagers/mix@gmail.com').set({ active: true });
-    // Now an access write fires. The trigger recomputes from both;
-    // manager flag survives.
-    await db
-      .doc('stakes/csnorth/access/mix@gmail.com')
-      .set({ importer_callings: { stake: ['HC'] } });
-    await runSync('csnorth', 'mix@gmail.com');
+  it(
+    'preserves the manager bit when access changes (stake block recomputed in full)',
+    { timeout: 30_000 },
+    async () => {
+      // A user can be both a manager AND a stake-scope grant holder. A
+      // write to access shouldn't clobber the manager flag (which lives
+      // in a different collection). `computeStakeClaims` reads both so
+      // the merged block is always self-consistent.
+      const { auth, db } = requireEmulators();
+      const uid = await makeSettledUser('mix@gmail.com', functionsEmulatorReachable);
+      await db
+        .doc('userIndex/mix@gmail.com')
+        .set({ uid, typedEmail: 'mix@gmail.com', lastSignIn: new Date() });
+      await db.doc('stakes/csnorth/kindooManagers/mix@gmail.com').set({ active: true });
+      // Now an access write fires. The trigger recomputes from both;
+      // manager flag survives.
+      await db
+        .doc('stakes/csnorth/access/mix@gmail.com')
+        .set({ importer_callings: { stake: ['HC'] } });
+      await runSync('csnorth', 'mix@gmail.com');
 
-    const refreshed = await auth.getUser(uid);
-    expect(refreshed.customClaims).toMatchObject({
-      stakes: { csnorth: { manager: true, stake: true, wards: [] } },
-    });
-  });
+      const refreshed = await auth.getUser(uid);
+      expect(refreshed.customClaims).toMatchObject({
+        stakes: { csnorth: { manager: true, stake: true, wards: [] } },
+      });
+    },
+  );
 
   it('no-ops gracefully when the user has not signed in (no userIndex)', async () => {
     // The access doc is written for a canonical that has no
@@ -151,24 +163,28 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     await expect(runSync('csnorth', 'ghost@gmail.com')).resolves.toBeUndefined();
   });
 
-  it('mints limited: true end-to-end for an all-limited access doc', async () => {
-    const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('ltd@gmail.com', functionsEmulatorReachable);
-    await db
-      .doc('userIndex/ltd@gmail.com')
-      .set({ uid, typedEmail: 'ltd@gmail.com', lastSignIn: new Date() });
+  it(
+    'mints limited: true end-to-end for an all-limited access doc',
+    { timeout: 30_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      const uid = await makeSettledUser('ltd@gmail.com', functionsEmulatorReachable);
+      await db
+        .doc('userIndex/ltd@gmail.com')
+        .set({ uid, typedEmail: 'ltd@gmail.com', lastSignIn: new Date() });
 
-    await db.doc('stakes/csnorth/access/ltd@gmail.com').set({
-      importer_callings: {},
-      manual_grants: { GE: [limitedGrant('g1')] },
-    });
-    await runSync('csnorth', 'ltd@gmail.com');
+      await db.doc('stakes/csnorth/access/ltd@gmail.com').set({
+        importer_callings: {},
+        manual_grants: { GE: [limitedGrant('g1')] },
+      });
+      await runSync('csnorth', 'ltd@gmail.com');
 
-    const refreshed = await auth.getUser(uid);
-    expect(refreshed.customClaims).toMatchObject({
-      stakes: { csnorth: { manager: false, stake: false, wards: ['GE'], limited: true } },
-    });
-  });
+      const refreshed = await auth.getUser(uid);
+      expect(refreshed.customClaims).toMatchObject({
+        stakes: { csnorth: { manager: false, stake: false, wards: ['GE'], limited: true } },
+      });
+    },
+  );
 });
 
 // --- D25 limited access -----------------------------------------------

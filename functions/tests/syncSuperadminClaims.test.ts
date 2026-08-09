@@ -39,30 +39,30 @@ describe.skipIf(!hasEmulators())('syncSuperadminClaims', () => {
     await clearEmulators();
   });
 
-  it('sets isPlatformSuperadmin=true on doc create', async () => {
+  it('sets isPlatformSuperadmin=true on doc create', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('super@gmail.com', functionsEmulatorReachable);
+    const uid = await makeSettledUser('super-add@gmail.com', functionsEmulatorReachable);
     await db
-      .doc('userIndex/super@gmail.com')
-      .set({ uid, typedEmail: 'super@gmail.com', lastSignIn: new Date() });
+      .doc('userIndex/super-add@gmail.com')
+      .set({ uid, typedEmail: 'super-add@gmail.com', lastSignIn: new Date() });
 
-    await syncSuperadminClaims.run(makeEvent('super@gmail.com', true));
+    await syncSuperadminClaims.run(makeEvent('super-add@gmail.com', true));
     const refreshed = await auth.getUser(uid);
     expect(
       (refreshed.customClaims as { isPlatformSuperadmin?: boolean }).isPlatformSuperadmin,
     ).toBe(true);
   });
 
-  it('clears isPlatformSuperadmin on doc delete', async () => {
+  it('clears isPlatformSuperadmin on doc delete', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('super@gmail.com', functionsEmulatorReachable);
+    const uid = await makeSettledUser('super-del@gmail.com', functionsEmulatorReachable);
     await db
-      .doc('userIndex/super@gmail.com')
-      .set({ uid, typedEmail: 'super@gmail.com', lastSignIn: new Date() });
+      .doc('userIndex/super-del@gmail.com')
+      .set({ uid, typedEmail: 'super-del@gmail.com', lastSignIn: new Date() });
 
     // First add (after.exists=true), then remove (after.exists=false).
-    await syncSuperadminClaims.run(makeEvent('super@gmail.com', true));
-    await syncSuperadminClaims.run(makeEvent('super@gmail.com', false));
+    await syncSuperadminClaims.run(makeEvent('super-del@gmail.com', true));
+    await syncSuperadminClaims.run(makeEvent('super-del@gmail.com', false));
 
     const refreshed = await auth.getUser(uid);
     const claims = (refreshed.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };

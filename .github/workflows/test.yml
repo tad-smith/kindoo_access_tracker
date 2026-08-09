@@ -164,10 +164,22 @@ jobs:
         #   `syncAccessClaims`, `syncSuperadminClaims`), the local
         #   variant in `onAuthUserCreate.test.ts`, and the pre-seed-
         #   then-createUser pattern in `syncSuperadminClaims.e2e`.
-        #   A NEW test that writes claims shortly after `createUser`
-        #   must do the same, or it is a coin flip on CI and always
-        #   green locally (`test:integration:local` boots no Functions
-        #   emulator, so the trigger never fires).
+        #   It waits up to 20s, so its callers carry an explicit
+        #   `{ timeout: 30_000 }` — no `testTimeout` is configured, and
+        #   vitest's 5s default would abort the test first.
+        #
+        #   `onAuthUserCreate` is NOT the only late writer. The
+        #   deployed role-sync triggers also fire on the Firestore
+        #   writes these tests make, and `clearEmulators()` cannot
+        #   cancel a delivery already queued — one from test N lands
+        #   during test N+1 and resolves `uidForCanonical` against
+        #   whatever `userIndex` says at that instant. So each test
+        #   also uses a DISTINCT email: a stale delivery then finds no
+        #   entry for its canonical and no-ops.
+        #
+        #   A NEW test must do both, or it is a coin flip on CI and
+        #   always green locally (`test:integration:local` boots no
+        #   Functions emulator, so none of these triggers fire).
         #
         # The Integration step below pins `--project demo-kindoo-tests`
         # so the Functions emulator loads the right env file; the E2E

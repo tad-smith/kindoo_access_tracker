@@ -41,15 +41,15 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     await clearEmulators();
   });
 
-  it('flips manager claim on when active=true', async () => {
+  it('flips manager claim on when active=true', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
+    const uid = await makeSettledUser('m-on@gmail.com', functionsEmulatorReachable);
     await db
-      .doc('userIndex/m@gmail.com')
-      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
+      .doc('userIndex/m-on@gmail.com')
+      .set({ uid, typedEmail: 'm-on@gmail.com', lastSignIn: new Date() });
 
-    await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
-    await runSync('csnorth', 'm@gmail.com');
+    await db.doc('stakes/csnorth/kindooManagers/m-on@gmail.com').set({ active: true });
+    await runSync('csnorth', 'm-on@gmail.com');
 
     const refreshed = await auth.getUser(uid);
     expect(refreshed.customClaims).toMatchObject({
@@ -57,37 +57,37 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     });
   });
 
-  it('flips manager claim off when active=false', async () => {
+  it('flips manager claim off when active=false', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
+    const uid = await makeSettledUser('m-off@gmail.com', functionsEmulatorReachable);
     await db
-      .doc('userIndex/m@gmail.com')
-      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
+      .doc('userIndex/m-off@gmail.com')
+      .set({ uid, typedEmail: 'm-off@gmail.com', lastSignIn: new Date() });
 
     // Manager toggled on, then off.
-    await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
-    await runSync('csnorth', 'm@gmail.com');
+    await db.doc('stakes/csnorth/kindooManagers/m-off@gmail.com').set({ active: true });
+    await runSync('csnorth', 'm-off@gmail.com');
     expect((await auth.getUser(uid)).customClaims).toMatchObject({
       stakes: { csnorth: { manager: true } },
     });
 
-    await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: false });
-    await runSync('csnorth', 'm@gmail.com');
+    await db.doc('stakes/csnorth/kindooManagers/m-off@gmail.com').set({ active: false });
+    await runSync('csnorth', 'm-off@gmail.com');
     const refreshed = await auth.getUser(uid);
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
 
-  it('clears manager when the doc is deleted entirely', async () => {
+  it('clears manager when the doc is deleted entirely', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const uid = await makeSettledUser('m@gmail.com', functionsEmulatorReachable);
+    const uid = await makeSettledUser('m-del@gmail.com', functionsEmulatorReachable);
     await db
-      .doc('userIndex/m@gmail.com')
-      .set({ uid, typedEmail: 'm@gmail.com', lastSignIn: new Date() });
-    await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').set({ active: true });
-    await runSync('csnorth', 'm@gmail.com');
+      .doc('userIndex/m-del@gmail.com')
+      .set({ uid, typedEmail: 'm-del@gmail.com', lastSignIn: new Date() });
+    await db.doc('stakes/csnorth/kindooManagers/m-del@gmail.com').set({ active: true });
+    await runSync('csnorth', 'm-del@gmail.com');
 
-    await db.doc('stakes/csnorth/kindooManagers/m@gmail.com').delete();
-    await runSync('csnorth', 'm@gmail.com');
+    await db.doc('stakes/csnorth/kindooManagers/m-del@gmail.com').delete();
+    await runSync('csnorth', 'm-del@gmail.com');
     const refreshed = await auth.getUser(uid);
     expect((refreshed.customClaims as { stakes?: unknown }).stakes).toBeUndefined();
   });
@@ -98,7 +98,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     await expect(runSync('csnorth', 'ghost@gmail.com')).resolves.toBeUndefined();
   });
 
-  it('revokes refresh tokens after a real claim flip', async () => {
+  it('revokes refresh tokens after a real claim flip', { timeout: 30_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('rev@gmail.com', functionsEmulatorReachable);
     await db
