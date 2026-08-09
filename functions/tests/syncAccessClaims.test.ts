@@ -44,15 +44,18 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
 // delivery. If its role-data READ lands before phase two's delete but its
 // claims WRITE lands after phase two's `runSync`, it restamps the block
 // that was just cleared — `claimsEqual` compares that delivery's own fresh
-// `existing` against its `merged`, so it does not short-circuit. Phase
-// two's own delivery converges to the same end state, so the restamp is
-// transient. Mirrors `stakeBlockClears` in `syncManagersClaims.test.ts`.
+// `existing` against its `merged`, so it does not short-circuit.
+//
+// Budget sized to observed Eventarc latency (~14.7s on this runner), since
+// recovering means waiting on phase two's own delivery. See the fuller
+// docblock on `stakeBlockClears` in `syncManagersClaims.test.ts`,
+// including the narrow case where that recovery itself short-circuits.
 async function stakeBlockClears(uid: string): Promise<boolean> {
   const { auth } = requireEmulators();
   return waitFor(async () => {
     const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
     return claims?.stakes === undefined;
-  }, 5_000);
+  }, 25_000);
 }
 
 /** Manual grant carrying the D25 limited marker. */
@@ -118,7 +121,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     },
   );
 
-  it('clears the stake block when the access doc goes away', { timeout: 30_000 }, async () => {
+  it('clears the stake block when the access doc goes away', { timeout: 60_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('c@gmail.com', functionsEmulatorReachable);
     await db

@@ -35,20 +35,37 @@ async function runSync(stakeId: string, memberCanonical: string): Promise<void> 
 //
 // The two-phase tests below have a residual race with the DEPLOYED
 // `syncManagersClaims`, which the `set({ active: true })` in phase one
-// queues. That delivery reads role data, then writes claims. If its READ
-// lands before phase two's `active: false` write but its WRITE lands after
-// phase two's `runSync`, it restamps `manager: true` over the cleared
-// block. `claimsEqual` does not close this: it compares the delivery's own
+// queues. That delivery (D1) reads role data, then writes claims. If its
+// READ lands before phase two's `active: false` write but its WRITE lands
+// after phase two's `runSync`, it restamps `manager: true` over the
+// cleared block. `claimsEqual` does not close this: it compares D1's own
 // freshly-read `existing` against its `merged`, which differ precisely in
-// that ordering. Phase two's own delivery converges to the same end state,
-// so a transient restamp self-corrects — polling absorbs it, where a
-// single read can catch the gap.
+// that ordering.
+//
+// Usually harmless in the first place — the poll's first read lands before
+// D1 does, and D1 requires stalling across phase two between two reads
+// that are adjacent inside a single invocation. When the restamp does land
+// first, phase two's own delivery (D2) normally undoes it.
+//
+// Budget: sized to observed Eventarc latency on this runner (~14.7s, see
+// `syncSuperadminClaims.e2e.test.ts`), not to the sub-second happy path —
+// waiting on D2 means waiting a full delivery. Callers raise their own
+// timeout to cover this on top of `makeSettledUser`'s 20s.
+//
+// NOT a guarantee, and the flake it leaves is not one polling can fix: if
+// D2 loads `existing` after `runSync` cleared the block but before D1
+// restamps it, then `merged === existing`, `claimsEqual` short-circuits,
+// D2 writes nothing and the restamp is terminal. That needs D1's write to
+// land after D2's read despite a head start, so it is a corner of a
+// corner; it is written down rather than closed because closing it means
+// settling D1 before phase two, and D1's write is byte-identical to the
+// in-process one that precedes it — there is nothing to observe.
 async function stakeBlockClears(uid: string): Promise<boolean> {
   const { auth } = requireEmulators();
   return waitFor(async () => {
     const claims = (await auth.getUser(uid)).customClaims as { stakes?: unknown };
     return claims?.stakes === undefined;
-  }, 5_000);
+  }, 25_000);
 }
 
 describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
@@ -78,7 +95,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     });
   });
 
-  it('flips manager claim off when active=false', { timeout: 30_000 }, async () => {
+  it('flips manager claim off when active=false', { timeout: 60_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-off@gmail.com', functionsEmulatorReachable);
     await db
@@ -97,7 +114,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     expect(await stakeBlockClears(uid)).toBe(true);
   });
 
-  it('clears manager when the doc is deleted entirely', { timeout: 30_000 }, async () => {
+  it('clears manager when the doc is deleted entirely', { timeout: 60_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-del@gmail.com', functionsEmulatorReachable);
     await db
