@@ -43,6 +43,12 @@ Rewiring `collidesWithOwnWard` onto the shared variants (the third surface above
 - **The calling tables are untouched.** `callingSortOrder.ts` and `appAccessCallings.ts` remain ward/stake only, so a Branch President parses to a valid scope and an unknown calling: bottom of its sort band, no derived app access. Deliberate — see T-96.
 - **No rules change.** Nothing about the unit's kind reaches `firestore.rules`.
 
+## Rollout note
+
+A `wards` doc whose `ward_name` already ends in `" Branch"` changes meaning the moment this ships: it stops getting the `" Ward"` suffix appended and starts writing its scope name verbatim. Correct for a real branch, silent **B-21** for a ward in an "Olive Branch"-type place — and nothing re-validates stored names, since `WARD_NAME_BRANCH_WARNING` only fires while typing.
+
+**Checked before release: production held no such name.** So this shipped with no unit reclassified and no repair path needed. Re-run that check (`ward_name` against `/\sbranch$/i`) before rolling out to any environment that predates this change.
+
 ## Known issues / deferred
 
 - **T-96 — branch-specific callings.** Fully specified and deliberately not implemented: the six branch callings, the 19 ward-family entries that carry over unchanged, and the four that grant app access — Branch President, Branch Presidency First / Second Counselor, Branch Clerk, plus Elders Quorum President when `stake.eq_president_app_access` is on, which the operator confirmed extends to branches. Matching stays exact with no wildcards; the four "families" are the entries already in `callingSortOrder.ts`, not a prefix rule. What remains open is the implementation shape: `AppAccessOptions` needs a `unitType`, and `syncApplyFix.ts` calls `filterAppAccessCallings` at `:302`, before the ward doc is read at `:311`, under a read that is itself conditional — plus three sibling call sites with no ward read at all.
