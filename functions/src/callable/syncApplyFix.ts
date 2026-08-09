@@ -452,6 +452,7 @@ async function applyKindooOnly(
         siteId: grantSite,
         detectedAt: now,
       });
+      if (merge.kind === 'refuse') return { success: false, error: merge.error };
       tx.update(seatRef, {
         ...merge.update,
         last_modified_at: now,
@@ -544,6 +545,57 @@ async function applyKindooOnly(
   return result;
 }
 
+/** What `planKindooOnlyMerge` decided: the seat fields to write, or a
+ * refusal carrying the message the extension shows inline. */
+type KindooOnlyMergePlan =
+  | { kind: 'write'; update: Record<string, unknown>; appended: boolean }
+  | { kind: 'refuse'; error: string };
+
+const SLOT_ALREADY_ON_SITE =
+  'that grant is already recorded on this Kindoo site — nothing to merge. ' +
+  'If this row keeps coming back, update the extension and re-run Sync.';
+
+/**
+ * True when the matched slot ALREADY resolves to the site the incoming
+ * grant lives on — a state the detector cannot produce, so the payload
+ * is not describing the row it claims to.
+ *
+ * The row exists only because NO grant on the seat projected onto the
+ * active site. A `(scope, type)` hit whose site already agrees would
+ * have projected, so the fix would never have been offered. Refusing is
+ * therefore free of false positives and buys two things:
+ *
+ *   - **Version skew.** Dropping the old `seatSnap.exists` guard changed
+ *     server behaviour for clients already in the field. An extension at
+ *     ≤1.1.8 sends the UNFILTERED primary scope (the defect `createScope`
+ *     fixes), and functions deploy the day the operator runs the script
+ *     while the extension waits on Chrome Web Store review. Through that
+ *     window a foreign-site click for a member with a multi-segment
+ *     Description would fold the foreign building into the HOME stake
+ *     primary and return success. This makes it fail loudly again, which
+ *     is what the pre-B-23 guard did.
+ *   - **Detector regressions**, which otherwise land as silent wrong
+ *     writes on the primary grant.
+ *
+ * Site resolution mirrors `projectSeatForSite`: the stamp when the field
+ * is PRESENT (`null` = home), else the scope's ward-derived site — which
+ * is `grantSite` itself, since a hit means the scopes match. So an
+ * unstamped slot always reads as agreeing, and only a slot whose stamp
+ * disagrees survives — exactly the stale-stamp repair the fix exists for.
+ *
+ * `grantSite === undefined` (unit doc missing) proves nothing, so it
+ * proceeds rather than refusing: a missing ward is not a hard failure
+ * anywhere else on this path either.
+ */
+function slotAlreadyOnGrantSite(
+  slotStamp: string | null | undefined,
+  grantSite: string | null | undefined,
+): boolean {
+  if (grantSite === undefined) return false;
+  const effective = slotStamp !== undefined ? slotStamp : grantSite;
+  return effective === grantSite;
+}
+
 /**
  * Seat fields that fold a `kindoo-only` grant into a seat the member
  * ALREADY has (B-23) — the case where the grant lives on a Kindoo site
@@ -590,7 +642,7 @@ function planKindooOnlyMerge(opts: {
   endDate: string | undefined;
   siteId: string | null | undefined;
   detectedAt: Timestamp;
-}): { update: Record<string, unknown>; appended: boolean } {
+}): KindooOnlyMergePlan {
   const {
     existingSeat,
     scope,
@@ -611,6 +663,9 @@ function planKindooOnlyMerge(opts: {
   // `kindoo-only`. Field-absent is the home representation on the
   // primary (spec §15), so home deletes rather than writes null.
   if (existingSeat.scope === scope && existingSeat.type === type) {
+    if (slotAlreadyOnGrantSite(existingSeat.kindoo_site_id, siteId)) {
+      return { kind: 'refuse', error: SLOT_ALREADY_ON_SITE };
+    }
     const update: Record<string, unknown> = {
       building_names: dedupePreserveOrder([
         ...(existingSeat.building_names ?? []),
@@ -620,12 +675,15 @@ function planKindooOnlyMerge(opts: {
     if (siteId !== undefined) {
       update.kindoo_site_id = siteId === null ? FieldValue.delete() : siteId;
     }
-    return { update, appended: false };
+    return { kind: 'write', update, appended: false };
   }
 
   const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === type);
   if (matchIdx >= 0) {
     const matched = dupes[matchIdx]!;
+    if (slotAlreadyOnGrantSite(matched.kindoo_site_id, siteId)) {
+      return { kind: 'refuse', error: SLOT_ALREADY_ON_SITE };
+    }
     const replacement: DuplicateGrant = {
       ...matched,
       building_names: dedupePreserveOrder([...(matched.building_names ?? []), ...buildingNames]),
@@ -636,6 +694,7 @@ function planKindooOnlyMerge(opts: {
     const next = dupes.slice();
     next[matchIdx] = replacement;
     return {
+      kind: 'write',
       update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
       appended: false,
     };
@@ -658,6 +717,7 @@ function planKindooOnlyMerge(opts: {
   }
   const next = [...dupes, entry];
   return {
+    kind: 'write',
     update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
     appended: true,
   };

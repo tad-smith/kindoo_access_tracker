@@ -589,6 +589,58 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(access.sort_order).toBe(BISHOP_ORDER);
       });
 
+      it('refuses a slot hit whose site already matches the incoming grant', async () => {
+        await seedManager();
+        // The version-skew shape: an extension at <=1.1.8 sends the
+        // UNFILTERED primary scope, so a foreign-site row for a member
+        // with a multi-segment Description arrives as `scope: 'stake'`
+        // and matches the stake primary. That slot already resolves to
+        // home, which is where a stake grant lives — a state the detector
+        // cannot emit a row for, so the payload isn't describing the row.
+        // Refuse, rather than folding the foreign building into the home
+        // grant and reporting success (PR #275 review).
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({
+          scope: 'stake',
+          type: 'auto',
+          callings: ['Stake Clerk'],
+          building_names: ['Lexington Building'],
+        });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'stake',
+                  type: 'auto',
+                  callings: ['Elders Quorum Second Counselor'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toMatchObject({ success: false });
+
+        // The home grant is untouched — no foreign building folded in.
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.building_names).toEqual(['Lexington Building']);
+        expect(seat.callings).toEqual(['Stake Clerk']);
+        expect(seat.duplicate_grants).toEqual([]);
+        expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
+      });
+
       it('merges into a matching duplicate grant and rebuilds the scope mirror', async () => {
         await seedManager();
         await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
