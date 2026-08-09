@@ -356,16 +356,36 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(third.length).toBeGreaterThan(0);
   });
 
-  it('does NOT latch on repeated transport drops — flappy is not hung', async () => {
-    // ~700ms of drops is far weaker evidence than 8.5s of silence, and
-    // latching on it would red the rest of the file with "not answering".
-    stubRejectingFetch(99, () => transportError('ECONNRESET'), ok);
+  it('does NOT latch on transport drops that eat the budget — flappy is not hung', async () => {
+    // Must be SLOW drops. Quick ones finish inside the budget, so
+    // `outOfTime` is false and the latch branch is never entered at all —
+    // an earlier version of this test used those and therefore could not
+    // fail however the guards were written.
+    const slowDrop = () => {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          calls.push('DELETE');
+          await new Promise((r) => setTimeout(r, 160));
+          throw transportError('ECONNRESET');
+        }),
+      );
+      return calls;
+    };
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(/failed after 4 attempt/);
 
-    const calls = stubFetch(ok);
-    await sweepFirestore(URL_UNDER_TEST);
-    expect(calls).toHaveLength(1);
+    for (let sweep = 1; sweep <= 2; sweep++) {
+      slowDrop();
+      await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(
+        /ECONNRESET/,
+      );
+    }
+
+    // Two budget-eating sweeps, but drops rather than silence: still no latch.
+    const third = slowDrop();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(/ECONNRESET/);
+    expect(third.length).toBeGreaterThan(0);
   });
 
   it('does NOT latch when the emulator answered — the T-97 case itself', async () => {

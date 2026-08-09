@@ -346,9 +346,22 @@ export async function sweepFirestore(
       // Both halves matter. A 409 means it answered, just slowly, which is
       // the T-97 scenario itself: latching there would turn one failed test
       // into a failed file, all of them claiming "not answering" when it
-      // demonstrably was. And four quick transport drops (~700ms total) are
-      // far weaker evidence than 8.5s of silence — that is a flappy socket,
-      // not a hung emulator, and it would misattribute the same way.
+      // demonstrably was. And transport drops that eat the whole budget are
+      // a flappy socket rather than a hung emulator — quick drops never
+      // reach here at all, since `outOfTime` excludes them, so it is the
+      // slow ones this guard is actually about.
+      //
+      // KNOWINGLY NOT BOUNDED: an emulator that 409s every sweep costs
+      // ~700ms × ~500 calls ≈ 6 min, the same runaway `ECONNREFUSED` is
+      // failed fast to avoid. It is left unbounded because the two are not
+      // symmetric in what a strike would cost. `ECONNREFUSED` is
+      // unambiguous — nothing is listening, every later call is certain to
+      // fail the same way. Two contended sweeps in a row are not: trigger
+      // fan-out bursts make that reachable in a healthy run, and
+      // short-circuiting there would convert a transient into a file-wide
+      // failure, replacing N independent named failures with one. Paying
+      // ~6 min on an already-red run is the better side of that trade for
+      // a case never yet observed. Revisit if it ever is.
       const abortedOnDeadline =
         terminalCause instanceof Error &&
         (terminalCause.name === 'TimeoutError' || terminalCause.name === 'AbortError');
