@@ -6,16 +6,57 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+## [T-94] Flaky E2E: `ignored-wards.spec.ts` on a cold preview build
 Status: pending
+Owner: @web-engineer
+Phase: cross-cutting
+
+Introduced with [T-88]. Fails intermittently — roughly 1 run in 3 locally — and only as the first test after a cold `vite preview` build; 6/6 green once the server is warm, at ~900ms per run. Every assertion that follows a navigation already carries a 20s timeout, which reduced the rate without eliminating it, so the remaining cause is something slower than the snapshot round-trip rather than the snapshot itself.
+
+**Invisible in CI**, which is why it has not shown up on any PR: `playwright.config.ts` sets `retries: 2` on CI and `0` locally. That makes this a local-developer tax rather than a broken gate, but it is still a flake in a test this repo added, and "retried green" is not the same as green.
+
+Worth timing the cold path before adding more timeout — if the first navigation after a build is genuinely slow (bundle served cold, Firestore websocket established for the first time), a single warm-up navigation in `beforeEach` fixes it properly where per-assertion timeouts only paper over it.
+
+## [T-93] Editing the home site name re-keys every existing stake-scope Kindoo Description
+Status: closed (2026-08-09 — accepted risk, operator decision; no code change)
 Owner: @web-engineer
 Phase: Kindoo Sites (§15)
 
-Two follow-ups from PR #263's review. Neither blocks; both are about the edit path added in [T-90].
+**Decision: keep the field, gated to superadmins — which it already is.** The hazard below is real and unmitigated in the code; the gate is the mitigation. `canEdit` requires a platform superadmin who also manages the stake ([T-92]), so nobody reaches this control by accident, and the operator has accepted that whoever does reach it is expected to know what a rename costs. **No warning text on the form** — declined twice, deliberately; the coupling is documented in `spec.md` §15 for engineers rather than surfaced as a nag. Recorded closed rather than deleted, because the coupling is not obvious from the field's name and the next person to touch it should find this.
 
-**Changing an existing home EID strands every home building's `kindoo_rule`.** The extension's configure wizard writes the EID and the per-building rule rows in one batch, so the two have never moved apart; this form is the first writer that moves the EID alone. Afterwards, provisioning applies the *old* environment's rule ids against the *new* environment. The usual safety net — "a building with no `kindoo_rule` forces the wizard" — does not fire, because the mappings are present, just wrong. Options: clear `kindoo_rule` on the home-site buildings when `site_id` actually changes (forcing a wizard re-run), or warn on the confirm and leave it to the operator. Prefer the former; a silently wrong rule id is the worse failure.
+Found by review on PR #263's merged head, after the EID half was settled as write-once ([T-92]). Same class of defect — a value the extension previously only ever moved as a set — but **write-once would not have fixed this one**, which is why it was split out rather than folded in.
 
-**Edit is not gated on the stake doc having loaded.** `useForm` captures `defaultValues` once at mount, so opening the editor before `stake.data` lands prefills `''` / `0`; saving then overwrites an existing `kindoo_expected_site_name` with whatever was typed against the empty form. Same clash-class T-90 just fixed for `kindoo_config.site_name`. Narrow window, and the component already gates two other things on snapshots arriving — gate the Edit button on `stake.data !== undefined` the same way.
+`stake.kindoo_expected_site_name` is not merely what the wizard compares a Kindoo site header against. It is the **key for stake-scope Descriptions in both directions**:
+
+- `resolveScopeName` (`extension/src/content/kindoo/provision.ts:162`) writes `kindoo_expected_site_name || stake_name` into the Kindoo Description of every stake-scope grant.
+- `parseDescription` (`extension/src/content/kindoo/sync/parser.ts`) matches those Descriptions back with the same `kindoo_expected_site_name || stake_name` key.
+
+So changing the field leaves every already-provisioned stake-scope Description carrying the *old* string while Sync now looks for the *new* one. Those members stop resolving and surface as `kindoo-unparseable` drift on the next run — whose one-click **Update SBA** writes the raw description text into the seat's calling / reason. The Home Kindoo Site form is the field's first writer.
+
+**Why write-once is not the answer here.** With the field unset the effective key is `stake_name`, so existing Descriptions already carry the stake name. Setting the override for the *first* time to anything different re-keys them just as surely as changing it later would. A write-once rule would forbid the correction while still permitting the initial break.
+
+Options considered, roughly in order of how much they preserve:
+
+1. **Drop the name field.** The EID alone breaks the extension deadlock the surface exists for (§15). Smallest surface; gives up an operator-settable override that has no other writer. *Recommended at the time, not taken.*
+2. **Keep it, superadmin-gated.** ← **chosen.** Leaves the hazard loaded, behind a gate only a platform superadmin who also manages the stake can reach.
+3. **Re-key on write.** Change the field and rewrite the affected Kindoo Descriptions. Correct in principle, far the largest — a bulk Kindoo write from the SPA, which has no such path today (every Kindoo write goes through the extension).
+
+**If this ever fires**, the recovery is (3) done by hand: the affected members show up as `kindoo-unparseable` on the next Sync, and re-provisioning them through the extension rewrites their Descriptions with the new key. Do *not* use the row's one-click **Update SBA** on them — that writes the raw description text into the seat's calling / reason rather than fixing the Description.
+
+## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+Status: done (2026-08-09 — `fix/home-eid-write-once`)
+Owner: @web-engineer
+Phase: Kindoo Sites (§15)
+
+Two follow-ups from PR #263's review, both on the edit path added in [T-90]. **Done**, plus one more the same review found on the merged head.
+
+**The home EID is now write-once** — settable while absent, never changeable here. Recorded options were to clear `kindoo_rule` on the home buildings when `site_id` changes, or to warn; the operator chose a third that removes the failure mode instead of compensating for it. The wizard writes the EID and every home building's `kindoo_rule` in one batch, so the two have never moved apart; refusing the change keeps it that way, and re-pointing a stake at a different environment stays a wizard re-run. Enforced in the mutation, with the field rendering `readOnly` once set so the rule is visible rather than met as an error.
+
+**Edit is gated on the stake snapshot** (`stake.data !== undefined`), closing the window where `useForm` captured empty defaults and a save wrote them over a real `kindoo_expected_site_name`.
+
+**`kindoo_config.site_name` is no longer seeded with the `stake_name` fallback.** It is seeded only when the operator supplied a name distinct from `stake_name`; otherwise the empty string, which is falsy so `homeSiteName()` falls through to the live chain. Seeding the fallback froze the value the override guard exists to avoid, and `homeSiteName()` ranks the capture *above* `kindoo_expected_site_name`, so it outranked the thing it was standing in for.
+
+**Still open, deliberately — see [T-93].** The same review flagged that editing the *site name* re-keys existing stake-scope Kindoo Descriptions. That is the same class as the EID (a value the extension only ever moved as a set), but write-once does not fix it, so it needs its own decision.
 
 ## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
 Status: pending
@@ -26,7 +67,14 @@ Split out of [T-90], where it was built, found not to work end to end, and remov
 
 **Three layers, all required. Shipping any one alone is authority or UI with no consumer.**
 
-1. **Active-stake resolution.** The blocker found last. A superadmin holding no role resolves **no active stake**, so the page's reads never fire — an E2E showed `?stake=` consumed and stripped, no console errors, and nothing loading. `resolveActiveStake`'s URL tier already has a superadmin-permissive branch and `useActiveStake` retains the param until validated, so the obvious claims-timing race is *not* the cause; the module needs actual investigation. Start here — the other two are unverifiable until a stake resolves.
+1. **Active-stake resolution.** The blocker, and still open. Findings from an instrumented run, so the next attempt starts past the dead ends:
+
+   - **The pure resolver is fine.** `resolveActiveStake(superadminPrincipal, 'highplains', null, null)` returns `{ stakeId: 'highplains', source: 'url' }`. Verified directly. Its superadmin-permissive URL tier works.
+   - **`principalSettling` is not the cause.** `principalFromClaims` gives a zero-role superadmin `isAuthenticated: true`, so the settling gate is false and the side effects are not deferred.
+   - **The actual symptom: `urlStakeParam` is `null` on every resolve.** The `?stake=` value never reaches the module-scoped reader at all — so the resolver is asked the right question with the wrong input. Meanwhile the landed URL keeps `?tab=kindoo-sites` and has lost `?stake=`, and our own strip cannot be responsible because it only runs after a successful URL-tier resolve, which never happens. **Prime suspect: TanStack Router rewriting the URL from its validated search schema on mount, before `refreshModuleUrlStakeParamFromUrl` reads `window.location.search`.** The Configuration route does declare `stake` optional in `searchSchema`, so confirm what the router actually serialises rather than assuming it round-trips.
+   - **A real, separate defect found on the way** — worth fixing here even though it is not sufficient alone. The URL-tier persist calls `persistChoiceCore(...)` but **not** `notifyActiveStakeStorageChanged()`, which the switcher does call after its storage write for exactly this reason (same-tab writes emit no `storage` event). Any hook instance that already resolved `null`, and whose `principalSignature` / `urlStakeParam` do not change afterwards, keeps that stale answer for the tab's lifetime. Invisible for any principal with a tier-4 fallback — tier 4 returns the same stake — so it bites precisely the identity with no tier 4. Left out of PR #265 because it is an unverified change to a load-bearing module in a PR about the EID guard.
+
+   **Methodology, because it cost hours:** `playwright.config.ts` sets `reuseExistingServer: !isCI`, so a `vite preview` left running from an earlier invocation is reused and **source edits silently never reach the browser** — instrumentation appears to produce nothing, and behaviour changes appear to have no effect. Kill whatever holds port 4173 before any instrumented run, and confirm the build actually contains your change (`grep` the bundle) before believing a negative result.
 2. **Sub-collection reads.** Widen read to `isPlatformSuperadmin()` on exactly five: `wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`. **Not `seats`, not `requests`** — those carry member names and emails, and widening them hands every superadmin the roster of every stake (operator decision, 2026-08-09). Consequence to accept: guards keyed on seats/requests (building rename + delete, organization delete) never hydrate for this persona and their buttons stay disabled — safe, and those are writes rules deny them anyway.
 3. **`stakes/{stakeId}` update.** Add `isPlatformSuperadmin()` **pinning `setup_complete` and `bootstrap_admin_email`**. Not optional: `isBootstrapAdmin` is exactly those two fields, so an unpinned grant re-opens the bootstrap hatch on any existing stake and `syncManagersClaims` turns it into a real manager claim. Ship with tests for both escalation attempts and one proving the pin doesn't narrow the manager path the wizard's own flip uses.
 
