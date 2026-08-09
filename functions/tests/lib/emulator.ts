@@ -163,12 +163,21 @@ export async function waitFor(
 /** The per-file budget for one Eventarc delivery. See {@link waitForDelivery}. */
 export const DELIVERY_WAIT_MS = 40_000;
 
-let deliveryWaitsAbandoned = false;
+let abandoned = false;
+
+/**
+ * True once a delivery wait in this file has run its full budget. Callers
+ * read it BEFORE their own wait, so a short-circuited result can be
+ * reported as "skipped" rather than mis-attributed to their own trigger.
+ */
+export function deliveryWaitsAbandoned(): boolean {
+  return abandoned;
+}
 
 /**
  * {@link waitFor} for an Eventarc-delivered write, with a latch.
  *
- * Once one delivery wait has run its full budget, the trigger has stopped
+ * Once one such wait has run its full budget, the trigger has stopped
  * delivering rather than merely slowed, and every later wait in this file
  * would burn the same budget to reach the same answer. That is not
  * hypothetical arithmetic: the integration suite runs strictly serially
@@ -185,14 +194,20 @@ let deliveryWaitsAbandoned = false;
  * just stop paying for a verdict already reached. Module scope means the
  * latch is per test file (vitest isolates modules), which bounds the
  * worst case at one full budget per file.
+ *
+ * ONLY for predicates whose staying false means "nothing was delivered".
+ * A predicate that can legitimately stay false while delivery is healthy
+ * — {@link claimsAfterClear}, where a false is a real regression in the
+ * handler's clear path — must not latch, or one genuine failure converts
+ * every later settle in the file into a mislabelled one.
  */
 export async function waitForDelivery(
   predicate: () => Promise<boolean>,
   timeoutMs: number = DELIVERY_WAIT_MS,
 ): Promise<boolean> {
-  if (deliveryWaitsAbandoned) return false;
+  if (abandoned) return false;
   const ok = await waitFor(predicate, timeoutMs);
-  if (!ok) deliveryWaitsAbandoned = true;
+  if (!ok) abandoned = true;
   return ok;
 }
 
@@ -211,6 +226,14 @@ export async function waitForDelivery(
  * normally undoes it, so recovery means waiting out a full delivery, hence
  * the same {@link DELIVERY_WAIT_MS} budget as a settle.
  *
+ * Deliberately does NOT use {@link waitForDelivery}. This predicate stays
+ * false when the clear path is genuinely broken — which is exactly what
+ * these tests are for — so latching on it would blame `onAuthUserCreate`
+ * for every later settle in the file. It cannot run away either: the
+ * block is cleared synchronously by the in-process `runSync` before this
+ * is called, so the first read returns and the poll is only ever entered
+ * when a live delivery restamped it.
+ *
  * NOT a guarantee, and the residue is not something polling can fix: if D2
  * loads `existing` after `runSync` cleared the block but before D1
  * restamps it, `merged === existing`, `claimsEqual` short-circuits, D2
@@ -224,15 +247,12 @@ export async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown 
   const { auth } = requireEmulators();
   const read = async () =>
     (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
-  // Always read once, before any latch can short-circuit — otherwise a
-  // latched wait would return `undefined` and the caller's
-  // `?.stakes).toBeUndefined()` would pass without having looked.
   let last = await read();
   if (last?.stakes === undefined) return last;
-  await waitForDelivery(async () => {
+  await waitFor(async () => {
     last = await read();
     return last?.stakes === undefined;
-  });
+  }, DELIVERY_WAIT_MS);
   return last;
 }
 
@@ -267,13 +287,17 @@ export async function makeSettledUser(
     // this runner (~60% used). Callers size their `timeout:` to the SUM of
     // their waits; the poll exits as soon as the claim lands, so the happy
     // path stays sub-second.
+    const wasAbandoned = deliveryWaitsAbandoned();
     const seeded = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       return ((u.customClaims ?? {}) as { canonical?: string }).canonical === wantCanonical;
     });
-    expect(seeded, `onAuthUserCreate never delivered its baseline claim for ${wantCanonical}`).toBe(
-      true,
-    );
+    expect(
+      seeded,
+      wasAbandoned
+        ? 'skipped: an earlier delivery wait in this file exhausted its budget'
+        : `onAuthUserCreate never delivered its baseline claim for ${wantCanonical}`,
+    ).toBe(true);
   }
   return user.uid;
 }

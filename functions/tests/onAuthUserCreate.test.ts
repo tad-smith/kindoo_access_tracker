@@ -11,8 +11,9 @@ import {
   clearEmulators,
   hasEmulators,
   hasFunctionsEmulator,
+  deliveryWaitsAbandoned,
   requireEmulators,
-  waitFor,
+  waitForDelivery,
 } from './lib/emulator.js';
 
 // `.run` is documented for v2 CloudFunctions and exists at runtime for
@@ -43,10 +44,12 @@ type V1Runnable = { run: (data: UserRecord, context: unknown) => Promise<unknown
 async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
   if (await hasFunctionsEmulator()) {
     const { auth } = requireEmulators();
-    // 40s for the same reason `makeSettledUser` uses it — same predicate,
-    // same delivery, and 20s sits tighter than the budget
-    // `syncSuperadminClaims.e2e.test.ts` already rejected as flake-prone.
-    const settled = await waitFor(async () => {
+    // `waitForDelivery` for its budget (same predicate and same delivery as
+    // `makeSettledUser`) and, just as importantly, for its latch: this file
+    // makes 11 of these, one per test, and unlatched that is ~7.3 minutes
+    // of pure waiting inside a job capped at 20.
+    const wasAbandoned = deliveryWaitsAbandoned();
+    const settled = await waitForDelivery(async () => {
       let u: UserRecord;
       try {
         u = await auth.getUser(user.uid);
@@ -58,11 +61,16 @@ async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
       }
       const claims = (u.customClaims ?? {}) as { canonical?: string };
       return typeof claims.canonical === 'string';
-    }, 40_000);
+    });
     // Assert rather than discard: a timed-out wait means the in-process
     // run below is racing the deployed trigger again, and the assertion
     // that then fails would point at the handler rather than the wait.
-    expect(settled).toBe(true);
+    expect(
+      settled,
+      wasAbandoned
+        ? 'skipped: an earlier delivery wait in this file exhausted its budget'
+        : `onAuthUserCreate never delivered its baseline claim for ${user.email}`,
+    ).toBe(true);
   }
   await (onAuthUserCreate as unknown as V1Runnable).run(user, { eventId: 't', timestamp: '' });
 }
@@ -229,9 +237,9 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     // get a claim block per matching stake.
     const { auth, db } = requireEmulators();
     await db.doc('stakes/csnorth').set({ name: 'CS North' });
-    await db.doc('stakes/csnorth/kindooManagers/multi@gmail.com').set({ active: true });
+    await db.doc('stakes/csnorth/kindooManagers/multistake@gmail.com').set({ active: true });
     await db
-      .doc('stakes/south/access/multi@gmail.com')
+      .doc('stakes/south/access/multistake@gmail.com')
       .set({ importer_callings: { GE: ['Bishop'] } });
     // Third stake exists but the user has no role data in it — its
     // empty block must be omitted from the claims payload.
@@ -239,7 +247,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       importer_callings: { stake: ['Stake President'] },
     });
 
-    const user = await auth.createUser({ email: 'multi@gmail.com' });
+    const user = await auth.createUser({ email: 'multistake@gmail.com' });
     await runOnAuthUserCreate(user);
 
     const refreshed = await auth.getUser(user.uid);
@@ -247,7 +255,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       canonical: string;
       stakes: Record<string, { manager: boolean; stake: boolean; wards: string[] }>;
     };
-    expect(claims.canonical).toBe('multi@gmail.com');
+    expect(claims.canonical).toBe('multistake@gmail.com');
     expect(Object.keys(claims.stakes).sort()).toEqual(['csnorth', 'south']);
     expect(claims.stakes['csnorth']).toEqual({ manager: true, stake: false, wards: [] });
     expect(claims.stakes['south']).toEqual({ manager: false, stake: false, wards: ['GE'] });
