@@ -31,7 +31,7 @@ That surfaces as a **`drift` row, not a manual-review row**. Because `segments.l
 
 **Seat repair is cleanup afterward, not a second remediation — and the order is load-bearing.** Once descriptions resolve, any seats already moved to stake scope resurface as ordinary `scope-mismatch` drift rows and repair normally. Doing that repair *before* the rename does not hold: the description still fails to resolve, `unparseableAligned` goes false again, and the same `kindoo-unparseable` row returns proposing stake scope a second time.
 
-**Status is "accepted risk", not "needs a fix".** The field hint was deliberately kept short — the case is rare enough that spelling it out in `WARD_NAME_HINT` costs more readers than it saves. That is a settled operator decision and this entry does not reopen it; the entry exists so the residual gap is on the record rather than implied to be covered. Note that `apps/web/src/lib/wardCopy.ts`'s `WARD_NAME_HINT` docblock still asserts "`unitNameCollision.ts` still rejects the pair at entry", which overstates the coverage in exactly the way described above.
+**Status is "accepted risk", not "needs a fix".** The field hint was deliberately kept short — the case is rare enough that spelling it out in `WARD_NAME_HINT` costs more readers than it saves. That is a settled operator decision and this entry does not reopen it; the entry exists so the residual gap is on the record rather than implied to be covered. An earlier draft of the `WARD_NAME_HINT` docblock claimed `unitNameCollision.ts` covered this case — it does not, for the reason above, and that claim was removed in the same PR.
 
 ## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
 Status: closed (fixed) `[FIXED 2026-08-08]`
