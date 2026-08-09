@@ -25,14 +25,25 @@ function stubFetch(...responses: Array<() => Response>) {
   return calls;
 }
 
-/** Like {@link stubFetch}, but each response takes `delayMs` to arrive. */
+/**
+ * Like {@link stubFetch}, but each response takes `delayMs` to arrive —
+ * and honours `init.signal`, so an attempt whose remaining budget is
+ * shorter than `delayMs` aborts instead of answering. Without that the
+ * stub models a race a real `fetch` cannot run.
+ */
 function stubSlowFetch(delayMs: number, response: () => Response) {
   const calls: string[] = [];
-  const impl = vi.fn(async () => {
-    calls.push('DELETE');
-    await new Promise((r) => setTimeout(r, delayMs));
-    return response();
-  });
+  const impl = vi.fn(
+    (_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        calls.push('DELETE');
+        const timer = setTimeout(() => resolve(response()), delayMs);
+        init?.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+        });
+      }),
+  );
   vi.stubGlobal('fetch', impl);
   return calls;
 }
@@ -153,8 +164,11 @@ describe('sweepFirestore (T-97 retry)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const started = Date.now();
+    // The later attempt aborts rather than answering, because its slice of
+    // the budget is shorter than the response delay — so the terminal shape
+    // is the abort, with the earlier 409 carried alongside it.
     await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(
-      /failed after \d+ attempt\(s\) \(300ms deadline\): 409/,
+      /\(300ms deadline\): TimeoutError.*last response: 409/s,
     );
 
     // Stopped early on time, not on the attempt ceiling.
