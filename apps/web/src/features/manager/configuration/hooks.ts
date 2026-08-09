@@ -798,6 +798,26 @@ export function useUpdateHomeKindooSiteMutation() {
       ]);
       const stake = stakeSnap.data() as Stake | undefined;
 
+      // WRITE-ONCE. The home EID may be set when absent and never
+      // changed afterwards (T-92). The extension's configure wizard
+      // writes the EID and every home building's `kindoo_rule` in one
+      // batch, so the two have never moved apart; this form is the first
+      // writer that could move the EID alone, and afterwards provisioning
+      // would apply the OLD environment's rule ids against the NEW
+      // environment. The usual net — a building with no `kindoo_rule`
+      // forces the wizard — does not catch it, because the mappings are
+      // present, just wrong. Refusing the change removes the failure mode
+      // rather than compensating for it; re-pointing a configured stake
+      // at a different Kindoo environment is a re-run of the wizard.
+      const existingEid = stake?.kindoo_config?.site_id;
+      if (typeof existingEid === 'number' && existingEid !== input.eid) {
+        throw new Error(
+          `The home Kindoo EID is already set to ${existingEid} and cannot be changed here. ` +
+            `Re-run the extension's Configure Kindoo wizard, which moves the EID and every ` +
+            `building's access-rule mapping together.`,
+        );
+      }
+
       // Home/foreign collision guard — the mirror of the one the
       // extension's `writeKindooConfig` already applies, and this is the
       // only path where a human types the EID rather than the wizard
@@ -805,9 +825,14 @@ export function useUpdateHomeKindooSiteMutation() {
       // `site_id` equal to some foreign `kindoo_eid` reclassifies that
       // foreign site as home for every Sync run and waves home-ward
       // requests onto the foreign environment through the Phase 3 guard.
-      const collision = sitesSnap.docs
-        .map((d) => d.data() as KindooSite)
-        .find((s) => typeof s.kindoo_eid === 'number' && s.kindoo_eid === input.eid);
+      // Only meaningful on the set path — write-once means an unchanged
+      // EID has already passed this once.
+      const collision =
+        existingEid === undefined
+          ? sitesSnap.docs
+              .map((d) => d.data() as KindooSite)
+              .find((s) => typeof s.kindoo_eid === 'number' && s.kindoo_eid === input.eid)
+          : undefined;
       if (collision) {
         throw new Error(
           `EID ${input.eid} is already configured as the foreign Kindoo site ` +
@@ -816,26 +841,34 @@ export function useUpdateHomeKindooSiteMutation() {
         );
       }
 
-      // `kindoo_config.site_name` is Kindoo's OWN display name, captured
-      // by the wizard from the live session — `homeSiteName()` prefers it
-      // because it is what a manager sees in the tab they are being asked
-      // to open. The form's name field edits `kindoo_expected_site_name`,
-      // a different value, so writing it over the capture would rename
-      // what the Requests Queue tells people to open. Preserve it; seed
-      // it only when the map does not exist yet (the validator needs the
-      // key present).
-      const existingSiteName = stake?.kindoo_config?.site_name;
-      const nextSiteName =
-        typeof existingSiteName === 'string' && existingSiteName.length > 0
-          ? existingSiteName
-          : siteName;
-
       // Don't freeze the fallback. The form prefills the name from
       // `stake_name` when no override is set, so an EID-only edit would
       // otherwise persist today's stake name as an override and strand it
       // there through any later rename.
       const hadOverride = (stake?.kindoo_expected_site_name ?? '').trim().length > 0;
       const writeOverride = hadOverride || siteName !== (stake?.stake_name ?? '');
+
+      // `kindoo_config.site_name` is Kindoo's OWN display name, captured
+      // by the wizard from the live session — `homeSiteName()` prefers it
+      // because it is what a manager sees in the tab they are being asked
+      // to open. The form's name field edits `kindoo_expected_site_name`,
+      // a different value, so writing it over the capture would rename
+      // what the Requests Queue tells people to open. Preserve it.
+      //
+      // When there is no capture yet the key still has to exist (the
+      // rules validator wants a string), but seeding it with the
+      // `stake_name` FALLBACK would freeze exactly what `writeOverride`
+      // above exists to avoid — and worse, because `homeSiteName()` ranks
+      // this above `kindoo_expected_site_name`. Seed the empty string in
+      // that case: falsy, so `homeSiteName()` falls through to the live
+      // fallback chain.
+      const existingSiteName = stake?.kindoo_config?.site_name;
+      const nextSiteName =
+        typeof existingSiteName === 'string' && existingSiteName.length > 0
+          ? existingSiteName
+          : writeOverride
+            ? siteName
+            : '';
 
       await updateDoc(ref, {
         ...(writeOverride ? { kindoo_expected_site_name: siteName } : {}),

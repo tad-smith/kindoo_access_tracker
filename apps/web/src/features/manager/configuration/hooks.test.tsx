@@ -589,6 +589,48 @@ describe('useUpdateHomeKindooSiteMutation', () => {
     expect(updateDocMock).not.toHaveBeenCalled();
   });
 
+  it('refuses to change an EID that is already set', async () => {
+    // Write-once (T-92). The wizard writes the EID and every home
+    // building's `kindoo_rule` in one batch; moving the EID alone leaves
+    // provisioning applying old-environment rule ids against the new one,
+    // and the "no kindoo_rule ⇒ force the wizard" net doesn't fire
+    // because the mappings are present, just wrong.
+    getDocMock.mockResolvedValue(
+      stakeSnap({ stake_name: 'High Plains', kindoo_config: { site_id: 27994 } }),
+    );
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({ siteName: 'Black Forest', eid: 11111 }),
+    ).rejects.toThrow(/already set to 27994/);
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a save that leaves the existing EID untouched', async () => {
+    // Write-once blocks a CHANGE, not a name-only edit that resubmits
+    // the same EID.
+    getDocMock.mockResolvedValue(
+      stakeSnap({ stake_name: 'High Plains', kindoo_config: { site_id: 27994 } }),
+    );
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({
+      kindoo_expected_site_name: 'Black Forest',
+    });
+  });
+
+  it('does not seed kindoo_config.site_name with the stake-name fallback', async () => {
+    // `homeSiteName()` ranks `kindoo_config.site_name` ABOVE
+    // `kindoo_expected_site_name`, so seeding it with the fallback
+    // freezes exactly what the override guard avoids — and outranks the
+    // live chain. Empty string is falsy, so the fallback still resolves.
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'High Plains', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({ 'kindoo_config.site_name': '' });
+  });
+
   it('allows an EID that no foreign site claims', async () => {
     getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
     getDocsMock.mockResolvedValue(siteDocs([{ display_name: 'East', kindoo_eid: 111 }]));
@@ -608,10 +650,11 @@ describe('useUpdateHomeKindooSiteMutation', () => {
       stakeSnap({
         stake_name: 'High Plains',
         kindoo_expected_site_name: 'Black Forest',
-        kindoo_config: { site_id: 1, site_name: 'BF Stake Center' },
+        kindoo_config: { site_id: 27994, site_name: 'BF Stake Center' },
       }),
     );
     const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    // Same EID — write-once blocks a change, and this is a name-only edit.
     await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
     expect(updateDocMock.mock.calls[0]![1]).toMatchObject({

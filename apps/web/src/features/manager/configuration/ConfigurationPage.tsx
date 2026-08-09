@@ -844,10 +844,17 @@ function HomeKindooSiteSection() {
   // the Stake List links here and `resolveActiveStake`'s URL tier is
   // superadmin-permissive. Gate on what the write actually needs, and
   // the button reappears on its own when T-91 lands.
+  // Also gated on the stake snapshot arriving. `useForm` captures
+  // `defaultValues` once at mount, so opening the editor before
+  // `stake.data` lands prefills '' / 0 — and saving then writes the empty
+  // form over a real `kindoo_expected_site_name`. Same clobber class the
+  // mutation guards for `kindoo_config.site_name`; the tab already gates
+  // two other controls on snapshots this way.
   const canEdit =
     principal.isPlatformSuperadmin &&
     activeStakeId !== null &&
-    principal.managerStakes.includes(activeStakeId);
+    principal.managerStakes.includes(activeStakeId) &&
+    stake.data !== undefined;
   const siteName = stake.data?.kindoo_expected_site_name?.trim() || (stake.data?.stake_name ?? '');
   const isDefaultedName = !stake.data?.kindoo_expected_site_name?.trim();
   const eid = stake.data?.kindoo_config?.site_id ?? null;
@@ -863,6 +870,7 @@ function HomeKindooSiteSection() {
 
       {editing ? (
         <HomeKindooSiteForm
+          eidLocked={eid !== null}
           defaults={{ site_name: siteName, eid: eid ?? 0 }}
           isPending={update.isPending}
           onCancel={() => setEditing(false)}
@@ -910,13 +918,21 @@ function HomeKindooSiteSection() {
 }
 
 interface HomeKindooSiteFormProps {
+  /** True once `kindoo_config.site_id` exists — the EID is write-once. */
+  eidLocked: boolean;
   defaults: HomeKindooSiteForm;
   isPending: boolean;
   onSubmit: (input: HomeKindooSiteForm) => Promise<void>;
   onCancel: () => void;
 }
 
-function HomeKindooSiteForm({ defaults, isPending, onSubmit, onCancel }: HomeKindooSiteFormProps) {
+function HomeKindooSiteForm({
+  eidLocked,
+  defaults,
+  isPending,
+  onSubmit,
+  onCancel,
+}: HomeKindooSiteFormProps) {
   const form = useForm<HomeKindooSiteForm>({
     resolver: zodResolver(homeKindooSiteSchema),
     defaultValues: defaults,
@@ -945,13 +961,28 @@ function HomeKindooSiteForm({ defaults, isPending, onSubmit, onCancel }: HomeKin
         Kindoo EID
         {/* No `min` attribute: native constraint validation suppresses the
             submit event entirely, so the zod message below would never
-            render. Zod owns the bound. */}
+            render. Zod owns the bound.
+
+            `readOnly` rather than `disabled` once locked — a disabled
+            input submits nothing, and the mutation needs the unchanged
+            value to compare against. The write-once rule is enforced
+            there too; this only keeps the operator from meeting it as an
+            error. */}
         <Input
           type="number"
+          readOnly={eidLocked}
+          aria-readonly={eidLocked || undefined}
           {...form.register('eid', { valueAsNumber: true })}
           data-testid="config-home-site-eid-input"
         />
       </label>
+      {eidLocked ? (
+        <p className="kd-form-hint" data-testid="config-home-site-eid-locked">
+          Set once and not editable here. Re-pointing this stake at a different Kindoo environment
+          means re-running the extension’s Configure Kindoo wizard, which moves the EID and every
+          building’s access-rule mapping together.
+        </p>
+      ) : null}
       {form.formState.errors.eid ? (
         <p className="kd-form-error">{form.formState.errors.eid.message}</p>
       ) : null}
