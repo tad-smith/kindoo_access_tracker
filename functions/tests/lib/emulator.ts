@@ -272,7 +272,10 @@ const CLEAR_BUDGET_MS = 8_500;
  * "delivery outlives the test" family the {@link clearEmulators} docblock
  * describes, except this variant takes the SWEEP down (a thrown `afterEach`,
  * failing whichever test happens to be running) instead of leaking a row.
- * T-97, seen once in ~6 full runs.
+ * T-97: seen ONCE in ~13 full runs, and never observed to engage since —
+ * six runs after this landed logged zero retries. That frequency is the
+ * whole justification for the machinery below, so it is worth knowing
+ * before extending it.
  *
  * `ABORTED` is documented as retryable and the contending write is short,
  * so a few quick attempts clear it. Bounded twice over — by attempt count
