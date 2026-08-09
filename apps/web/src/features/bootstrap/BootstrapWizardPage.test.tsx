@@ -108,6 +108,7 @@ vi.mock('../auth/signOut', () => ({
 }));
 
 import { BootstrapWizardPage, nextBlocker } from './BootstrapWizardPage';
+import { WARD_NAME_HINT } from '../../lib/wardCopy';
 
 function liveResult<T>(data: T[] | undefined) {
   return {
@@ -625,6 +626,16 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  it('tells the manager the " Ward" suffix is optional but a branch must end in " Branch"', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('wizard-step-tab-3'));
+    expect(screen.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+    expect(WARD_NAME_HINT).toMatch(/“ Ward” suffix is optional/);
+    expect(WARD_NAME_HINT).toMatch(/A branch must end in “ Branch”, e\.g\. “Limon Branch”\./);
+  });
+
   it('writes both building_id and building_name when a ward is added', async () => {
     useBuildingsMock.mockReturnValue(
       liveResult<Building>([
@@ -634,7 +645,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.type(screen.getByLabelText(/Ward or branch name/i), 'Maple');
     // The select value is the immutable slug, not the display name.
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
@@ -673,7 +684,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'maple ward');
+    await user.type(screen.getByLabelText(/Ward or branch name/i), 'maple ward');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();

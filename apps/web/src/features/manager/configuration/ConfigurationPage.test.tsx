@@ -95,6 +95,7 @@ vi.mock('../../../lib/useActiveStake', () => ({
 }));
 
 import { ConfigurationPage } from './ConfigurationPage';
+import { WARD_NAME_HINT } from '../../../lib/wardCopy';
 
 function liveResult<T>(data: T[]) {
   return {
@@ -371,7 +372,7 @@ describe('<ConfigurationPage />', () => {
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-ward-edit-CO'));
     // The ward name is the only visible identifier; the code is hidden.
-    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple');
+    expect((screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement).value).toBe('Maple');
     expect(screen.queryByLabelText(/Ward code/i)).toBeNull();
     expect(screen.getByRole('heading', { name: 'Edit ward' })).toBeInTheDocument();
   });
@@ -431,6 +432,20 @@ describe('<ConfigurationPage />', () => {
     expect(select.value).toBe('maple-building');
   });
 
+  it('gives the same ward-or-branch naming hint as the bootstrap wizard', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    expect(screen.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+  });
+
   it('writes both building_id and building_name when a ward is saved', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(
@@ -441,7 +456,7 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.type(screen.getByLabelText(/Ward or branch name/i), 'Maple');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByTestId('config-ward-submit'));
     await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
@@ -1228,7 +1243,7 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
 
     // Open the edit dialog and change the ward name (in-progress edit).
     await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const nameInput = screen.getByLabelText(/Ward name/i) as HTMLInputElement;
+    const nameInput = screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement;
     await user.clear(nameInput);
     await user.type(nameInput, 'Maple Renamed');
     expect(nameInput.value).toBe('Maple Renamed');
@@ -1245,7 +1260,9 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
     rerender(<ConfigurationPage initialTab="wards" />);
 
     // The in-progress edit survives — reset() did not fire.
-    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple Renamed');
+    expect((screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement).value).toBe(
+      'Maple Renamed',
+    );
     // The Building <Select> still reflects the live catalogue (the new
     // building is now an option), proving the dropdown stayed live.
     const select = screen.getByLabelText('Building') as HTMLSelectElement;

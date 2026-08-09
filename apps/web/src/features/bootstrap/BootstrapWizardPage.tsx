@@ -74,6 +74,7 @@ import { Switch } from '../../components/ui/Switch';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
+import { WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
 import { canonicalEmail as canonicalEmailFn } from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { accessibleStakes } from '../../lib/activeStake';
@@ -662,9 +663,10 @@ function Step3Wards() {
       </ul>
       <form onSubmit={handleSubmit(onAdd)}>
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
+        <p className="kd-form-hint">{WARD_NAME_HINT}</p>
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}
