@@ -3,7 +3,8 @@
 //   - A user with roles on ≥ 2 stakes sees the trigger.
 //   - Clicking a stake-list item swaps the active stake without leaving
 //     the page; the brand bar updates and storage tiers reflect the
-//     choice.
+//     choice, and the menu dismisses on the pick (operator report: it
+//     used to take a second click) with focus back on the trigger.
 //   - A user with exactly one accessible stake does NOT see the
 //     trigger.
 
@@ -85,7 +86,13 @@ test.describe('Stake switcher dropdown', () => {
 
     // Open the menu and click ridgeline.
     await trigger.click();
+    await expect(page.getByTestId('stake-switcher-menu')).toBeVisible();
     await page.getByTestId('stake-switcher-item-ridgeline').click();
+
+    // The pick dismisses the menu on its own — the operator shouldn't
+    // need a second click — and focus lands back on the trigger.
+    await expect(page.getByTestId('stake-switcher-menu')).toHaveCount(0);
+    await expect(trigger).toBeFocused();
 
     // Brand bar updates to ridgeline.
     await expect(page.locator('.kd-brandbar-stake')).toContainText('Ridgeline Stake', {
