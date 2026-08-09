@@ -15,9 +15,10 @@ import { deleteDoc, runTransaction, serverTimestamp, setDoc, updateDoc } from 'f
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { canonicalEmail, buildingSlug } from '@kindoo/shared';
-import type { Building, KindooManager, Stake, Ward } from '@kindoo/shared';
+import type { Building, CustomClaims, KindooManager, Stake, Ward } from '@kindoo/shared';
+import { refreshIdToken } from '../auth/useTokenRefresh';
 import { useFirestoreCollection, useFirestoreDoc } from '../../lib/data';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
 import {
   buildingRef,
   buildingsCol,
@@ -398,6 +399,40 @@ export function useDeleteManagerMutation() {
 }
 
 /**
+ * The `kindooManagers/{canonical}` upsert that gives `syncManagersClaims`
+ * something to mint the bootstrap admin's `manager` claim from.
+ * Idempotent via `merge: true` — safe to re-issue any number of times;
+ * fields not listed here (there are none yet, but a future one) survive
+ * a re-issue untouched, while every field listed here (including
+ * `active: true`) is reasserted on every call. Shared by
+ * `useEnsureBootstrapAdmin` (the wizard-mount auto-add) and
+ * `useCompleteSetupMutation`'s fail-closed retry path below — both need
+ * byte-identical write shape so re-issuing from either call site targets
+ * the same doc the same way.
+ */
+async function writeBootstrapAdminManagerDoc(
+  sid: string,
+  bootstrapAdminEmail: string,
+  principalEmail: string,
+  actor: { email: string; canonical: string },
+): Promise<void> {
+  const canonical = canonicalEmail(bootstrapAdminEmail);
+  await setDoc(
+    kindooManagerRef(db, sid, canonical),
+    {
+      member_canonical: canonical,
+      member_email: bootstrapAdminEmail,
+      name: principalEmail ?? bootstrapAdminEmail,
+      active: true,
+      added_at: serverTimestamp(),
+      added_by: actor,
+      lastActor: actor,
+    } as unknown as KindooManager,
+    { merge: true },
+  );
+}
+
+/**
  * Auto-add the bootstrap admin to `kindooManagers` on first wizard
  * load. Idempotent: if the doc already exists with `active=true` we
  * leave it alone (avoids fighting the user if they reopened the wizard
@@ -412,22 +447,78 @@ export function useEnsureBootstrapAdmin() {
     mutationFn: async (bootstrapAdminEmail: string) => {
       const sid = requireActiveStake(activeStakeId);
       const actor = actorOf(principal);
-      const canonical = canonicalEmail(bootstrapAdminEmail);
-      await setDoc(
-        kindooManagerRef(db, sid, canonical),
-        {
-          member_canonical: canonical,
-          member_email: bootstrapAdminEmail,
-          name: principal.email ?? bootstrapAdminEmail,
-          active: true,
-          added_at: serverTimestamp(),
-          added_by: actor,
-          lastActor: actor,
-        } as unknown as KindooManager,
-        { merge: true },
-      );
+      await writeBootstrapAdminManagerDoc(sid, bootstrapAdminEmail, principal.email, actor);
     },
   });
+}
+
+// Same bound as `pollForCanonicalClaim` (`features/auth/signIn.ts`,
+// added for B-4): 10 iterations at 500ms apart caps the wait at ~5s.
+const CLAIM_POLL_ITERATIONS = 10;
+const CLAIM_POLL_INTERVAL_MS = 500;
+
+/**
+ * Whether this admin can still ADMINISTER the stake once
+ * `setup_complete` flips true — i.e. still holds the `manager` claim on
+ * this stake — not merely whether they can read the parent stake doc.
+ *
+ * This is deliberately NARROWER than the post-flip `/stakes/{stakeId}`
+ * *read* rule `firestore.rules` enforces once `setup_complete` is true:
+ * `isAnyMember(stakeId) || isPlatformSuperadmin()` (:677-679; `isAnyMember`
+ * at :137-141 is `isManager || isStakeMember ||
+ * bishopricWardOf(stakeId).size() > 0`). A previous revision of this gate
+ * widened the check to mirror that read rule — checking `stake` and
+ * `wards` claims and `isPlatformSuperadmin` alongside `manager` — on the
+ * reasoning that anything narrower would wrongly block a principal the
+ * read rule itself admits. That was wrong, and got reverted: passing
+ * this gate must mean the admin can still ADMINISTER the stake
+ * post-flip, not merely read its parent doc. Once
+ * `isBootstrapAdmin`/`isSetupInProgressReadable` go silent post-flip
+ * (both gated on `setup_complete == false`), a platform superadmin — or
+ * a principal holding only a `stake`- or `wards`-scoped claim on this
+ * stake — satisfies the read rule above but loses:
+ *
+ *   - `kindooManagers` (:780-785) — gated on `isManager(stakeId) ||
+ *     isBootstrapAdmin(stakeId)`, no `isPlatformSuperadmin()` disjunct
+ *   - `wards` writes (:705) — same `isManager(stakeId) || isBootstrapAdmin`
+ *   - `buildings` writes (:719) — same `isManager(stakeId) || isBootstrapAdmin`
+ *
+ * and no rule or callable lets a platform superadmin write
+ * `kindooManagers`, so once flipped there is no path back to `manager`.
+ * Widening the gate to match the read rule let exactly the stranding
+ * this gate exists to prevent happen to a wider set of principals. Don't
+ * re-widen this a third time on "but the read rule allows it" reasoning
+ * — that reasoning is exactly what got it wrong the second time.
+ */
+function canAdministerStakePostFlip(claims: CustomClaims | undefined, stakeId: string): boolean {
+  return claims?.stakes?.[stakeId]?.manager === true;
+}
+
+/**
+ * Bounded wait for the `manager` claim to become present on the
+ * signed-in admin's cached ID token — see `canAdministerStakePostFlip`
+ * for exactly which claim shape qualifies. Same shape as
+ * `pollForCanonicalClaim`: force-refresh, check the decoded claims, and
+ * if nothing qualifying is there yet, sleep and refresh again — up to
+ * `CLAIM_POLL_ITERATIONS` times.
+ *
+ * Diverges from `pollForCanonicalClaim` in outcome, not shape: that
+ * helper always resolves — a downstream page handles a permanently
+ * missing claim. This one backs a fail-closed gate ahead of an
+ * irreversible write (see `useCompleteSetupMutation` below), so it
+ * reports whether the claim actually landed rather than silently
+ * carrying on either way.
+ */
+async function waitForPostFlipAdminAccess(stakeId: string): Promise<boolean> {
+  await refreshIdToken();
+  for (let i = 0; i < CLAIM_POLL_ITERATIONS; i++) {
+    const result = await auth.currentUser?.getIdTokenResult();
+    const claims = result?.claims as CustomClaims | undefined;
+    if (canAdministerStakePostFlip(claims, stakeId)) return true;
+    await new Promise((resolve) => setTimeout(resolve, CLAIM_POLL_INTERVAL_MS));
+    await refreshIdToken();
+  }
+  return false;
 }
 
 /**
@@ -435,6 +526,69 @@ export function useEnsureBootstrapAdmin() {
  * the `lastActor` integrity field; this Firestore flip is the entire
  * Complete-Setup action (the routing gate redirects once it lands, and
  * the `auditTrigger` fans the audit row).
+ *
+ * Verifies the `manager` claim is actually ON THE TOKEN before issuing
+ * the flip — not just that a refresh happened, and not merely that the
+ * stake doc would still be READABLE. The instant `setup_complete`
+ * becomes `true`, `isSetupInProgressReadable` and `isBootstrapAdmin`
+ * (firestore.rules) both stop applying — they're gated on
+ * `setup_complete == false` — so the stake-doc *read* falls back to
+ * plain `isAnyMember(stakeId) || isPlatformSuperadmin()`. That read rule
+ * is a distractor here: `canAdministerStakePostFlip` checks `manager`
+ * specifically, deliberately narrower than the read rule — see its doc
+ * comment for why mirroring the read rule would strand a platform
+ * superadmin or a stake/wards-only principal (they could still read the
+ * flipped stake doc, but couldn't write `kindooManagers`, `wards`, or
+ * `buildings` to recover). The claim this mutation needs is the
+ * `manager` claim `useEnsureBootstrapAdmin`'s auto-add minted earlier in
+ * the wizard. A refresh alone doesn't guarantee that claim actually
+ * arrived: the auto-add write is fire-and-forget from
+ * `BootstrapWizardPage.tsx` (only retried when `managers.data` changes)
+ * and `syncManagersClaims` can silently miss on a `uidForCanonical`
+ * lookup. Flipping anyway on a non-qualifying token strands the admin
+ * worse than before the flip — the wizard is unreachable once
+ * `setup_complete=true`, the token was just refreshed so a reload
+ * doesn't recover, and the auto-add effect can't re-mint the claim
+ * because it early-returns once the manager doc exists.
+ *
+ * So `waitForPostFlipAdminAccess` is a gate, not a courtesy: if nothing
+ * qualifying lands within its bound, `mutationFn` re-issues the auto-add
+ * write (see below) and throws — the `updateDoc` never runs,
+ * `setup_complete` stays `false`, and the wizard is exactly where it
+ * was. Under no circumstances does a failed verification still issue
+ * the flip.
+ *
+ * Re-issue-then-throw, not re-issue-then-repoll: on a claim miss this
+ * mutation writes `kindooManagers/{canonical}` again (`merge: true`,
+ * safe to repeat) so `syncManagersClaims` gets another chance, then
+ * throws immediately rather than looping through a second
+ * `CLAIM_POLL_ITERATIONS` wait in the same call. The retry-worthy case
+ * this fixes — the earlier fix's known gap — is a dropped trigger or a
+ * transient `uidForCanonical` miss, and `syncManagersClaims` reacting to
+ * a Firestore write is typically a sub-second round trip; the admin's
+ * own next "Complete Setup" click starts a fresh bounded poll with a
+ * real chance of seeing it, at the same bounded ~5s worst case as any
+ * other attempt. Re-polling inline after the re-issue would only save
+ * that one click at the cost of doubling the worst-case wait on EVERY
+ * miss (including ones the re-issue can't fix, e.g. `activeStakeId`
+ * resolving to the wrong stake) — not a trade worth making for a flow
+ * that runs once per stake, ever.
+ *
+ * This is deliberately NOT the pattern `architecture.md` D28(d)
+ * reverted, even though both are a forced refresh next to `stakes`
+ * writes — don't delete the refresh inside `waitForPostFlipAdminAccess`
+ * on the assumption it repeats that mistake. D28(d)'s refresh ran right
+ * after `createStake`, racing `syncBootstrapClaims` — an async Firestore
+ * trigger on that very write — before it had run; it lost almost every
+ * time and re-cached a claimless token for ~1h. Here the qualifying
+ * claim was minted *minutes* earlier in the common case:
+ * `useEnsureBootstrapAdmin` writes `kindooManagers/{canonical}` at
+ * wizard mount, `syncManagersClaims` fires off that write, and the admin
+ * then works through the rest of the wizard's steps before ever
+ * reaching Complete Setup. By the time this mutation runs the claim
+ * already exists server-side in the overwhelming common case — the
+ * bounded wait (and the re-issue-on-miss below) are a backstop for the
+ * rare cases where it doesn't, not the primary mechanism.
  */
 export function useCompleteSetupMutation() {
   const principal = usePrincipal();
@@ -443,6 +597,41 @@ export function useCompleteSetupMutation() {
   return useMutation({
     mutationFn: async () => {
       const sid = requireActiveStake(activeStakeId);
+      const claimLanded = await waitForPostFlipAdminAccess(sid);
+      if (!claimLanded) {
+        // Make the retry story true: the doc `useEnsureBootstrapAdmin`
+        // wrote at wizard mount may already exist (so its own
+        // early-return-if-active guard means it will never fire again),
+        // even though the claim it was supposed to mint never landed.
+        // Re-issuing here — not repolling inline, see the doc comment
+        // above — gives `syncManagersClaims` a fresh write to react to
+        // before the admin's next Complete Setup click.
+        const actor = actorOf(principal);
+        await writeBootstrapAdminManagerDoc(sid, principal.email, principal.email, actor);
+        // Diagnostic breadcrumb: if `userIndex/{canonical}` is missing,
+        // `syncManagersClaims` hits `if (!uid) return` on every re-issue
+        // (functions/src/triggers/syncManagersClaims.ts) — this retry
+        // can then never succeed, and the message below promises a
+        // recovery that can't arrive. Rare (`onAuthUserCreate` +
+        // `pollForCanonicalClaim` normally seed `userIndex` at sign-in
+        // before this ever runs) but gives an operator looking at a
+        // stuck admin's console a thread to pull. Message text is left
+        // unchanged on repeat: distinguishing "still not syncing" from
+        // "syncing" would need attempt state to persist across separate
+        // mutation calls — a retry-counter machine not worth building
+        // for a once-per-stake flow. The console line is what actually
+        // makes this diagnosable; the operator already needs devtools
+        // access to unstick the admin regardless of which text shows.
+        if (typeof console !== 'undefined' && process.env['NODE_ENV'] !== 'test') {
+          console.error('[complete-setup] manager claim did not land after re-issue', {
+            stakeId: sid,
+            canonical: actor.canonical,
+          });
+        }
+        throw new Error(
+          'Setup access is still syncing — wait a moment and try Complete Setup again.',
+        );
+      }
       const actor = actorOf(principal);
       await updateDoc(stakeRef(db, sid), {
         setup_complete: true,
