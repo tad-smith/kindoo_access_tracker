@@ -6,10 +6,34 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-96] Branch-specific callings — specified, deliberately not implemented
+## [T-98] Playwright coverage for the calling typeahead inside `EditSeatDialog`
 Status: pending
+Owner: @web-engineer
+Phase: cross-cutting
+
+The branch calling list is unverified in the one place it renders inside a modal. `CallingCombobox` is a Radix Popover, `EditSeatDialog` is a Radix Dialog, and under jsdom the Popover will not open inside the Dialog — the content never mounts, so no assertion can reach the suggestion list. A test for it was written during T-96 and **removed rather than contorted**: faking the open state would have asserted against a component tree the browser never produces, which is worse than no coverage because it reads as coverage.
+
+`NewRequestForm`'s typeahead is fully covered in jsdom (it is not inside a Dialog), and `standardCallings.ts` itself has a unit suite pinning the ward / branch / stake splits against the shared table. What is missing is only the integration: that opening Edit Seat on a **branch** seat and typing into `reason` offers Branch President and not Bishop. That is a Playwright test against a real browser, in `e2e/`.
+
+Worth doing alongside any other `EditSeatDialog` E2E work rather than as a lone spec — the fixture cost (a stake with a branch unit, a seat on it) is the bulk of the effort and is reusable.
+
+## [T-97] Export the ordered calling table from `packages/shared`
+Status: pending
+Owner: @web-engineer
+Phase: cross-cutting
+
+`apps/web/src/features/requests/standardCallings.ts` holds a hand-maintained copy of the churchwide calling table — `STAKE_CALLINGS` (42 entries) plus `UNIT_CALLINGS` (50), reproducing `packages/shared/src/callingSortOrder.ts`'s 92 names and their order exactly. It is a copy of a churchwide fact, which `packages/shared/CLAUDE.md` says belongs in `shared`.
+
+**It is blocked on one thing: `CALLING_ORDER` is module-private.** `callingSortOrder` exports a name → order *lookup*, and a lookup cannot be enumerated, so the typeahead has nothing to derive a list from. Export the ordered array (or a `callingsInOrder()` accessor) and both web lists become projections of it: `STAKE_CALLINGS` is the slice before `Bishop`, `UNIT_CALLINGS` the slice from `Bishop` on, and the existing ward / branch subtraction sets keep working unchanged on top.
+
+The copy is currently machine-checked against the shared table by a conformance suite (`apps/web/src/features/requests/tests/standardCallings.test.ts`): every entry must resolve, the concatenation must be strictly ascending by `callingSortOrder`, and the indices it covers must be gap-free. **That catches an insertion or a rename but not an append to the very end** — the gap check bounds its range at `Math.max(...orders) + 1`, computed from the copy's own entries, so a new entry appended past the copy's last index leaves no hole to find. T-96 is the case that motivates this: seven callings landed in `shared` and silently did not reach the typeahead, which is exactly the shape the test now catches, and the append case is the one hole left in it.
+
+## [T-96] Branch-specific callings — specified, deliberately not implemented
+Status: done (2026-08-09 — PR #270)
 Owner: @backend-engineer, @extension-engineer
 Phase: cross-cutting
+
+Shipped as specified below, with two amendments made while building and folded into the list in this entry: the branch sort set is **seven** callings, not six (the operator added `Branch Assistant Clerk--Membership` mid-flight), and the web request typeahead turned out to need the same split — `apps/web/src/features/requests/standardCallings.ts` kept its own hardcoded copy of the calling list and never imported the shared table, so a Branch President was unselectable on the New Request and Edit Seat forms. Recorded as `architecture.md` D32; `docs/changelog/branch-callings.md` has the full account. Two follow-ups fell out: T-97 (export the ordered calling table from `packages/shared` so the typeahead derives instead of duplicating) and T-98 (Playwright coverage for the typeahead inside `EditSeatDialog`).
 
 PR #268 taught the system what a branch **is** (`architecture.md` D31 — a unit whose name ends in `" Branch"`, whose Kindoo scope name is verbatim). It taught it nothing about what a branch's people are **called**. `callingSortOrder.ts`'s 85-entry table and `appAccessCallings.ts`'s two sets are ward/stake only, so today a Branch President's Kindoo description parses to a real scope and an unknown calling: the seat sorts to the bottom of its type band (`callingSortOrder` returns `null`), and no app access is derived. Scope resolution works; the person is invisible to everything keyed on the calling name.
 
@@ -20,9 +44,12 @@ PR #268 taught the system what a branch **is** (`architecture.md` D31 — a unit
 - Branch Presidency Second Counselor
 - Branch Clerk
 - Branch Assistant Clerk
+- Branch Assistant Clerk--Membership
 - Branch Assistant Clerk--Finance
 
-Note the list has **no Branch Executive Secretary** — confirmed deliberate by the operator, 2026-08-09; branches have no equivalent of Ward Executive Secretary. It also has no `Branch Assistant Clerk--Membership`, where both the stake and ward sets carry a Membership variant alongside the Finance one. That asymmetry was not asked about and is recorded as observed, not as a decision.
+Note the list has **no Branch Executive Secretary** — confirmed deliberate by the operator, 2026-08-09; branches have no equivalent of Ward Executive Secretary.
+
+The `--Membership` variant above was **not** in the first draft of this list, which ran to six and observed that the stake and ward sets each carry a Membership variant alongside the Finance one while the branch set did not. That asymmetry was recorded as observed rather than decided, and the operator closed it mid-build (2026-08-09) by adding the variant. The list is seven; anything citing six predates that call. Only the first four grant app access — the three Assistant Clerk entries rank a seat in the sort table and confer nothing, matching their ward counterparts.
 
 **Ward callings that also apply to branches — the four families, as the entries that already exist verbatim in `callingSortOrder.ts`.** All 19 were verified present in the table; none needs adding, and none is a rename.
 
@@ -42,6 +69,9 @@ Implementation note — still open, and the reason this is `pending` rather than
 
 - The natural extension point is `unitType` on the existing `AppAccessOptions` bag — the mechanism D23 prescribes for exactly this ("add a gate there, never by making the arrays configurable", `packages/shared/CLAUDE.md`). `appAccessCallingsForScope` already branches on `scope === 'stake'` vs. anything else; a branch is a third case it currently cannot see, because a `ward_code` is all it receives and the code is a slug (`peterson-branch` or `LB`), not a name.
 - **`syncApplyFix.ts` reads the ward doc too late.** At `:302` it calls `filterAppAccessCallings` before the ward doc is loaded at `:311`, and that read is conditional on `needsSiteResolve` — so the unit's name isn't available at the point the calling set is chosen, and on some paths isn't read at all. It needs hoisting. Three further call sites have the same gap and no ward read anywhere near them: `:467` (REPLACE recompute) and `:642` (manual→auto promote) both key on `seat.scope`; `:774` is stake-scope only and is unaffected.
+
+**Resolved as built (2026-08-09).** `unitType` did land on `AppAccessOptions`, absent reading as ward. `:302`'s existing site read was hoisted above the calling-set choice and `needsSiteResolve` became `isUnitScope`, so one snapshot feeds both. `:467` and `:642` each take one `tx.get`, unit scopes only. `:774` was confirmed inert and reads nothing. An unresolvable unit refuses the fix rather than defaulting to either set. The count above reads "three further call sites" but exempts `:774` in the same sentence — two of the three actually needed work.
+
 ## [T-95] Flaky integration test: `syncManagersClaims` — claim read races the trigger
 Status: pending
 Owner: @backend-engineer
