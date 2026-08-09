@@ -332,7 +332,7 @@ function ConfigureBody({ step, onRetry, onAssign, onSave }: BodyProps) {
       <div data-testid="sba-configure-unknown-site">
         <p className="sba-error">
           This Kindoo site (<code>{step.activeSiteName || 'unknown'}</code>) isn&rsquo;t configured
-          in SBA. Add it in Configuration → Kindoo Sites first.
+          in SBA. Add it in Configuration → Kindoo Config first.
         </p>
         <button type="button" className="sba-btn" onClick={onRetry}>
           Retry

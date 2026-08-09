@@ -1,4 +1,4 @@
-// Wards to Ignore in Kindoo — the second list on the Kindoo Sites tab.
+// Wards to Ignore in Kindoo — the last list on the Kindoo Config tab.
 // Validation and mutation payloads are covered at the component layer
 // (ConfigurationPage.test.tsx); this proves the section renders in a
 // real bundle and that a write round-trips through Firestore rules to
@@ -59,25 +59,43 @@ test.describe('Wards to Ignore in Kindoo', () => {
   });
 
   test('adds a ward, persists it to the stake doc, and removes it again', async ({ page }) => {
+    // Every assertion here that follows a navigation gets a generous
+    // timeout. The list renders off a Firestore snapshot, and a
+    // navigation (first load or the reload below) has to establish the
+    // websocket before one arrives — warm that is ~1s, but on the first
+    // test after a cold `vite preview` build it intermittently exceeded
+    // the 5s default. Timing, not behaviour: the same test passes 6/6
+    // once the server is warm.
     await signInAsManager(page, 'mgr-ignored@example.com');
     await page.goto('/manager/configuration?tab=kindoo-sites');
 
-    await expect(page.getByRole('heading', { name: 'Wards to Ignore in Kindoo' })).toBeVisible();
-    await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Wards to Ignore in Kindoo' })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible({ timeout: 20_000 });
+
+    await page.getByTestId('config-ignored-wards-add-button').click();
+
+    // A pasted description is refused — matching is on the ward name alone.
+    await page.getByTestId('config-ignored-ward-input').fill('Aspen Grove Ward (Bishop)');
+    await expect(page.getByTestId('config-ignored-ward-error')).toContainText(
+      'drop the calling in parentheses',
+    );
 
     // Our own ward is refused — ignoring it would hide its own Sync rows.
     await page.getByTestId('config-ignored-ward-input').fill('Maple Ward');
     await expect(page.getByTestId('config-ignored-ward-error')).toContainText('one of your own');
-    await expect(page.getByTestId('config-ignored-ward-add')).toBeDisabled();
 
     // A neighbouring stake's ward goes through and survives a reload.
     await page.getByTestId('config-ignored-ward-input').fill('Aspen Grove Ward');
     await expect(page.getByTestId('config-ignored-ward-error')).toHaveCount(0);
-    await page.getByTestId('config-ignored-ward-add').click();
+    await page.getByTestId('config-ignored-ward-submit').click();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
 
     await page.reload();
-    await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
+    await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible({
+      timeout: 20_000,
+    });
 
     await page.getByTestId('config-ignored-ward-delete-Aspen Grove Ward').click();
     await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();

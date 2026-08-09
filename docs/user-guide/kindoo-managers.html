@@ -217,7 +217,7 @@
     <li>Navigate <strong>into a specific Kindoo site</strong> (not the "My Sites" listing). The panel needs to know which site you're on.</li>
   </ol>
   <div class="callout"><span class="lbl">How the panel behaves</span><p>The toolbar button toggles the panel open and closed. The panel runs on top of Kindoo without changing Kindoo's own pages. If you manage more than one stake on the same Kindoo environment, the panel will ask which stake you're working in.</p></div>
-  <div class="callout warn"><span class="lbl">"This Kindoo site isn't configured"</span><p>The extension matches the Kindoo site you're viewing to a site configured in SBA. If you see a message that the site isn't recognized, make sure you've opened a specific site in Kindoo (not the site list) and that the site exists under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span> (see <a href="#sites">Section 8</a>).</p></div>
+  <div class="callout warn"><span class="lbl">"This Kindoo site isn't configured"</span><p>The extension matches the Kindoo site you're viewing to a site configured in SBA. If you see a message that the site isn't recognized, make sure you've opened a specific site in Kindoo (not the site list) and that the site exists under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Config</span> (see <a href="#sites">Section 8</a>).</p></div>
 
   <h3>First-run setup: connect your buildings to Kindoo</h3>
   <p>The first time you open the panel on a recognized Kindoo site, it shows the <span class="ui">Configure&nbsp;Kindoo</span> wizard <strong>before</strong> the request queue. This one-time step links each of your SBA buildings to the Kindoo <strong>Access Rule</strong> that controls that building's doors.</p>
@@ -229,7 +229,7 @@
     <li>Click <span class="ui">Save</span>. The panel then opens to the request <span class="ui">Queue</span> and is ready to use.</li>
   </ol>
   <div class="callout"><span class="lbl">More than one Kindoo site</span><p>If your buildings span more than one Kindoo site (see <a href="#sites">Section 8</a>), run the wizard once per site: switch to the other site in Kindoo's own interface, reopen the panel, and map that site's buildings. You can re-open the wizard any time from the panel's <strong>gear</strong> (settings) tab to change a mapping later.</p></div>
-  <div class="callout warn"><span class="lbl">If a building or site is missing from the wizard</span><p>The wizard only lists buildings that already exist in SBA and are assigned to the active Kindoo site. If one is missing, add or reassign it under <span class="ui">Configuration&nbsp;→&nbsp;Buildings</span> first. If the wizard reports the site isn't configured in SBA, add it under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span> (<a href="#sites">Section 8</a>), then reopen the panel.</p></div>
+  <div class="callout warn"><span class="lbl">If a building or site is missing from the wizard</span><p>The wizard only lists buildings that already exist in SBA and are assigned to the active Kindoo site. If one is missing, add or reassign it under <span class="ui">Configuration&nbsp;→&nbsp;Buildings</span> first. If the wizard reports the site isn't configured in SBA, add it under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Config</span> (<a href="#sites">Section 8</a>), then reopen the panel.</p></div>
 
   <figure class="shot">
     <img src="img/extension-queue.png" alt="The extension panel open over Kindoo, showing the Queue tab" style="display:block;max-width:400px;width:100%;height:auto;margin:.5rem auto;border-radius:10px;border:1px solid #e2e8f0" />
@@ -250,7 +250,7 @@
   <p>The full roster across every ward and the stake, with filters for scope, building, and type. You can request a <strong>removal</strong> from here, but there's no edit button (edits are made from the roster pages). A foreign-site member's row may show a <span class="ui">Give Access To Stake Buildings</span> button — see <a href="#sites">Section 8</a>.</p>
 
   <h4>Configuration</h4>
-  <p>Tabs, in order: <strong>Config</strong> (seat cap, time zone, notification switch, and the <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> switch — see <a href="#appaccess">Section 9</a>), <strong>Managers</strong>, <strong>Kindoo Sites</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
+  <p>Tabs, in order: <strong>Config</strong> (seat cap, time zone, notification switch, and the <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> switch — see <a href="#appaccess">Section 9</a>), <strong>Managers</strong>, <strong>Kindoo Config</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
 
   <h4>App Access</h4>
   <p>Shows who can sign in to the web app. Calling-based access is managed automatically and is read-only; you can add <strong>manual</strong> access for someone whose calling isn't on the standard list, at either <strong>Full</strong> or <strong>Limited</strong> level. See <a href="#appaccess">Section 9</a>.</p>
@@ -397,7 +397,7 @@
   <p>Most stakes run a single Kindoo environment — the <strong>home site</strong>. But a building's doors are sometimes governed by a different stake's Kindoo environment. SBA calls those <strong>Kindoo Sites</strong> so it can route door changes to the right environment.</p>
   <ul>
     <li>The <strong>home site</strong> is implied — you don't configure it as a separate entry.</li>
-    <li><strong>Foreign sites</strong> are added under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Sites</span>.</li>
+    <li><strong>Foreign sites</strong> are added under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Config</span>.</li>
     <li>Each <strong>building</strong> can be assigned to a site; a ward inherits its site from its building.</li>
     <li>The extension discovers the active site's identifier automatically from the Kindoo page you're viewing.</li>
   </ul>
@@ -546,7 +546,7 @@
 
   <footer>
     <div class="footer-grid">
-      <span><strong>Stake Building Access</strong> — Kindoo Manager Guide<br>Version 1.4 · August 2026</span>
+      <span><strong>Stake Building Access</strong> — Kindoo Manager Guide<br>Version 1.5 · August 2026</span>
       <span>stakebuildingaccess.org<br><a href="mailto:support@stakebuildingaccess.org">support@stakebuildingaccess.org</a></span>
     </div>
   </footer>

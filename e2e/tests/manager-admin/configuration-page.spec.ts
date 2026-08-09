@@ -76,7 +76,7 @@ test.describe('Manager admin pages (Phase 7)', () => {
     expect(labels).toEqual([
       'Config',
       'Managers',
-      'Kindoo Sites',
+      'Kindoo Config',
       'Buildings',
       'Wards',
       'Organizations',

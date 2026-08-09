@@ -11,6 +11,7 @@
 import {
   deleteDoc,
   getDoc,
+  getDocs,
   runTransaction,
   serverTimestamp,
   setDoc,
@@ -743,6 +744,109 @@ export function useUpsertKindooSiteMutation() {
           );
         });
       }
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+// ---- Home Kindoo site -----------------------------------------------
+//
+// The stake's own Kindoo environment. Normally written by the
+// extension's configure wizard, which discovers the EID from the live
+// Kindoo session; this is the manual path, gated to superadmins in the
+// UI because a wrong EID silently points every Kindoo operation at
+// another environment.
+//
+// It also breaks a genuine deadlock. The extension resolves an active
+// EID to a stake only among stakes that ALREADY record that EID, so a
+// stake whose home site has never been configured can never be reached
+// from the panel to configure it — and if a sibling stake has the same
+// environment as a foreign site, the panel silently resolves to the
+// sibling instead.
+//
+// `kindoo_config` is written by DOTTED PATH, mirroring the extension's
+// `writeKindooConfig`. A whole-map literal replaces the map, dropping
+// any key not in the literal — today that would silently rewrite
+// `site_name`, and tomorrow whatever a later phase adds. (It is not the
+// rules validator that forces this: `validKindooConfig` reads
+// `request.resource.data`, i.e. the MERGED result, so a dotted write
+// satisfies it just as well.)
+
+export interface HomeKindooSiteInput {
+  /** → `stake.kindoo_expected_site_name`. */
+  siteName: string;
+  /** → `stake.kindoo_config.site_id`. */
+  eid: number;
+}
+
+export function useUpdateHomeKindooSiteMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: HomeKindooSiteInput) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      const siteName = input.siteName.trim();
+      const ref = stakeRef(db, sid);
+
+      const [stakeSnap, sitesSnap] = await Promise.all([
+        getDoc(ref),
+        getDocs(kindooSitesCol(db, sid)),
+      ]);
+      const stake = stakeSnap.data() as Stake | undefined;
+
+      // Home/foreign collision guard — the mirror of the one the
+      // extension's `writeKindooConfig` already applies, and this is the
+      // only path where a human types the EID rather than the wizard
+      // discovering it. `identifyActiveSite` tests home FIRST, so a home
+      // `site_id` equal to some foreign `kindoo_eid` reclassifies that
+      // foreign site as home for every Sync run and waves home-ward
+      // requests onto the foreign environment through the Phase 3 guard.
+      const collision = sitesSnap.docs
+        .map((d) => d.data() as KindooSite)
+        .find((s) => typeof s.kindoo_eid === 'number' && s.kindoo_eid === input.eid);
+      if (collision) {
+        throw new Error(
+          `EID ${input.eid} is already configured as the foreign Kindoo site ` +
+            `“${collision.display_name}”. Setting it as home would trap the foreign ` +
+            `environment on the stake doc.`,
+        );
+      }
+
+      // `kindoo_config.site_name` is Kindoo's OWN display name, captured
+      // by the wizard from the live session — `homeSiteName()` prefers it
+      // because it is what a manager sees in the tab they are being asked
+      // to open. The form's name field edits `kindoo_expected_site_name`,
+      // a different value, so writing it over the capture would rename
+      // what the Requests Queue tells people to open. Preserve it; seed
+      // it only when the map does not exist yet (the validator needs the
+      // key present).
+      const existingSiteName = stake?.kindoo_config?.site_name;
+      const nextSiteName =
+        typeof existingSiteName === 'string' && existingSiteName.length > 0
+          ? existingSiteName
+          : siteName;
+
+      // Don't freeze the fallback. The form prefills the name from
+      // `stake_name` when no override is set, so an EID-only edit would
+      // otherwise persist today's stake name as an override and strand it
+      // there through any later rename.
+      const hadOverride = (stake?.kindoo_expected_site_name ?? '').trim().length > 0;
+      const writeOverride = hadOverride || siteName !== (stake?.stake_name ?? '');
+
+      await updateDoc(ref, {
+        ...(writeOverride ? { kindoo_expected_site_name: siteName } : {}),
+        'kindoo_config.site_id': input.eid,
+        'kindoo_config.site_name': nextSiteName,
+        'kindoo_config.configured_at': serverTimestamp(),
+        'kindoo_config.configured_by': actor,
+        last_modified_at: serverTimestamp(),
+        last_modified_by: actor,
+        lastActor: actor,
+      });
     },
     onSuccess: () => {
       void qc.invalidateQueries();

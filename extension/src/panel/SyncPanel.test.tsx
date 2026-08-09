@@ -154,6 +154,45 @@ describe('SyncPanel', () => {
     expect(screen.queryByTestId('sba-sync-ignored')).toBeNull();
   });
 
+  it('never spends a Kindoo enrichment call on a user the ignore list drops', async () => {
+    // The whole point of the list is that another stake's members cost
+    // us nothing. `detect` drops them, but Phase C runs first — so
+    // without the pre-filter each one bills a `getUserDoorGrants`
+    // round-trip on every single Sync run.
+    const user = userEvent.setup();
+    const b = bundle();
+    b.stake = { ...b.stake, kindoo_ignored_wards: ['Aspen Grove Ward'] } as typeof b.stake;
+    getSyncDataMock.mockResolvedValue(b);
+    const ignored = {
+      euid: 'e1',
+      userId: 'u1',
+      username: 'bishop@aspengrove.example',
+      description: 'Aspen Grove Ward (Bishop)',
+      isTempUser: false,
+      accessSchedules: [],
+    };
+    const ours = {
+      euid: 'e2',
+      userId: 'u2',
+      username: 'ours@example.com',
+      description: 'Maple Ward (Bishop)',
+      isTempUser: false,
+      accessSchedules: [],
+    };
+    listAllEnvironmentUsersMock.mockResolvedValue([ignored, ours]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+
+    // Third positional arg is the user list handed to enrichment.
+    const enrichedArg = enrichUsersWithDerivedBuildingsMock.mock.calls[0]![2] as Array<{
+      username: string;
+    }>;
+    expect(enrichedArg.map((u) => u.username)).toEqual(['ours@example.com']);
+    // Still counted — the ignored user reaches `detect`, un-enriched.
+    expect(screen.getByTestId('sba-sync-ignored')).toHaveTextContent(/1\s*ignored/);
+  });
+
   it('counts users dropped by the ignore list instead of reporting them as drift', async () => {
     const user = userEvent.setup();
     const b = bundle();
@@ -1203,7 +1242,7 @@ describe('SyncPanel', () => {
     await user.click(screen.getByTestId('sba-sync-run'));
     await waitFor(() => expect(screen.getByTestId('sba-sync-unknown-site')).toBeInTheDocument());
     expect(screen.getByTestId('sba-sync-unknown-site-message')).toHaveTextContent(
-      'This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Sites or switch to a known site.',
+      'This Kindoo site is not configured in SBA. Add it in Configuration → Kindoo Config or switch to a known site.',
     );
     // Report rendering is suppressed entirely.
     expect(screen.queryByTestId('sba-sync-report')).toBeNull();

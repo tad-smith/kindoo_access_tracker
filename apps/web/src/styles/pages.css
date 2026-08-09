@@ -1190,6 +1190,34 @@
 .kd-config-section-header h2 {
   margin: 0;
 }
+/* Leading sub-section: sits ABOVE the tab's primary list, so its rule
+   goes below it rather than above. */
+.kd-config-subsection-lead {
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--kd-border);
+}
+.kd-config-subsection-lead h2 {
+  margin: 0 0 12px;
+}
+
+/* Inline edit form for a sub-section — stacked label/field pairs, no
+   dialog. */
+.kd-config-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  max-width: 420px;
+}
+.kd-config-inline-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  font-size: 0.9em;
+}
+
 /* A second list under a tab's primary one, fenced off by a rule so the
    two don't read as one table. */
 .kd-config-subsection {
@@ -1199,18 +1227,6 @@
 }
 .kd-config-subsection h2 {
   margin: 0 0 12px;
-}
-
-/* Single free-text field + its Add button, for list rows too small to
-   deserve a dialog. */
-.kd-inline-add {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.kd-inline-add > button {
-  flex: 0 0 auto;
 }
 
 .kd-config-row-actions {

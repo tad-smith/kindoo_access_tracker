@@ -6,6 +6,55 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+Status: pending
+Owner: @web-engineer
+Phase: Kindoo Sites (§15)
+
+Two follow-ups from PR #263's review. Neither blocks; both are about the edit path added in [T-90].
+
+**Changing an existing home EID strands every home building's `kindoo_rule`.** The extension's configure wizard writes the EID and the per-building rule rows in one batch, so the two have never moved apart; this form is the first writer that moves the EID alone. Afterwards, provisioning applies the *old* environment's rule ids against the *new* environment. The usual safety net — "a building with no `kindoo_rule` forces the wizard" — does not fire, because the mappings are present, just wrong. Options: clear `kindoo_rule` on the home-site buildings when `site_id` actually changes (forcing a wizard re-run), or warn on the confirm and leave it to the operator. Prefer the former; a silently wrong rule id is the worse failure.
+
+**Edit is not gated on the stake doc having loaded.** `useForm` captures `defaultValues` once at mount, so opening the editor before `stake.data` lands prefills `''` / `0`; saving then overwrites an existing `kindoo_expected_site_name` with whatever was typed against the empty form. Same clash-class T-90 just fixed for `kindoo_config.site_name`. Narrow window, and the component already gates two other things on snapshots arriving — gate the Edit button on `stake.data !== undefined` the same way.
+
+## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
+Status: pending
+Owner: @web-engineer, @backend-engineer
+Phase: Kindoo Sites (§15)
+
+Split out of [T-90], where it was built, found not to work end to end, and removed before merge. The Home Kindoo Site editor ships manager-only; this is the case it was originally for — a platform superadmin configuring a stake they hold no role on, which is how a stake whose home EID was never recorded gets un-stranded (see T-90 and `spec.md` §15 for why the extension panel cannot do it).
+
+**Three layers, all required. Shipping any one alone is authority or UI with no consumer.**
+
+1. **Active-stake resolution.** The blocker found last. A superadmin holding no role resolves **no active stake**, so the page's reads never fire — an E2E showed `?stake=` consumed and stripped, no console errors, and nothing loading. `resolveActiveStake`'s URL tier already has a superadmin-permissive branch and `useActiveStake` retains the param until validated, so the obvious claims-timing race is *not* the cause; the module needs actual investigation. Start here — the other two are unverifiable until a stake resolves.
+2. **Sub-collection reads.** Widen read to `isPlatformSuperadmin()` on exactly five: `wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`. **Not `seats`, not `requests`** — those carry member names and emails, and widening them hands every superadmin the roster of every stake (operator decision, 2026-08-09). Consequence to accept: guards keyed on seats/requests (building rename + delete, organization delete) never hydrate for this persona and their buttons stay disabled — safe, and those are writes rules deny them anyway.
+3. **`stakes/{stakeId}` update.** Add `isPlatformSuperadmin()` **pinning `setup_complete` and `bootstrap_admin_email`**. Not optional: `isBootstrapAdmin` is exactly those two fields, so an unpinned grant re-opens the bootstrap hatch on any existing stake and `syncManagersClaims` turns it into a real manager claim. Ship with tests for both escalation attempts and one proving the pin doesn't narrow the manager path the wizard's own flip uses.
+
+Two false leads, recorded so they aren't re-derived: the **route gate is not a blocker** (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`, so a superadmin already passes every manager-gated route), and the Stake List link therefore never "bounced a superadmin out" of the Dashboard — it failed on data reads.
+
+Verification this needs and T-90 lacked: an E2E for a token carrying **only** `isPlatformSuperadmin` (no `stakes` block) that reaches Kindoo Config from the Stake List, sees the foreign-sites list actually populated (a denied read renders the *empty state*, which would tell an operator a site they're about to collide with doesn't exist), and saves a home EID. Unit tests mock Firestore and rules tests don't render, so nothing below E2E catches this.
+
+## [T-90] Kindoo Config tab — Home Kindoo Site, section renames, Sync pre-filter
+Status: done (2026-08-08 — `feat/kindoo-config-tab`)
+Owner: @web-engineer, @extension-engineer
+Phase: Kindoo Sites (§15)
+
+**Done.** Follow-ups to [T-88], plus the two items PR #261's review filed as non-blocking. Full write-up in `docs/changelog/kindoo-config-tab.md`. (Numbered T-90, not T-89: PR #260 landed its own T-89 on main while this branch was open — git merges duplicate ids without a conflict when they arrive in different positions, so check the number is unique and strictly greater after folding a parallel branch.)
+
+- Configuration tab **"Kindoo Sites" → "Kindoo Config"**, now three sections: Home Kindoo Site, Foreign Kindoo Sites (renamed), Wards to Ignore in Kindoo. Tab **key** stays `kindoo-sites` — it is in the URL.
+- **Home Kindoo Site** section: shows `kindoo_expected_site_name` (falling back to `stake_name`) + `kindoo_config.site_id`, superadmin-editable. Closes the gap where `kindoo_expected_site_name` had no writer anywhere and `kindoo_config` was extension-only — which is what made a never-configured stake unreachable from the extension panel (its EID isn't recorded, so it isn't a resolution candidate).
+- **Sync pre-filter** — the ignore-list drop moved ahead of the door-grant enrichment loop; it was costing one Kindoo round-trip per ignored member per run.
+- **`(` guard** on ignore-list entries, and the section moved to the header-button + dialog pattern.
+- **Stake List** stake-name link retargeted from the manager Dashboard to Configuration — a superadmin opening someone else's stake wants its settings, not its request queue. Both routes already admitted a superadmin, so this is usefulness, not access.
+
+**The superadmin-without-a-manager-role path was built here and removed before merge** — it needed three layers, only one of which was rules, and it never worked end to end. Split to [T-91]; the editor ships manager-only. No rules change in T-90 as merged.
+
+Two things worth not re-deriving.
+
+`kindoo_config` is written by **dotted path**. A whole-map literal drops keys — which is how an EID-only edit was clobbering `kindoo_config.site_name`, the value `homeSiteName()` uses to tell a manager which Kindoo tab to open. Note the rules validator does *not* force the whole-map write: it reads the merged result.
+
+The EID input carries **no `min` attribute** — native constraint validation suppresses the submit event, so React never sees it and the zod message can never render.
+
 ## [T-89] E2E coverage for Complete Setup against real emulators + rules
 Status: pending
 Owner: @web-engineer
@@ -14,6 +63,7 @@ Phase: cross-cutting
 No E2E exercises the Complete Setup button at all. `e2e/tests/manager-admin/bootstrap-wizard.spec.ts` covers the setup-complete gate's routing decision (bootstrap admin sees the wizard, non-admin sees SetupInProgress, all four step tabs render) but never clicks Complete Setup or asserts on `stake.setup_complete` flipping. `apps/web/src/features/bootstrap/hooks.test.tsx` mocks `firebase/firestore` and `../../lib/firebase` (which wraps `auth`) wholesale, so `useCompleteSetupMutation`'s claim-verification gate — `canAdministerStakePostFlip` / `waitForPostFlipAdminAccess` — never runs against real custom claims or real `firestore.rules`; the unit tests can only assert what the mocked claims object says, not whether that predicate actually matches what the rules require.
 
 This is why the gate's predicate was wrong in both directions on PR #260: first narrower than the rule (`manager` claim alone, correct as it turned out, but justified at the time only by a hand-reading of the rules), then widened to mirror the post-flip stake-doc read rule exactly (`isAnyMember || isPlatformSuperadmin`) on the reasoning that anything narrower would block a principal the read rule admits — also argued from a hand-reading, and wrong, because the read rule isn't the invariant that matters (see `architecture.md` D30). Both times, nothing in CI actually exercised the gate against emulated rules to catch the error; both times a reviewer caught it by re-reading `firestore.rules` a third time. An E2E that signs in as the bootstrap admin, drives the wizard through all four steps, clicks Complete Setup, and asserts `setup_complete` flips true — plus a case that starts with no qualifying claim on the token and asserts the retry-toast path fires and `setup_complete` stays `false` — would verify the gate's actual behavior against the emulator's real rule evaluation instead of resting on argument.
+
 ## [T-88] Wards to Ignore in Kindoo — skip another SBA stake's wards during Sync
 Status: done (2026-08-08 — `feat/kindoo-ignored-wards`)
 Owner: @web-engineer, @extension-engineer

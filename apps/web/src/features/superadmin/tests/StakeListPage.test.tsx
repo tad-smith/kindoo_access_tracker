@@ -101,10 +101,10 @@ function mockStakes(rows: StakeWithId[] | undefined, isLoading = false) {
 // Minimal router fixture so `<Link>` inside the page can resolve.
 async function renderPage() {
   const rootRoute = createRootRoute({ component: () => <SuperadminStakeListPage /> });
-  const dash = createRoute({
+  const configuration = createRoute({
     getParentRoute: () => rootRoute,
-    path: 'manager/dashboard',
-    component: () => <div>dashboard</div>,
+    path: 'manager/configuration',
+    component: () => <div>configuration</div>,
   });
   const catchAll = createRoute({
     getParentRoute: () => rootRoute,
@@ -112,7 +112,7 @@ async function renderPage() {
     component: () => <Outlet />,
   });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([dash, catchAll]),
+    routeTree: rootRoute.addChildren([configuration, catchAll]),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   });
   await router.load();
@@ -180,11 +180,11 @@ describe('<SuperadminStakeListPage />', () => {
     // resolves the target stake on arrival.
     expect(screen.getByTestId('superadmin-stake-link-csnorth')).toHaveAttribute(
       'href',
-      '/manager/dashboard?stake=csnorth',
+      '/manager/configuration?stake=csnorth',
     );
     expect(screen.getByTestId('superadmin-stake-link-eaststake')).toHaveAttribute(
       'href',
-      '/manager/dashboard?stake=eaststake',
+      '/manager/configuration?stake=eaststake',
     );
   });
 
@@ -209,7 +209,7 @@ describe('<SuperadminStakeListPage />', () => {
     expect(screen.getByTestId('superadmin-stake-slug-csnorth')).toHaveTextContent('csnorth');
     expect(screen.getByTestId('superadmin-stake-link-csnorth')).toHaveAttribute(
       'href',
-      '/manager/dashboard?stake=csnorth',
+      '/manager/configuration?stake=csnorth',
     );
     expect(screen.getByTestId('apply-fixes-menu-stub-csnorth')).toBeInTheDocument();
   });
