@@ -21,6 +21,12 @@ const baseURL = `http://localhost:${PORT}`;
 
 const isCI = !!process.env.CI;
 
+// Must track the default in `fixtures/emulator.ts` — the bundle and the
+// fixtures have to address the same emulator namespace. Honours the same
+// `E2E_FIREBASE_PROJECT` override, so pointing a run at an isolated
+// project still moves both halves together.
+const PROJECT_ID = process.env['E2E_FIREBASE_PROJECT'] ?? 'kindoo-staging';
+
 export default defineConfig({
   testDir: './tests',
   // The user-guide capture utility (`tests/screenshots.capture.ts`) is
@@ -71,8 +77,16 @@ export default defineConfig({
     // import-now, and install-scheduled-jobs specs DO require all three
     // emulators to be running at test time (CI launches them via
     // `firebase emulators:exec --only firestore,auth,functions,hosting`).
-    command:
-      'VITE_USE_FIRESTORE_EMULATOR=true VITE_USE_AUTH_EMULATOR=true VITE_USE_FUNCTIONS_EMULATOR=true pnpm --filter @kindoo/web build && pnpm --filter @kindoo/web preview',
+    //
+    // `VITE_FIREBASE_PROJECT_ID` is pinned to the namespace the fixtures
+    // seed (`fixtures/emulator.ts`). `vite build` runs in mode
+    // `production`, so it picks up `apps/web/.env.production` — which is
+    // gitignored, and on an operator's machine pins `kindoo-prod`. The
+    // bundle then queries a namespace nothing seeded and every spec
+    // fails against an empty database. CI and fresh worktrees have no
+    // such file and fall through to the same default, so the breakage is
+    // local-only and invisible on PRs.
+    command: `VITE_USE_FIRESTORE_EMULATOR=true VITE_USE_AUTH_EMULATOR=true VITE_USE_FUNCTIONS_EMULATOR=true VITE_FIREBASE_PROJECT_ID=${PROJECT_ID} pnpm --filter @kindoo/web build && pnpm --filter @kindoo/web preview`,
     url: baseURL,
     reuseExistingServer: !isCI,
     timeout: 120_000,
