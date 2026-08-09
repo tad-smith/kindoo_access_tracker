@@ -460,6 +460,14 @@ function ReportView({
         Found <strong>{driftCount}</strong> drift item{driftCount === 1 ? '' : 's'},{' '}
         <strong>{reviewCount}</strong> need review. SBA: <strong>{result.seatCount}</strong> seats.
         Kindoo: <strong>{result.kindooCount}</strong> users.
+        {result.ignoredCount > 0 && (
+          <>
+            {' '}
+            <span data-testid="sba-sync-ignored" title="Configured under Wards to Ignore in Kindoo">
+              <strong>{result.ignoredCount}</strong> ignored.
+            </span>
+          </>
+        )}
       </p>
       <div className="sba-sync-filters" role="group" aria-label="Filter discrepancies">
         <FilterChip current={filter} value="all" label="All" onFilter={onFilter} />

@@ -150,6 +150,31 @@ describe('SyncPanel', () => {
     await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/SBA:\s*0\s*seats/);
     expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/Kindoo:\s*0\s*users/);
+    // No ignore list configured → the chip stays off.
+    expect(screen.queryByTestId('sba-sync-ignored')).toBeNull();
+  });
+
+  it('counts users dropped by the ignore list instead of reporting them as drift', async () => {
+    const user = userEvent.setup();
+    const b = bundle();
+    b.stake = { ...b.stake, kindoo_ignored_wards: ['Aspen Grove Ward'] } as typeof b.stake;
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([
+      {
+        euid: 'e1',
+        userId: 'u1',
+        username: 'bishop@aspengrove.example',
+        description: 'Aspen Grove Ward (Bishop)',
+        isTempUser: false,
+        accessSchedules: [],
+      },
+    ]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-summary')).toHaveTextContent(/Kindoo:\s*0\s*users/);
+    expect(screen.getByTestId('sba-sync-ignored')).toHaveTextContent(/1\s*ignored/);
+    expect(screen.queryByTestId('sba-sync-list')).toBeNull();
   });
 
   it('updates progress text as the per-user enrichment loop ticks', async () => {

@@ -6,9 +6,9 @@
 // immutable-`building_id` create semantics.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Building, Ward } from '@kindoo/shared';
 import { buildingDeleteBlocker, duplicateBuildingNameBlocker } from './hooks';
 
@@ -120,9 +120,38 @@ vi.mock('firebase/firestore', async () => {
   };
 });
 
+// `getIdTokenMock` backs `refreshIdToken()` and `getIdTokenResultMock`
+// backs the claim read in `waitForPostFlipAdminAccess` (both via
+// `auth.currentUser`), which `useCompleteSetupMutation` calls before
+// flipping `setup_complete`. `getIdTokenResultMock` defaults to a token
+// that already carries the `manager` claim on the active stake
+// ('csnorth', per the `useActiveStake` mock below) so every other
+// describe block (none of which touch `auth`) is unaffected; the
+// `useCompleteSetupMutation` tests below override behaviour per case.
+// `vi.hoisted` is required here (unlike the plain top-level `const`s
+// above) because the `vi.mock` factory below reads `authMock` as a
+// value at mock-registration time rather than closing over it inside a
+// lazily-invoked function — without `vi.hoisted` that read lands in the
+// TDZ, since `vi.mock` calls are hoisted above ordinary `const`s.
+const { getIdTokenMock, getIdTokenResultMock, authMock } = vi.hoisted(() => {
+  const getIdTokenMock = vi.fn().mockResolvedValue(undefined);
+  const getIdTokenResultMock = vi
+    .fn()
+    .mockResolvedValue({ claims: { stakes: { csnorth: { manager: true } } } });
+  const authMock: {
+    currentUser: {
+      getIdToken: typeof getIdTokenMock;
+      getIdTokenResult: typeof getIdTokenResultMock;
+    } | null;
+  } = {
+    currentUser: { getIdToken: getIdTokenMock, getIdTokenResult: getIdTokenResultMock },
+  };
+  return { getIdTokenMock, getIdTokenResultMock, authMock };
+});
+
 vi.mock('../../lib/firebase', () => ({
   db: { __sentinel: 'db' },
-  auth: { currentUser: null },
+  auth: authMock,
 }));
 
 vi.mock('../../lib/docs', async () => {
@@ -144,6 +173,11 @@ vi.mock('../../lib/docs', async () => {
       path: `stakes/${stakeId}`,
       id: stakeId,
     }),
+    kindooManagerRef: (_db: unknown, stakeId: string, canonical: string) => ({
+      __sentinel: 'kindooManagerRef',
+      path: `stakes/${stakeId}/kindooManagers/${canonical}`,
+      id: canonical,
+    }),
   };
 });
 
@@ -160,7 +194,12 @@ vi.mock('../../lib/useActiveStake', () => ({
   useActiveStake: () => 'csnorth',
 }));
 
-import { useAddBuildingMutation, useAddWardMutation, useStep1Mutation } from './hooks';
+import {
+  useAddBuildingMutation,
+  useAddWardMutation,
+  useCompleteSetupMutation,
+  useStep1Mutation,
+} from './hooks';
 
 function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({
@@ -175,6 +214,17 @@ beforeEach(() => {
   getDocMock.mockClear();
   serverTimestampMock.mockClear();
   runTransactionMock.mockClear();
+  getIdTokenMock.mockClear();
+  getIdTokenMock.mockReset().mockResolvedValue(undefined);
+  getIdTokenResultMock.mockClear();
+  getIdTokenResultMock
+    .mockReset()
+    .mockResolvedValue({ claims: { stakes: { csnorth: { manager: true } } } });
+  authMock.currentUser = { getIdToken: getIdTokenMock, getIdTokenResult: getIdTokenResultMock };
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('useStep1Mutation', () => {
@@ -331,5 +381,193 @@ describe('useAddWardMutation', () => {
       }),
     ).rejects.toThrow(/Ward name is required/i);
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Hook-level: complete setup --------------------------------------
+//
+// The defect this closes: once `setup_complete` flips true,
+// `isBootstrapAdmin`/`isSetupInProgressReadable` (firestore.rules) go
+// silent, and the client needs the `manager` claim
+// `useEnsureBootstrapAdmin` minted earlier in the wizard already loaded
+// onto its cached ID token — or the post-flip stake-doc read
+// permission-denies and the admin bounces to NotAuthorized.
+//
+// A refresh alone doesn't prove the claim arrived — a transient failure
+// of the wizard's fire-and-forget auto-add, or a silent
+// `uidForCanonical` miss in `syncManagersClaims`, can leave the token
+// claimless even after a fresh fetch. So on top of the ordering
+// assertion (refresh lands before the write goes out — a call-count
+// assertion alone is exactly what let the equivalent D28(d) bug ship),
+// the tests below assert the fail-closed gate: a claim that never
+// lands must block the write outright, not just log a warning and
+// proceed.
+describe('useCompleteSetupMutation', () => {
+  it('refreshes the ID token before flipping setup_complete, not in onSuccess after it', async () => {
+    const callOrder: string[] = [];
+    getIdTokenMock.mockImplementation(async () => {
+      callOrder.push('refresh');
+    });
+    updateDocMock.mockImplementationOnce(async () => {
+      callOrder.push('write');
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    expect(callOrder).toEqual(['refresh', 'write']);
+    // Force-refresh, not a read of the (possibly stale) cached token.
+    expect(getIdTokenMock).toHaveBeenCalledWith(true);
+  });
+
+  it('leaves setup_complete unwritten when the token refresh fails', async () => {
+    getIdTokenMock.mockRejectedValue(new Error('network blip'));
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await expect(result.current.mutateAsync()).rejects.toThrow(/network blip/);
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('still writes setup_complete=true with the lastActor integrity field', async () => {
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [ref, body] = updateDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth' });
+    expect(body).toMatchObject({
+      setup_complete: true,
+      last_modified_at: '__server_timestamp__',
+      last_modified_by: { email: 'admin@example.com', canonical: 'admin@example.com' },
+      lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    });
+  });
+
+  it('proceeds with the flip once the manager claim is confirmed present after the refresh', async () => {
+    getIdTokenResultMock.mockResolvedValue({
+      claims: { stakes: { csnorth: { manager: true } } },
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    await result.current.mutateAsync();
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalledTimes(1));
+  });
+
+  // Regression guard for the widened-predicate mistake on PR #260: a
+  // second reviewer pass initially argued the gate should match the
+  // post-flip stake-doc *read* rule (`isAnyMember(stakeId) ||
+  // isPlatformSuperadmin()`, firestore.rules), broader than `manager`
+  // alone — then, on the same PR, found that reasoning wrong. Passing
+  // this gate must mean the admin can still ADMINISTER the stake
+  // post-flip, not merely read its parent doc: `kindooManagers`
+  // (:780-785), `wards` (:704) and `buildings` (:715) all stay gated on
+  // `isManager(stakeId) || isBootstrapAdmin(stakeId)` post-flip — no
+  // `isPlatformSuperadmin`, `stake`, or `wards` disjunct — and nothing
+  // lets a platform superadmin write `kindooManagers` to recover. Each
+  // of these three principals would satisfy the (wrong) widened check
+  // and the read rule, but must NOT be allowed to proceed here.
+  it('does not proceed with the flip for a platform superadmin with no manager claim on this stake', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({ claims: { isPlatformSuperadmin: true } });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('does not proceed with the flip for a stake-level member with no manager claim', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({
+      claims: { stakes: { csnorth: { manager: false, stake: true } } },
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('does not proceed with the flip for a bishopric ward member with no manager claim', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({
+      claims: { stakes: { csnorth: { manager: false, wards: ['CO'] } } },
+    });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  // The gap PR #260's reviewer found: the prior fix refreshed and
+  // proceeded regardless. A claim that never lands must leave the stake
+  // doc untouched — asserted on the write itself, not merely on the
+  // rejection, since a rejected promise with a write that fired anyway
+  // would still strand the admin.
+  //
+  // Second gap the same reviewer found: even fail-closed, the earlier
+  // fix promised a recovery ("wait a moment and try again") that could
+  // never happen — the `kindooManagers` doc `useEnsureBootstrapAdmin`
+  // already wrote at wizard mount means its own early-return-if-active
+  // guard would never re-fire, so a claim that never minted never would.
+  // The fix re-issues that write on the failure path so the *next*
+  // Complete Setup click has a real chance. Asserted here as a `setDoc`
+  // call — not a `useEnsureBootstrapAdmin`-mutation call, since the
+  // hooks are independent and only the underlying Firestore write is
+  // shared.
+  it('re-issues the kindooManagers write before failing, and updateDoc is still never called', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({ claims: {} });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    expect(updateDocMock).not.toHaveBeenCalled();
+    expect(setDocMock).toHaveBeenCalledTimes(1);
+    const [ref, body, options] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/kindooManagers/admin@example.com' });
+    expect(body).toMatchObject({
+      member_canonical: 'admin@example.com',
+      member_email: 'admin@example.com',
+      active: true,
+      lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+    });
+    expect(options).toEqual({ merge: true });
+  });
+
+  // The re-poll decision: re-issue-then-throw, not re-issue-then-repoll
+  // (see the `useCompleteSetupMutation` doc comment for the trade-off).
+  // Proven here by call count — exactly one bounded poll's worth of
+  // `getIdTokenResult` reads (the same `CLAIM_POLL_ITERATIONS` bound the
+  // "later retry" test below exercises), not two, confirming the
+  // re-issue above doesn't kick off a second in-call poll.
+  it('does not start a second poll after re-issuing — exactly one bounded wait per call', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock.mockResolvedValue({ claims: {} });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    const assertion = expect(pending).rejects.toThrow(/setup access is still syncing/i);
+    await act(() => vi.runAllTimersAsync());
+    await assertion;
+    // CLAIM_POLL_ITERATIONS (10) reads for the single bounded wait; a
+    // re-poll-after-reissue design would double this.
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(10);
+  });
+
+  // Proves the retry loop actually re-checks rather than the first read
+  // happening to already succeed (the previous test's mock never
+  // resolves the claim; this one resolves it two retries in).
+  it('proceeds with the flip when the manager claim arrives on a later retry', async () => {
+    vi.useFakeTimers();
+    getIdTokenResultMock
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: {} })
+      .mockResolvedValueOnce({ claims: { stakes: { csnorth: { manager: true } } } });
+    const { result } = renderHook(() => useCompleteSetupMutation(), { wrapper });
+    const pending = result.current.mutateAsync();
+    await act(() => vi.runAllTimersAsync());
+    await pending;
+    expect(getIdTokenResultMock).toHaveBeenCalledTimes(3);
+    expect(updateDocMock).toHaveBeenCalledTimes(1);
   });
 });

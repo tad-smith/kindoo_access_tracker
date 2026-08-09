@@ -28,6 +28,8 @@ export const stakeSchema = z.object({
   notifications_enabled: z.boolean(),
   // Optional — existing stake docs predate the field. Absent ⇒ off.
   eq_president_app_access: z.boolean().optional(),
+  // Optional — absent on every stake that has never configured one.
+  kindoo_ignored_wards: z.array(z.string()).optional(),
   // Operator-only, console-set. The http(s) scheme requirement is
   // enforced where it's consumed (EmailService.buildLink), not here —
   // a stored value that fails it is ignored, not a parse error.

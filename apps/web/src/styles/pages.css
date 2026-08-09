@@ -1190,6 +1190,29 @@
 .kd-config-section-header h2 {
   margin: 0;
 }
+/* A second list under a tab's primary one, fenced off by a rule so the
+   two don't read as one table. */
+.kd-config-subsection {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--kd-border);
+}
+.kd-config-subsection h2 {
+  margin: 0 0 12px;
+}
+
+/* Single free-text field + its Add button, for list rows too small to
+   deserve a dialog. */
+.kd-inline-add {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.kd-inline-add > button {
+  flex: 0 0 auto;
+}
+
 .kd-config-row-actions {
   display: inline-flex;
   gap: 8px;

@@ -30,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { resolveWardBuilding } from '@kindoo/shared';
+import { collidesWithOwnWard, normaliseIgnoredWard, resolveWardBuilding } from '@kindoo/shared';
 import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -59,6 +59,7 @@ import {
   useRequests,
   useSeats,
   useStakeDoc,
+  useUpdateIgnoredWardsMutation,
   useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
@@ -794,6 +795,130 @@ function KindooSitesTab() {
         }}
         onClose={() => setOpenMode('closed')}
       />
+
+      <IgnoredWardsSection />
+    </div>
+  );
+}
+
+// ---- Wards to Ignore in Kindoo --------------------------------------
+//
+// The mirror image of the Kindoo Sites list above. That list is for
+// wards of OURS that live in someone else's Kindoo site; this one is for
+// wards of THEIRS that live in one of ours. Both arise from the same
+// building-sharing arrangement, which is why they sit on one tab.
+//
+// Entry is a bare text input rather than a dialog — one free-text field
+// with no second field to pair it with. Adds and deletes write the whole
+// array straight through; there is no draft state to save.
+
+function IgnoredWardsSection() {
+  const stake = useStakeDoc();
+  const wards = useWards();
+  const update = useUpdateIgnoredWardsMutation();
+  const [draft, setDraft] = useState('');
+
+  const ignored = useMemo(() => stake.data?.kindoo_ignored_wards ?? [], [stake.data]);
+  const wardNames = useMemo(() => (wards.data ?? []).map((w) => w.ward_name), [wards.data]);
+
+  // Gate Add on the wards snapshot arriving: the own-ward guard below
+  // runs against it, and an empty array would wave through an entry
+  // that silently does nothing.
+  const ready = stake.data !== undefined && wards.data !== undefined;
+
+  const trimmed = draft.trim();
+  const problem = !trimmed
+    ? null
+    : ignored.some((w) => normaliseIgnoredWard(w) === normaliseIgnoredWard(trimmed))
+      ? 'That ward is already on the list.'
+      : collidesWithOwnWard(trimmed, wardNames)
+        ? `“${trimmed}” is one of your own wards — ignoring it would hide its own Sync rows.`
+        : null;
+
+  const add = () => {
+    if (!ready || !trimmed || problem) return;
+    update
+      .mutateAsync([...ignored, trimmed])
+      .then(() => {
+        setDraft('');
+        toast('Ward added to the ignore list.', 'success');
+      })
+      .catch((err) => toast(errorMessage(err), 'error'));
+  };
+
+  const remove = (name: string) => {
+    update
+      .mutateAsync(ignored.filter((w) => w !== name))
+      .then(() => toast('Ward removed from the ignore list.', 'success'))
+      .catch((err) => toast(errorMessage(err), 'error'));
+  };
+
+  return (
+    <div className="kd-config-subsection" data-testid="config-ignored-wards">
+      <h2>Wards to Ignore in Kindoo</h2>
+      <p className="kd-form-hint">
+        Wards that appear in one of your Kindoo sites but are managed by a different stake in Stake
+        Building Access — typically a neighbouring stake whose wards meet in one of your buildings
+        and whose managers provision their own members. Sync skips them, so they aren’t reported as
+        members missing a seat. Enter the ward exactly as it appears in Kindoo descriptions, without
+        the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>.
+      </p>
+
+      <div className="kd-inline-add">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="Ward name as Kindoo shows it"
+          aria-label="Ward to ignore"
+          aria-invalid={problem ? true : undefined}
+          disabled={!ready}
+          data-testid="config-ignored-ward-input"
+        />
+        <Button
+          onClick={add}
+          disabled={!ready || !trimmed || problem !== null || update.isPending}
+          data-testid="config-ignored-ward-add"
+        >
+          Add
+        </Button>
+      </div>
+      {problem && (
+        <p className="kd-form-error" data-testid="config-ignored-ward-error">
+          {problem}
+        </p>
+      )}
+
+      {ignored.length === 0 ? (
+        <p className="kd-empty-state" data-testid="config-ignored-wards-empty">
+          No wards ignored. Every Kindoo user is compared against this stake’s seats.
+        </p>
+      ) : (
+        <ul className="kd-config-rows" data-testid="config-ignored-wards-list">
+          {ignored.map((name) => (
+            <li key={name} data-testid={`config-ignored-ward-row-${name}`}>
+              <span>
+                <strong>{name}</strong>
+              </span>
+              <span className="kd-config-row-actions">
+                <Button
+                  variant="danger"
+                  disabled={update.isPending}
+                  onClick={() => remove(name)}
+                  data-testid={`config-ignored-ward-delete-${name}`}
+                >
+                  Remove
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
