@@ -6,13 +6,9 @@
 // (~310 of 313 csnorth users in production), so we can't derive
 // auto-user buildings from it. This module fills the gap:
 //
-//   per-rule doors  ─┐
-//                    ├─► strict-subset → effective rule ids → buildings
-//   per-user doors  ─┘
-//
-// A user is considered to "have" a rule iff EVERY DoorID in that rule's
-// door set is present in the user's door set. Strict subset; partial
-// overlap doesn't claim the rule.
+//   per-rule doors  ─┐   ┌─ strict subset ─► effective rule ids ─┐
+//                    ├───┤                                       ├─► buildings
+//   per-user doors  ─┘   └─ any overlap ───► church rule ids ────┘
 //
 // Two building sets come out of the same per-user door fetch, and they
 // ask DIFFERENT questions, so they use different rule predicates:
