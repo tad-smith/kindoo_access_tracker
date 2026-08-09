@@ -12,7 +12,7 @@ import {
   clearEmulators,
   hasEmulators,
   requireEmulators,
-  waitFor,
+  claimsAfterClear,
 } from './lib/emulator.js';
 // CI boots this suite under `--only firestore,auth,functions`, so the
 // `onAuthUserCreate` v1 auth trigger is live and fires (async, via
@@ -36,29 +36,6 @@ const makeEvent = (stakeId: string, memberCanonical: string) =>
 
 async function runSync(stakeId: string, memberCanonical: string): Promise<void> {
   await syncAccessClaims.run(makeEvent(stakeId, memberCanonical));
-}
-
-// Poll the terminal "block is gone" assertion instead of reading once.
-//
-// The seed write in phase one queues a DEPLOYED `syncAccessClaims`
-// delivery. If its role-data READ lands before phase two's delete but its
-// claims WRITE lands after phase two's `runSync`, it restamps the block
-// that was just cleared — `claimsEqual` compares that delivery's own fresh
-// `existing` against its `merged`, so it does not short-circuit.
-//
-// Budget sized to observed Eventarc latency (~14.7s on this runner), since
-// recovering means waiting on phase two's own delivery. See the fuller
-// docblock on `claimsAfterClear` in `syncManagersClaims.test.ts`,
-// including the narrow case where that recovery itself short-circuits and
-// why this returns the last-read claims instead of a boolean.
-async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown } | undefined> {
-  const { auth } = requireEmulators();
-  let last: { stakes?: unknown } | undefined;
-  await waitFor(async () => {
-    last = (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
-    return last?.stakes === undefined;
-  }, 25_000);
-  return last;
 }
 
 /** Manual grant carrying the D25 limited marker. */
@@ -124,7 +101,7 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     },
   );
 
-  it('clears the stake block when the access doc goes away', { timeout: 75_000 }, async () => {
+  it('clears the stake block when the access doc goes away', { timeout: 90_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('c@gmail.com', functionsEmulatorReachable);
     await db
@@ -142,7 +119,6 @@ describe.skipIf(!hasEmulators())('syncAccessClaims', () => {
     // Delete + re-fire trigger. Stake block goes away.
     await db.doc('stakes/csnorth/access/c@gmail.com').delete();
     await runSync('csnorth', 'c@gmail.com');
-    // Polled, not read once — see `claimsAfterClear`.
     expect((await claimsAfterClear(uid))?.stakes).toBeUndefined();
   });
 

@@ -27,7 +27,12 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { FieldValue } from 'firebase-admin/firestore';
-import { clearEmulators, hasFunctionsEmulator, requireEmulators, waitFor } from './lib/emulator.js';
+import {
+  clearEmulators,
+  hasFunctionsEmulator,
+  requireEmulators,
+  waitForDelivery,
+} from './lib/emulator.js';
 
 // `await hasFunctionsEmulator()` would be ideal but `describe.skipIf`
 // takes a synchronous predicate. We snapshot the result once at module
@@ -46,17 +51,17 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     await clearEmulators();
   });
 
-  // 50s per-test timeout. Vitest's default is 5s; observed CI run on
-  // PR #153 measured ~14.7s for Eventarc delete-event delivery alone,
-  // which makes the previous 30s/25s pair (~60% used) flake-prone if
-  // a future runner regresses or Eventarc emulator delivery slows.
-  // 50s per-test + 40s polling budget keeps headroom comfortable.
-  // The polling loop inside each test exits as soon as the claim
+  // Vitest's default cap is 5s; an observed CI run on PR #153 measured
+  // ~14.7s for Eventarc delete-event delivery alone, which makes a 25s
+  // budget (~60% used) flake-prone if a runner regresses or emulator
+  // delivery slows. Hence `DELIVERY_WAIT_MS` (40s) per wait — and a
+  // per-test cap sized to the SUM of that test's waits, since these tests
+  // make two and three of them. Each poll exits as soon as the claim
   // flips, so happy-path runtime is still typically <2s.
 
   it(
     'mints isPlatformSuperadmin=true when a platformSuperadmins doc is created',
-    { timeout: 50_000 },
+    { timeout: 90_000 },
     async () => {
       const { auth, db } = requireEmulators();
       const typedEmail = 'Super.Admin.Mint@gmail.com';
@@ -97,11 +102,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       // the superadmin flag `syncSuperadminClaims` is about to add.
       const user = await auth.createUser({ email: typedEmail });
 
-      const seeded = await waitFor(async () => {
+      const seeded = await waitForDelivery(async () => {
         const u = await auth.getUser(user.uid);
         const claims = (u.customClaims ?? {}) as { canonical?: string };
         return claims.canonical === canonical;
-      }, 40_000);
+      });
       expect(seeded).toBe(true);
 
       // Fields shadow `firebase-schema.md` §3.2: `email` (typed),
@@ -113,17 +118,17 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
         addedBy: 'operator@example.com',
       });
 
-      const flipped = await waitFor(async () => {
+      const flipped = await waitForDelivery(async () => {
         const u = await auth.getUser(user.uid);
         const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
         return claims.isPlatformSuperadmin === true;
-      }, 40_000);
+      });
 
       expect(flipped).toBe(true);
     },
   );
 
-  it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 50_000 }, async () => {
+  it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 130_000 }, async () => {
     const { auth, db } = requireEmulators();
     const typedEmail = 'Super.Admin.Revoke@gmail.com';
     const canonical = 'superadminrevoke@gmail.com';
@@ -135,11 +140,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     // single-delivery author that flakes under CI load.
     const user = await auth.createUser({ email: typedEmail });
 
-    const seeded = await waitFor(async () => {
+    const seeded = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { canonical?: string };
       return claims.canonical === canonical;
-    }, 40_000);
+    });
     expect(seeded).toBe(true);
 
     await db.doc(`platformSuperadmins/${canonical}`).set({
@@ -149,11 +154,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     });
 
     // Step 1: wait for the mint to land via `syncSuperadminClaims`.
-    const minted = await waitFor(async () => {
+    const minted = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin === true;
-    }, 40_000);
+    });
     expect(minted).toBe(true);
 
     // Step 2: delete the doc, wait for the claim to clear. Eventarc
@@ -161,11 +166,11 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     // that introduced this test; 40s budget matches the mint test
     // for headroom against future runner regression.
     await db.doc(`platformSuperadmins/${canonical}`).delete();
-    const revoked = await waitFor(async () => {
+    const revoked = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       const claims = (u.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       return claims.isPlatformSuperadmin !== true;
-    }, 40_000);
+    });
     expect(revoked).toBe(true);
   });
 });

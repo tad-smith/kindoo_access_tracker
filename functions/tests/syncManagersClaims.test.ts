@@ -11,7 +11,7 @@ import {
   clearEmulators,
   hasEmulators,
   requireEmulators,
-  waitFor,
+  claimsAfterClear,
 } from './lib/emulator.js';
 // CI boots this suite under `--only firestore,auth,functions`, so the
 // `onAuthUserCreate` v1 auth trigger is live and fires (async, via
@@ -29,49 +29,6 @@ const makeEvent = (stakeId: string, memberCanonical: string) =>
 
 async function runSync(stakeId: string, memberCanonical: string): Promise<void> {
   await syncManagersClaims.run(makeEvent(stakeId, memberCanonical));
-}
-
-// Poll the terminal "block is gone" assertion instead of reading once.
-//
-// The two-phase tests below have a residual race with the DEPLOYED
-// `syncManagersClaims`, which the `set({ active: true })` in phase one
-// queues. That delivery (D1) reads role data, then writes claims. If its
-// READ lands before phase two's `active: false` write but its WRITE lands
-// after phase two's `runSync`, it restamps `manager: true` over the
-// cleared block. `claimsEqual` does not close this: it compares D1's own
-// freshly-read `existing` against its `merged`, which differ precisely in
-// that ordering.
-//
-// Usually harmless in the first place — the poll's first read lands before
-// D1 does, and D1 requires stalling across phase two between two reads
-// that are adjacent inside a single invocation. When the restamp does land
-// first, phase two's own delivery (D2) normally undoes it.
-//
-// Budget: sized to observed Eventarc latency on this runner (~14.7s, see
-// `syncSuperadminClaims.e2e.test.ts`), not to the sub-second happy path —
-// waiting on D2 means waiting a full delivery. Callers size their own
-// `timeout:` to cover this on top of `makeSettledUser`'s 40s.
-//
-// Returns the LAST claims object read, so the caller asserts on a value
-// rather than on a bare boolean: `expect(false).toBe(true)` says nothing,
-// and the claims object is what made T-95 diagnosable in the first place.
-//
-// NOT a guarantee, and the flake it leaves is not one polling can fix: if
-// D2 loads `existing` after `runSync` cleared the block but before D1
-// restamps it, then `merged === existing`, `claimsEqual` short-circuits,
-// D2 writes nothing and the restamp is terminal. That needs D1's write to
-// land after D2's read despite a head start, so it is a corner of a
-// corner; it is written down rather than closed because closing it means
-// settling D1 before phase two, and D1's write is byte-identical to the
-// in-process one that precedes it — there is nothing to observe.
-async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown } | undefined> {
-  const { auth } = requireEmulators();
-  let last: { stakes?: unknown } | undefined;
-  await waitFor(async () => {
-    last = (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
-    return last?.stakes === undefined;
-  }, 25_000);
-  return last;
 }
 
 describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
@@ -101,7 +58,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     });
   });
 
-  it('flips manager claim off when active=false', { timeout: 75_000 }, async () => {
+  it('flips manager claim off when active=false', { timeout: 90_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-off@gmail.com', functionsEmulatorReachable);
     await db
@@ -120,7 +77,7 @@ describe.skipIf(!hasEmulators())('syncManagersClaims', () => {
     expect((await claimsAfterClear(uid))?.stakes).toBeUndefined();
   });
 
-  it('clears manager when the doc is deleted entirely', { timeout: 75_000 }, async () => {
+  it('clears manager when the doc is deleted entirely', { timeout: 90_000 }, async () => {
     const { auth, db } = requireEmulators();
     const uid = await makeSettledUser('m-del@gmail.com', functionsEmulatorReachable);
     await db

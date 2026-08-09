@@ -166,12 +166,20 @@ jobs:
         #   `onAuthUserCreate.test.ts` and `syncSuperadminClaims.e2e`
         #   each inline the same order for their own reasons.
         #
-        #   Those waits run to 20s, so EVERY test containing one carries
-        #   an explicit timeout override: no `testTimeout` is configured
-        #   anywhere, and vitest's 5s default would abort the test long
-        #   before the wait it was written with. Delivery has been
-        #   observed at ~14.7s on this runner (see the note in
-        #   `syncSuperadminClaims.e2e.test.ts`), so 5s is not academic.
+        #   Each wait runs to `DELIVERY_WAIT_MS` (40s), so EVERY test
+        #   containing one carries an explicit timeout override sized to
+        #   the SUM of its waits: no `testTimeout` is configured anywhere,
+        #   and vitest's 5s default would abort the test long before the
+        #   wait it was written with. Delivery has been observed at ~14.7s
+        #   on this runner (see `syncSuperadminClaims.e2e.test.ts`), so 5s
+        #   is not academic and a 25s budget was already judged too tight.
+        #
+        #   The suite runs strictly serially (`fileParallelism: false`,
+        #   `maxWorkers: 1`) and makes ~44 of these waits, which at full
+        #   budget would exceed this job's `timeout-minutes: 20` and turn
+        #   a named assertion failure into an unnamed cancellation. So
+        #   `waitForDelivery` LATCHES: the first exhausted wait makes the
+        #   rest return immediately. Bounded at one budget per test file.
         #
         #   `onAuthUserCreate` is NOT the only late writer. The deployed
         #   role-sync triggers also fire on the Firestore writes these

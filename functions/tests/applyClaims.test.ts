@@ -125,31 +125,16 @@ describe.skipIf(!hasEmulators())('applyClaims — deleted auth user is a benign 
     { timeout: 50_000 },
     async () => {
       const { auth } = requireEmulators();
-      const user = await auth.createUser({ email: 'present@gmail.com' });
+      // Settle `onAuthUserCreate`'s baseline `{ canonical }` write before
+      // applying the superadmin claim — otherwise it lands after and
+      // clobbers the flag, flaking this assertion to `undefined`. The
+      // trigger writes exactly once per user, so once its baseline is in,
+      // a later write is safe. No-op when the Functions emulator isn't up.
+      const uid = await makeSettledUser('present@gmail.com', functionsEmulatorReachable);
 
-      // `auth.createUser` fires the real `onAuthUserCreate` trigger when
-      // the Functions emulator is up (the CI integration config). That
-      // trigger's one async write — `applyFullClaims` stamping the
-      // baseline `{ canonical }` block — would otherwise land a few
-      // hundred ms after our `applySuperadminClaim` and clobber the flag
-      // we just set, making this assertion flake `undefined`. The trigger
-      // writes exactly once per user, so wait for that baseline to settle
-      // BEFORE applying the superadmin claim; once it has landed it can't
-      // overwrite a later write. Skipped when the Functions emulator
-      // isn't running (the trigger never fires; `customClaims` stays
-      // null), so this stays correct under `test:integration:local` too.
-      if (functionsEmulatorReachable) {
-        const seeded = await waitFor(async () => {
-          const u = await auth.getUser(user.uid);
-          const claims = (u.customClaims ?? {}) as { canonical?: string };
-          return claims.canonical === 'present@gmail.com';
-        }, 20_000);
-        expect(seeded).toBe(true);
-      }
+      await applySuperadminClaim(uid, 'present@gmail.com', true);
 
-      await applySuperadminClaim(user.uid, 'present@gmail.com', true);
-
-      const refreshed = await auth.getUser(user.uid);
+      const refreshed = await auth.getUser(uid);
       const claims = (refreshed.customClaims ?? {}) as { isPlatformSuperadmin?: boolean };
       expect(claims.isPlatformSuperadmin).toBe(true);
     },

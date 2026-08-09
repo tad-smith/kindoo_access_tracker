@@ -160,6 +160,82 @@ export async function waitFor(
   return false;
 }
 
+/** The per-file budget for one Eventarc delivery. See {@link waitForDelivery}. */
+export const DELIVERY_WAIT_MS = 40_000;
+
+let deliveryWaitsAbandoned = false;
+
+/**
+ * {@link waitFor} for an Eventarc-delivered write, with a latch.
+ *
+ * Once one delivery wait has run its full budget, the trigger has stopped
+ * delivering rather than merely slowed, and every later wait in this file
+ * would burn the same budget to reach the same answer. That is not
+ * hypothetical arithmetic: the integration suite runs strictly serially
+ * (`fileParallelism: false`, `maxWorkers: 1`), makes ~44 of these waits,
+ * and `test.yml` caps the whole `test` job at 20 minutes — so an
+ * unlatched 40s budget is ~31 minutes of pure waiting, and the job is
+ * cancelled with no test name at all. That is strictly worse to diagnose
+ * than the flake this helper exists to prevent, and it lands from causes
+ * as ordinary as `KINDOO_SKIP_CLAIM_SYNC` reappearing in the wrong env
+ * file or an unpinned `firebase-tools` regressing v1 auth emulation.
+ *
+ * So the first exhausted wait latches and later ones return `false`
+ * immediately. Every test still fails on its own named assertion; they
+ * just stop paying for a verdict already reached. Module scope means the
+ * latch is per test file (vitest isolates modules), which bounds the
+ * worst case at one full budget per file.
+ */
+export async function waitForDelivery(
+  predicate: () => Promise<boolean>,
+  timeoutMs: number = DELIVERY_WAIT_MS,
+): Promise<boolean> {
+  if (deliveryWaitsAbandoned) return false;
+  const ok = await waitFor(predicate, timeoutMs);
+  if (!ok) deliveryWaitsAbandoned = true;
+  return ok;
+}
+
+/**
+ * Poll until the caller's stake block is gone, returning the LAST claims
+ * object read so the caller asserts on a value — `expect(false).toBe(true)`
+ * names nothing, and the claims object is what made T-95 diagnosable.
+ *
+ * Why polling: the two-phase clear tests race the DEPLOYED role-sync
+ * trigger that phase one's write queued. That delivery (D1) reads role
+ * data, then writes claims; if its read lands before phase two's write but
+ * its write lands after phase two's in-process `runSync`, it restamps the
+ * block just cleared. `claimsEqual` does not short-circuit that — it
+ * compares D1's own freshly-read `existing` against its `merged`, which
+ * differ in precisely that ordering. Phase two's own delivery (D2)
+ * normally undoes it, so recovery means waiting out a full delivery, hence
+ * the same {@link DELIVERY_WAIT_MS} budget as a settle.
+ *
+ * NOT a guarantee, and the residue is not something polling can fix: if D2
+ * loads `existing` after `runSync` cleared the block but before D1
+ * restamps it, `merged === existing`, `claimsEqual` short-circuits, D2
+ * writes nothing, and the restamp is terminal. That needs D1's write to
+ * land after D2's read despite a head start. Written down rather than
+ * closed, because closing it means settling D1 before phase two and D1's
+ * write is byte-identical to the in-process one preceding it — there is
+ * nothing to observe.
+ */
+export async function claimsAfterClear(uid: string): Promise<{ stakes?: unknown } | undefined> {
+  const { auth } = requireEmulators();
+  const read = async () =>
+    (await auth.getUser(uid)).customClaims as { stakes?: unknown } | undefined;
+  // Always read once, before any latch can short-circuit — otherwise a
+  // latched wait would return `undefined` and the caller's
+  // `?.stakes).toBeUndefined()` would pass without having looked.
+  let last = await read();
+  if (last?.stakes === undefined) return last;
+  await waitForDelivery(async () => {
+    last = await read();
+    return last?.stakes === undefined;
+  });
+  return last;
+}
+
 /**
  * Create an Auth user and, when the Functions emulator is live, wait out
  * `onAuthUserCreate`'s async baseline claim write (its `applyFullClaims`
@@ -185,18 +261,19 @@ export async function makeSettledUser(
     // compare against the same canonical form so a mixed-case `email`
     // (e.g. a test distinguishing `adminA@`/`adminB@`) still settles.
     const wantCanonical = canonicalEmail(email);
-    // 40s, matching `syncSuperadminClaims.e2e.test.ts` — it polls a
-    // byte-identical predicate and its docblock rejects a 25s budget as
-    // flake-prone against the ~14.7s delivery measured on this runner
-    // (~60% used). 20s would be 74% used, i.e. tighter than the number
-    // already rejected, across the ~40 waits a CI integration run makes.
-    // Callers size their `timeout:` above this; the poll exits as soon as
-    // the claim lands, so the happy path stays sub-second.
-    const seeded = await waitFor(async () => {
+    // `DELIVERY_WAIT_MS` (40s) matches `syncSuperadminClaims.e2e.test.ts`,
+    // which polls a byte-identical predicate and whose docblock rejects a
+    // 25s budget as flake-prone against the ~14.7s delivery measured on
+    // this runner (~60% used). Callers size their `timeout:` to the SUM of
+    // their waits; the poll exits as soon as the claim lands, so the happy
+    // path stays sub-second.
+    const seeded = await waitForDelivery(async () => {
       const u = await auth.getUser(user.uid);
       return ((u.customClaims ?? {}) as { canonical?: string }).canonical === wantCanonical;
-    }, 40_000);
-    expect(seeded).toBe(true);
+    });
+    expect(seeded, `onAuthUserCreate never delivered its baseline claim for ${wantCanonical}`).toBe(
+      true,
+    );
   }
   return user.uid;
 }

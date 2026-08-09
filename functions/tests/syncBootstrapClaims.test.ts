@@ -147,7 +147,7 @@ describe.skipIf(!hasEmulators())('syncBootstrapClaims', () => {
 
   it(
     're-points the marker when bootstrap_admin_email changes mid-setup',
-    { timeout: 50_000 },
+    { timeout: 90_000 },
     async () => {
       const { auth } = requireEmulators();
       const uidA = await makeSettledUser('adminA@example.com', functionsEmulatorReachable);
