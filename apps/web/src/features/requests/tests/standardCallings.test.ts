@@ -1,31 +1,33 @@
-// Pins the typeahead's calling lists against the shared sort table.
+// Covers what `standardCallings.ts` still decides for itself.
 //
-// `standardCallings.ts` reproduces `@kindoo/shared`'s `CALLING_ORDER` by
-// hand, because that table is module-private there and exposes only a
-// name→order lookup. These tests are what stops the copy drifting: they
-// reconstruct the shared table's shape through `callingSortOrder()` and
-// assert the copy still matches it.
+// The conformance suite that used to live here is gone (T-99). It
+// reconstructed the shared table's shape through `callingSortOrder()` —
+// every entry resolves, the concatenation ascends strictly, the covered
+// indices are gap-free — to catch the copy of that table drifting. There
+// is no copy now: `STAKE_CALLINGS` and `UNIT_CALLINGS` are the shared
+// table's two bands, so all three assertions hold by construction and
+// tested nothing but `Array.prototype.filter`. The band invariants they
+// were really about moved to `packages/shared`'s
+// `callingSortOrder.test.ts`, next to the table they constrain.
 //
-// The gap-free check is the one that matters. Seven branch callings
-// landed in the shared table (T-96) and never reached the typeahead, and
-// nothing failed — every remaining entry still resolved, and still
-// resolved in ascending order. Only the holes they left in the index
-// range make an omission visible from this side.
+// What is left is the product ruling — which ward callings a branch
+// replaces — and the one hand-maintained thing that implements it: the
+// two hide-sets. A name in a hide-set that the shared table no longer
+// spells subtracts nothing and fails silently, leaving the wrong entry
+// in a branch's typeahead. That is the shape of the T-96 bug, on the
+// only surface where it can still happen, so it gets its own test.
 
 import { describe, expect, it } from 'vitest';
-import { callingSortOrder, type Ward } from '@kindoo/shared';
+import type { Ward } from '@kindoo/shared';
 import {
   BRANCH_CALLINGS,
+  BRANCH_ONLY_CALLINGS,
   STAKE_CALLINGS,
   UNIT_CALLINGS,
   WARD_CALLINGS,
+  WARD_ONLY_CALLINGS,
   callingsForScope,
 } from '../standardCallings';
-
-// The union is what the conformance checks run against. The split
-// subtracts from it, so neither sub-list covers a contiguous index range
-// on its own — only together do they still account for the whole table.
-const ALL_CALLINGS = [...STAKE_CALLINGS, ...UNIT_CALLINGS];
 
 function unit(code: string, name: string): Ward {
   return { ward_code: code, ward_name: name } as unknown as Ward;
@@ -37,89 +39,32 @@ const CATALOGUE: readonly Ward[] = [
 ];
 
 describe('standard calling lists', () => {
-  it('offers branch callings on the unit list', () => {
-    expect(UNIT_CALLINGS).toEqual(
-      expect.arrayContaining([
-        'Branch President',
-        'Branch Presidency First Counselor',
-        'Branch Presidency Second Counselor',
-        'Branch Clerk',
-        'Branch Assistant Clerk',
-        'Branch Assistant Clerk--Membership',
-        'Branch Assistant Clerk--Finance',
-      ]),
+  it('draws the stake list and the unit list from their own bands', () => {
+    // The one mis-wiring the checks below would miss. They anchor the
+    // unit lists to real ward and branch entries, but nothing else would
+    // notice `STAKE_CALLINGS` pointed at the wrong band.
+    expect(STAKE_CALLINGS[0]).toBe('Stake President');
+    expect(UNIT_CALLINGS[0]).toBe('Bishop');
+    expect(STAKE_CALLINGS.some((c) => UNIT_CALLINGS.includes(c))).toBe(false);
+  });
+
+  it('subtracts only names the shared unit band still spells', () => {
+    // The hide-sets are hand-written strings; the band they subtract from
+    // is not. Rename a calling in `@kindoo/shared` and the matching
+    // hide-set entry stops matching anything — no error, just a Ward
+    // Clerk offered at a branch. Membership in `UNIT_CALLINGS` is the
+    // shared-table check, sharpened: an entry that moved to the stake
+    // band would also never be subtracted.
+    const stale = [...WARD_ONLY_CALLINGS, ...BRANCH_ONLY_CALLINGS].filter(
+      (c) => !UNIT_CALLINGS.includes(c),
     );
-  });
-
-  it('still offers the ward callings alongside them', () => {
-    expect(UNIT_CALLINGS).toEqual(
-      expect.arrayContaining([
-        'Bishop',
-        'Bishopric First Counselor',
-        'Bishopric Second Counselor',
-        'Ward Executive Secretary',
-        'Ward Clerk',
-        'Elders Quorum President',
-        'Relief Society President',
-        'Technology Specialist',
-      ]),
-    );
-  });
-
-  it('still offers the stake callings', () => {
-    expect(STAKE_CALLINGS).toEqual(
-      expect.arrayContaining([
-        'Stake President',
-        'Stake Presidency First Counselor',
-        'Stake Clerk',
-        'Stake Executive Secretary',
-        'Stake High Councilor',
-        'Patriarch',
-      ]),
-    );
-  });
-
-  it('ranks each branch calling immediately after its ward counterpart', () => {
-    const pairs: ReadonlyArray<readonly [string, string]> = [
-      ['Bishop', 'Branch President'],
-      ['Bishopric First Counselor', 'Branch Presidency First Counselor'],
-      ['Bishopric Second Counselor', 'Branch Presidency Second Counselor'],
-      ['Ward Clerk', 'Branch Clerk'],
-      ['Ward Assistant Clerk', 'Branch Assistant Clerk'],
-      ['Ward Assistant Clerk--Membership', 'Branch Assistant Clerk--Membership'],
-      ['Ward Assistant Clerk--Finance', 'Branch Assistant Clerk--Finance'],
-    ];
-    for (const [ward, branch] of pairs) {
-      expect(UNIT_CALLINGS.indexOf(branch)).toBe(UNIT_CALLINGS.indexOf(ward) + 1);
-    }
-  });
-
-  it('names no calling the shared sort table does not know', () => {
-    const unknown = ALL_CALLINGS.filter((c) => callingSortOrder(c) === null);
-    expect(unknown).toEqual([]);
-  });
-
-  it('lists every calling in the shared table order', () => {
-    const orders = ALL_CALLINGS.map((c) => callingSortOrder(c));
-    const ascending = orders.every((order, i) => i === 0 || order! > orders[i - 1]!);
-    expect(ascending).toBe(true);
-  });
-
-  it('covers the shared table without gaps, so a new entry there cannot be silently dropped', () => {
-    const orders = ALL_CALLINGS.map((c) => callingSortOrder(c)!);
-    const covered = new Set(orders);
-    // Contiguous 0..n-1: any entry present in the shared table but absent
-    // here shifts its successors and leaves a hole in the range.
-    const missing = Array.from({ length: Math.max(...orders) + 1 }, (_, i) => i).filter(
-      (i) => !covered.has(i),
-    );
-    expect(missing).toEqual([]);
-    expect(covered.size).toBe(ALL_CALLINGS.length);
+    expect(stale).toEqual([]);
   });
 
   it('loses no unit calling to the split — ward plus branch spans the union', () => {
-    // The gap-free check above runs on the union, so an entry dropped
-    // from BOTH sub-lists would escape it. This is what closes that.
+    // Derivation guarantees the union tracks the shared band; it says
+    // nothing about the two sub-lists between them. An entry that landed
+    // in BOTH hide-sets would reach no typeahead at all.
     const spanned = new Set([...WARD_CALLINGS, ...BRANCH_CALLINGS]);
     expect([...UNIT_CALLINGS].filter((c) => !spanned.has(c))).toEqual([]);
   });
@@ -184,20 +129,6 @@ describe('standard calling lists', () => {
         'Ward Assistant Clerk--Finance',
       ]),
     );
-  });
-
-  it('keeps both sub-lists in the shared table order', () => {
-    for (const list of [WARD_CALLINGS, BRANCH_CALLINGS]) {
-      const orders = list.map((c) => callingSortOrder(c)!);
-      expect(orders.every((o, i) => i === 0 || o > orders[i - 1]!)).toBe(true);
-    }
-  });
-
-  it('splits stake from unit callings at the Bishop boundary', () => {
-    const lastStake = callingSortOrder(STAKE_CALLINGS[STAKE_CALLINGS.length - 1]!)!;
-    const firstUnit = callingSortOrder(UNIT_CALLINGS[0]!)!;
-    expect(UNIT_CALLINGS[0]).toBe('Bishop');
-    expect(firstUnit).toBe(lastStake + 1);
   });
 });
 

@@ -22,13 +22,33 @@
 // Matching is exact, trimmed, case-insensitive — NO wildcards. A
 // calling that isn't in the table resolves to `null` ("unknown"), which
 // the sort comparator banishes to the bottom of its type band.
+//
+// THE TABLE IS EXPORTED AS ITS TWO BANDS, NOT AS ONE ARRAY PLUS A
+// BOUNDARY (T-99).
+//
+// `callingSortOrder` is a name→order lookup, and a lookup cannot be
+// enumerated — which is why the web request typeahead carried a
+// hand-maintained copy of all 92 names until T-99, and why T-96's seven
+// branch callings reached this table and silently not that one.
+// `STAKE_CALLING_ORDER` and `UNIT_CALLING_ORDER` are what a consumer
+// needing a *list* projects from.
+//
+// They are two exports rather than one because the stake/unit boundary
+// is a property of this table, not of any consumer. Exporting only the
+// whole array would make every list-consumer slice at
+// `indexOf('Bishop')` — the boundary restated as a magic string, in
+// code that has no way to know it moved. `CALLING_ORDER` stays the
+// concatenation, so every index this module hands out is unchanged;
+// changing them would re-break the stored `access.sort_order` the way
+// T-96 did.
+//
+// A new calling goes in one of the two bands. Nothing may be appended
+// to `CALLING_ORDER` outside them — a third band would be invisible to
+// every consumer enumerating the two, which is the exact failure T-99
+// removed. `callingSortOrder.test.ts` pins that.
 
-/**
- * Canonical calling order. Index = priority (lower sorts first).
- * Treated as the source of truth; the lookup map is derived from it.
- */
-const CALLING_ORDER: readonly string[] = [
-  // ----- Stake callings (1–42) -----
+/** Stake-band callings (1–42), in priority order. */
+export const STAKE_CALLING_ORDER: readonly string[] = [
   'Stake President',
   'Stake Presidency First Counselor',
   'Stake Presidency Second Counselor',
@@ -71,8 +91,13 @@ const CALLING_ORDER: readonly string[] = [
   'Audit Committee Member',
   'Auditor',
   'Patriarch',
-  // ----- Unit callings (43–92): ward, each branch calling
-  // ----- immediately after its ward counterpart -----
+];
+
+/**
+ * Unit-band callings (43–92), in priority order — both kinds of unit,
+ * each branch calling immediately after its ward counterpart.
+ */
+export const UNIT_CALLING_ORDER: readonly string[] = [
   'Bishop',
   'Branch President',
   'Bishopric First Counselor',
@@ -128,6 +153,13 @@ const CALLING_ORDER: readonly string[] = [
   'Email Communication Specialist',
   'Technology Specialist',
 ];
+
+/**
+ * Canonical calling order — the two bands, concatenated. Index =
+ * priority (lower sorts first). The source of truth for the lookup map;
+ * the bands are the source of truth for it.
+ */
+export const CALLING_ORDER: readonly string[] = [...STAKE_CALLING_ORDER, ...UNIT_CALLING_ORDER];
 
 /** Normalisation key: trimmed + lower-cased. Matching is exact on this key. */
 function normalize(calling: string): string {
