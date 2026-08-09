@@ -41,8 +41,8 @@ describe('matchesIgnoredWard', () => {
 });
 
 describe('collidesWithOwnWard', () => {
-  // SBA stores ward names without the trailing " Ward".
-  const wards = ['Maple', 'Jackson Creek', 'Pine Ward'];
+  // The trailing " Ward" is optional in SBA, so the list mixes both.
+  const wards = ['Maple', 'Jackson Creek', 'Pine Ward', 'Limon Branch'];
 
   it('collides on the bare stored form', () => {
     expect(collidesWithOwnWard('Maple', wards)).toBe(true);
@@ -54,9 +54,22 @@ describe('collidesWithOwnWard', () => {
     expect(collidesWithOwnWard('  JACKSON CREEK WARD ', wards)).toBe(true);
   });
 
-  it('collides once for a ward whose stored name already ends in " Ward"', () => {
+  it('collides on both forms for a ward whose stored name already ends in " Ward"', () => {
+    // The suffix is optional either way round: a ward stored as "Pine
+    // Ward" is the same unit as one stored as "Pine", so an ignore
+    // entry naming either form is naming our own ward.
     expect(collidesWithOwnWard('Pine Ward', wards)).toBe(true);
-    expect(collidesWithOwnWard('Pine', wards)).toBe(false);
+    expect(collidesWithOwnWard('Pine', wards)).toBe(true);
+  });
+
+  it('collides on a branch only under its verbatim name', () => {
+    // Kindoo renders a branch verbatim, so "Limon Branch Ward" is a
+    // name nothing produces — inventing a key for it would block an
+    // ignore entry that could never match our own unit.
+    expect(collidesWithOwnWard('Limon Branch', wards)).toBe(true);
+    expect(collidesWithOwnWard('  limon branch ', wards)).toBe(true);
+    expect(collidesWithOwnWard('Limon Branch Ward', wards)).toBe(false);
+    expect(collidesWithOwnWard('Limon', wards)).toBe(false);
   });
 
   it('does not collide with a ward this stake does not own', () => {

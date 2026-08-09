@@ -79,6 +79,7 @@ export {
   exceedsLimitedTempWindow,
   isoDateSpanDays,
 } from './tempWindow.js';
+export { kindooScopeName, kindooScopeNameVariants, unitType, type UnitType } from './unitName.js';
 
 // ---- Domain types -----------------------------------------------------
 export type {

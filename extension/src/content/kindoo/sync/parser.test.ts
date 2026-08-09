@@ -173,11 +173,11 @@ describe('parseDescription', () => {
     expect(parsed.segments[0]?.resolvedScope).toBe(false);
   });
 
-  // ----- ward " Ward" suffix asymmetry -----
+  // ----- the optional " Ward" suffix, and branches -----
 
   it('resolves a ward when ward_name lacks " Ward" but the description carries it', () => {
-    // SBA stores ward names without the trailing " Ward". Kindoo
-    // descriptions include it. Both forms must resolve.
+    // The trailing " Ward" is optional in SBA. Kindoo always renders
+    // it. Both forms must resolve.
     const wardsNoSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek' }];
     const parsed = parseDescription(
       'Jackson Creek Ward (Young Women President)',
@@ -208,21 +208,55 @@ describe('parseDescription', () => {
     expect(parsed.segments[0]?.scope).toBe('JC');
   });
 
-  it('does NOT resolve an unsuffixed description against a ward_name that includes " Ward"', () => {
-    // When ward_name is "Jackson Creek Ward", only that exact form is
-    // registered as a lookup key. An unsuffixed "Jackson Creek (X)"
-    // description does not match — the parser only strips/adds the
-    // " Ward" suffix on the ward_name side, never on the description
-    // side. Documented to keep the two-key behavior asymmetric and
-    // predictable.
+  it('resolves an unsuffixed description against a ward_name that includes " Ward"', () => {
+    // Behaviour change: the suffix used to be stripped/added only on
+    // the ward_name side, so this direction did not resolve. The
+    // suffix is now optional in both directions — "Jackson Creek" and
+    // "Jackson Creek Ward" name the same unit whichever side each form
+    // appears on, so an operator who typed the suffix into SBA is no
+    // longer punished for it.
     const wardsWithSuffix = [{ ward_code: 'JC', ward_name: 'Jackson Creek Ward' }];
     const parsed = parseDescription(
       'Jackson Creek (Young Women President)',
       STAKE,
       wardsWithSuffix,
     );
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]?.scope).toBe('JC');
+  });
+
+  it('resolves a branch under its verbatim name', () => {
+    const withBranch = [{ ward_code: 'LB', ward_name: 'Limon Branch' }];
+    const parsed = parseDescription('Limon Branch (Branch President)', STAKE, withBranch);
+    expect(parsed.unparseable).toBe(false);
+    expect(parsed.segments[0]).toMatchObject({
+      rawScopeName: 'Limon Branch',
+      scope: 'LB',
+      calling: 'Branch President',
+      resolvedScope: true,
+    });
+  });
+
+  it('does not register a " Ward"-suffixed form for a branch', () => {
+    // Kindoo renders a branch verbatim; "Limon Branch Ward" is a name
+    // nothing writes, so resolving it would only ever mask a typo.
+    const withBranch = [{ ward_code: 'LB', ward_name: 'Limon Branch' }];
+    const parsed = parseDescription('Limon Branch Ward (Branch President)', STAKE, withBranch);
     expect(parsed.unparseable).toBe(true);
     expect(parsed.segments[0]?.resolvedScope).toBe(false);
+  });
+
+  it('resolves a branch alongside a ward in a multi-scope description', () => {
+    const units = [
+      { ward_code: 'LB', ward_name: 'Limon Branch' },
+      { ward_code: 'JC', ward_name: 'Jackson Creek' },
+    ];
+    const parsed = parseDescription(
+      'Limon Branch (Branch President) | Jackson Creek Ward (Sunday School Teacher)',
+      STAKE,
+      units,
+    );
+    expect(parsed.segments.map((s) => s.scope)).toEqual(['LB', 'JC']);
   });
 });
 

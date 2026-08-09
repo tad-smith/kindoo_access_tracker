@@ -32,6 +32,7 @@ import {
   // Resolves a ward_code to its display `ward_name`. Every email renders
   // the name, never the raw code.
   scopeLabel,
+  unitType,
 } from '@kindoo/shared';
 import type {
   Access,
@@ -258,7 +259,7 @@ export function buildNewRequestTextBody(o: RequesterNamedEmailOpts): string {
     newRequestLead(o),
     '',
     textRow('Request', TYPE_LABEL[req.type]),
-    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow(scopeRowLabel(req.scope, o.scope), o.scope),
     textRow('Member', ...memberLines(req)),
   ];
   if (req.reason) lines.push(textRow('Reason', req.reason));
@@ -273,7 +274,7 @@ export function buildNewRequestHtmlBody(o: RequesterNamedEmailOpts): string {
   const { req } = o;
   const rows: string[] = [
     htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
-    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow(scopeRowLabel(req.scope, o.scope), escapeHtml(o.scope)),
     htmlRow('Member', memberCell(req)),
   ];
   if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
@@ -300,7 +301,7 @@ export function buildCompletedTextBody(o: RequestEmailOpts): string {
     `${requestLeadStem(req)} has been completed.`,
     '',
     textRow('Request', TYPE_LABEL[req.type]),
-    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow(scopeRowLabel(req.scope, o.scope), o.scope),
     textRow('Member', ...memberLines(req)),
   ];
   if (req.reason) lines.push(textRow('Reason', req.reason));
@@ -313,7 +314,7 @@ export function buildCompletedHtmlBody(o: RequestEmailOpts): string {
   const { req } = o;
   const rows: string[] = [
     htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
-    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow(scopeRowLabel(req.scope, o.scope), escapeHtml(o.scope)),
     htmlRow('Member', memberCell(req)),
   ];
   if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
@@ -340,7 +341,7 @@ export function buildRejectedTextBody(o: RequestEmailOpts): string {
     `${requestLeadStem(req)} was rejected.`,
     '',
     textRow('Request', TYPE_LABEL[req.type]),
-    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow(scopeRowLabel(req.scope, o.scope), o.scope),
     textRow('Member', ...memberLines(req)),
     textRow('Reason given', rejectionReason(req)),
     '',
@@ -354,7 +355,7 @@ export function buildRejectedHtmlBody(o: RequestEmailOpts): string {
     lead: `${escapeHtml(requestLeadStem(req))} was ${REJECTED_WORD}.`,
     rows: [
       htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
-      htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+      htmlRow(scopeRowLabel(req.scope, o.scope), escapeHtml(o.scope)),
       htmlRow('Member', memberCell(req)),
       htmlRow('Reason given', escapeHtml(rejectionReason(req))),
     ],
@@ -375,7 +376,7 @@ export function buildCancelledTextBody(o: RequesterNamedEmailOpts): string {
     cancelledLead(o),
     '',
     textRow('Request', TYPE_LABEL[req.type]),
-    textRow(scopeRowLabel(req.scope), o.scope),
+    textRow(scopeRowLabel(req.scope, o.scope), o.scope),
     textRow('Member', ...memberLines(req)),
   ];
   if (req.reason) lines.push(textRow('Reason', req.reason));
@@ -387,7 +388,7 @@ export function buildCancelledHtmlBody(o: RequesterNamedEmailOpts): string {
   const { req } = o;
   const rows: string[] = [
     htmlRow('Request', escapeHtml(TYPE_LABEL[req.type])),
-    htmlRow(scopeRowLabel(req.scope), escapeHtml(o.scope)),
+    htmlRow(scopeRowLabel(req.scope, o.scope), escapeHtml(o.scope)),
     htmlRow('Member', memberCell(req)),
   ];
   if (req.reason) rows.push(htmlRow('Reason', escapeHtml(req.reason)));
@@ -463,9 +464,14 @@ function overCapLead(count: number): string {
   return `${COUNT_WORDS[count] ?? String(count)} seat pools are over their cap`;
 }
 
-/** `Ward` for a ward-scoped request, `Scope` for the stake pool. */
-function scopeRowLabel(scope: string): string {
-  return scope === 'stake' ? 'Scope' : 'Ward';
+/**
+ * `Scope` for the stake pool; otherwise the unit's own kind, which the
+ * resolved name is the only discriminator for — a stake with a branch
+ * must not read `Ward: Limon Branch`.
+ */
+function scopeRowLabel(scope: string, scopeName: string): string {
+  if (scope === 'stake') return 'Scope';
+  return unitType(scopeName) === 'branch' ? 'Branch' : 'Ward';
 }
 
 /** Display name where there is one; the address is always the fallback. */

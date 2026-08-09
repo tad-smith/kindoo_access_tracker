@@ -194,7 +194,8 @@ describe('EmailService — pure builders', () => {
   // ---- scope + type rendering ----------------------------------------------
 
   // The builders never see a raw ward code — the service layer resolves it —
-  // but they do choose the row's label off `req.scope`.
+  // and the row's label comes off `req.scope` plus the resolved name,
+  // which is the only thing distinguishing a branch from a ward.
   it('labels the scope row Ward for a ward and Scope for the stake pool', () => {
     expect(buildNewRequestTextBody(managerOpts())).toContain('Ward:      Greenwood Ward');
     const stake = managerOpts({ req: { ...baseRequest, scope: 'stake' }, scope: 'Stake' });
@@ -202,6 +203,33 @@ describe('EmailService — pure builders', () => {
     expect(buildNewRequestHtmlBody(stake)).toContain('<th style="text-align:left');
     expect(buildNewRequestHtmlBody(stake)).toContain('>Scope</th>');
     expect(buildNewRequestHtmlBody(stake)).toContain('>Stake</td>');
+  });
+
+  it('labels the scope row Branch when the resolved unit name is a branch', () => {
+    const branch = managerOpts({ req: { ...baseRequest, scope: 'LB' }, scope: 'Limon Branch' });
+    expect(buildNewRequestTextBody(branch)).toContain('Branch:    Limon Branch');
+    expect(buildNewRequestHtmlBody(branch)).toContain('>Branch</th>');
+    expect(buildNewRequestHtmlBody(branch)).toContain('>Limon Branch</td>');
+    expect(buildNewRequestTextBody(branch)).not.toContain('Ward:');
+  });
+
+  it('labels the scope row Branch across every request-lifecycle email', () => {
+    const req = { ...baseRequest, scope: 'LB' };
+    const named = managerOpts({ req, scope: 'Limon Branch' });
+    const plain = { req, scope: 'Limon Branch', link: QUEUE_LINK };
+    for (const body of [
+      buildNewRequestTextBody(named),
+      buildNewRequestHtmlBody(named),
+      buildCompletedTextBody(plain),
+      buildCompletedHtmlBody(plain),
+      buildRejectedTextBody(plain),
+      buildRejectedHtmlBody(plain),
+      buildCancelledTextBody(named),
+      buildCancelledHtmlBody(named),
+    ]) {
+      expect(body).toContain('Branch');
+      expect(body).not.toContain('Ward');
+    }
   });
 
   it('renders a human label for every request type, never the raw enum', () => {

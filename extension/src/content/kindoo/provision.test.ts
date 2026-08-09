@@ -111,6 +111,15 @@ const WARDS: Ward[] = [
   } as unknown as Ward,
 ];
 
+/** A stake with a branch — the name is the only unit-type discriminator. */
+const BRANCH_WARDS: Ward[] = [
+  {
+    ward_code: 'LB',
+    ward_name: 'Limon Branch',
+    building_name: 'Maple Building',
+  } as unknown as Ward,
+];
+
 const ENVS: KindooEnvironment[] = [
   {
     EID: 27994,
@@ -699,12 +708,12 @@ describe('provisionAddOrChange — guards', () => {
   });
 
   it('appends the " Ward" suffix when ward_name is stored without it', async () => {
-    // SBA stores ward_name without the trailing " Ward" (production
-    // data: "Pine Creek", "Maple"). Kindoo's canonical Description form
-    // (matching the church auto-provisioned callings) carries the
-    // suffix. The write side must append it so manual seats land as
-    // "Pine Creek Ward (...)", mirroring the read-side parseDescription
-    // which resolves both forms.
+    // The trailing " Ward" is optional in SBA (production data:
+    // "Pine Creek", "Maple"). Kindoo's canonical Description form
+    // (matching the church auto-provisioned callings) always carries
+    // the suffix. The write side must append it so manual seats land
+    // as "Pine Creek Ward (...)", mirroring the read-side
+    // parseDescription which resolves both forms.
     lookupUserByEmailMock.mockResolvedValue(null);
     inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
     saveAccessRuleMock.mockResolvedValue({ ok: true });
@@ -750,6 +759,54 @@ describe('provisionAddOrChange — guards', () => {
 
     const invitePayload = inviteUserMock.mock.calls[0]![1];
     expect(invitePayload.Description).toBe('Pine Creek Ward (Sunday School Teacher)');
+  });
+
+  it('writes a branch name verbatim, without a " Ward" suffix', async () => {
+    // A unit whose name ends in " Branch" IS a branch, and Kindoo
+    // renders it as-is. "Limon Branch Ward" is a name the church
+    // automation never writes.
+    lookupUserByEmailMock.mockResolvedValue(null);
+    inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
+    saveAccessRuleMock.mockResolvedValue({ ok: true });
+
+    await provisionAddOrChange({
+      request: addManualRequest({ scope: 'LB', building_names: [] }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: BRANCH_WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    const invitePayload = inviteUserMock.mock.calls[0]![1];
+    expect(invitePayload.Description).toBe('Limon Branch (Sunday School Teacher)');
+  });
+
+  it('re-provisioning a branch seat is a no-op — no editUser churn', async () => {
+    // The regression that matters: appending " Ward" to a branch made
+    // the target description permanently differ from what Kindoo held,
+    // and `descDiffers` is a strict !==, so every provision re-fired
+    // editUser and overwrote the church-provisioned label.
+    const existing = existingUser({
+      description: 'Limon Branch (Sunday School Teacher)',
+      accessSchedules: [{ ruleId: 6248 }],
+    });
+    lookupUserByEmailMock.mockResolvedValue(existing);
+
+    const result = await provisionAddOrChange({
+      request: addManualRequest({ scope: 'LB', building_names: ['Maple Building'] }),
+      seat: null,
+      stake: STAKE,
+      buildings: BUILDINGS,
+      wards: BRANCH_WARDS,
+      envs: ENVS,
+      session: SESSION,
+    });
+
+    expect(editUserMock).not.toHaveBeenCalled();
+    expect(saveAccessRuleMock).not.toHaveBeenCalled();
+    expect(result.note).toBe('No Kindoo changes needed for Test User.');
   });
 
   it('respects req.building_names on ward-scope requests with multiple buildings', async () => {

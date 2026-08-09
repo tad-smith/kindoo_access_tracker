@@ -18,6 +18,7 @@
 
 import {
   filterAppAccessCallings,
+  kindooScopeNameVariants,
   matchesIgnoredWard,
   type AppAccessOptions,
   type Stake,
@@ -69,12 +70,11 @@ function normalise(s: string): string {
  * descriptions. Falls back to `stake_name` when the override is absent
  * or empty.
  *
- * Ward matching registers each ward under two keys: the bare
- * `ward_name` and `ward_name + " Ward"`. SBA stores ward names without
- * the trailing `" Ward"` suffix (`"Jackson Creek"`) but Kindoo
- * descriptions carry the full form (`"Jackson Creek Ward"`); both
- * variants resolve. Wards whose `ward_name` already ends in `" Ward"`
- * register only the single key (`Map.set` collapses duplicates).
+ * Unit matching registers each ward under every form Kindoo could
+ * render it as (`kindooScopeNameVariants`). The trailing `" Ward"` is
+ * optional in SBA, so a ward stored either way resolves against a
+ * description written either way. A branch has one form — Kindoo never
+ * renders `"Limon Branch Ward"`.
  *
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or
@@ -103,16 +103,8 @@ export function parseDescription(
   );
   const wardLookup = new Map<string, string>();
   for (const w of wards) {
-    const baseKey = normalise(w.ward_name);
-    wardLookup.set(baseKey, w.ward_code);
-    // Kindoo descriptions render the ward with a " Ward" suffix
-    // (e.g. "Jackson Creek Ward") while SBA stores `ward_name`
-    // without it ("Jackson Creek"). Register both forms so the
-    // exact-match lookup succeeds regardless of which form the
-    // description carries.
-    const suffixKey = normalise(`${w.ward_name} Ward`);
-    if (suffixKey !== baseKey) {
-      wardLookup.set(suffixKey, w.ward_code);
+    for (const key of kindooScopeNameVariants(w.ward_name)) {
+      wardLookup.set(key, w.ward_code);
     }
   }
 
