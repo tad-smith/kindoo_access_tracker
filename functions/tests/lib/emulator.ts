@@ -85,6 +85,7 @@ export function requireEmulators(): { app: App; db: Firestore; auth: Auth } {
  * `markRequestComplete` / `syncApplyFix` audit smoke checks (doc-id reads).
  */
 export async function clearEmulators(): Promise<void> {
+  const startedAt = Date.now();
   const { auth } = requireEmulators();
   // Auth: list+delete in batches.
   let pageToken: string | undefined;
@@ -100,8 +101,12 @@ export async function clearEmulators(): Promise<void> {
   // `host:port` (asserted by `hasEmulators()` above). Project ID is the
   // one Admin SDK already resolved.
   const host = process.env['FIRESTORE_EMULATOR_HOST']!;
+  // Hand the sweep whatever is left of the hook budget, so a slow Auth
+  // half shrinks the sweep's slice instead of pushing the pair past the
+  // hook timeout.
   await sweepFirestore(
     `http://${host}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
+    { deadlineMs: Math.max(1_000, CLEAR_BUDGET_MS - (Date.now() - startedAt)) },
   );
 }
 
@@ -110,24 +115,30 @@ const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
 const SWEEP_ATTEMPTS = 4;
 
 /**
- * Wall-clock ceiling for the whole sweep, retries included.
+ * Wall-clock ceiling for a whole `clearEmulators` call, retries included.
  *
- * `clearEmulators` runs in `afterEach`, and vitest's default `hookTimeout`
- * is 10s — no config here sets one, and no hook overrides it. An
- * attempt-only bound does not respect that: the thing being retried is by
- * name a *timeout* (`Transaction lock timeout`), so a failing attempt is
- * not necessarily fast, and four slow attempts plus backoff could blow the
- * hook budget. That would report `Hook timed out in 10000ms` against
+ * It runs in `afterEach`, and vitest's default `hookTimeout` is 10s — no
+ * config here sets one, and no hook overrides it. An attempt-only bound
+ * does not respect that: the thing being retried is by name a *timeout*
+ * (`Transaction lock timeout`), so a failing attempt is not necessarily
+ * fast. Overrunning the hook reports `Hook timed out in 10000ms` against
  * whatever unrelated test was running — losing the attempt count and body
  * this retry exists to produce, and landing exactly the misattributed
- * diagnosis the retry is meant to prevent, one layer up.
+ * diagnosis it is meant to prevent, one layer up.
  *
- * 5s leaves room for the Auth deletion that precedes the sweep in the same
- * hook. It is enforced on each `fetch` via `AbortSignal.timeout`, not only
- * on the decision to start another attempt — otherwise one slow answer
- * could still overrun the hook, which is the case that motivated the bound.
+ * 8.5s, not a rounder guess, because the budget has to be BIGGER than the
+ * problem it covers. Measured against this emulator: the Auth half costs
+ * ≤84ms and an uncontended sweep ≤50ms, so the hook normally finishes in
+ * ~0.1s of its 10s. A tighter ceiling would convert the very case this
+ * exists for — a sweep that blocks for seconds and then succeeds — from a
+ * pass into a red abort. 8.5s keeps the abort a last resort while leaving
+ * ~1.5s for vitest to report the informative failure.
+ *
+ * {@link clearEmulators} subtracts the Auth half's actual cost before
+ * handing the remainder to {@link sweepFirestore}, so a slow Auth half
+ * shrinks the sweep's slice rather than pushing the pair over.
  */
-const SWEEP_DEADLINE_MS = 5_000;
+const CLEAR_BUDGET_MS = 8_500;
 
 /**
  * `DELETE` the whole document tree, retrying transient contention.
@@ -143,7 +154,7 @@ const SWEEP_DEADLINE_MS = 5_000;
  *
  * `ABORTED` is documented as retryable and the contending write is short,
  * so a few quick attempts clear it. Bounded twice over — by attempt count
- * and by {@link SWEEP_DEADLINE_MS} wall-clock, because how long a
+ * and by {@link CLEAR_BUDGET_MS} wall-clock, because how long a
  * *contended* DELETE takes to answer is not known (the one sighting only
  * bounds it below 10s).
  *
@@ -157,9 +168,15 @@ const SWEEP_DEADLINE_MS = 5_000;
  */
 export async function sweepFirestore(
   url: string,
-  { deadlineMs = SWEEP_DEADLINE_MS }: { deadlineMs?: number } = {},
+  { deadlineMs = CLEAR_BUDGET_MS }: { deadlineMs?: number } = {},
 ): Promise<void> {
   const deadline = Date.now() + deadlineMs;
+  // An abort is always terminal (it fires AT the deadline, so there is
+  // never time for another attempt), and its message says only
+  // "aborted due to timeout". Keeping the last real response means the
+  // final error still carries the `Transaction lock timeout` body that
+  // explains WHY the sweep was slow — the diagnostic this all exists for.
+  let lastResponse: string | undefined;
   for (let attempt = 1; ; attempt++) {
     // Bound the ATTEMPT, not merely the decision to start another one.
     // The premise here is that a contended DELETE's duration is unknown,
@@ -182,6 +199,7 @@ export async function sweepFirestore(
         return;
       }
       detail = `${res.status} ${await res.text()}`;
+      lastResponse = detail;
       retryable = RETRYABLE_SWEEP_STATUSES.has(res.status);
     } catch (err) {
       // The deadline abort, or a transport failure such as a socket reset.
@@ -195,9 +213,11 @@ export async function sweepFirestore(
     const backoffMs = 100 * 2 ** (attempt - 1);
     const outOfTime = Date.now() + backoffMs >= deadline;
     if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
+      const carried =
+        lastResponse && lastResponse !== detail ? `; last response: ${lastResponse}` : '';
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
-          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}`,
+          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}${carried}`,
       );
     }
     console.warn(`clearEmulators(Firestore): ${detail} on attempt ${attempt}, retrying`);

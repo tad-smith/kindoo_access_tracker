@@ -139,6 +139,33 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  it('keeps the 409 body when the terminal attempt is an abort', async () => {
+    // An abort is always terminal, so without carrying the last real
+    // response the final error would read as a bare `TimeoutError` and the
+    // `Transaction lock timeout` body — the reason the sweep was slow —
+    // would be lost. That is the diagnostic this whole change is for.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        calls.push('DELETE');
+        // First answers 409; afterwards hangs until the deadline aborts.
+        if (calls.length === 1) return Promise.resolve(aborted());
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+          );
+        });
+      }),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const err = await sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 }).catch((e: Error) => e);
+
+    expect(String(err)).toMatch(/TimeoutError/);
+    expect(String(err)).toMatch(/last response: 409 .*Transaction lock timeout/);
+  });
+
   it('retries a transport failure instead of throwing it raw', async () => {
     // A socket reset rejects rather than returning a status, so it used to
     // bypass the retry entirely and escape as a bare TypeError.
