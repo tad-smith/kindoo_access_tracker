@@ -6,6 +6,23 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
+Status: pending
+Owner: @web-engineer, @backend-engineer
+Phase: Kindoo Sites (§15)
+
+Split out of [T-90], where it was built, found not to work end to end, and removed before merge. The Home Kindoo Site editor ships manager-only; this is the case it was originally for — a platform superadmin configuring a stake they hold no role on, which is how a stake whose home EID was never recorded gets un-stranded (see T-90 and `spec.md` §15 for why the extension panel cannot do it).
+
+**Three layers, all required. Shipping any one alone is authority or UI with no consumer.**
+
+1. **Active-stake resolution.** The blocker found last. A superadmin holding no role resolves **no active stake**, so the page's reads never fire — an E2E showed `?stake=` consumed and stripped, no console errors, and nothing loading. `resolveActiveStake`'s URL tier already has a superadmin-permissive branch and `useActiveStake` retains the param until validated, so the obvious claims-timing race is *not* the cause; the module needs actual investigation. Start here — the other two are unverifiable until a stake resolves.
+2. **Sub-collection reads.** Widen read to `isPlatformSuperadmin()` on exactly five: `wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`. **Not `seats`, not `requests`** — those carry member names and emails, and widening them hands every superadmin the roster of every stake (operator decision, 2026-08-09). Consequence to accept: guards keyed on seats/requests (building rename + delete, organization delete) never hydrate for this persona and their buttons stay disabled — safe, and those are writes rules deny them anyway.
+3. **`stakes/{stakeId}` update.** Add `isPlatformSuperadmin()` **pinning `setup_complete` and `bootstrap_admin_email`**. Not optional: `isBootstrapAdmin` is exactly those two fields, so an unpinned grant re-opens the bootstrap hatch on any existing stake and `syncManagersClaims` turns it into a real manager claim. Ship with tests for both escalation attempts and one proving the pin doesn't narrow the manager path the wizard's own flip uses.
+
+Two false leads, recorded so they aren't re-derived: the **route gate is not a blocker** (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`, so a superadmin already passes every manager-gated route), and the Stake List link therefore never "bounced a superadmin out" of the Dashboard — it failed on data reads.
+
+Verification this needs and T-90 lacked: an E2E for a token carrying **only** `isPlatformSuperadmin` (no `stakes` block) that reaches Kindoo Config from the Stake List, sees the foreign-sites list actually populated (a denied read renders the *empty state*, which would tell an operator a site they're about to collide with doesn't exist), and saves a home EID. Unit tests mock Firestore and rules tests don't render, so nothing below E2E catches this.
+
 ## [T-90] Kindoo Config tab — Home Kindoo Site, section renames, Sync pre-filter
 Status: done (2026-08-08 — `feat/kindoo-config-tab`)
 Owner: @web-engineer, @extension-engineer
@@ -17,11 +34,11 @@ Phase: Kindoo Sites (§15)
 - **Home Kindoo Site** section: shows `kindoo_expected_site_name` (falling back to `stake_name`) + `kindoo_config.site_id`, superadmin-editable. Closes the gap where `kindoo_expected_site_name` had no writer anywhere and `kindoo_config` was extension-only — which is what made a never-configured stake unreachable from the extension panel (its EID isn't recorded, so it isn't a resolution candidate).
 - **Sync pre-filter** — the ignore-list drop moved ahead of the door-grant enrichment loop; it was costing one Kindoo round-trip per ignored member per run.
 - **`(` guard** on ignore-list entries, and the section moved to the header-button + dialog pattern.
-- **Superadmin path**, per operator: `/manager/configuration` admits `manager || platformSuperadmin` and shows the whole tab set; the Stake List gains a per-row Kindoo Config deep-link, which is the *only* entry point because a zero-role superadmin's active stake can come from the URL tier alone.
+- **Stake List** stake-name link retargeted from the manager Dashboard to Configuration — a superadmin opening someone else's stake wants its settings, not its request queue. Both routes already admitted a superadmin, so this is usefulness, not access.
 
-Three things worth not re-deriving.
+**The superadmin-without-a-manager-role path was built here and removed before merge** — it needed three layers, only one of which was rules, and it never worked end to end. Split to [T-91]; the editor ships manager-only. No rules change in T-90 as merged.
 
-`stakes/{stakeId}` update allows `isManager || isBootstrapAdmin || (isPlatformSuperadmin && setup_complete and bootstrap_admin_email unchanged)`. Those two pins are load-bearing, not tidiness: `isBootstrapAdmin` is exactly those fields, so an unpinned grant lets a superadmin re-open the bootstrap hatch on any existing stake and have `syncManagersClaims` mint them a manager claim over its data. Caught in review after I shipped it unpinned and argued it was "not a new tier of authority."
+Two things worth not re-deriving.
 
 `kindoo_config` is written by **dotted path**. A whole-map literal drops keys — which is how an EID-only edit was clobbering `kindoo_config.site_name`, the value `homeSiteName()` uses to tell a manager which Kindoo tab to open. Note the rules validator does *not* force the whole-map write: it reads the merged result.
 

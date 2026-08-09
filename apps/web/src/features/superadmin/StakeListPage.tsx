@@ -31,17 +31,15 @@ import { useStakes, type StakeWithId } from './hooks';
  * sessionStorage + localStorage, and strips it via
  * `history.replaceState` (spec §2.1).
  *
- * Configuration, not the Dashboard: every viewer of this page is a
- * platform superadmin, and `/manager/dashboard` gates on the manager
- * role alone — so for a superadmin holding no role on the stake, the
- * old target bounced straight back out. Configuration admits
- * `manager || platformSuperadmin` and is where the superadmin-only
- * surface lives (Home Kindoo Site — spec §15), which is the reason to
- * open a stake you don't manage in the first place.
+ * Configuration rather than the Dashboard because Configuration is what
+ * a superadmin opening someone else's stake actually wants — the stake's
+ * settings, not its request queue. Both routes admit a superadmin
+ * (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`), so this is
+ * a usefulness change, not an access one.
  *
- * The `?stake=` param is load-bearing here rather than cosmetic: a
- * zero-role superadmin has no active stake of their own, and only the
- * URL tier of `resolveActiveStake` is superadmin-permissive.
+ * For a superadmin holding NO role on the stake neither target renders
+ * usefully yet: no active stake resolves, so the page's reads never
+ * fire. That is T-91, not something this link decides.
  */
 function landingTargetFor(stake: StakeWithId): { to: string; search: { stake: string } } {
   return { to: '/manager/configuration', search: { stake: stake.id } };

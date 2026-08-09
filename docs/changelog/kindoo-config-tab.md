@@ -21,9 +21,10 @@ The home site has no `KindooSite` doc — it lives on the parent stake doc — s
 
 - **Site name** shows `kindoo_expected_site_name`, falling back to `stake_name` and labelling the row as defaulted when it does — the same fallback `parseDescription` and the wizard's home-by-name resolution apply, so the row shows the string those actually compare against rather than an empty field. Saving writes **only** that field: `kindoo_config.site_name` is Kindoo's own captured display name and is preserved (see "Caught in review"). The override is also left unset when the entered name still equals `stake_name` and none existed, so an EID-only edit doesn't freeze today's stake name into stored state a later rename would strand.
 - **Kindoo EID** shows `kindoo_config.site_id`, or `Not set`. Refused when it collides with a configured foreign `kindoo_eid` — the mirror of the guard the extension's `writeKindooConfig` already applies.
-- **Superadmin-only editing** in the UI; the rules still let any manager write these fields as part of an ordinary stake update, so the gate is "the SPA offers this control to superadmins," not enforcement.
-- **The rules gate admits superadmins** so the control is reachable without a per-stake role: `isManager || isBootstrapAdmin || (isPlatformSuperadmin && setup_complete and bootstrap_admin_email unchanged)`. Those pins matter — see below.
-- **Reaching the page.** `/manager/configuration` admits `manager || platformSuperadmin` and shows the whole tab set; sub-collection writes stay gated on `isManager`, so a superadmin browsing the other tabs sees them and an unentitled write fails at the rules layer. A zero-role superadmin has no active stake of their own and only the **URL** tier of `resolveActiveStake` is superadmin-permissive, so the `?stake=` deep-link is the entry point rather than a convenience — the **Stake List's existing stake-name link now targets Configuration instead of the manager Dashboard**. That link was already there and already broken for this case: the Dashboard gates on the manager role alone, so clicking a stake you don't manage bounced you straight back out. (A separate per-row "Kindoo Config" link was added first and then removed as redundant once the existing link was retargeted.)
+- **Superadmin-only editing** in the UI; the rules are unchanged, so the editor must hold the manager role too. The gate is "the SPA offers this control to superadmins," not enforcement.
+- **The Stake List's stake-name link now targets Configuration** instead of the manager Dashboard — a superadmin opening someone else's stake wants its settings, not its request queue. Both routes already admitted a superadmin, so this is usefulness, not access.
+
+**The superadmin-without-a-manager-role case is deliberately not in this PR** — see "Held back" below.
 
 This breaks a real deadlock, which is what prompted it: `resolveEidStakes` matches an active EID only against stakes that **already record it**, so a stake whose home site has never been configured is never a candidate and cannot be reached from the panel in order to configure it. Worse, when a sibling stake already carries that environment as a *foreign* site, the EID resolves to exactly one candidate and the panel auto-picks the sibling — no picker, no override. Setting the home EID here makes the stranded stake a second candidate, which surfaces the picker.
 
@@ -41,11 +42,22 @@ Matching is on a description's scope-name portion, so pasting `Aspen Grove Ward 
 
 The EID field carries **no `min` attribute**. Native constraint validation suppresses the submit event outright, so React never sees it and the zod message can never render — the bound silently became browser-enforced instead of app-enforced. Found by instrumenting `handleSubmit` after a test expecting the zod message got no error at all. Zod owns the bound.
 
+## Held back: the superadmin-without-a-manager-role path (T-91)
+
+Attempted in this branch and removed before merge, because it never worked end to end and each layer only revealed the next.
+
+The rules widening came first, unscoped, and review caught it as a **privilege-escalation path**: it also handed a superadmin `setup_complete` + `bootstrap_admin_email` on any *existing* stake. `isBootstrapAdmin` is exactly those two fields, so: write them → the bootstrap hatch re-opens → `kindooManagers` create is allowed → `syncManagersClaims` mints a real manager claim over that stake's seats, requests and members. Flipping `setup_complete` alone also routes every user of the stake to SetupInProgress. The commit shipping it claimed this was "not a new tier of authority"; that was wrong — before it, a superadmin's only rules write was `create` on a *new* stake doc, which cannot reach existing data. Pinning both fields fixes it, and that shape is what T-91 should carry.
+
+Then the feature still didn't work, and two more layers surfaced:
+
+- **Five sub-collection reads are `isAnyMember`-gated** (`wards`, `buildings`, `kindooManagers`, `kindooSites`, `organizations`). The Home Kindoo Site save reads `kindooSites` for its collision guard, so it died on `permission-denied` before writing — for the exact persona the surface exists for. Widening exactly those five (and *not* seats or requests, which carry member names and emails) is the agreed shape.
+- **No active stake resolves at all** for a superadmin holding no role. An E2E for the persona showed the page rendering with `?stake=` consumed and stripped, no console errors, and every read simply never fired. Rules were necessary and insufficient.
+
+Two of my own justifications turned out false along the way, and both are worth not re-deriving: `useRequireRole('manager')` was never the blocker (`holdsAnyRole` short-circuits on `isPlatformSuperadmin`), and the Dashboard therefore never "bounced a superadmin out" — the Stake List link failed on its data reads, not its role gate.
+
 ## Caught in review
 
-Three defects, all in code this branch introduced.
-
-**The superadmin rules branch was an escalation path.** Unscoped, it also handed a superadmin `setup_complete` + `bootstrap_admin_email` on any *existing* stake. `isBootstrapAdmin` is exactly those two fields, so: write them → the bootstrap hatch re-opens → `kindooManagers` create is allowed → `syncManagersClaims` mints a real manager claim over that stake's seats, requests and members. Flipping `setup_complete` alone also routes every user of the stake to SetupInProgress. The commit shipping it claimed this was "not a new tier of authority"; that was wrong — before it, a superadmin's only rules write was `create` on a *new* stake doc, which cannot reach existing data. Both fields are now pinned on that branch, with tests for the two escalation attempts and one proving the pin didn't narrow the manager path the wizard's own flip uses.
+Two more defects, both in code this branch keeps.
 
 **An EID-only edit clobbered `kindoo_config.site_name`.** That field is Kindoo's own display name, captured by the wizard from the live session; `homeSiteName()` prefers it precisely because it's what a manager sees in the tab they're being told to open. The form's name field edits `kindoo_expected_site_name`, a different value — so saving wrote the wrong string over the capture and the Requests Queue then named the wrong thing. Now preserved, seeded only when the map is created.
 
