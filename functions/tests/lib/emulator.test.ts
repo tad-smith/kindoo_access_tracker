@@ -37,6 +37,37 @@ function stubSlowFetch(delayMs: number, response: () => Response) {
   return calls;
 }
 
+/**
+ * A request that never answers until its abort signal fires — the emulator
+ * holding the lock open, which is the case an attempt-count bound misses.
+ */
+function stubHangingFetch() {
+  const calls: string[] = [];
+  const impl = vi.fn(
+    (_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        calls.push('DELETE');
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+        );
+      }),
+  );
+  vi.stubGlobal('fetch', impl);
+  return calls;
+}
+
+/** Rejects like a transport failure (socket reset), then serves `then`. */
+function stubRejectingFetch(rejections: number, then: () => Response) {
+  const calls: string[] = [];
+  const impl = vi.fn(async () => {
+    calls.push('DELETE');
+    if (calls.length <= rejections) throw new TypeError('fetch failed');
+    return then();
+  });
+  vi.stubGlobal('fetch', impl);
+  return calls;
+}
+
 describe('sweepFirestore (T-97 retry)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -90,6 +121,33 @@ describe('sweepFirestore (T-97 retry)', () => {
     // Stopped early on time, not on the attempt ceiling.
     expect(calls.length).toBeLessThan(4);
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('aborts a single attempt that outlives the deadline', async () => {
+    // The case an attempt-count bound cannot catch: ONE request the
+    // emulator never answers. Without bounding the fetch itself, this
+    // would hang past vitest's 10s `hookTimeout` and surface as
+    // `Hook timed out` against an unrelated test, with no attempt count.
+    const calls = stubHangingFetch();
+
+    const started = Date.now();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 200 })).rejects.toThrow(
+      /failed after 1 attempt\(s\) \(200ms deadline\): TimeoutError/,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it('retries a transport failure instead of throwing it raw', async () => {
+    // A socket reset rejects rather than returning a status, so it used to
+    // bypass the retry entirely and escape as a bare TypeError.
+    const calls = stubRejectingFetch(2, ok);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await sweepFirestore(URL_UNDER_TEST);
+
+    expect(calls).toHaveLength(3);
   });
 
   it('does not retry a non-transient status', async () => {

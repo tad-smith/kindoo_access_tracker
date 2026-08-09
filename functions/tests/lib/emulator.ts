@@ -123,7 +123,9 @@ const SWEEP_ATTEMPTS = 4;
  * diagnosis the retry is meant to prevent, one layer up.
  *
  * 5s leaves room for the Auth deletion that precedes the sweep in the same
- * hook, so the informative throw always beats the hook timeout.
+ * hook. It is enforced on each `fetch` via `AbortSignal.timeout`, not only
+ * on the decision to start another attempt — otherwise one slow answer
+ * could still overrun the hook, which is the case that motivated the bound.
  */
 const SWEEP_DEADLINE_MS = 5_000;
 
@@ -159,25 +161,46 @@ export async function sweepFirestore(
 ): Promise<void> {
   const deadline = Date.now() + deadlineMs;
   for (let attempt = 1; ; attempt++) {
-    const res = await fetch(url, { method: 'DELETE' });
-    if (res.ok) {
-      if (attempt > 1) {
-        console.warn(`clearEmulators(Firestore): swept on attempt ${attempt} of ${SWEEP_ATTEMPTS}`);
+    // Bound the ATTEMPT, not merely the decision to start another one.
+    // The premise here is that a contended DELETE's duration is unknown,
+    // so an unbounded `fetch` would let a single slow answer overrun the
+    // hook budget no matter how few attempts were made.
+    const remainingMs = Math.max(1, deadline - Date.now());
+    let detail: string;
+    let retryable: boolean;
+    try {
+      const res = await fetch(url, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      if (res.ok) {
+        if (attempt > 1) {
+          console.warn(
+            `clearEmulators(Firestore): swept on attempt ${attempt} of ${SWEEP_ATTEMPTS}`,
+          );
+        }
+        return;
       }
-      return;
+      detail = `${res.status} ${await res.text()}`;
+      retryable = RETRYABLE_SWEEP_STATUSES.has(res.status);
+    } catch (err) {
+      // The deadline abort, or a transport failure such as a socket reset.
+      // Both used to escape this loop and throw raw, with no attempt count
+      // and no context — treat them as transient and let the deadline
+      // check below decide whether there is time to try again.
+      detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      retryable = true;
     }
-    const body = await res.text();
+
     const backoffMs = 100 * 2 ** (attempt - 1);
     const outOfTime = Date.now() + backoffMs >= deadline;
-    if (attempt >= SWEEP_ATTEMPTS || outOfTime || !RETRYABLE_SWEEP_STATUSES.has(res.status)) {
+    if (attempt >= SWEEP_ATTEMPTS || outOfTime || !retryable) {
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
-          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${res.status} ${body}`,
+          `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}`,
       );
     }
-    console.warn(
-      `clearEmulators(Firestore): ${res.status} on attempt ${attempt}, retrying — ${body}`,
-    );
+    console.warn(`clearEmulators(Firestore): ${detail} on attempt ${attempt}, retrying`);
     await new Promise((r) => setTimeout(r, backoffMs));
   }
 }
