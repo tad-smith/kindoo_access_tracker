@@ -382,14 +382,14 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 ### 4.2 `stakes/{stakeId}/wards/{wardCode}`
 
-**Doc ID:** immutable `ward_code`. On create it is derived from `ward_name` via `buildingSlug()` (`'Maple Ward'` → `'maple-ward'`: lowercase, ASCII alnum + internal hyphens), pinned for the doc's life, and never shown or typed. Legacy wards retain their original 2-letter codes (e.g. `CO`, matching the old LCR tab name) as immutable doc IDs — those are not regenerated.
+**Doc ID:** immutable `ward_code`. On create it is derived from `ward_name` via `buildingSlug()` (`'Maple Ward'` → `'maple-ward'`: lowercase, ASCII alnum + internal hyphens), pinned for the doc's life, and never shown or typed. The slug follows `ward_name` **verbatim** — it is not run through `kindooScopeName()` first — so the same ward stored as `'Maple'` lands at `'maple'` instead. That is deliberate: the code is a foreign key by value and re-deriving it would orphan references. It is never rendered and never matched against Kindoo, so the two forms diverging there costs nothing. Legacy wards retain their original 2-letter codes (e.g. `CO`, matching the old LCR tab name) as immutable doc IDs — those are not regenerated.
 
 **Fields:**
 
 ```typescript
 {
   ward_code: string;       // = doc.id; buildingSlug(ward_name) at create (legacy 2-letter codes retained), immutable
-  ward_name: string;       // The only visible ward identifier; unique (case-insensitive, trimmed) across the stake
+  ward_name: string;       // The only visible unit identifier; unique (case-insensitive, trimmed) across the stake. Ward OR branch — see below
   building_id?: string;    // Preferred FK to buildings/{building_id} (immutable slug). Optional during the additive transition; new writes always populate it.
   building_name: string;   // Legacy display-name FK + display snapshot. Still required + populated.
   seat_cap: number;
@@ -401,6 +401,16 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 
 **Written by:** Bootstrap wizard; manager via Configuration page.
 **Read by:** Roster pages (utilization); Sync's `syncApplyFix` (scope resolution); `EmailService` on every notification send (see below).
+
+**`ward_name` → Kindoo scope name.** This collection holds every unit of the stake, ward or **branch**; there is no `unit_type` field and none is planned. The unit's kind, and the scope name Kindoo displays for it, are derived from `ward_name` alone by `packages/shared/src/unitName.ts` (`unitType`, `kindooScopeName`, `kindooScopeNameVariants`) — `architecture.md` D31.
+
+| `ward_name` | `unitType` | Kindoo scope name | resolves from |
+|---|---|---|---|
+| `Maple` | `ward` | `Maple Ward` | `maple`, `maple ward` |
+| `Maple Ward` | `ward` | `Maple Ward` | `maple`, `maple ward` |
+| `Limon Branch` | `branch` | `Limon Branch` | `limon branch` |
+
+A ward's trailing `" Ward"` is **optional** and equivalent in both directions: it is appended when writing a Description if absent, and both forms are registered as lookup keys when reading one back. A branch is identified **solely** by its name ending in `" Branch"`; its scope name is verbatim and nothing is appended, because Kindoo never renders `"Limon Branch Ward"` and the provisioner's strict `!==` description comparison would rewrite the Description on every pass if it did. Suffix matching requires preceding whitespace, so a unit literally named `Ward` or `Branch` is an ordinary name. Uniqueness is enforced on the raw `ward_name` (case-insensitive, trimmed), **not** on the derived scope name — see B-20.
 
 **Every email send reads this collection.** All six notification emails (`spec.md` §9) render ward display names, never raw ward codes, so each send issues one `stakes/{stakeId}/wards` collection read through `loadScopeLabeller` in `functions/src/services/EmailService.ts`, which returns a `scopeLabel(scope, wards)` resolver. One read labels any number of scopes — the over-cap email labels every flagged pool from it. That is one read per send for `notifyOnRequestWrite` (submit / complete / reject / cancel), `notifyOnOverCap`, and `notifyOnAccessGranted`; the two manager-bound request emails batch it concurrently with their `resolveRequesterLabel` reads. Unresolved codes fall back to the raw code, so a ward deleted out from under a pending request degrades to the code rather than failing the send.
 

@@ -48,6 +48,7 @@ src/
 - **Tailwind classes inline.** No `@apply` in CSS files except for global tokens.
 - **Tests colocated** under each feature's `tests/` directory. One test file per source file.
 - **Types from `packages/shared/`** for any domain object (Seat, Request, Access). Don't redeclare locally.
+- **Copy repeated across forms lives in one constant.** Three fields take a unit's name — the bootstrap wizard's Step 3, Configuration → Wards, Wards to Ignore in Kindoo — and they read from `WARD_NAME_LABEL` / `WARD_NAME_HINT` in `src/lib/wardCopy.ts`. Drifting label text between forms that collect the same thing is a recurring bug, and it is invisible from any one of them. Note the hint is deliberately *not* on the ignore-list field: it matches Kindoo's description text verbatim, where the `" Ward"` suffix is not optional.
 - **A config save never implies a data reconcile.** When flipping a stake setting leaves existing docs stale (e.g. `eq_president_app_access` — Configuration → Config), the save lands on its own and a confirm dialog offers the reconcile as a separate, declinable action. Read the persisted value *before* awaiting the mutation — the live snapshot updates underneath you — and compare against it to detect the flip.
 
 ## Don't

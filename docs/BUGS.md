@@ -6,6 +6,19 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
+Status: open
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found while documenting PR #268
+
+`architecture.md` D31 makes `"Maple"` and `"Maple Ward"` the same unit — one Kindoo scope name, one pair of lookup keys. The uniqueness guard does not know that. `duplicateWardNameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts:174`) compares `name.trim().toLowerCase()` against each existing `ward.ward_name.trim().toLowerCase()`, so the two forms read as different names and both saves are allowed. They slug to different doc IDs (`maple`, `maple-ward`), so the create-path transaction backstop doesn't catch it either.
+
+**Consequence if it happens.** Both wards register the same two keys in `parseDescription`'s `wardLookup` (`extension/src/content/kindoo/sync/parser.ts`), so the later one in iteration order wins **both** and every member of the other silently resolves to the wrong `ward_code` — wrong seat scope on apply, wrong roster, wrong building. `collidesWithOwnWard` likewise can't distinguish them. Nothing warns; the two rows look distinct in Configuration → Wards.
+
+**Not urgent** — it takes an operator deliberately adding the same unit twice under two spellings, and the fix is obvious once seen (delete one). Filed because the guard reads as though it prevents this and does not. The fix is to compare `kindooScopeName(name)` rather than the raw name, in `duplicateWardNameBlocker` and in the bootstrap wizard's pending-list check.
+
 ## [B-19] Bootstrap admin of a newly-created stake lands on Not Authorized instead of the wizard
 Status: closed (fixed)
 Owner: @backend-engineer
