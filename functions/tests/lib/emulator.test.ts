@@ -72,6 +72,26 @@ function transportError(code: string) {
   return new TypeError('fetch failed', { cause });
 }
 
+/**
+ * Answers 409 once, then hangs until the deadline aborts — the slow-
+ * contention shape, which terminates on the DEADLINE rather than the
+ * attempt ceiling. The only stub that reaches the latch's guarded branch.
+ */
+function stubAnsweredThenHanging() {
+  const calls: string[] = [];
+  const impl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+    calls.push('DELETE');
+    if (calls.length === 1) return Promise.resolve(aborted());
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () =>
+        reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError')),
+      );
+    });
+  });
+  vi.stubGlobal('fetch', impl);
+  return calls;
+}
+
 /** Rejects `rejections` times with `err()`, then serves `then`. */
 function stubRejectingFetch(rejections: number, err: () => Error, then: () => Response) {
   const calls: string[] = [];
@@ -307,6 +327,33 @@ describe('sweepFirestore (T-97 retry)', () => {
     const err = await sweepFirestore(URL_UNDER_TEST).catch((e: Error) => e);
 
     expect(String(err)).toContain('ECONNREFUSED');
+  });
+
+  it('never latches while the emulator keeps answering, however slowly', async () => {
+    // The guard that matters most, and the only test that reaches it.
+    // Every other case here terminates on the ATTEMPT CEILING, where
+    // `outOfTime` is false and the latch branch is skipped entirely — so
+    // deleting both guards leaves the rest of the suite green.
+    //
+    // This is the T-97 scenario at its worst: a contended DELETE answers
+    // 409 and the retry then runs out of budget. Repeated, it must never
+    // short-circuit — otherwise one slow file reds wholesale, every hook
+    // claiming the emulator is not answering while it demonstrably is.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    for (let sweep = 1; sweep <= 2; sweep++) {
+      stubAnsweredThenHanging();
+      await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 250 })).rejects.toThrow(
+        /deadline\): TimeoutError.*last response: 409/s,
+      );
+    }
+
+    const third = stubAnsweredThenHanging();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 250 })).rejects.toThrow(
+      /last response: 409 .*Transaction lock timeout/,
+    );
+    // Still talking to the emulator, not short-circuiting on a stale latch.
+    expect(third.length).toBeGreaterThan(0);
   });
 
   it('does NOT latch on repeated transport drops — flappy is not hung', async () => {
