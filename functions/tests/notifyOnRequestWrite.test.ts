@@ -251,6 +251,24 @@ describe.skipIf(!hasEmulators())('notifyOnRequestWrite', () => {
     expect(calls[0]!.html).toContain('>Stake</td>');
   });
 
+  // The resolved unit name is the only unit-type discriminator, so the
+  // row label has to come off the wards read, not off `req.scope`.
+  it('renders a branch-scoped request as Branch, not Ward', async () => {
+    await seedStake();
+    await seedWard('LB', 'Peterson Branch');
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls } = mockSender([{ ok: true, id: 'mid-1-branch' }]);
+    restoreSender = _setResendSender(sender);
+
+    const req: AccessRequest = { ...baseRequest, scope: 'LB' };
+    await notifyOnRequestWrite.run(makeEvent({ before: null, after: req }));
+
+    expect(calls[0]!.text).toContain('Branch:    Peterson Branch');
+    expect(calls[0]!.text).not.toContain('Ward:');
+    expect(calls[0]!.html).toContain('>Branch</th>');
+    expect(calls[0]!.html).toContain('>Peterson Branch</td>');
+  });
+
   it('on create (pending) falls back to the raw email when no requester access doc exists', async () => {
     await seedStake();
     await seedWard('GE', 'Greenwood Ward');

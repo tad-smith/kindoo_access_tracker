@@ -79,6 +79,12 @@ export {
   exceedsLimitedTempWindow,
   isoDateSpanDays,
 } from './tempWindow.js';
+export { kindooScopeName, kindooScopeNameVariants, unitType, type UnitType } from './unitName.js';
+export {
+  findUnitNameCollision,
+  unitNameCollisionMessage,
+  type UnitNameCollision,
+} from './unitNameCollision.js';
 
 // ---- Domain types -----------------------------------------------------
 export type {

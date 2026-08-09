@@ -14,7 +14,18 @@ export type Ward = {
    * `access.*` map keys.
    */
   ward_code: string;
-  /** Display name (`"3rd Ward"`, etc.). */
+  /**
+   * The unit's name as the operator typed it, and the only visible unit
+   * identifier. A ward OR a branch — this collection holds both, and the
+   * name is the sole discriminator; there is no `unit_type` field.
+   *
+   * A ward's trailing `" Ward"` is optional and equivalent in both
+   * directions: `"Maple"` and `"Maple Ward"` are the same unit. A branch
+   * is identified by ending in `" Branch"` and its Kindoo scope name is
+   * verbatim. Never compare this field against a Kindoo description
+   * directly — go through `unitName.ts` (`unitType`, `kindooScopeName`,
+   * `kindooScopeNameVariants`). See `architecture.md` D31.
+   */
   ward_name: string;
   /**
    * Preferred FK to `stakes/{stakeId}/buildings/{building_id}` by the

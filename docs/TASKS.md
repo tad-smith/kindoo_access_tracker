@@ -6,6 +6,69 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-98] CI's "Verify all checks passed" gate does not name the step that failed
+Status: pending
+Owner: @infra-engineer
+Phase: cross-cutting
+
+Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-on-error: true` and a final gate aggregates the true `outcome` values — so a failing step renders **green** in the GitHub UI and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing T-95 meant reading `steps[].conclusion` off the API and mapping the failing index back to the step list in the workflow. Echo the failing step's name in that gate.
+
+Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
+
+## [T-97] `clearEmulators` can 409 on the Firestore blow-away
+Status: pending
+Owner: @backend-engineer
+Phase: cross-cutting
+
+Observed once in ~6 full integration runs while verifying [T-95], locally, under the CI emulator config:
+
+```
+backfillKindooSiteId.test.ts > updates the primary when stored kindoo_site_id explicitly differs from derived
+Error: clearEmulators(Firestore) failed: 409 {"error":{"code":409,"message":"Transaction lock timeout.","status":"ABORTED"}}
+  ❯ clearEmulators tests/lib/emulator.ts:106
+```
+
+Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow-away rather than an assertion. The REST `DELETE …/documents` endpoint contends with an in-flight write, most likely a deployed trigger's, and the emulator returns `ABORTED` instead of blocking. That is the same "delivery outlives the test" family the `clearEmulators` docblock already describes for leftover `auditLog` rows, but this variant takes the *sweep* down rather than leaking a row.
+
+One sighting is thin evidence and it did not recur in five subsequent runs, so this is recorded rather than fixed. If it shows up on CI: `ABORTED` is the documented retryable status, so a bounded retry around the fetch is the obvious remedy — but confirm the frequency first, and note that a retry masks whatever holds the lock.
+
+## [T-96] Branch-specific callings — specified, deliberately not implemented
+Status: pending
+Owner: @backend-engineer, @extension-engineer
+Phase: cross-cutting
+
+PR #268 taught the system what a branch **is** (`architecture.md` D31 — a unit whose name ends in `" Branch"`, whose Kindoo scope name is verbatim). It taught it nothing about what a branch's people are **called**. `callingSortOrder.ts`'s 85-entry table and `appAccessCallings.ts`'s two sets are ward/stake only, so today a Branch President's Kindoo description parses to a real scope and an unknown calling: the seat sorts to the bottom of its type band (`callingSortOrder` returns `null`), and no app access is derived. Scope resolution works; the person is invisible to everything keyed on the calling name.
+
+**Branch-specific callings to add:**
+
+- Branch President
+- Branch Presidency First Counselor
+- Branch Presidency Second Counselor
+- Branch Clerk
+- Branch Assistant Clerk
+- Branch Assistant Clerk--Finance
+
+Note the list has **no Branch Executive Secretary** — confirmed deliberate by the operator, 2026-08-09; branches have no equivalent of Ward Executive Secretary. It also has no `Branch Assistant Clerk--Membership`, where both the stake and ward sets carry a Membership variant alongside the Finance one. That asymmetry was not asked about and is recorded as observed, not as a decision.
+
+**Ward callings that also apply to branches — the four families, as the entries that already exist verbatim in `callingSortOrder.ts`.** All 19 were verified present in the table; none needs adding, and none is a rename.
+
+- Elders Quorum President, Elders Quorum First Counselor, Elders Quorum Second Counselor, Elders Quorum Secretary, Elders Quorum Assistant Secretary
+- Relief Society President, Relief Society First Counselor, Relief Society Second Counselor, Relief Society Secretary
+- Primary President, Primary First Counselor, Primary Second Counselor, Primary Secretary
+- Young Women President, Young Women First Counselor, Young Women Second Counselor, Young Women Secretary, Young Women Specialist, Young Women Class Adviser
+
+**Decided, 2026-08-09 — do not re-open these.**
+
+- **Matching stays exact, trimmed, case-insensitive, with no wildcards** (`packages/shared/src/callingSortOrder.ts:14`). The `*` in an earlier framing of the four families ("Elders Quorum\*") named which existing entries to pick, not a prefix-matching mode. The matching model does not change.
+- **`stake.eq_president_app_access` extends to branches**, with the same behaviour as wards: with the stake opted in, Elders Quorum President grants app access at a branch scope too. This follows D23's shape rather than widening it — one boolean, one calling, now two unit kinds instead of one. It carries the tier with it: `LIMITED_TIER_CALLINGS` is keyed on the calling name, not the scope, so a branch EQ President lands on the **limited** tier (D25/D26) exactly as a ward EQ President does.
+
+**The branch app-access set is therefore exactly:** Branch President, Branch Presidency First Counselor, Branch Presidency Second Counselor, Branch Clerk — plus Elders Quorum President when the stake toggle is on. Note this is not the ward set with names swapped: the ward set carries Ward Executive Secretary, and the branch set has no counterpart to it.
+
+Implementation note — still open, and the reason this is `pending` rather than ready to build:
+
+- The natural extension point is `unitType` on the existing `AppAccessOptions` bag — the mechanism D23 prescribes for exactly this ("add a gate there, never by making the arrays configurable", `packages/shared/CLAUDE.md`). `appAccessCallingsForScope` already branches on `scope === 'stake'` vs. anything else; a branch is a third case it currently cannot see, because a `ward_code` is all it receives and the code is a slug (`peterson-branch` or `LB`), not a name.
+- **`syncApplyFix.ts` reads the ward doc too late.** At `:302` it calls `filterAppAccessCallings` before the ward doc is loaded at `:311`, and that read is conditional on `needsSiteResolve` — so the unit's name isn't available at the point the calling set is chosen, and on some paths isn't read at all. It needs hoisting. Three further call sites have the same gap and no ward read anywhere near them: `:467` (REPLACE recompute) and `:642` (manual→auto promote) both key on `seat.scope`; `:774` is stake-scope only and is unaffected.
+
 ## [T-95] Flaky integration test: `syncManagersClaims` — the trigger clobbers the test, not the reverse
 Status: done (2026-08-09 — `fix/syncmanagers-claims-flake`)
 Owner: @backend-engineer
@@ -40,33 +103,7 @@ The `.github/workflows/test.yml` build step had **predicted the first path preci
 
 **Generalisable, and broader than `createUser`:** under this config every write a test makes to a trigger's own Firestore path has a second, asynchronous writer whose delivery outlives the test. Settle what you can; make what you can't settle unaddressable, by never sharing an identity between tests.
 
-Left open, split out as [T-96]: the failure is invisible in the GitHub UI, because every step in `test.yml` sets `continue-on-error: true` and only the aggregator turns red.
-
-## [T-97] `clearEmulators` can 409 on the Firestore blow-away
-Status: pending
-Owner: @backend-engineer
-Phase: cross-cutting
-
-Observed once in ~6 full integration runs while verifying [T-95], locally, under the CI emulator config:
-
-```
-backfillKindooSiteId.test.ts > updates the primary when stored kindoo_site_id explicitly differs from derived
-Error: clearEmulators(Firestore) failed: 409 {"error":{"code":409,"message":"Transaction lock timeout.","status":"ABORTED"}}
-  ❯ clearEmulators tests/lib/emulator.ts:106
-```
-
-Unrelated to T-95 — a different file, and the throw is in the `afterEach` blow-away rather than an assertion. The REST `DELETE …/documents` endpoint contends with an in-flight write, most likely a deployed trigger's, and the emulator returns `ABORTED` instead of blocking. That is the same "delivery outlives the test" family the `clearEmulators` docblock already describes for leftover `auditLog` rows, but this variant takes the *sweep* down rather than leaking a row.
-
-One sighting is thin evidence and it did not recur in five subsequent runs, so this is recorded rather than fixed. If it shows up on CI: `ABORTED` is the documented retryable status, so a bounded retry around the fetch is the obvious remedy — but confirm the frequency first, and note that a retry masks whatever holds the lock.
-
-## [T-96] CI's "Verify all checks passed" gate does not name the step that failed
-Status: pending
-Owner: @infra-engineer
-Phase: cross-cutting
-
-Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-on-error: true` and a final gate aggregates the true `outcome` values — so a failing step renders **green** in the GitHub UI and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing T-95 meant reading `steps[].conclusion` off the API and mapping the failing index back to the step list in the workflow. Echo the failing step's name in that gate.
-
-Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
+Left open, split out as [T-98]: the failure is invisible in the GitHub UI, because every step in `test.yml` sets `continue-on-error: true` and only the aggregator turns red.
 
 ## [T-94] Flaky E2E: `ignored-wards.spec.ts` — reload raced the write's server ack
 Status: done (2026-08-08 — `fix/ignored-wards-e2e-write-ack`)
@@ -185,7 +222,7 @@ Phase: Kindoo Sites (§15) Phase 6
 The trigger: two wards of one stake meet in a building governed by a second stake's Kindoo site. The first stake configures that site as a foreign Kindoo Site and provisions its own members into it. When the second stake is set up in SBA, those members appear in its **home** Kindoo site with descriptions naming wards it has never heard of — and Sync's home-site branch deliberately keeps unresolvable users so real `kindoo-only` rows still surface. Every one of the first stake's members therefore lands as `kindoo-only` drift, inviting the second stake to mint seats for another stake's people.
 
 - `packages/shared` — `Stake.kindoo_ignored_wards?: string[]` + zod schema; `kindooIgnoredWards.ts` carries the three comparison helpers both surfaces must agree on (`normaliseIgnoredWard`, `matchesIgnoredWard`, `collidesWithOwnWard`).
-- `apps/web` — "Wards to Ignore in Kindoo" section under the Kindoo Sites list: inline add, per-row Remove, `useUpdateIgnoredWardsMutation` against the parent stake doc. Blocks a case-insensitive duplicate and an entry naming one of this stake's own wards (both the bare stored form and the `" Ward"`-suffixed form).
+- `apps/web` — "Wards to Ignore in Kindoo" section under the Kindoo Sites list: inline add, per-row Remove, `useUpdateIgnoredWardsMutation` against the parent stake doc. Blocks a case-insensitive duplicate and an entry naming one of this stake's own units. **Amended by PR #268 ([T-96], `architecture.md` D31):** the own-unit check matched exactly two forms, the bare stored name and the `" Ward"`-suffixed one. It now matches whatever `kindooScopeNameVariants` returns — still both forms for a ward, but a single verbatim form for a **branch**, since Kindoo never renders `"Peterson Branch Ward"`.
 - `extension` — `parseDescription` strips matching segments and counts them; `isFullyIgnored` distinguishes a wholly-ignored description from a blank one; `detect` drops fully-ignored users ahead of the active-site filter and reports `ignoredCount`, which the Sync header renders.
 - **No rules change.** Managers can already update the parent stake doc (`firestore.rules:686`), and the SBA UI is the only writer.
 

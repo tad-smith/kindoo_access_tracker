@@ -6,6 +6,52 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
+Status: open (accepted risk)
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found reviewing PR #268
+
+`unitType` reads a trailing `" Branch"` as the discriminator (D31(a)), so a **ward** in a place whose own name ends in "Branch" — Olive Branch, Long Branch — must be stored as `"Olive Branch Ward"`. If the operator types `Olive Branch`, the unit is stored as a branch.
+
+**Why the collision guard does not catch it.** `findUnitNameCollision` compares the candidate against the stake's *existing* unit names, so it fires only when the stake holds **both** `Olive Branch` and `Olive Branch Ward`. The likely shape is a single unit: the stake's only unit in that place is the ward, the operator types `Olive Branch`, nothing else claims the key `olive branch`, the guard returns `null`, and the save goes through. B-20's fix covers the two-unit case and nothing more; it is not a mitigation for this one.
+
+**Consequence, write side.** `resolveScopeName` (`extension/src/content/kindoo/provision.ts:151`) writes a branch's scope name verbatim, so the Description reads `Olive Branch` where Church Access Automation writes `Olive Branch Ward`. The provisioner compares with a strict `!==` (`:764`), so every Sync pass sees a difference and rewrites the church-provisioned Description — indefinitely. The unit also labels as `Branch:` in notification emails (`scopeRowLabel`), and once branch-specific callings land (T-96) it would resolve against the wrong calling table.
+
+**Consequence, read side.** The same misclassification breaks resolution in the other direction, so the symptom is a pair, not just the rewrite. `kindooScopeNameVariants('Olive Branch')` returns the single verbatim key `['olive branch']` — the branch path deliberately registers no suffixed form (D31(c)) — so a church-provisioned description reading `Olive Branch Ward (Bishop)` normalises to `olive branch ward`, misses `wardLookup`, and yields an unresolved segment. `parseDescription` computes `unparseable` as `segments.every((s) => !s.resolvedScope)`, so a single-segment description makes the whole user unparseable. Sync cannot resolve the users it did not itself write.
+
+That surfaces as a **`drift` row, not a manual-review row**. Because `segments.length > 0`, the detector takes the present-but-unparseable path (`extension/src/content/kindoo/sync/detector.ts:848`) and emits `kindoo-unparseable` at severity `drift`, whose stated remedy is to "treat as a stake-scope (church-wide) calling and Update SBA". Applying it moves the unit's members to **stake scope** — a wrong-scope write, not merely a failure to resolve. Two gates suppress the row before that: a foreign active site (`isHomeSite`), and a seat already aligned to the stake-scope target (`unparseableAligned`).
+
+**Blast radius is capped, but not by a confirmation step.** There is no bulk-apply path: Sync's fix actions are per-row only, locked in at Phase 2 (`extension/docs/sync-design.md` — "Per-row only — no bulk fix"), with bulk fix explicitly deferred as out of scope. So the exposure is one deliberate click per affected member, not one sweep that restakes a whole unit. What does *not* cap it is any friction on the click itself: the model is trust-fire, and the panel's own header says so (`extension/src/panel/SyncPanel.tsx:323`) — "Fix buttons apply changes one row at a time — no confirmation, no undo." Both the confirmation dialog and the undo affordance are deliberate omissions, not gaps.
+
+**Applying the row also hides it.** Once a seat sits at stake scope with the raw description recorded, `unparseableAligned` returns true and the `kindoo-unparseable` row is suppressed on every later run. So the mis-scoping stops being reported the moment it is applied — the bug's own symptom is what disappears, not the bug.
+
+**Recovery is a single action.** Rename the unit to `Olive Branch Ward` in Configuration → Wards. Both halves derive from the same misclassification, so the rename closes both at once: `unitType` stops matching `/\sbranch$/i`, so `kindooScopeName` returns `Olive Branch Ward` — exactly what Church Access Automation writes — and `kindooScopeNameVariants` widens from `['olive branch']` to `['olive branch', 'olive branch ward']`, so church-written descriptions resolve. The provisioner does make one final corrective write, since its own earlier passes left `Olive Branch (…)` stored in Kindoo and `descDiffers` is true once more against the new target; it converges after that instead of looping. The rename keeps the original `ward_code` (the doc ID is never re-derived, §5.3), so no seat / request / grant reference is orphaned.
+
+**Seat repair is cleanup afterward, not a second remediation — and the order is load-bearing.** Once descriptions resolve, any seats already moved to stake scope resurface as ordinary `scope-mismatch` drift rows and repair normally. Doing that repair *before* the rename does not hold: the description still fails to resolve, `unparseableAligned` goes false again, and the same `kindoo-unparseable` row returns proposing stake scope a second time.
+
+**Status is "accepted risk", not "needs a fix".** The field hint was deliberately kept short — the case is rare enough that spelling it out in `WARD_NAME_HINT` costs more readers than it saves. That is a settled operator decision and this entry does not reopen it; the entry exists so the residual gap is on the record rather than implied to be covered. An earlier draft of the `WARD_NAME_HINT` docblock claimed `unitNameCollision.ts` covered this case — it does not, for the reason above, and that claim was removed in the same PR.
+
+## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
+Status: closed (fixed) `[FIXED 2026-08-08]`
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found while documenting PR #268; fixed in the same PR
+
+`architecture.md` D31 makes `"Maple"` and `"Maple Ward"` the same unit — one Kindoo scope name, one pair of lookup keys. The uniqueness guard does not know that. `duplicateWardNameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts:174`) compares `name.trim().toLowerCase()` against each existing `ward.ward_name.trim().toLowerCase()`, so the two forms read as different names and both saves are allowed. They slug to different doc IDs (`maple`, `maple-ward`), so the create-path transaction backstop doesn't catch it either.
+
+**Consequence if it happens.** Both wards register the same two keys in `parseDescription`'s `wardLookup` (`extension/src/content/kindoo/sync/parser.ts`), so the later one in iteration order wins **both** and every member of the other silently resolves to the wrong `ward_code` — wrong seat scope on apply, wrong roster, wrong building. `collidesWithOwnWard` likewise can't distinguish them. Nothing warns; the two rows look distinct in Configuration → Wards.
+
+**Fix.** `findUnitNameCollision` / `unitNameCollisionMessage` (`packages/shared/src/unitNameCollision.ts`), consumed by `duplicateWardNameBlocker` and the bootstrap wizard's pending-list check.
+
+The rule is **variant-set intersection**, not equality of `kindooScopeName`. Canonical-name equality catches `Maple` / `Maple Ward` but misses a branch `Olive Branch` (variants `["olive branch"]`) beside a ward `Olive Branch Ward` (variants `["olive branch","olive branch ward"]`): their canonical names differ, yet they collide on `olive branch` and the parser would still shadow one. Intersection is exactly the invariant `parseDescription` needs.
+
+`parseDescription` was hardened alongside it, for the stakes that already hold such a pair. `buildWardLookup` sorts the units by `ward_code` (ascending, code-unit compare on a copy — `localeCompare` can rank two distinct ids equal and would put array order back into the tie-break) before registering variants, and a key already held by a different `ward_code` keeps its incumbent and warns once.
+
+**The sort is what makes resolution independent of the order Firestore returns wards** — not the keep-incumbent rule. First-wins and last-wins are both functions of array position; switching between them only changes which unit a given order picks. Sorting on `ward_code` — the immutable doc ID, so a stable total order — is what fixes the winner: the contested key goes to the lower `ward_code` on every run. First-wins over that sorted list is still preferable to last-wins, because a later unit keeps every variant the earlier one did not claim, so a branch sorting ahead of the ward that shadows it leaves both units resolvable where last-wins would strand the branch. What is guaranteed is determinism, not that the branch wins — that depends on the two `ward_code`s. The `[sba-ext]` warn still fires, and its dedupe signature is now stable across runs since the owner is always the lower code.
+
 ## [B-19] Bootstrap admin of a newly-created stake lands on Not Authorized instead of the wizard
 Status: closed (fixed)
 Owner: @backend-engineer

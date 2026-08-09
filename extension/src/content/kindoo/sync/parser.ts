@@ -18,6 +18,7 @@
 
 import {
   filterAppAccessCallings,
+  kindooScopeNameVariants,
   matchesIgnoredWard,
   type AppAccessOptions,
   type Stake,
@@ -56,6 +57,67 @@ function normalise(s: string): string {
   return s.trim().toLowerCase();
 }
 
+/** Collision signatures already warned about — see `buildWardLookup`. */
+const warnedCollisions = new Set<string>();
+
+/**
+ * Normalised variant → `ward_code`, registered in **`ward_code` order**
+ * with **first registration winning**.
+ *
+ * Two units in one stake can produce overlapping variant sets: `"Maple"`
+ * and `"Maple Ward"` both yield `maple` + `maple ward`, and a branch
+ * `"Olive Branch"` overlaps a ward `"Olive Branch Ward"` on
+ * `olive branch`. Whoever wins the contested key silently absorbs the
+ * other unit's Kindoo users, and Sync then proposes seat writes against
+ * the wrong unit — worse than not resolving at all. So the winner must
+ * not depend on the order Firestore happened to hand `wards` over:
+ * sorting on `ward_code` first — the immutable doc ID, hence a stable
+ * total order — makes the contested key go to the same unit every run.
+ * The warn makes the config error visible in DevTools. The real fix is
+ * renaming one of the two units in SBA.
+ *
+ * First-wins rather than last-wins over that sorted list, because a
+ * later unit still keeps every variant the earlier one did not claim.
+ * In the branch/ward shape the branch's key set is a subset of the
+ * ward's, so when the branch sorts first both units still resolve —
+ * last-wins would hand `Olive Branch Ward` both keys and leave the
+ * branch resolving to nothing.
+ *
+ * The warn is deduped across calls: `parseDescription` runs once per
+ * Kindoo user per Sync pass, and a name collision persists for the whole
+ * run — one line per contested pair, not several hundred.
+ */
+function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): Map<string, string> {
+  const lookup = new Map<string, string>();
+  // Code-unit compare, not `localeCompare`: collation can rank two
+  // distinct ids equal, which would put array order back in the
+  // tie-break. Sorted on a copy — `wards` belongs to the caller.
+  const ordered = [...wards].sort((a, b) =>
+    a.ward_code < b.ward_code ? -1 : a.ward_code > b.ward_code ? 1 : 0,
+  );
+  for (const w of ordered) {
+    for (const key of kindooScopeNameVariants(w.ward_name)) {
+      const owner = lookup.get(key);
+      if (owner === undefined) {
+        lookup.set(key, w.ward_code);
+        continue;
+      }
+      // The variants list is de-duplicated, but a unit re-registering
+      // its own key is still not a collision.
+      if (owner === w.ward_code) continue;
+      const signature = `${key}|${owner}|${w.ward_code}`;
+      if (warnedCollisions.has(signature)) continue;
+      warnedCollisions.add(signature);
+      console.warn(
+        `[sba-ext] parseDescription: unit name collision on "${key}" — units ` +
+          `${owner} and ${w.ward_code} both claim it. Keeping ${owner}; descriptions ` +
+          `naming "${key}" will not resolve to ${w.ward_code}. Rename one unit in SBA.`,
+      );
+    }
+  }
+  return lookup;
+}
+
 /**
  * Parse a Kindoo description into resolved scope+calling segments.
  *
@@ -69,12 +131,14 @@ function normalise(s: string): string {
  * descriptions. Falls back to `stake_name` when the override is absent
  * or empty.
  *
- * Ward matching registers each ward under two keys: the bare
- * `ward_name` and `ward_name + " Ward"`. SBA stores ward names without
- * the trailing `" Ward"` suffix (`"Jackson Creek"`) but Kindoo
- * descriptions carry the full form (`"Jackson Creek Ward"`); both
- * variants resolve. Wards whose `ward_name` already ends in `" Ward"`
- * register only the single key (`Map.set` collapses duplicates).
+ * Unit matching registers each ward under every form Kindoo could
+ * render it as (`kindooScopeNameVariants`). The trailing `" Ward"` is
+ * optional in SBA, so a ward stored either way resolves against a
+ * description written either way. A branch has one form — Kindoo never
+ * renders `"Peterson Branch Ward"`. Two units whose variant sets overlap
+ * contest a key; the lower `ward_code` keeps it — independent of the
+ * order `wards` arrives in — and the collision is warned about. See
+ * `buildWardLookup`.
  *
  * Returns `unparseable: true` when no segment resolves — including the
  * case of an empty string, a non-conforming string with no parens, or
@@ -101,20 +165,7 @@ export function parseDescription(
   const stakeKey = normalise(
     expectedSiteName && expectedSiteName.length > 0 ? expectedSiteName : stake.stake_name,
   );
-  const wardLookup = new Map<string, string>();
-  for (const w of wards) {
-    const baseKey = normalise(w.ward_name);
-    wardLookup.set(baseKey, w.ward_code);
-    // Kindoo descriptions render the ward with a " Ward" suffix
-    // (e.g. "Jackson Creek Ward") while SBA stores `ward_name`
-    // without it ("Jackson Creek"). Register both forms so the
-    // exact-match lookup succeeds regardless of which form the
-    // description carries.
-    const suffixKey = normalise(`${w.ward_name} Ward`);
-    if (suffixKey !== baseKey) {
-      wardLookup.set(suffixKey, w.ward_code);
-    }
-  }
+  const wardLookup = buildWardLookup(wards);
 
   const rawSegments = input.split(' | ');
   const segments: ParsedSegment[] = [];

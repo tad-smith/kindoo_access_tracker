@@ -2,7 +2,7 @@
 // once: list rendering + form validation. Mutations are mocked.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -16,6 +16,7 @@ import type {
   Stake,
   Ward,
 } from '@kindoo/shared';
+import { unitNameCollisionMessage } from '@kindoo/shared';
 
 const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
@@ -100,6 +101,7 @@ vi.mock('../../../lib/useActiveStake', () => ({
 }));
 
 import { ConfigurationPage } from './ConfigurationPage';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT } from '../../../lib/wardCopy';
 
 function liveResult<T>(data: T[]) {
   return {
@@ -331,6 +333,65 @@ describe('<ConfigurationPage />', () => {
     expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
   });
 
+  it('gates Add Ward until the wards snapshot arrives, then feeds the guard the real list', async () => {
+    // The unique-display-name guard runs against `wards.data`. While the
+    // snapshot is unresolved an empty list reads as "nothing to collide
+    // with", so a submit landing first would save unconditionally — and
+    // the mutation's slug backstop can't catch it, since "Maple" and
+    // "Maple Ward" slug to different doc ids. Same gate
+    // IgnoredWardsSection uses on its own Add.
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    useWardsMock.mockReturnValue(loadingResult());
+    const user = userEvent.setup();
+    const { rerender } = render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+
+    const gated = screen.getByTestId('config-wards-add-button');
+    expect(gated).toBeDisabled();
+    expect(gated).toHaveAttribute('title', 'Loading…');
+    // Buildings are known and non-empty, so the reason shown is the
+    // load — not the wrong empty-catalogue hint.
+    expect(screen.queryByTestId('config-wards-no-buildings-hint')).toBeNull();
+    await user.click(gated);
+    expect(screen.queryByTestId('config-ward-submit')).toBeNull();
+
+    // Snapshot lands, carrying the ward that "Maple" collides with.
+    const existingWards = [
+      {
+        ward_code: 'maple-ward',
+        ward_name: 'Maple Ward',
+        building_id: 'maple-building',
+        building_name: 'Maple Building',
+        seat_cap: 20,
+      } as Ward,
+    ];
+    useWardsMock.mockReturnValue(liveResult<Ward>(existingWards));
+    rerender(<ConfigurationPage initialTab="wards" />);
+
+    expect(screen.getByTestId('config-wards-add-button')).not.toBeDisabled();
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
+    await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
+    await user.click(screen.getByTestId('config-ward-submit'));
+
+    // The guard (inside the mutation — see `duplicateWardNameBlocker`)
+    // now receives the hydrated catalogue rather than an empty stand-in.
+    await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
+    expect(upsertWardMock.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({ ward_name: 'Maple', existingWards }),
+    );
+    // And that list is what makes the rule bite: the real shared rule
+    // rejects "Maple" against the hydrated names, and stays silent
+    // against the empty stand-in the un-gated code would have passed.
+    const names = existingWards.map((w) => w.ward_name);
+    expect(unitNameCollisionMessage('Maple', names)).toMatch(/are the same ward/i);
+    expect(unitNameCollisionMessage('Maple', [])).toBeNull();
+  });
+
   it('shows ward-form validation error on empty submit (modal-driven)', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(
@@ -376,7 +437,9 @@ describe('<ConfigurationPage />', () => {
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-ward-edit-CO'));
     // The ward name is the only visible identifier; the code is hidden.
-    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple');
+    expect((screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement).value).toBe(
+      'Maple',
+    );
     expect(screen.queryByLabelText(/Ward code/i)).toBeNull();
     expect(screen.getByRole('heading', { name: 'Edit ward' })).toBeInTheDocument();
   });
@@ -436,6 +499,80 @@ describe('<ConfigurationPage />', () => {
     expect(select.value).toBe('maple-building');
   });
 
+  it('gives the same ward-or-branch naming hint as the bootstrap wizard', async () => {
+    const user = userEvent.setup();
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    const dialog = within(screen.getByTestId('config-ward-form'));
+    expect(dialog.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    expect(dialog.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+  });
+
+  /** Render the Wards tab with one building and open the Add ward dialog. */
+  async function openWardDialog(user: ReturnType<typeof userEvent.setup>) {
+    useBuildingsMock.mockReturnValue(
+      liveResult<Building>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { building_id: 'maple-building', building_name: 'Maple Building', address: '' } as any,
+      ]),
+    );
+    render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-wards-add-button'));
+    return screen.getByLabelText(/^Ward or branch name$/);
+  }
+
+  it('warns under the ward-name field as soon as the typed name reads as a branch', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+
+    await user.type(input, 'Olive Branch');
+    const warning = await screen.findByTestId('config-ward-branch-warning');
+    expect(warning).toHaveTextContent(WARD_NAME_BRANCH_WARNING);
+    // Advisory only — it must never gate the submit button.
+    expect(screen.getByTestId('config-ward-submit')).toBeEnabled();
+  });
+
+  it('hides the branch warning again once the name no longer ends in " Branch"', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+
+    await user.type(input, 'Olive Branch');
+    expect(await screen.findByTestId('config-ward-branch-warning')).toBeInTheDocument();
+
+    await user.type(input, ' Ward');
+    await waitFor(() => expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull());
+
+    await user.clear(input);
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a plain ward name', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    await user.type(input, 'Maple');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
+  it('leaves the branch warning hidden for a name ending in "Branch" with no preceding space', async () => {
+    const user = userEvent.setup();
+    const input = await openWardDialog(user);
+    // Mirrors the classifier's /\sbranch$/i — "Branchville" is a ward,
+    // and so is the degenerate single word "Branch".
+    await user.type(input, 'Branchville');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+
+    await user.clear(input);
+    await user.type(input, 'Branch');
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
   it('writes both building_id and building_name when a ward is saved', async () => {
     const user = userEvent.setup();
     useBuildingsMock.mockReturnValue(
@@ -446,7 +583,7 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
-    await user.type(screen.getByLabelText(/Ward name/i), 'Maple');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByTestId('config-ward-submit'));
     await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
@@ -864,6 +1001,29 @@ describe('Wards to Ignore in Kindoo (Kindoo Config tab)', () => {
     await user.type(screen.getByTestId('config-ignored-ward-input'), text);
   }
 
+  it('labels its field for a branch too, but asks for the name verbatim rather than the create-ward suffix rule', async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(screen.getByTestId('config-ignored-wards-add-button'));
+    const dialog = within(screen.getByTestId('config-ignored-ward-form'));
+    expect(dialog.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    // Matching is against Kindoo's description text, so no suffix is
+    // optional here — the create-ward hint would be wrong guidance.
+    expect(screen.getByPlaceholderText('Ward name as Kindoo shows it')).toBeInTheDocument();
+    expect(screen.queryByText(WARD_NAME_HINT)).toBeNull();
+  });
+
+  it('stays silent when an ignored-ward entry names a branch', async () => {
+    const user = userEvent.setup();
+    renderTab(undefined, [mkWard('Maple')]);
+    // A neighbouring stake's branch is an ordinary entry here — the
+    // create-ward branch warning would be noise, and it names the wrong
+    // remedy (the " Ward" suffix is not optional on this field).
+    await openAndType(user, 'Peterson Branch');
+    expect(screen.queryByText(WARD_NAME_BRANCH_WARNING)).toBeNull();
+    expect(screen.queryByTestId('config-ward-branch-warning')).toBeNull();
+  });
+
   it('renders under the Foreign Kindoo Sites list with the empty state', () => {
     renderTab();
     expect(screen.getByTestId('config-ignored-wards')).toBeInTheDocument();
@@ -1234,7 +1394,7 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
 
     // Open the edit dialog and change the ward name (in-progress edit).
     await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const nameInput = screen.getByLabelText(/Ward name/i) as HTMLInputElement;
+    const nameInput = screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement;
     await user.clear(nameInput);
     await user.type(nameInput, 'Maple Renamed');
     expect(nameInput.value).toBe('Maple Renamed');
@@ -1251,7 +1411,9 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
     rerender(<ConfigurationPage initialTab="wards" />);
 
     // The in-progress edit survives — reset() did not fire.
-    expect((screen.getByLabelText(/Ward name/i) as HTMLInputElement).value).toBe('Maple Renamed');
+    expect((screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement).value).toBe(
+      'Maple Renamed',
+    );
     // The Building <Select> still reflects the live catalogue (the new
     // building is now an option), proving the dropdown stayed live.
     const select = screen.getByLabelText('Building') as HTMLSelectElement;

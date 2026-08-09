@@ -68,7 +68,7 @@ Algorithm:
 2. For each, regex `^(.+?) \((.+)\)\s*$` → `scopeName`, `calling`.
 3. Resolve `scopeName`:
    - Exact match against `stake.stake_name` (case-insensitive, trimmed) → `scope = 'stake'`.
-   - Exact match against any `ward.ward_name` → `scope = ward.ward_code`.
+   - Exact match against any of the unit's registered forms → `scope = ward.ward_code`. Each ward doc is registered under **every** normalised form `kindooScopeNameVariants(ward.ward_name)` returns (`@kindoo/shared`, `architecture.md` D31), not under `ward_name` alone — a ward under both the bare and `" Ward"`-suffixed forms (`maple`, `maple ward`), a branch under its one verbatim form (`peterson branch`). So a ward stored either way resolves against a description written either way, and `"Peterson Branch Ward"` — which Kindoo never renders — resolves to nothing on purpose.
    - No match → `resolvedScope = false`.
 4. `unparseable = segments.every(s => !s.resolvedScope)`.
 

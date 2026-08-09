@@ -122,7 +122,34 @@ describe('configuration duplicateWardNameBlocker', () => {
 
   it('blocks a new ward whose name matches a legacy 2-letter-coded ward', () => {
     const msg = duplicateWardNameBlocker('Maple', wards, undefined);
-    expect(msg).toContain('Ward names must be unique');
+    expect(msg).toContain('Ward and branch names must be unique');
+  });
+
+  it('blocks "Maple" against a stored "Maple Ward" and says why', () => {
+    // Same unit under the optional suffix. A verbatim string compare
+    // let the pair coexist, and the parser then keyed both `maple` and
+    // `maple ward` to whichever ward was registered last.
+    const suffixed = [ward({ ward_code: 'CO', ward_name: 'Maple Ward' })];
+    const msg = duplicateWardNameBlocker('Maple', suffixed, undefined);
+    expect(msg).toContain('are the same ward');
+    expect(msg).toContain('" Ward" suffix is optional');
+  });
+
+  it('blocks "Maple Ward" against a stored bare "Maple"', () => {
+    expect(duplicateWardNameBlocker('Maple Ward', wards, undefined)).not.toBeNull();
+  });
+
+  it('blocks a ward that shadows a branch of the same place name', () => {
+    // "Olive Branch" (a branch) and "Olive Branch Ward" have different
+    // canonical names, so a canonical-name compare would allow the
+    // pair — but both answer to "olive branch" in the parser.
+    const branch = [ward({ ward_code: 'OB', ward_name: 'Olive Branch' })];
+    const msg = duplicateWardNameBlocker('Olive Branch Ward', branch, undefined);
+    expect(msg).toContain('reads both as "Olive Branch"');
+  });
+
+  it('leaves a branch alone when no ward shares its place name', () => {
+    expect(duplicateWardNameBlocker('Peterson Branch', wards, undefined)).toBeNull();
   });
 
   it('blocks a rename onto another existing ward name', () => {
@@ -134,8 +161,59 @@ describe('configuration duplicateWardNameBlocker', () => {
     expect(duplicateWardNameBlocker('Maple', wards, 'CO')).toBeNull();
   });
 
+  it('allows a rename that only collides with the ward being renamed', () => {
+    // CO ("Maple") → "Maple Ward" is the same unit under the optional
+    // suffix, and nothing else answers to it. Self-exclusion, not the
+    // unchanged-name short-circuit: the name really did change.
+    expect(duplicateWardNameBlocker('Maple Ward', wards, 'CO')).toBeNull();
+  });
+
   it('matches case-insensitively and trims', () => {
     expect(duplicateWardNameBlocker('  maple ', wards, undefined)).not.toBeNull();
+  });
+
+  // A stake can already hold a colliding pair — the guard postdates the
+  // data. Running it on every save would make the pair's other fields
+  // (seat_cap, building) uneditable, with renaming as the only escape.
+  describe('when the stake already holds a colliding pair', () => {
+    const pair = [
+      ward({ ward_code: 'CO', ward_name: 'Maple' }),
+      ward({ ward_code: 'MW', ward_name: 'Maple Ward' }),
+    ];
+    const branchPair = [
+      ward({ ward_code: 'OB', ward_name: 'Olive Branch' }),
+      ward({ ward_code: 'OBW', ward_name: 'Olive Branch Ward' }),
+    ];
+
+    it('allows an edit that leaves the colliding name unchanged', () => {
+      expect(duplicateWardNameBlocker('Maple', pair, 'CO')).toBeNull();
+      expect(duplicateWardNameBlocker('Maple Ward', pair, 'MW')).toBeNull();
+    });
+
+    it('allows an edit that leaves a ward/branch collision unchanged', () => {
+      expect(duplicateWardNameBlocker('Olive Branch', branchPair, 'OB')).toBeNull();
+      expect(duplicateWardNameBlocker('Olive Branch Ward', branchPair, 'OBW')).toBeNull();
+    });
+
+    it('ignores surrounding whitespace when deciding the name is unchanged', () => {
+      expect(duplicateWardNameBlocker('  Maple  ', pair, 'CO')).toBeNull();
+    });
+
+    it('still blocks a rename of one half onto a third ward', () => {
+      const withThird = [...pair, ward({ ward_code: 'PR', ward_name: 'Prairie' })];
+      expect(duplicateWardNameBlocker('Prairie', withThird, 'CO')).not.toBeNull();
+    });
+
+    it('still blocks a create that collides with either half', () => {
+      expect(duplicateWardNameBlocker('Maple', pair, undefined)).not.toBeNull();
+      expect(duplicateWardNameBlocker('Maple Ward', pair, undefined)).not.toBeNull();
+    });
+
+    it('runs the guard when the edited ward is absent from the snapshot', () => {
+      // Stale snapshot — no stored name to compare against, so the
+      // guard must not silently treat the save as a no-op edit.
+      expect(duplicateWardNameBlocker('Maple', pair, 'GONE')).not.toBeNull();
+    });
   });
 });
 
@@ -999,7 +1077,53 @@ describe('useUpsertWardMutation', () => {
         seat_cap: 20,
         existingWards: [ward({ ward_code: 'CO', ward_name: 'Maple' })],
       }),
-    ).rejects.toThrow(/Ward names must be unique/i);
+    ).rejects.toThrow(/Ward and branch names must be unique/i);
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('saves a seat_cap edit on a ward that already collides with another ward', async () => {
+    // The stake predates the uniqueness guard and holds "Maple" beside
+    // "Maple Ward". Raising the cap on one of them touches no name, so
+    // the guard must stay out of the way — otherwise the pair's every
+    // other field is uneditable until one is renamed.
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await result.current.mutateAsync({
+      ward_code: 'CO',
+      ward_name: 'Maple',
+      building_id: 'main',
+      building_name: 'Main',
+      seat_cap: 40,
+      existingWards: [
+        ward({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 }),
+        ward({ ward_code: 'MW', ward_name: 'Maple Ward' }),
+      ],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    const [ref, body] = setDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/CO' });
+    expect(body).toMatchObject({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 40 });
+  });
+
+  it('rejects a rename that walks a ward into an existing collision', async () => {
+    // Same pre-existing pair, but this save changes the name — renaming
+    // "Prairie" onto the pair is a NEW collision and stays blocked.
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertWardMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        ward_code: 'PR',
+        ward_name: 'Maple Ward',
+        building_id: 'main',
+        building_name: 'Main',
+        seat_cap: 20,
+        existingWards: [
+          ward({ ward_code: 'CO', ward_name: 'Maple' }),
+          ward({ ward_code: 'MW', ward_name: 'Maple Ward' }),
+          ward({ ward_code: 'PR', ward_name: 'Prairie' }),
+        ],
+      }),
+    ).rejects.toThrow(/Ward and branch names must be unique/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 
@@ -1018,7 +1142,7 @@ describe('useUpsertWardMutation', () => {
           ward({ ward_code: 'PR', ward_name: 'Prairie' }),
         ],
       }),
-    ).rejects.toThrow(/Ward names must be unique/i);
+    ).rejects.toThrow(/Ward and branch names must be unique/i);
     expect(setDocMock).not.toHaveBeenCalled();
   });
 

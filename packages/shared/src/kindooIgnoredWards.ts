@@ -10,28 +10,14 @@
 //     entry and to reject one naming a ward this stake owns.
 //   - the extension's `parseDescription`, to drop the matching segments.
 
+import { kindooScopeNameVariants, normaliseUnitName } from './unitName.js';
+
 /**
  * Comparison form for every ignore-list check: trimmed, lowercased.
  * Exported so the Configuration UI's duplicate check keys on exactly
  * what the matcher keys on.
  */
-export function normaliseIgnoredWard(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-/**
- * The forms a ward's name takes across the two systems. SBA stores
- * `ward_name` without the trailing `" Ward"` (`"Jackson Creek"`) while
- * Kindoo descriptions carry the full form (`"Jackson Creek Ward"`).
- * Mirrors the dual-key registration in the extension's
- * `parseDescription`; a name already ending in `" Ward"` yields one key.
- */
-function wardNameVariants(wardName: string): string[] {
-  const base = normaliseIgnoredWard(wardName);
-  if (base.length === 0) return [];
-  const suffixed = normaliseIgnoredWard(`${wardName} Ward`);
-  return suffixed === base ? [base] : [base, suffixed];
-}
+export const normaliseIgnoredWard = normaliseUnitName;
 
 /**
  * Does `scopeName` — the ward-name portion of a Kindoo description
@@ -57,11 +43,13 @@ export function matchesIgnoredWard(
  * an entry would sit in the list doing nothing while reading as though
  * it were suppressing something.
  *
- * Matches either form of the ward's name — `"Maple"` and `"Maple Ward"`
- * both collide with a ward stored as `"Maple"`.
+ * Matches every form Kindoo could render the unit under, so `"Maple"`
+ * and `"Maple Ward"` collide with each other whichever way the ward is
+ * stored. A branch has one form: `"Peterson Branch"` collides, and
+ * `"Peterson Branch Ward"` — which Kindoo never renders — does not.
  */
 export function collidesWithOwnWard(entry: string, wardNames: readonly string[]): boolean {
   const key = normaliseIgnoredWard(entry);
   if (key.length === 0) return false;
-  return wardNames.some((name) => wardNameVariants(name).includes(key));
+  return wardNames.some((name) => kindooScopeNameVariants(name).includes(key));
 }

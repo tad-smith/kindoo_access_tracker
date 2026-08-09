@@ -31,17 +31,19 @@ src/
 ├── buildingSlug.ts         # building name → URL-safe slug
 ├── existingSeatGate.ts     # can an add be provisioned onto an existing seat
 ├── remoteApply.ts          # remote-apply timings, freshness, site keys, claim rule
+├── unitName.ts             # ward_name → unit type + Kindoo scope name (D31)
 └── index.ts
 ```
 
 ## Conventions
 
 - **One source of truth per domain type.** No duplicate `Seat` / `Request` types anywhere else in the monorepo.
-- **A predicate two surfaces must agree on lives here, not in each of them.** A gate expressed twice drifts, and the drift is invisible from either copy — neither surface can see the other's. It also rarely fails safe: the broader copy silently removes a capability for a class of input the other handles, which reads to the user as a bug in the feature rather than a disagreement between two files. `addBlockedByExistingSeat` (`existingSeatGate.ts`), `canClaimRemoteApplyJob` / `remoteApplySiteKey` / `remoteApplyTargetSiteKey` (`remoteApply.ts`), `partitionPendingRequests`, and `deriveRequesterDisplay` are all here for that reason. Take the facts as arguments, not the surface's own data shapes, so a caller can consume it without reshaping its props.
+- **A predicate two surfaces must agree on lives here, not in each of them.** A gate expressed twice drifts, and the drift is invisible from either copy — neither surface can see the other's. It also rarely fails safe: the broader copy silently removes a capability for a class of input the other handles, which reads to the user as a bug in the feature rather than a disagreement between two files. `addBlockedByExistingSeat` (`existingSeatGate.ts`), `canClaimRemoteApplyJob` / `remoteApplySiteKey` / `remoteApplyTargetSiteKey` (`remoteApply.ts`), `unitType` / `kindooScopeName` / `kindooScopeNameVariants` (`unitName.ts`), `partitionPendingRequests`, and `deriveRequesterDisplay` are all here for that reason. Take the facts as arguments, not the surface's own data shapes, so a caller can consume it without reshaping its props.
 - **zod schemas mirror types** via `z.infer<typeof schema>`. Define schema once; type comes free.
 - **Pure functions only.** No DOM access, no `fs`, no Node-only APIs, no browser-only APIs. Must work everywhere.
 - **Vitest unit tests** for every utility function and every schema (a `parse` test on representative inputs).
 - **Optional booleans declare their own default direction — never copy the neighbouring field's.** `Stake.notifications_enabled` reads `?? true` (absent ⇒ on); `Stake.eq_president_app_access` reads `=== true` (absent ⇒ off). Anything that grants access or authority defaults **off**, because the field lands absent on every pre-existing doc and "nobody has answered this question yet" must not read as "yes". State the direction in the type's doc comment so consumers don't have to infer it.
+- **A unit's kind comes from its name, never from a field.** `unitName.ts` is the only place that decides: a `ward_name` ending in `" Branch"` is a branch (scope name verbatim); anything else is a ward (`" Ward"` optional, appended when absent). Never test the suffix inline or compare `ward_name` to a Kindoo description directly. Don't add a `unit_type` field — `architecture.md` D31 says why.
 - **App-access callings are a fixed list plus explicit gates.** `WARD_APP_ACCESS_CALLINGS` / `STAKE_APP_ACCESS_CALLINGS` are churchwide and not per-stake (`architecture.md` D17). The one exception is `AppAccessOptions`, an options bag threaded into `appAccessCallingsForScope` / `filterAppAccessCallings` that gates individual callings on stake config (D23). Add a gate there, never by making the arrays configurable.
 
 ## Don't
