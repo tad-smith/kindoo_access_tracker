@@ -35,7 +35,12 @@ easily as the second.
   application-default login` run at least once, with a Google account that
   holds a role able to manage Firebase Auth users on the target project
   (e.g. Firebase Admin, or project Editor/Owner), and a local checkout of
-  this repo so `functions/`'s `firebase-admin` dependency is resolvable.
+  this repo with `pnpm install` already run at the repo root at least
+  once. The checkout alone isn't enough — `functions/node_modules/`
+  isn't committed, and pnpm only populates it (as a symlink into the
+  workspace store) on install. Skip this and §3b's script fails
+  immediately on `ERR_MODULE_NOT_FOUND: Cannot find package
+  'firebase-admin'`, mid-incident, with no dry-run to catch it first.
 
 ## 1. Recognise it
 
@@ -134,22 +139,58 @@ Then check the doc itself in the Firestore console:
   §3a (the doc-repair step there covers this case too).
 - **Present, with a `uid` field that does NOT match the `localId` from the
   `jq` output above** → don't assume either value is "right," and don't
-  jump to §3b. This is the dual-provider uid split `signIn.ts` documents
-  (`apps/web/src/features/auth/signIn.ts`): a magic-link sign-in and a
-  Google sign-in can mint two separate Firebase Auth users for what
-  canonicalises to the same address, and whichever one signed in most
-  recently is the one `onAuthUserCreate` last pointed `userIndex` at — not
-  necessarily the one the admin is stuck using right now. Look the stored
-  `uid` up directly in the Authentication console (Authentication → Users →
-  search by UID) to see what email/provider it belongs to, and ask the
-  admin which sign-in method they're actually using. Fix via §3a, repointing
-  `uid` at whichever account is the one the admin is actually authenticating
-  as — which may be the `jq` match, or may be neither.
+  jump to §3b. This is the Q15 `userIndex` collision
+  (`docs/firebase-schema.md` §8.4), **not** a dual-provider uid split —
+  rule that framing out first: Firebase Auth's "one account per email
+  address" project setting already merges a Google sign-in and a
+  magic-link sign-in onto a single uid for the same literal, typed
+  address (`signIn.ts:15-18`), so two different sign-in *methods* for the
+  *same* address can never produce two uids. Asking the admin which
+  method they're using can't discriminate anything here — don't ask it.
+
+  What actually produces two uids is two different typed addresses that
+  both canonicalise to this one — Gmail dot-insertion or `+suffix`
+  (`packages/shared/canonicalEmail.ts`). Each is a genuinely separate
+  Firebase Auth account; each fires its own `onAuthUserCreate` on its own
+  first sign-in; and that trigger's `userIndex/{canonical}` write is an
+  unconditional, non-merging `.set()`
+  (`functions/src/triggers/onAuthUserCreate.ts`) — whichever account
+  signed in most recently simply clobbers the other's `uid` and
+  `typedEmail`, with no detection or refusal. That silent-overwrite gap
+  is exactly what Q15 flags as undecided.
+
+  The discriminating evidence is already in hand, no further lookup
+  needed: compare `typedEmail` on the `userIndex/{canonical}` doc against
+  `.email` on the Auth record the `jq` output above matched. That match
+  was keyed on the admin's known typed address (the canonical breadcrumb
+  directly for a non-Gmail domain, or `bootstrap_admin_email` for a
+  Gmail-family admin, per the note above) — not on `userIndex`, so it
+  isn't vulnerable to the same clobber. If `userIndex`'s `typedEmail`
+  differs from that `.email`, the doc was last written by the *other*,
+  colliding account, confirming this branch. Fix via §3a, repointing
+  `uid` at the `localId` from the `jq` output above — the admin's actual
+  account, by construction of that match — not at whatever `uid` the doc
+  currently holds.
 - **Present, with a `uid` field matching the `localId` from the `jq`
-  output above** → not this cause. Fix via §3b (the blunter fallback, when
-  it applies — see its gating note below), or dig further (e.g. confirm
-  `stakes/{stakeId}/kindooManagers/{canonical}` really has `active: true` —
-  `computeStakeClaims` reads it to decide `manager`).
+  output above** → not a `userIndex` problem. Before falling to §3b,
+  check `stakes/{stakeId}/kindooManagers/{canonical}` in the Firestore
+  console: `computeStakeClaims` (`functions/src/lib/seedClaims.ts`)
+  derives `manager` from `managerSnap.exists && isActiveManagerDoc(...)`
+  on that exact doc, so a missing doc or one without `active: true` is
+  the single most common reason the claim won't mint even when
+  `userIndex` is entirely correct.
+
+  - **Missing, or present without `active: true`** → fix the doc
+    directly (Firestore console: create it, or open it and set
+    `active: true`), then re-fire `syncManagersClaims` with the `_touch`
+    add/delete trick from §3a Step 2. This mints the claim the ordinary,
+    durable way — skip §3b entirely for this cause. Stamping the claim
+    by hand over a doc that still says "not active" only reverts on the
+    doc's next write; see the required check in §3b's first step if you
+    land there anyway.
+  - **Present with `active: true`** → not this cause either. Fix via §3b
+    (the blunter fallback, when it applies — see its gating note below),
+    or dig further.
 
 ## 3a. Fix: repoint `userIndex/{canonical}`, then mint the claim yourself
 
@@ -170,7 +211,7 @@ Fields, matching exactly what `onAuthUserCreate` writes
 
 | Field | Type | Value |
 | --- | --- | --- |
-| `uid` | string | the correct uid — the `localId` from the `jq` output in §2, **unless** §2's mismatch branch identified a different uid as the one the admin actually authenticates as |
+| `uid` | string | the `localId` from the `jq` output in §2 — including for the mismatch branch, where that match is keyed on the admin's known typed address and is therefore always the correct target |
 | `typedEmail` | string | the `email` field from the matching Auth record |
 | `lastSignIn` | timestamp | now |
 
@@ -222,19 +263,48 @@ Only once this shows `manager:true` → continue to §4.
 
 Use this when §2's decision tree puts you on its last bullet —
 `userIndex/{canonical}` is present and its `uid` already matches — and
-digging further (the `active: true` check, etc.) didn't turn up a fix. Not
-merely because the admin needs to be unblocked faster than §3a's round trip:
-if `userIndex/{canonical}` is actually missing or wrong (any of §2's other
-three branches), this path leaves that doc broken permanently, since it
-bypasses the doc `uidForCanonical` reads — every future claim sync for this
-admin keeps no-oping on the same lookup miss, indefinitely, not just for
-this one incident. Prefer §3a whenever it applies; only fall through to this
-path once it doesn't.
+Step 1 below confirms `kindooManagers/{canonical}` isn't the problem
+either. Not merely because the admin needs to be unblocked faster than
+§3a's round trip: if `userIndex/{canonical}` is actually missing or wrong
+(any of §2's other three branches), this path leaves that doc broken
+permanently, since it bypasses the doc `uidForCanonical` reads — every
+future claim sync for this admin keeps no-oping on the same lookup miss,
+indefinitely, not just for this one incident. Prefer §3a whenever it
+applies; only fall through to this path once it doesn't.
 
 This bypasses `syncManagersClaims` entirely and writes the claim with the
 Admin SDK.
 
-1. From the `jq` output in §2, take the existing `customAttributes` JSON
+1. **Required — confirm the stamp will survive, or fix the real cause
+   instead.** `computeStakeClaims` (`functions/src/lib/seedClaims.ts`)
+   derives `manager` from `stakes/{stakeId}/kindooManagers/{canonical}`
+   (`managerSnap.exists && isActiveManagerDoc(...)`), and both
+   `syncManagersClaims` and `syncAccessClaims` re-run it — with
+   `mergeStake` (`functions/src/lib/applyClaims.ts:196-230`) replacing
+   the *whole* stake block with the result — on every subsequent write to
+   either `kindooManagers/{canonical}` or `access/{canonical}` for this
+   admin, run by anyone, for any reason. Skip this check and the first
+   such write after you stamp `manager: true` silently reverts it back to
+   whatever the doc says, with no error and no signal to the operator —
+   the admin is stranded again, quietly, possibly after `setup_complete`
+   has already flipped and the recovery surface is gone (see the top of
+   this runbook).
+
+   Check `stakes/{stakeId}/kindooManagers/{canonical}` in the Firestore
+   console now:
+
+   - **Missing, or present without `active: true`** → stop here. Fix the
+     doc directly (create it, or open it and set `active: true`), then
+     re-fire `syncManagersClaims` with the `_touch` add/delete trick from
+     §3a Step 2. This mints the claim the ordinary, durable way — you
+     don't need the rest of this section for this cause.
+   - **Present with `active: true`** → the doc is not the problem. The
+     stamp you're about to make in the steps below will survive the next
+     ordinary trigger fire, because `computeStakeClaims` will
+     independently recompute the same `manager: true` from this doc.
+     Continue to Step 2.
+
+2. From the `jq` output in §2, take the existing `customAttributes` JSON
    string and parse it. Build the merged claims object: keep every existing
    field (in particular `canonical`, and any other stake's entry under
    `stakes`) and set the affected stake's entry to
@@ -259,15 +329,30 @@ Admin SDK.
    an existing `bootstrap: true` on this stake's block forward across a
    replace, the literal object above does not — it's a plain overwrite of
    the stake's entry. That's a deliberate simplification of this manual
-   path, not an oversight: this stake's `bootstrap` flag exists to let the
-   admin read the stake doc pre-flip, and `manager: true` grants the write
-   access this recovery is actually for, so dropping `bootstrap` here
-   doesn't block anything in this runbook's flow. If you're hand-editing
-   this snippet for a case where the admin still needs `bootstrap` preserved
-   (e.g. they're not about to flip `setup_complete` immediately), carry the
-   existing `stakes[stakeId].bootstrap` value forward explicitly.
+   path, not an oversight, but the reason isn't that `bootstrap` is what
+   lets the admin read the stake doc pre-flip — it isn't. Both rules that
+   grant that read, `isSetupInProgressReadable` and `isBootstrapAdmin`
+   (`firestore/firestore.rules`), gate on `setup_complete` and (for the
+   latter) the token's raw `request.auth.token.email` matching
+   `bootstrap_admin_email` — neither one consults
+   `request.auth.token.stakes[stakeId].bootstrap` at all. What `bootstrap`
+   actually drives is client-side active-stake resolution
+   (`apps/web/src/lib/activeStake.ts`, `apps/web/src/lib/setupGate.ts`;
+   D28 / B-19): it widens which stakes count as "accessible" for the
+   URL/session/local storage tiers, and backstops the tier-4 fallback when
+   the principal has zero claim-derived stakes. Dropping it here is still
+   safe, but for a different reason: `manager: true` itself makes this
+   stake claim-derived (it lands in `managerStakes`), and
+   `activeStake.ts`'s tier 4 always prefers a claim-derived stake over any
+   `bootstrapStakes` entry — so the admin's active-stake resolution lands
+   correctly with or without `bootstrap` riding along. If you're
+   hand-editing this snippet for a case where the admin still needs
+   `bootstrap` preserved on *this* stake's block (e.g. they still need
+   pre-flip wizard access to it after this stamp, rather than being done
+   with it), carry the existing `stakes[stakeId].bootstrap` value forward
+   explicitly.
 
-2. Run, from a checkout of this repo:
+3. Run, from a checkout of this repo:
 
    ```bash
    cd functions
@@ -277,8 +362,8 @@ Admin SDK.
 
    initializeApp({ credential: applicationDefault(), projectId: 'kindoo-staging' }); // or kindoo-prod
 
-   const uid = '<localId from the jq output in step 2>';
-   const claims = <the merged claims object from step 1, as JSON>;
+   const uid = '<localId from the jq output in §2>';
+   const claims = <the merged claims object from step 2, as JSON>;
 
    const auth = getAuth();
    await auth.setCustomUserClaims(uid, claims);
@@ -293,9 +378,10 @@ Admin SDK.
    for this admin) will already show `manager:true`; it reconfirms rather
    than diagnoses a race.
 
-This is the blunt path — it skips the trigger and the doc it reads, so it
-doesn't fix whatever actually broke `syncManagersClaims` for this admin (if
-it wasn't a `userIndex` problem).
+This is the blunt path — it skips the trigger, but not (per Step 1) the
+doc it reads, so it doesn't fix whatever else might be broken about
+`syncManagersClaims` for this admin (if it wasn't a `userIndex` or
+`kindooManagers` problem).
 
 ## 4. After either fix: the admin needs a full sign-out/sign-in, not a reload
 
