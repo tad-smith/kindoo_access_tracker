@@ -18,7 +18,13 @@ export {
 export { auditId } from './auditId.js';
 export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
-export { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
+export {
+  CALLING_ORDER,
+  STAKE_CALLING_ORDER,
+  UNIT_CALLING_ORDER,
+  callingSortOrder,
+  seatCallingOrder,
+} from './callingSortOrder.js';
 export { canonicalEmail, emailsEqual, isGmailAddress } from './canonicalEmail.js';
 export {
   addBlockedByExistingSeat,

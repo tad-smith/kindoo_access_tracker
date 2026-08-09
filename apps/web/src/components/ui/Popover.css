@@ -1,0 +1,32 @@
+/* Popover stacking. Radix portals the content to <body>, so its layer
+   is decided by z-index alone — not by where the trigger sits in the
+   tree.
+
+   The app's scale: 30 / 40 (Shell.css) < 1000 (Toast.css) < 1300 modal
+   overlay < 1301 modal positioner (Dialog.css). A Popover has to clear
+   the positioner, because `CallingCombobox` is hosted only inside
+   Dialogs — `EditSeatDialog`, and `NewRequestForm` inside
+   `NewRequestDialog`. (`GrantStakeAccessDialog` takes its reason as
+   free text and hosts no combobox.)
+
+   shadcn's stock class is `z-50`, which loses to the 1301 positioner —
+   the suggestion list then renders BEHIND the modal's opaque panel.
+   The DOM still says "visible" (real box, no `display:none`), so it
+   fails silently: only a hit test or a real click catches it.
+   Regression coverage is e2e/tests/requests/calling-typeahead-edit-seat
+   .spec.ts, whose selection assertion clicks an option for real.
+
+   `TimezoneCombobox` was hit by the same bug and is the reason not to
+   trust "that one's fine" here: `CreateStakeForm` is a Dialog and hosts
+   it, and unlike the calling field it is selection-only — no free-text
+   fallback — so a superadmin could not move a new stake off
+   DEFAULT_TIMEZONE at all. Assuming a consumer was unaffected is the
+   reasoning error that produced B-22; check the host, don't infer it.
+
+   `StakeSwitcher` is genuinely page-level. Raising it over the toast
+   host (1000) is harmless: it dismisses on outside interaction, and the
+   toast host is bottom-left while the trigger is not. */
+
+.kd-popover-content {
+  z-index: 1302;
+}

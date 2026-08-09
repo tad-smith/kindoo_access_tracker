@@ -6,6 +6,31 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-22] Every Popover inside a modal rendered behind it and could not be used
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @web-engineer
+Severity: high (every popover inside a modal was unreachable — the calling typeahead in New Request and Edit Seat, and the Create Stake timezone picker)
+Phase: cross-cutting
+Branch / PR: found by T-100's Playwright spec; fixed in the same PR
+
+**Every Popover rendered inside a modal was invisible and unclickable.** `CallingCombobox` in `EditSeatDialog` and in `NewRequestForm` inside `NewRequestDialog`; and `TimezoneCombobox` in `CreateStakeForm`, which is also a Dialog. A manager saw a focused, empty-looking box and no suggestions, so the field silently degraded to free text. Of roughly fifty rows, exactly one was visible, poking out below the dialog's bottom edge.
+
+**Cause.** `PopoverContent` carried shadcn's default `z-50` while `.kd-modal-positioner` is `z-index: 1301` with an opaque `.kd-modal-inner`. Radix mirrors the content's computed z-index onto its portal wrapper, so the popper sat at 50, underneath the dialog panel that had just opened it.
+
+**Evidence.** `document.elementFromPoint` at the centre of the "Branch President" row returned a `<label>` from inside the dialog; Playwright's click retried for 30s with "subtree intercepts pointer events"; the popper wrapper's computed z-index read `50`.
+
+**Not new, and not branch-specific.** The ward list was equally unreachable. It dates to whenever `CallingCombobox` was first placed inside a Dialog — T-96 merely produced the first test that opens the list in a real browser. `GrantStakeAccessDialog` was never affected: its reason is free text and it imports no combobox.
+
+**Why nothing caught it.** `toBeVisible` is DOM visibility, not occlusion, so three assertions passed green against a list no user could reach. Only a real click hit-tests. If that selection assertion is ever softened to a keyboard selection to make a flake go away, this bug becomes invisible again — that is the one thing not to do to this spec.
+
+**Fix.** `apps/web/src/components/ui/Popover.css` at `z-index: 1302`, colocated with `Dialog.css` / `Toast.css` and commented with the whole scale (30 / 40 / 1000 toast / 1300 overlay / 1301 positioner / 1302 popover). One rule fixes every host. `StakeSwitcher` is the only genuinely page-level consumer; raising it over the toast host (1000) is harmless, since it dismisses on outside interaction and the toast host is bottom-left while the trigger is not.
+
+**The Create Stake timezone picker was the worse case, and we nearly missed it.** `TimezoneCombobox` is selection-only — there is no free-text fallback — so with the list unclickable a superadmin could not move a new stake off `DEFAULT_TIMEZONE` at all. The calling field at least degraded to typing.
+
+That miss is the lesson. The first pass recorded `TimezoneCombobox` as unaffected because it appears on Configuration, an ordinary page — without checking its *other* host. Reasoning about a consumer's context instead of reading it is precisely what let the original bug survive.
+
+**Generalise:** any portal-based primitive dropped into a Dialog inherits the same trap, and the audit question is "which hosts render this?", never "where do I think this appears?". A component test cannot see it; only a browser can.
+
 ## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
 Status: open (accepted risk)
 Owner: @web-engineer

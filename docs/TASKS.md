@@ -7,9 +7,11 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-100] Playwright coverage for the calling typeahead inside `EditSeatDialog`
-Status: pending
+Status: done (2026-08-09 — PR pending)
 Owner: @web-engineer
 Phase: cross-cutting
+
+**Done.** `e2e/tests/requests/calling-typeahead-edit-seat.spec.ts` — four tests through Ward Rosters → `EditSeatDialog`, on a stake seeded with a ward and a branch whose only branch marker is the `" Branch"` name suffix. Radix Popover does mount inside Radix Dialog in a real browser; it was jsdom that could not drive it. The spec found **B-22**: the list was rendering behind the modal and was unusable in both hosting dialogs. Fixed in the same PR. The selection assertion uses a real click on purpose — `toBeVisible` is DOM visibility, not occlusion, and three assertions passed green against a list no user could reach.
 
 The branch calling list is unverified in the one place it renders inside a modal. `CallingCombobox` is a Radix Popover, `EditSeatDialog` is a Radix Dialog, and under jsdom the Popover will not open inside the Dialog — the content never mounts, so no assertion can reach the suggestion list. A test for it was written during T-96 and **removed rather than contorted**: faking the open state would have asserted against a component tree the browser never produces, which is worse than no coverage because it reads as coverage.
 
@@ -18,9 +20,11 @@ The branch calling list is unverified in the one place it renders inside a modal
 Worth doing alongside any other `EditSeatDialog` E2E work rather than as a lone spec — the fixture cost (a stake with a branch unit, a seat on it) is the bulk of the effort and is reusable.
 
 ## [T-99] Export the ordered calling table from `packages/shared`
-Status: pending
+Status: done (2026-08-09 — PR pending)
 Owner: @web-engineer
 Phase: cross-cutting
+
+**Done.** `callingSortOrder.ts` exports `STAKE_CALLING_ORDER` and `UNIT_CALLING_ORDER` as the two bands, with `CALLING_ORDER` their concatenation; the web lists are projections. The band boundary is exported rather than re-derived, so no consumer restates where the stake band ends. Verified propagation by appending a name to each shared band and watching it reach all four web lists with `standardCallings.ts` untouched — the unit-band append is exactly what the old gap-free check could not catch. Table indices are unchanged (literals diffed against base), so no `access.sort_order` exposure. The hide-sets stay hand-maintained and are now pinned against the shared **unit band** — a name that moved to the stake band would still resolve via `callingSortOrder` yet never be subtracted.
 
 `apps/web/src/features/requests/standardCallings.ts` holds a hand-maintained copy of the churchwide calling table — `STAKE_CALLINGS` (42 entries) plus `UNIT_CALLINGS` (50), reproducing `packages/shared/src/callingSortOrder.ts`'s 92 names and their order exactly. It is a copy of a churchwide fact, which `packages/shared/CLAUDE.md` says belongs in `shared`.
 

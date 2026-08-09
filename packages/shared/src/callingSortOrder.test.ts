@@ -5,7 +5,13 @@
 // aggregation.
 
 import { describe, expect, it } from 'vitest';
-import { callingSortOrder, seatCallingOrder } from './callingSortOrder.js';
+import {
+  CALLING_ORDER,
+  STAKE_CALLING_ORDER,
+  UNIT_CALLING_ORDER,
+  callingSortOrder,
+  seatCallingOrder,
+} from './callingSortOrder.js';
 
 describe('callingSortOrder', () => {
   it('maps a known calling to its priority index (0-based)', () => {
@@ -147,6 +153,45 @@ describe('callingSortOrder', () => {
     expect(callingSortOrder('Counselor')).toBeNull();
     expect(callingSortOrder('First Counselor')).toBeNull();
     expect(callingSortOrder('Bishopric')).toBeNull();
+  });
+});
+
+describe('exported calling bands', () => {
+  // These are what a consumer needing a *list* projects from — the web
+  // request typeahead derives its stake and unit lists from them rather
+  // than keeping a copy (T-99). The invariant that matters is that the
+  // two bands are the whole table: anything reachable through
+  // `callingSortOrder` but not through them is invisible to every such
+  // consumer, which is exactly how T-96's branch callings went missing.
+
+  it('is exactly the stake band followed by the unit band', () => {
+    // Not tautological against the implementation it restates: a third
+    // band spliced into `CALLING_ORDER` would strand its entries in
+    // every consumer that enumerates the two exported ones.
+    expect(CALLING_ORDER).toEqual([...STAKE_CALLING_ORDER, ...UNIT_CALLING_ORDER]);
+  });
+
+  it('indexes every calling in the bands at its own position', () => {
+    // Equivalently: the bands enumerate the lookup, in order, from 0.
+    expect(CALLING_ORDER.map((name) => callingSortOrder(name))).toEqual(
+      CALLING_ORDER.map((_, index) => index),
+    );
+  });
+
+  it('opens the unit band at Bishop, one past the stake band tail', () => {
+    // The stake/unit boundary is a property of this table. It is
+    // exported as the split rather than left for consumers to find by
+    // slicing at `indexOf('Bishop')`.
+    expect(STAKE_CALLING_ORDER[0]).toBe('Stake President');
+    expect(UNIT_CALLING_ORDER[0]).toBe('Bishop');
+    expect(callingSortOrder('Bishop')).toBe(STAKE_CALLING_ORDER.length);
+  });
+
+  it('names no calling twice, across the bands or within one', () => {
+    // A repeat is silently lossy: the lookup keeps the last index, so
+    // the earlier position becomes unreachable and the sort shifts.
+    const keys = CALLING_ORDER.map((name) => name.trim().toLowerCase());
+    expect(new Set(keys).size).toBe(CALLING_ORDER.length);
   });
 });
 
