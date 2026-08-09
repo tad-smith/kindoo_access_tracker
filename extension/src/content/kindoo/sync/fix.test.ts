@@ -18,6 +18,10 @@ function kb(over: Partial<KindooBlock> = {}): KindooBlock {
     isTempUser: false,
     memberName: 'Alice Person',
     primaryScope: 'CO',
+    // Site-filtered scope — what a `kindoo-only` payload uses. Same as
+    // `primaryScope` for a single-site Description; the two diverge only
+    // on a multi-site one (see the dedicated test below).
+    createScope: 'CO',
     intendedType: 'manual',
     intendedCallings: ['Sunday School Teacher'],
     intendedFreeText: '',
@@ -191,6 +195,40 @@ describe('buildCallableInput', () => {
     expect(payload.isTempUser).toBe(false);
     // No reason on auto.
     expect(payload.reason).toBeUndefined();
+  });
+
+  it('kindoo-only sources scope from the site-filtered segment, not the unfiltered primary', () => {
+    // Multi-site Description on a FOREIGN-site run. `primaryScope` is the
+    // unfiltered pick, whose tiebreaker prefers the app-access / stake
+    // segment; `createScope` is the site-filtered one the callings came
+    // from. Taking `primaryScope` here would write this site's callings
+    // onto the home stake grant — a silent wrong write that never
+    // converges (found in the PR #275 review).
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: kb({
+          description:
+            'Colorado Springs North Stake (Stake Clerk) | Kettle Creek Ward (Elders Quorum Second Counselor)',
+          primaryScope: 'stake',
+          createScope: 'KC',
+          intendedCallings: ['Elders Quorum Second Counselor'],
+          grantTargetType: 'auto',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.scope).toBe('KC');
+    expect(payload.callings).toEqual(['Elders Quorum Second Counselor']);
+  });
+
+  it('kindoo-only falls back to stake when no segment resolved (createScope null)', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({ code: 'kindoo-only', kindoo: kb({ createScope: null }) }),
+    );
+    expect((input.fix.payload as Record<string, unknown>).scope).toBe('stake');
   });
 
   it('kindoo-only church-backed creates an auto seat with derivedBuildings over buildingNames', () => {

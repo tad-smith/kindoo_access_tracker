@@ -2184,6 +2184,34 @@ describe('detect', () => {
     );
   });
 
+  it('B-23: createScope is the site-filtered segment even when primaryScope is not', () => {
+    // Multi-site Description on the foreign site. The unfiltered
+    // tiebreaker prefers the app-access stake segment, so `primaryScope`
+    // says `stake` — home-only by policy, and NOT where this grant lives.
+    // `createScope` must name the segment that put the row on this site,
+    // the same one `intendedFreeText` came from. Sending `primaryScope`
+    // as the payload scope wrote the grant onto the home slot.
+    const result = detect(
+      mixedInputs({
+        seats: [],
+        kindooUsers: [
+          kuser({
+            username: 'multi@example.com',
+            description:
+              'Colorado Springs North Stake (Stake Clerk) | Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.kindoo?.primaryScope).toBe('stake');
+    expect(row.kindoo?.createScope).toBe('FT');
+    expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum Second Counselor');
+  });
+
   // ----- T-42 multi-site fan-out -----
   //
   // A Kindoo user whose Description spans home + foreign sites must

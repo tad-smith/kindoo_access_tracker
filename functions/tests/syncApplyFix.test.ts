@@ -531,6 +531,64 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(seat.duplicate_grants).toEqual([]);
       });
 
+      it('leaves the access doc alone on an AUTO slot hit (callings stay the seat truth)', async () => {
+        await seedManager();
+        // The slot-hit branch with `isAuto` true — the combination that
+        // touches the access doc. The merge leaves `seat.callings[]`
+        // alone (that axis belongs to `callings-mismatch`), so it must
+        // not reconcile access either; doing so would derive claims from
+        // callings the seat doesn't record. Found in the PR #275 review.
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({
+          scope: 'MR',
+          type: 'auto',
+          callings: ['Bishop', 'Ward Clerk'],
+          building_names: ['Maple Building'],
+        });
+        await seedAccess({
+          importer_callings: { MR: ['Bishop', 'Ward Clerk'] },
+          sort_order: BISHOP_ORDER,
+        });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ kindoo_site_id: null });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'auto',
+                  callings: ['Ward Clerk'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                },
+              },
+            },
+          }),
+        );
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        // Buildings merged and the stale stamp corrected, as on any hit.
+        expect(seat.building_names).toEqual(['Maple Building', 'Black Forest']);
+        expect(seat.kindoo_site_id).toBe('east-stake');
+        expect(seat.callings).toEqual(['Bishop', 'Ward Clerk']);
+        // Access untouched — still both callings, matching the seat.
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ MR: ['Bishop', 'Ward Clerk'] });
+        expect(access.sort_order).toBe(BISHOP_ORDER);
+      });
+
       it('merges into a matching duplicate grant and rebuilds the scope mirror', async () => {
         await seedManager();
         await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });

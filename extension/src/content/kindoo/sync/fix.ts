@@ -186,10 +186,15 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
-      // Scope falls back to the parsed primary scope; without either the
-      // seat can't be written. Use stake as a last-ditch fallback (server
-      // validates anyway).
-      const scope = d.kindoo.primaryScope ?? 'stake';
+      // Scope comes from the SITE-FILTERED segment (`createScope`) — the
+      // same segment `intendedCallings` / `intendedFreeText` above are
+      // built from. Deliberately NOT `primaryScope`, whose unfiltered
+      // tiebreaker prefers an app-access segment then `'stake'`: on a
+      // multi-site Description that pairs this site's callings with
+      // another site's scope, writing the grant onto the wrong slot and
+      // never converging. `null` (nothing resolved) falls back to stake
+      // as before; the server validates either way.
+      const scope = d.kindoo.createScope ?? 'stake';
       const payload: SyncApplyFixInput['fix']['payload'] = {
         memberEmail: d.displayEmail,
         memberName: d.kindoo.memberName,

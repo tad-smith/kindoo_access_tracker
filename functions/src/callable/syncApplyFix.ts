@@ -440,30 +440,39 @@ async function applyKindooOnly(
     const grantSite: string | null | undefined = isUnitScope ? newSeatSite : null;
 
     if (existingSeat) {
+      const merge = planKindooOnlyMerge({
+        existingSeat,
+        scope,
+        type,
+        callings: dedupedCallings,
+        buildingNames,
+        reason,
+        startDate,
+        endDate,
+        siteId: grantSite,
+        detectedAt: now,
+      });
       tx.update(seatRef, {
-        ...planKindooOnlyMerge({
-          existingSeat,
-          scope,
-          type,
-          callings: dedupedCallings,
-          buildingNames,
-          reason,
-          startDate,
-          endDate,
-          siteId: grantSite,
-          detectedAt: now,
-        }),
+        ...merge.update,
         last_modified_at: now,
         last_modified_by: actor,
         lastActor: actor,
       });
-      // Same per-scope access reconcile the create path runs — the merged
-      // grant earns app access for ITS scope, and `writeAccessForAutoScope`
-      // preserves every other scope's entry. Nothing is CLEARED when the
-      // grant earns no access: the scope is new to this seat, so there is
-      // no entry of its own to clear, and clearing one that predates this
-      // grant would revoke access this fix knows nothing about.
-      if (isAuto && accessCallings.length > 0) {
+      // Per-scope access reconcile, on the APPEND branch only. The scope
+      // is new to the seat there, so `writeAccessForAutoScope`'s wholesale
+      // replace of `importer_callings[scope]` adds an entry rather than
+      // rewriting one, and every other scope's entry is preserved. Nothing
+      // is cleared when the grant earns no access — the seat has no entry
+      // of its own to clear, and clearing one that predates this grant
+      // would revoke access this fix knows nothing about.
+      //
+      // A slot HIT is excluded deliberately: there the scope is already on
+      // the seat, and the merge leaves `seat.callings[]` alone (that axis
+      // belongs to `callings-mismatch`). Reconciling access anyway would
+      // re-derive claims from callings the seat doesn't record — access
+      // and seat disagreeing until someone applies the next run's
+      // `callings-mismatch`, which is the write that owns both.
+      if (isAuto && merge.appended && accessCallings.length > 0) {
         writeAccessForAutoScope(tx, accessRef, {
           canonical,
           memberEmail,
@@ -562,7 +571,9 @@ async function applyKindooOnly(
  *
  * Callings are deliberately NOT rewritten on a hit: `callings-mismatch`
  * owns that axis, and it fires on the following run once the grant is
- * visible on the site.
+ * visible on the site. `appended` reports which branch ran so the caller
+ * can hold the auto access reconcile to the append — on a hit, writing
+ * access from callings the seat doesn't record would split the two.
  *
  * `siteId`: `null` home, a string foreign, `undefined` when the unit doc
  * was missing — the last leaves the field off so the read-time ward
@@ -579,7 +590,7 @@ function planKindooOnlyMerge(opts: {
   endDate: string | undefined;
   siteId: string | null | undefined;
   detectedAt: Timestamp;
-}): Record<string, unknown> {
+}): { update: Record<string, unknown>; appended: boolean } {
   const {
     existingSeat,
     scope,
@@ -609,7 +620,7 @@ function planKindooOnlyMerge(opts: {
     if (siteId !== undefined) {
       update.kindoo_site_id = siteId === null ? FieldValue.delete() : siteId;
     }
-    return update;
+    return { update, appended: false };
   }
 
   const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === type);
@@ -624,7 +635,10 @@ function planKindooOnlyMerge(opts: {
     if (siteId !== undefined) replacement.kindoo_site_id = siteId;
     const next = dupes.slice();
     next[matchIdx] = replacement;
-    return { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) };
+    return {
+      update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
+      appended: false,
+    };
   }
 
   const entry: DuplicateGrant = {
@@ -643,7 +657,10 @@ function planKindooOnlyMerge(opts: {
     if (endDate !== undefined) entry.end_date = endDate;
   }
   const next = [...dupes, entry];
-  return { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) };
+  return {
+    update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
+    appended: true,
+  };
 }
 
 /**

@@ -7,7 +7,7 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 ---
 
 ## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
-Status: open
+Status: closed (fixed in PR #275) `[FIXED 2026-08-09]`
 Owner: @backend-engineer
 Severity: high (the drift row is unfixable — Sync re-reports it on every run and the operator has no in-product remedy)
 Phase: cross-cutting
@@ -33,6 +33,8 @@ The data model already has the right home for this grant: `DuplicateGrant` with 
 - The site re-stamp on a slot hit is what makes the fix converge. The row exists precisely because no grant on the seat targeted the active site, so a merge that leaves the stale site in place would clear nothing and the operator would re-click forever.
 - Callings are deliberately **not** rewritten on a slot hit: `callings-mismatch` is the code that owns that axis, and it fires on the next run once the grant is visible on the site.
 - Detector + panel: when the member has a seat that projected to no grant on the active site, the row says so and the button reads **Add SBA grant**.
+
+**A second, pre-existing defect the merge would have amplified — found in review.** The `kindoo-only` payload's `scope` came from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment` — while `intendedCallings` / `intendedFreeText` on the same payload come from the **site-filtered** `pickSegmentForSite`. On a multi-site Description the two disagree: the unfiltered tiebreaker prefers an app-access segment and then `'stake'`, so a foreign-site row arrived carrying the foreign ward's callings under a home segment's scope. Creating a seat that way was already wrong; merging made it worse, because a `scope: 'stake'` payload matches the stake primary's slot, folds the foreign building into the home grant, re-stamps nothing, and returns `success: true` — turning a loud failure into a silent wrong write that still never converges. The home-ward variant appends a wrong-scope duplicate, which also widens that ward's bishopric read access (`duplicate_scopes` is a rules predicate) and its utilization bar. Fixed upstream of the callable: `KindooBlock.createScope` carries the site-filtered segment's scope — the one `intendedShape` was built from — and the dispatcher uses it for `kindoo-only`. `primaryScope` is unchanged, because `scope-mismatch` wants the unfiltered pick.
 
 **Not fixed here.** B-16 (per-row fixes write the primary's fields even when the row was surfaced through a projected duplicate) is adjacent and still open. This entry adds a grant rather than editing one, and targets by `(scope, type)` rather than assuming the primary, so it does not widen B-16.
 

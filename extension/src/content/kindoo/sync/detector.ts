@@ -103,8 +103,28 @@ export interface KindooBlock {
    * Phase 2 fix dispatcher needs this to populate `memberName` on
    * `kindoo-only` callable payloads (SBA seat schema requires it). */
   memberName: string;
-  /** Parsed primary segment's scope (`'stake'` / ward_code / `null`). */
+  /** Parsed primary segment's scope (`'stake'` / ward_code / `null`).
+   * Computed from the UNFILTERED `pickPrimarySegment`, so on a
+   * multi-site Description it can name a segment that doesn't live on
+   * the active site. `scope-mismatch` wants exactly that; a
+   * `kindoo-only` create/merge does not — see {@link createScope}. */
   primaryScope: 'stake' | string | null;
+  /**
+   * `kindoo-only` rows only: the scope the created — or merged —
+   * grant targets, taken from the **site-filtered** segment
+   * (`pickSegmentForSite`), which is the same segment
+   * `intendedCallings` / `intendedFreeText` are built from.
+   *
+   * `primaryScope` is not usable here. Its unfiltered tiebreaker
+   * prefers an app-access segment and then `'stake'`, so a foreign-site
+   * row for a member whose Description also names a home segment would
+   * arrive carrying the foreign ward's CALLINGS under the home
+   * segment's SCOPE — writing the grant onto the wrong slot, on the
+   * wrong site, and never converging. `null` when no segment resolves
+   * (home-site unparseable); the dispatcher falls back to `'stake'`,
+   * as it did before.
+   */
+  createScope?: 'stake' | string | null;
   /** Parser-derived seat shape from the primary segment. Informational
    * only — `temp` when `IsTempUser`, else `manual`; the authoritative
    * seat type is `grantTargetType` (role + door-grant derived). */
@@ -797,6 +817,18 @@ export function detect(inputs: DetectInputs): DetectResult {
       // no seat for them" there is false, and "Create SBA seat" describes
       // a write the backend won't make (it merges).
       const mergeTarget = seatDocCanonicals.has(canon);
+      const block = buildKindooBlock(
+        kuser,
+        parsed,
+        intended,
+        inputs.buildings,
+        eqOpts,
+        createdType,
+      );
+      // The grant goes onto the site the row was surfaced from, so its
+      // scope is the SITE-FILTERED segment's — the one `intended` above
+      // was built from — not the block's unfiltered `primaryScope`.
+      block.createScope = primary?.scope ?? null;
       discrepancies.push({
         canonical: canon,
         displayEmail,
@@ -806,7 +838,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           ? 'Kindoo grants this member access on this site, but their SBA seat holds no grant here — it will be added to their existing seat.'
           : 'Kindoo has a user for this email, but SBA has no seat for them.',
         sba: null,
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, createdType),
+        kindoo: block,
         ...(mergeTarget ? { mergesOntoExistingSeat: true } : {}),
       });
       continue;
