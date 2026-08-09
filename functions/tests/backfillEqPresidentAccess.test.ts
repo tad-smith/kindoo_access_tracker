@@ -17,7 +17,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore, Transaction } from 'firebase-admin/firestore';
-import { auditId } from '@kindoo/shared';
+import { EQ_PRESIDENT_CALLING, auditId, callingSortOrder, seatCallingOrder } from '@kindoo/shared';
 import type { Access, ActorRef, AuditLog, ManualGrant, Seat } from '@kindoo/shared';
 import {
   backfillEqPresidentAccess,
@@ -29,9 +29,15 @@ import { clearEmulators, hasEmulators, requireEmulators } from './lib/emulator.j
 const STAKE_ID = 'csnorth';
 const MANAGER_EMAIL = 'mgr@gmail.com';
 const MEMBER_EMAIL = 'alice@gmail.com';
-const EQP = 'Elders Quorum President';
-/** `Elders Quorum President`'s index in the canonical calling order. */
-const EQP_ORDER = 51;
+const EQP = EQ_PRESIDENT_CALLING;
+// Canonical calling-order indices, DERIVED from the shared table rather
+// than pinned. Every one of these is a position in a list that grows: the
+// branch callings interleaving into the unit band (T-96) shifted the two
+// unit entries below once already. A literal here fails as a wall of
+// off-by-N assertions that says nothing about what actually changed.
+const EQP_ORDER = seatCallingOrder([EQP]);
+const BISHOP_ORDER = callingSortOrder('Bishop');
+const WARD_CLERK_ORDER = callingSortOrder('Ward Clerk');
 const ACTOR = { email: 'admin@gmail.com', canonical: 'admin@gmail.com' };
 const MANAGER_ACTOR: ActorRef = { email: MANAGER_EMAIL, canonical: MANAGER_EMAIL };
 /** Stands in for whatever actor last touched the doc before the backfill. */
@@ -300,7 +306,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     await seedAccess({
       importer_callings: { CO: ['Bishop'], DR: ['Ward Clerk'] },
       manual_grants: { CO: [manualGrant('training')] },
-      sort_order: 42,
+      sort_order: BISHOP_ORDER,
     });
 
     const result = await run('grant');
@@ -311,8 +317,8 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     expect(access?.importer_callings).toEqual({ CO: ['Bishop', EQP], DR: ['Ward Clerk'] });
     expect(access?.manual_grants['CO']?.length).toBe(1);
     expect(access?.manual_grants['CO']?.[0]?.reason).toBe('training');
-    // MIN(prior 42, EQP 51) = 42.
-    expect(access?.sort_order).toBe(42);
+    // MIN(prior Bishop, EQP) — Bishop outranks the quorum president.
+    expect(access?.sort_order).toBe(BISHOP_ORDER);
   });
 
   it('grant: skips manual / temp seats, stake-scope seats, and non-exact quorum titles', async () => {
@@ -392,7 +398,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     await seedManager();
     await seedStake({ eqPresidentAccess: false });
     await seedSeat({ callings: ['Bishop', EQP] });
-    await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: 42 });
+    await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: BISHOP_ORDER });
 
     expect(await run('revoke')).toEqual({
       ok: true,
@@ -404,7 +410,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     const access = await readAccess();
     expect(access?.importer_callings).toEqual({ CO: ['Bishop'] });
     // Recomputed as the MIN across everything left in the map.
-    expect(access?.sort_order).toBe(42);
+    expect(access?.sort_order).toBe(BISHOP_ORDER);
     expect(access?.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
   });
 
@@ -427,8 +433,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     const access = await readAccess();
     // The DR key is dropped entirely once its list empties.
     expect(access?.importer_callings).toEqual({ CO: ['Ward Clerk'] });
-    // `Ward Clerk` = 47.
-    expect(access?.sort_order).toBe(47);
+    expect(access?.sort_order).toBe(WARD_CLERK_ORDER);
   });
 
   it('revoke: deletes the doc when the importer map empties and there are no manual grants', async () => {
@@ -513,7 +518,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
     await seedManager();
     await seedStake({ eqPresidentAccess: false });
     await seedSeat({ callings: ['Bishop', EQP] });
-    await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: 42 });
+    await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: BISHOP_ORDER });
 
     expect(await run('revoke')).toEqual({
       ok: true,
@@ -562,7 +567,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
       await seedSeat({ scope: 'CO', callings: ['Bishop', EQP] });
       await seedAccess({
         importer_callings: { CO: ['Bishop'], DR: ['Ward Clerk'] },
-        sort_order: 42,
+        sort_order: BISHOP_ORDER,
       });
 
       expect(await run('grant')).toEqual({
@@ -637,7 +642,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
       await seedAccess({
         importer_callings: { CO: ['Bishop', EQP] },
         importer_limited_callings: { CO: [EQP] },
-        sort_order: 42,
+        sort_order: BISHOP_ORDER,
       });
 
       expect(await run('revoke')).toEqual({
@@ -702,7 +707,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
       await seedManager();
       await seedStake({ eqPresidentAccess: false });
       await seedSeat({ callings: ['Bishop', EQP] });
-      await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: 42 });
+      await seedAccess({ importer_callings: { CO: ['Bishop', EQP] }, sort_order: BISHOP_ORDER });
 
       expect(await run('revoke')).toEqual({
         ok: true,
@@ -851,8 +856,7 @@ describe.skipIf(!hasEmulators())('backfillEqPresidentAccess (integration)', () =
       // The Elders Quorum President entry is still reaped; the scope that
       // arrived mid-flight survives.
       expect(access?.importer_callings).toEqual({ DR: ['Ward Clerk'] });
-      // `Ward Clerk` = 47.
-      expect(access?.sort_order).toBe(47);
+      expect(access?.sort_order).toBe(WARD_CLERK_ORDER);
       expect(access?.lastActor).toEqual(MANAGER_ACTOR);
     });
 
