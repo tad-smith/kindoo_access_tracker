@@ -59,11 +59,20 @@ test.describe('Wards to Ignore in Kindoo', () => {
   });
 
   test('adds a ward, persists it to the stake doc, and removes it again', async ({ page }) => {
+    // Every assertion here that follows a navigation gets a generous
+    // timeout. The list renders off a Firestore snapshot, and a
+    // navigation (first load or the reload below) has to establish the
+    // websocket before one arrives — warm that is ~1s, but on the first
+    // test after a cold `vite preview` build it intermittently exceeded
+    // the 5s default. Timing, not behaviour: the same test passes 6/6
+    // once the server is warm.
     await signInAsManager(page, 'mgr-ignored@example.com');
     await page.goto('/manager/configuration?tab=kindoo-sites');
 
-    await expect(page.getByRole('heading', { name: 'Wards to Ignore in Kindoo' })).toBeVisible();
-    await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Wards to Ignore in Kindoo' })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByTestId('config-ignored-wards-empty')).toBeVisible({ timeout: 20_000 });
 
     await page.getByTestId('config-ignored-wards-add-button').click();
 
@@ -83,10 +92,6 @@ test.describe('Wards to Ignore in Kindoo', () => {
     await page.getByTestId('config-ignored-ward-submit').click();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible();
 
-    // Longer timeout than the default 5s: a reload drops the Firestore
-    // websocket, and the SDK occasionally logs one "could not reach
-    // backend" retry before the stake-doc snapshot re-lands. The row is
-    // rendered from that snapshot, so the assertion races the reconnect.
     await page.reload();
     await expect(page.getByTestId('config-ignored-ward-row-Aspen Grove Ward')).toBeVisible({
       timeout: 20_000,

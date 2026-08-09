@@ -82,6 +82,7 @@ import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
+import { useActiveStake } from '../../../lib/useActiveStake';
 import { toast } from '../../../lib/store/toast';
 
 export type ConfigTabKey =
@@ -832,10 +833,21 @@ function KindooSitesTab() {
 function HomeKindooSiteSection() {
   const principal = usePrincipal();
   const stake = useStakeDoc();
+  const activeStakeId = useActiveStake();
   const update = useUpdateHomeKindooSiteMutation();
   const [editing, setEditing] = useState(false);
 
-  const canEdit = principal.isPlatformSuperadmin;
+  // Superadmin AND manager of this stake. The rule is
+  // `isManager || isBootstrapAdmin` (T-91 holds back the superadmin
+  // branch), so offering Edit on the superadmin claim alone renders a
+  // button whose save dies on `permission-denied` — reachable now that
+  // the Stake List links here and `resolveActiveStake`'s URL tier is
+  // superadmin-permissive. Gate on what the write actually needs, and
+  // the button reappears on its own when T-91 lands.
+  const canEdit =
+    principal.isPlatformSuperadmin &&
+    activeStakeId !== null &&
+    principal.managerStakes.includes(activeStakeId);
   const siteName = stake.data?.kindoo_expected_site_name?.trim() || (stake.data?.stake_name ?? '');
   const isDefaultedName = !stake.data?.kindoo_expected_site_name?.trim();
   const eid = stake.data?.kindoo_config?.site_id ?? null;

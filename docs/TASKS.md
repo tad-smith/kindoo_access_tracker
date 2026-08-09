@@ -6,6 +6,17 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
+Status: pending
+Owner: @web-engineer
+Phase: Kindoo Sites (§15)
+
+Two follow-ups from PR #263's review. Neither blocks; both are about the edit path added in [T-90].
+
+**Changing an existing home EID strands every home building's `kindoo_rule`.** The extension's configure wizard writes the EID and the per-building rule rows in one batch, so the two have never moved apart; this form is the first writer that moves the EID alone. Afterwards, provisioning applies the *old* environment's rule ids against the *new* environment. The usual safety net — "a building with no `kindoo_rule` forces the wizard" — does not fire, because the mappings are present, just wrong. Options: clear `kindoo_rule` on the home-site buildings when `site_id` actually changes (forcing a wizard re-run), or warn on the confirm and leave it to the operator. Prefer the former; a silently wrong rule id is the worse failure.
+
+**Edit is not gated on the stake doc having loaded.** `useForm` captures `defaultValues` once at mount, so opening the editor before `stake.data` lands prefills `''` / `0`; saving then overwrites an existing `kindoo_expected_site_name` with whatever was typed against the empty form. Same clash-class T-90 just fixed for `kindoo_config.site_name`. Narrow window, and the component already gates two other things on snapshots arriving — gate the Edit button on `stake.data !== undefined` the same way.
+
 ## [T-91] Home Kindoo Site for a superadmin who holds no role on the stake
 Status: pending
 Owner: @web-engineer, @backend-engineer

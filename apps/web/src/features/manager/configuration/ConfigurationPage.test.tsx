@@ -90,6 +90,10 @@ vi.mock('../../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
 }));
 
+vi.mock('../../../lib/useActiveStake', () => ({
+  useActiveStake: () => 'csnorth',
+}));
+
 import { ConfigurationPage } from './ConfigurationPage';
 
 function liveResult<T>(data: T[]) {
@@ -731,6 +735,25 @@ describe('Home Kindoo Site (Kindoo Config tab)', () => {
 
   it('offers no Edit button to a manager who is not a platform superadmin', () => {
     renderTab({}, false);
+    expect(screen.queryByTestId('config-home-kindoo-site-edit')).toBeNull();
+  });
+
+  it('offers no Edit button to a superadmin who does not manage this stake', () => {
+    // The write needs `isManager` (T-91 holds back the superadmin rules
+    // branch), so the superadmin claim alone would render a button whose
+    // save dies on permission-denied.
+    useStakeDocMock.mockReturnValue(stakeDocResult());
+    usePrincipalMock.mockReturnValue({
+      email: 'sa@example.com',
+      canonical: 'sa@example.com',
+      isAuthenticated: true,
+      isPlatformSuperadmin: true,
+      managerStakes: [],
+      stakeMemberStakes: [],
+      bishopricWards: {},
+    });
+    render(<ConfigurationPage initialTab="kindoo-sites" />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-home-kindoo-site')).toBeInTheDocument();
     expect(screen.queryByTestId('config-home-kindoo-site-edit')).toBeNull();
   });
 
