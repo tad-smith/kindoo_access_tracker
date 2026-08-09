@@ -149,7 +149,7 @@ describe('configuration duplicateWardNameBlocker', () => {
   });
 
   it('leaves a branch alone when no ward shares its place name', () => {
-    expect(duplicateWardNameBlocker('Limon Branch', wards, undefined)).toBeNull();
+    expect(duplicateWardNameBlocker('Peterson Branch', wards, undefined)).toBeNull();
   });
 
   it('blocks a rename onto another existing ward name', () => {

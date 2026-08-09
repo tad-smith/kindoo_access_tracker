@@ -14,14 +14,14 @@ describe('normaliseUnitName', () => {
 
 describe('unitType', () => {
   it('classifies a name ending in " Branch" as a branch, case-insensitively', () => {
-    expect(unitType('Limon Branch')).toBe('branch');
-    expect(unitType('limon branch')).toBe('branch');
-    expect(unitType('LIMON BRANCH')).toBe('branch');
+    expect(unitType('Peterson Branch')).toBe('branch');
+    expect(unitType('peterson branch')).toBe('branch');
+    expect(unitType('PETERSON BRANCH')).toBe('branch');
   });
 
   it('ignores surrounding whitespace', () => {
-    expect(unitType('Limon Branch ')).toBe('branch');
-    expect(unitType('  Limon Branch')).toBe('branch');
+    expect(unitType('Peterson Branch ')).toBe('branch');
+    expect(unitType('  Peterson Branch')).toBe('branch');
   });
 
   it('classifies everything else as a ward', () => {
@@ -62,8 +62,8 @@ describe('kindooScopeName', () => {
   });
 
   it('returns a branch name verbatim', () => {
-    expect(kindooScopeName('Limon Branch')).toBe('Limon Branch');
-    expect(kindooScopeName('Limon Branch ')).toBe('Limon Branch');
+    expect(kindooScopeName('Peterson Branch')).toBe('Peterson Branch');
+    expect(kindooScopeName('Peterson Branch ')).toBe('Peterson Branch');
   });
 
   it('trims', () => {
@@ -77,7 +77,7 @@ describe('kindooScopeName', () => {
   });
 
   it('is idempotent', () => {
-    for (const name of ['Maple', 'Maple Ward', 'maple ward', 'Limon Branch', '3rd Ward']) {
+    for (const name of ['Maple', 'Maple Ward', 'maple ward', 'Peterson Branch', '3rd Ward']) {
       expect(kindooScopeName(kindooScopeName(name))).toBe(kindooScopeName(name));
     }
   });
@@ -92,10 +92,10 @@ describe('kindooScopeNameVariants', () => {
   });
 
   it('yields only the verbatim form for a branch', () => {
-    // Kindoo never renders "Limon Branch Ward", so a key for it could
+    // Kindoo never renders "Peterson Branch Ward", so a key for it could
     // only ever mis-resolve.
-    expect(kindooScopeNameVariants('Limon Branch')).toEqual(['limon branch']);
-    expect(kindooScopeNameVariants('Limon Branch ')).toEqual(['limon branch']);
+    expect(kindooScopeNameVariants('Peterson Branch')).toEqual(['peterson branch']);
+    expect(kindooScopeNameVariants('Peterson Branch ')).toEqual(['peterson branch']);
   });
 
   it('is empty for an empty or whitespace-only name', () => {
@@ -104,7 +104,7 @@ describe('kindooScopeNameVariants', () => {
   });
 
   it('de-duplicates', () => {
-    for (const name of ['Maple', 'Maple Ward', 'Limon Branch', 'Ward']) {
+    for (const name of ['Maple', 'Maple Ward', 'Peterson Branch', 'Ward']) {
       const variants = kindooScopeNameVariants(name);
       expect(new Set(variants).size).toBe(variants.length);
     }
@@ -116,7 +116,7 @@ describe('kindooScopeNameVariants', () => {
   });
 
   it('always contains the normalised kindooScopeName', () => {
-    for (const name of ['Maple', 'Maple Ward', 'maple ward', 'Limon Branch', '3rd Ward']) {
+    for (const name of ['Maple', 'Maple Ward', 'maple ward', 'Peterson Branch', '3rd Ward']) {
       expect(kindooScopeNameVariants(name)).toContain(normaliseUnitName(kindooScopeName(name)));
     }
   });

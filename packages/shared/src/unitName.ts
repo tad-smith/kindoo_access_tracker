@@ -4,7 +4,7 @@
 // `" Ward"` is optional, so `"Maple"` and `"Maple Ward"` are the same
 // unit. Kindoo always renders a ward with the suffix. A BRANCH carries
 // its own suffix and Kindoo renders it verbatim — appending `" Ward"`
-// to `"Limon Branch"` produces a name the church automation never
+// to `"Peterson Branch"` produces a name the church automation never
 // writes, and the provisioner then rewrites the Description on every
 // pass because its comparison is a strict `!==`.
 //
@@ -51,7 +51,7 @@ export function kindooScopeName(unitName: string): string {
  * Every normalised form that should resolve to this unit when read back
  * out of a Kindoo description. A ward matches both with and without the
  * suffix; a branch matches only its verbatim name, because Kindoo never
- * renders `"Limon Branch Ward"` and a key for it would only ever
+ * renders `"Peterson Branch Ward"` and a key for it would only ever
  * mis-resolve.
  */
 export function kindooScopeNameVariants(unitName: string): string[] {

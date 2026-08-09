@@ -4,7 +4,7 @@ import { findUnitNameCollision, unitNameCollisionMessage } from './unitNameColli
 describe('findUnitNameCollision', () => {
   it('returns null when no existing unit shares a variant', () => {
     expect(findUnitNameCollision('Oak', ['Maple', 'Prairie Ward'])).toBeNull();
-    expect(findUnitNameCollision('Limon Branch', ['Maple Ward'])).toBeNull();
+    expect(findUnitNameCollision('Peterson Branch', ['Maple Ward'])).toBeNull();
   });
 
   it('returns null for an empty or whitespace-only name', () => {
@@ -42,11 +42,11 @@ describe('findUnitNameCollision', () => {
 
   it('matches case-insensitively and trims', () => {
     expect(findUnitNameCollision('  maple WARD ', ['Maple'])).not.toBeNull();
-    expect(findUnitNameCollision('LIMON BRANCH', ['  Limon Branch  '])).not.toBeNull();
+    expect(findUnitNameCollision('PETERSON BRANCH', ['  Peterson Branch  '])).not.toBeNull();
   });
 
   it('does not collide two branches of different places', () => {
-    expect(findUnitNameCollision('Limon Branch', ['Olive Branch'])).toBeNull();
+    expect(findUnitNameCollision('Peterson Branch', ['Olive Branch'])).toBeNull();
   });
 
   it('reports the first colliding name when several exist', () => {

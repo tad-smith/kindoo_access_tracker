@@ -206,17 +206,17 @@ describe('EmailService — pure builders', () => {
   });
 
   it('labels the scope row Branch when the resolved unit name is a branch', () => {
-    const branch = managerOpts({ req: { ...baseRequest, scope: 'LB' }, scope: 'Limon Branch' });
-    expect(buildNewRequestTextBody(branch)).toContain('Branch:    Limon Branch');
+    const branch = managerOpts({ req: { ...baseRequest, scope: 'LB' }, scope: 'Peterson Branch' });
+    expect(buildNewRequestTextBody(branch)).toContain('Branch:    Peterson Branch');
     expect(buildNewRequestHtmlBody(branch)).toContain('>Branch</th>');
-    expect(buildNewRequestHtmlBody(branch)).toContain('>Limon Branch</td>');
+    expect(buildNewRequestHtmlBody(branch)).toContain('>Peterson Branch</td>');
     expect(buildNewRequestTextBody(branch)).not.toContain('Ward:');
   });
 
   it('labels the scope row Branch across every request-lifecycle email', () => {
     const req = { ...baseRequest, scope: 'LB' };
-    const named = managerOpts({ req, scope: 'Limon Branch' });
-    const plain = { req, scope: 'Limon Branch', link: QUEUE_LINK };
+    const named = managerOpts({ req, scope: 'Peterson Branch' });
+    const plain = { req, scope: 'Peterson Branch', link: QUEUE_LINK };
     for (const body of [
       buildNewRequestTextBody(named),
       buildNewRequestHtmlBody(named),

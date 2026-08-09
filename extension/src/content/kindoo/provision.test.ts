@@ -115,7 +115,7 @@ const WARDS: Ward[] = [
 const BRANCH_WARDS: Ward[] = [
   {
     ward_code: 'LB',
-    ward_name: 'Limon Branch',
+    ward_name: 'Peterson Branch',
     building_name: 'Maple Building',
   } as unknown as Ward,
 ];
@@ -763,7 +763,7 @@ describe('provisionAddOrChange — guards', () => {
 
   it('writes a branch name verbatim, without a " Ward" suffix', async () => {
     // A unit whose name ends in " Branch" IS a branch, and Kindoo
-    // renders it as-is. "Limon Branch Ward" is a name the church
+    // renders it as-is. "Peterson Branch Ward" is a name the church
     // automation never writes.
     lookupUserByEmailMock.mockResolvedValue(null);
     inviteUserMock.mockResolvedValue({ uid: 'new-uid' });
@@ -780,7 +780,7 @@ describe('provisionAddOrChange — guards', () => {
     });
 
     const invitePayload = inviteUserMock.mock.calls[0]![1];
-    expect(invitePayload.Description).toBe('Limon Branch (Sunday School Teacher)');
+    expect(invitePayload.Description).toBe('Peterson Branch (Sunday School Teacher)');
   });
 
   it('re-provisioning a branch seat is a no-op — no editUser churn', async () => {
@@ -789,7 +789,7 @@ describe('provisionAddOrChange — guards', () => {
     // and `descDiffers` is a strict !==, so every provision re-fired
     // editUser and overwrote the church-provisioned label.
     const existing = existingUser({
-      description: 'Limon Branch (Sunday School Teacher)',
+      description: 'Peterson Branch (Sunday School Teacher)',
       accessSchedules: [{ ruleId: 6248 }],
     });
     lookupUserByEmailMock.mockResolvedValue(existing);

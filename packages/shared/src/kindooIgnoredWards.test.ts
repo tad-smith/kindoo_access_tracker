@@ -42,7 +42,7 @@ describe('matchesIgnoredWard', () => {
 
 describe('collidesWithOwnWard', () => {
   // The trailing " Ward" is optional in SBA, so the list mixes both.
-  const wards = ['Maple', 'Jackson Creek', 'Pine Ward', 'Limon Branch'];
+  const wards = ['Maple', 'Jackson Creek', 'Pine Ward', 'Peterson Branch'];
 
   it('collides on the bare stored form', () => {
     expect(collidesWithOwnWard('Maple', wards)).toBe(true);
@@ -63,13 +63,13 @@ describe('collidesWithOwnWard', () => {
   });
 
   it('collides on a branch only under its verbatim name', () => {
-    // Kindoo renders a branch verbatim, so "Limon Branch Ward" is a
+    // Kindoo renders a branch verbatim, so "Peterson Branch Ward" is a
     // name nothing produces — inventing a key for it would block an
     // ignore entry that could never match our own unit.
-    expect(collidesWithOwnWard('Limon Branch', wards)).toBe(true);
-    expect(collidesWithOwnWard('  limon branch ', wards)).toBe(true);
-    expect(collidesWithOwnWard('Limon Branch Ward', wards)).toBe(false);
-    expect(collidesWithOwnWard('Limon', wards)).toBe(false);
+    expect(collidesWithOwnWard('Peterson Branch', wards)).toBe(true);
+    expect(collidesWithOwnWard('  peterson branch ', wards)).toBe(true);
+    expect(collidesWithOwnWard('Peterson Branch Ward', wards)).toBe(false);
+    expect(collidesWithOwnWard('Peterson', wards)).toBe(false);
   });
 
   it('does not collide with a ward this stake does not own', () => {

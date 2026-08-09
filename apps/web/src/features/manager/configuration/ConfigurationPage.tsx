@@ -1053,7 +1053,7 @@ function IgnoredWardsSection() {
         and whose managers provision their own members. Sync skips them, so they aren’t reported as
         members missing a seat. Enter the ward exactly as it appears in Kindoo descriptions, without
         the calling — e.g. <code>Maple Ward</code> to skip <code>Maple Ward (Bishop)</code>, or{' '}
-        <code>Limon Branch</code> to skip <code>Limon Branch (Branch President)</code>.
+        <code>Peterson Branch</code> to skip <code>Peterson Branch (Branch President)</code>.
       </p>
 
       <IgnoredWardDialog

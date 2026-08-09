@@ -633,11 +633,12 @@ describe('<BootstrapWizardPage />', () => {
     expect(screen.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
     expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
     expect(WARD_NAME_HINT).toMatch(/“ Ward” suffix is optional/);
-    expect(WARD_NAME_HINT).toMatch(/A branch must end in “ Branch”, e\.g\. “Limon Branch”\./);
-    // The trap: a ward in a place called Olive Branch is classified as a
-    // branch unless the operator stores the suffix. The hint must say so.
-    expect(WARD_NAME_HINT).toMatch(/“Olive Branch Ward”, not “Olive Branch”/);
-    // And it must not also claim the name is whatever Kindoo displays —
+    expect(WARD_NAME_HINT).toMatch(/A branch must end in “ Branch”, e\.g\. “Peterson Branch”\./);
+    // Deliberately short: the Olive-Branch-is-really-a-ward case is rare
+    // enough that spelling it out here costs more than it saves. The
+    // uniqueness guard still rejects the colliding pair at entry.
+    expect(WARD_NAME_HINT).not.toMatch(/Olive Branch/);
+    // And it must not claim the name is whatever Kindoo displays —
     // for a bare-stored ward Kindoo shows the SUFFIXED form, so that
     // sentence contradicted the suffix-is-optional half.
     expect(WARD_NAME_HINT).not.toMatch(/as Kindoo shows it/);

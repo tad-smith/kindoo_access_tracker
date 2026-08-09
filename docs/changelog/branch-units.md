@@ -11,9 +11,9 @@ A stake can hold **branches** alongside wards, and the system can tell them apar
 |---|---|---|---|
 | `Maple` | ward | `Maple Ward` | `maple`, `maple ward` |
 | `Maple Ward` | ward | `Maple Ward` | `maple`, `maple ward` |
-| `Limon Branch` | branch | `Limon Branch` | `limon branch` |
+| `Peterson Branch` | branch | `Peterson Branch` | `peterson branch` |
 
-Four surfaces were rewired onto it: `resolveScopeName` in `extension/src/content/kindoo/provision.ts` (write), `parseDescription` in `extension/src/content/kindoo/sync/parser.ts` (read), `collidesWithOwnWard` in `packages/shared/src/kindooIgnoredWards.ts` (ignore-list collision), and `scopeRowLabel` in `functions/src/services/EmailService.ts` — whose notification row now reads `Branch:` for a branch instead of `Ward: Limon Branch`.
+Four surfaces were rewired onto it: `resolveScopeName` in `extension/src/content/kindoo/provision.ts` (write), `parseDescription` in `extension/src/content/kindoo/sync/parser.ts` (read), `collidesWithOwnWard` in `packages/shared/src/kindooIgnoredWards.ts` (ignore-list collision), and `scopeRowLabel` in `functions/src/services/EmailService.ts` — whose notification row now reads `Branch:` for a branch instead of `Ward: Peterson Branch`.
 
 The web copy for the three fields that take a unit name — the bootstrap wizard's Step 3, Configuration → Wards, and Wards to Ignore in Kindoo — is now `Ward or branch name`, from `WARD_NAME_LABEL` in `apps/web/src/lib/wardCopy.ts`. The two fields that *create* a unit also carry `WARD_NAME_HINT`, which states the suffix rule.
 
@@ -23,7 +23,7 @@ The web copy for the three fields that take a unit name — the bootstrap wizard
 
 **The name is the discriminator, and there is deliberately no `unit_type` field.** Kindoo has no structured notion of unit type: the Description string is the entire interface, and Church Access Automation writes it off the unit's own name. A stored type would be a second copy of a fact the name already carries, settable independently of it, so its failure mode is a doc whose type says `branch` and whose name says `Maple` — with the write side still having to decide which one Kindoo's string follows. It would also cost a migration across every existing ward doc and a form control the operator has to keep in agreement with the name they just typed. Recorded as `architecture.md` D31, including the instruction not to propose the field later.
 
-**The asymmetry between the two suffixes is not an oversight.** A ward's `" Ward"` is optional in both directions because SBA has accepted both forms since the first stake and Kindoo always renders the suffixed one; both must resolve. A branch's `" Branch"` is required and its scope name is verbatim, because appending `" Ward"` to `"Limon Branch"` produces a string Church Access Automation never writes — and the provisioner compares descriptions with a strict `!==`, so it would rewrite the Description on every single pass. For the same reason the read side registers **no** `"Limon Branch Ward"` key: symmetry with wards would buy nothing, since that key could only ever mis-resolve.
+**The asymmetry between the two suffixes is not an oversight.** A ward's `" Ward"` is optional in both directions because SBA has accepted both forms since the first stake and Kindoo always renders the suffixed one; both must resolve. A branch's `" Branch"` is required and its scope name is verbatim, because appending `" Ward"` to `"Peterson Branch"` produces a string Church Access Automation never writes — and the provisioner compares descriptions with a strict `!==`, so it would rewrite the Description on every single pass. For the same reason the read side registers **no** `"Peterson Branch Ward"` key: symmetry with wards would buy nothing, since that key could only ever mis-resolve.
 
 **`Ward or branch name` on the ignore-list field, but not its hint.** That field matches against Kindoo's own description text, where nothing is optional, so the create-side hint would be wrong guidance there. It keeps its `Ward name as Kindoo shows it` placeholder.
 

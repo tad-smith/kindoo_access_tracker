@@ -120,7 +120,7 @@ function buildWardLookup(wards: Array<Pick<Ward, 'ward_code' | 'ward_name'>>): M
  * render it as (`kindooScopeNameVariants`). The trailing `" Ward"` is
  * optional in SBA, so a ward stored either way resolves against a
  * description written either way. A branch has one form — Kindoo never
- * renders `"Limon Branch Ward"`. Two units whose variant sets overlap
+ * renders `"Peterson Branch Ward"`. Two units whose variant sets overlap
  * contest a key; the first one registered keeps it and the collision is
  * warned about — see `buildWardLookup`.
  *

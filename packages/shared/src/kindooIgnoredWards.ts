@@ -45,8 +45,8 @@ export function matchesIgnoredWard(
  *
  * Matches every form Kindoo could render the unit under, so `"Maple"`
  * and `"Maple Ward"` collide with each other whichever way the ward is
- * stored. A branch has one form: `"Limon Branch"` collides, and
- * `"Limon Branch Ward"` — which Kindoo never renders — does not.
+ * stored. A branch has one form: `"Peterson Branch"` collides, and
+ * `"Peterson Branch Ward"` — which Kindoo never renders — does not.
  */
 export function collidesWithOwnWard(entry: string, wardNames: readonly string[]): boolean {
   const key = normaliseIgnoredWard(entry);

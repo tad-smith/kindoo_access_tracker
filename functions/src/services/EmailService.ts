@@ -467,7 +467,7 @@ function overCapLead(count: number): string {
 /**
  * `Scope` for the stake pool; otherwise the unit's own kind, which the
  * resolved name is the only discriminator for — a stake with a branch
- * must not read `Ward: Limon Branch`.
+ * must not read `Ward: Peterson Branch`.
  */
 function scopeRowLabel(scope: string, scopeName: string): string {
   if (scope === 'stake') return 'Scope';

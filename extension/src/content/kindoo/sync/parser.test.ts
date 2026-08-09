@@ -226,11 +226,11 @@ describe('parseDescription', () => {
   });
 
   it('resolves a branch under its verbatim name', () => {
-    const withBranch = [{ ward_code: 'LB', ward_name: 'Limon Branch' }];
-    const parsed = parseDescription('Limon Branch (Branch President)', STAKE, withBranch);
+    const withBranch = [{ ward_code: 'LB', ward_name: 'Peterson Branch' }];
+    const parsed = parseDescription('Peterson Branch (Branch President)', STAKE, withBranch);
     expect(parsed.unparseable).toBe(false);
     expect(parsed.segments[0]).toMatchObject({
-      rawScopeName: 'Limon Branch',
+      rawScopeName: 'Peterson Branch',
       scope: 'LB',
       calling: 'Branch President',
       resolvedScope: true,
@@ -238,21 +238,21 @@ describe('parseDescription', () => {
   });
 
   it('does not register a " Ward"-suffixed form for a branch', () => {
-    // Kindoo renders a branch verbatim; "Limon Branch Ward" is a name
+    // Kindoo renders a branch verbatim; "Peterson Branch Ward" is a name
     // nothing writes, so resolving it would only ever mask a typo.
-    const withBranch = [{ ward_code: 'LB', ward_name: 'Limon Branch' }];
-    const parsed = parseDescription('Limon Branch Ward (Branch President)', STAKE, withBranch);
+    const withBranch = [{ ward_code: 'LB', ward_name: 'Peterson Branch' }];
+    const parsed = parseDescription('Peterson Branch Ward (Branch President)', STAKE, withBranch);
     expect(parsed.unparseable).toBe(true);
     expect(parsed.segments[0]?.resolvedScope).toBe(false);
   });
 
   it('resolves a branch alongside a ward in a multi-scope description', () => {
     const units = [
-      { ward_code: 'LB', ward_name: 'Limon Branch' },
+      { ward_code: 'LB', ward_name: 'Peterson Branch' },
       { ward_code: 'JC', ward_name: 'Jackson Creek' },
     ];
     const parsed = parseDescription(
-      'Limon Branch (Branch President) | Jackson Creek Ward (Sunday School Teacher)',
+      'Peterson Branch (Branch President) | Jackson Creek Ward (Sunday School Teacher)',
       STAKE,
       units,
     );
