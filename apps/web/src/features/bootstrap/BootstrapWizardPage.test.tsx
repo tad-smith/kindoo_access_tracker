@@ -645,7 +645,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward or branch name/i), 'Maple');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
     // The select value is the immutable slug, not the display name.
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
@@ -684,7 +684,7 @@ describe('<BootstrapWizardPage />', () => {
     const user = userEvent.setup();
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('wizard-step-tab-3'));
-    await user.type(screen.getByLabelText(/Ward or branch name/i), 'maple ward');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'maple ward');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByRole('button', { name: /Add ward/i }));
     expect(await screen.findByText(/already exists/i)).toBeInTheDocument();

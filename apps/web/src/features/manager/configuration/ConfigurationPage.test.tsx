@@ -2,7 +2,7 @@
 // once: list rendering + form validation. Mutations are mocked.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -372,7 +372,9 @@ describe('<ConfigurationPage />', () => {
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-ward-edit-CO'));
     // The ward name is the only visible identifier; the code is hidden.
-    expect((screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement).value).toBe('Maple');
+    expect((screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement).value).toBe(
+      'Maple',
+    );
     expect(screen.queryByLabelText(/Ward code/i)).toBeNull();
     expect(screen.getByRole('heading', { name: 'Edit ward' })).toBeInTheDocument();
   });
@@ -442,8 +444,9 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
-    expect(screen.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
-    expect(screen.getByText(WARD_NAME_HINT)).toBeInTheDocument();
+    const dialog = within(screen.getByTestId('config-ward-form'));
+    expect(dialog.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    expect(dialog.getByText(WARD_NAME_HINT)).toBeInTheDocument();
   });
 
   it('writes both building_id and building_name when a ward is saved', async () => {
@@ -456,7 +459,7 @@ describe('<ConfigurationPage />', () => {
     );
     render(<ConfigurationPage initialTab="wards" />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-wards-add-button'));
-    await user.type(screen.getByLabelText(/Ward or branch name/i), 'Maple');
+    await user.type(screen.getByLabelText(/^Ward or branch name$/), 'Maple');
     await user.selectOptions(screen.getByLabelText('Building'), 'maple-building');
     await user.click(screen.getByTestId('config-ward-submit'));
     await vi.waitFor(() => expect(upsertWardMock).toHaveBeenCalled());
@@ -873,6 +876,18 @@ describe('Wards to Ignore in Kindoo (Kindoo Config tab)', () => {
     await user.type(screen.getByTestId('config-ignored-ward-input'), text);
   }
 
+  it('labels its field for a branch too, but asks for the name verbatim rather than the create-ward suffix rule', async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(screen.getByTestId('config-ignored-wards-add-button'));
+    const dialog = within(screen.getByTestId('config-ignored-ward-form'));
+    expect(dialog.getByLabelText(/^Ward or branch name$/)).toBeInTheDocument();
+    // Matching is against Kindoo's description text, so no suffix is
+    // optional here — the create-ward hint would be wrong guidance.
+    expect(screen.getByPlaceholderText('Ward name as Kindoo shows it')).toBeInTheDocument();
+    expect(screen.queryByText(WARD_NAME_HINT)).toBeNull();
+  });
+
   it('renders under the Foreign Kindoo Sites list with the empty state', () => {
     renderTab();
     expect(screen.getByTestId('config-ignored-wards')).toBeInTheDocument();
@@ -1243,7 +1258,7 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
 
     // Open the edit dialog and change the ward name (in-progress edit).
     await user.click(screen.getByTestId('config-ward-edit-CO'));
-    const nameInput = screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement;
+    const nameInput = screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement;
     await user.clear(nameInput);
     await user.type(nameInput, 'Maple Renamed');
     expect(nameInput.value).toBe('Maple Renamed');
@@ -1260,7 +1275,7 @@ describe('WardFormDialog reset stability across buildings snapshots', () => {
     rerender(<ConfigurationPage initialTab="wards" />);
 
     // The in-progress edit survives — reset() did not fire.
-    expect((screen.getByLabelText(/Ward or branch name/i) as HTMLInputElement).value).toBe(
+    expect((screen.getByLabelText(/^Ward or branch name$/) as HTMLInputElement).value).toBe(
       'Maple Renamed',
     );
     // The Building <Select> still reflects the live catalogue (the new

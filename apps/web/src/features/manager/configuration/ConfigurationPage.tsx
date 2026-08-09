@@ -1155,7 +1155,7 @@ function IgnoredWardDialog({
     >
       <form onSubmit={submit} className="kd-wizard-form" data-testid="config-ignored-ward-form">
         <label>
-          Ward name
+          {WARD_NAME_LABEL}
           <Input
             {...register('ward')}
             placeholder="Ward name as Kindoo shows it"
