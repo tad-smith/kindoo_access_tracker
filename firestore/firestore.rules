@@ -684,17 +684,31 @@ service cloud.firestore {
       // pre-dates the extension and never writes this field, but the
       // validator is no-op when absent so it stays in the predicate.
       //
-      // NOT widened to platform superadmins. A superadmin editing a
-      // stake's home Kindoo site without holding a role there needs
-      // this branch, and the shape it needs is known — pin
-      // `setup_complete` and `bootstrap_admin_email`, because
-      // `isBootstrapAdmin` is exactly those two fields and an unpinned
-      // grant re-opens the bootstrap hatch on any existing stake. It is
-      // held back with the rest of that path (T-91): the reads it
-      // depends on and the active-stake resolution both need work
-      // first, and shipping the rule alone would be authority with no
-      // consumer.
-      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
+      // Platform superadmins may edit a stake's home Kindoo site
+      // (`kindoo_expected_site_name` + `kindoo_config`) without holding
+      // a role there — `spec.md` §15 "Home Kindoo Site surface".
+      //
+      // Their branch PINS `setup_complete` and `bootstrap_admin_email`,
+      // and that is load-bearing, not tidiness. `isBootstrapAdmin` is
+      // exactly `setup_complete == false && bootstrap_admin_email ==
+      // token.email`, so an unpinned grant is an escalation path rather
+      // than a config edit: write those two on any EXISTING stake and
+      // the bootstrap hatch below re-opens — `kindooManagers` create is
+      // gated on `isBootstrapAdmin`, and `syncManagersClaims` then mints
+      // a real manager claim over that stake's seats, requests and
+      // members. Flipping `setup_complete` alone also routes every user
+      // of the stake to SetupInProgress (§10). Before this branch a
+      // superadmin's only rules write was `create` on a NEW stake doc,
+      // which cannot reach existing data; the pins keep it that way.
+      //
+      // Everything else on the doc is open to them, matching the read
+      // rule above. Both integrity conditions still bind: the write is
+      // stamped with the superadmin's own identity, and `kindoo_config`
+      // must be well-formed.
+      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId)
+          || (isPlatformSuperadmin()
+              && request.resource.data.setup_complete == resource.data.setup_complete
+              && request.resource.data.bootstrap_admin_email == resource.data.bootstrap_admin_email))
         && lastActorMatchesAuth(request.resource.data)
         && validKindooConfig(request.resource.data);
       allow delete: if false;
@@ -711,8 +725,19 @@ service cloud.firestore {
       // check; delete cannot (no `request.resource.data` on delete) and
       // is gated only by the role predicate. Same split applied to
       // buildings + kindooManagers below.
+      // Platform-superadmin read (§15 "Home Kindoo Site surface", T-91):
+      // Configuration admits a superadmin holding no role on the stake,
+      // and every tab there reads a sub-collection. Granted on exactly
+      // five — wards, buildings, kindooManagers, kindooSites,
+      // organizations. Deliberately NOT seats or requests: those carry
+      // member names and emails, and widening them would hand every
+      // superadmin the roster of every stake. Consequence accepted: the
+      // guards keyed on seats / requests (building rename + delete,
+      // organization delete) never hydrate for that persona and their
+      // buttons stay disabled — safe, and those are writes the rules
+      // deny them anyway.
       match /wards/{wardCode} {
-        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId) || isPlatformSuperadmin();
         allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
         allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);
@@ -723,7 +748,8 @@ service cloud.firestore {
       // can mutate. Bootstrap-admin gate matches wards: the wizard's
       // Step 2 (≥1 building) writes here.
       match /buildings/{buildingId} {
-        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId);
+        // Superadmin read — see the note above `wards`.
+        allow read: if isAnyMember(stakeId) || isBootstrapAdmin(stakeId) || isPlatformSuperadmin();
         // `kindoo_rule` (extension v2.1) is manager-writable as part of
         // the standard building update path. Validation enforces the
         // field shape when present; absence is fine.
@@ -758,7 +784,12 @@ service cloud.firestore {
       // via their building) is the UI's concern; rules gate WHO can
       // write, not field-level FK checks.
       match /kindooSites/{kindooSiteId} {
-        allow read: if isAnyMember(stakeId);
+        // Superadmin read — see the note above `wards`. Load-bearing for
+        // the Home Kindoo Site save: its foreign-EID collision guard
+        // reads this collection before writing, so without this branch
+        // the write dies on permission-denied for the one persona the
+        // surface exists for.
+        allow read: if isAnyMember(stakeId) || isPlatformSuperadmin();
         allow create, update: if isManager(stakeId)
           && lastActorMatchesAuth(request.resource.data);
         allow delete: if isManager(stakeId);
@@ -774,7 +805,8 @@ service cloud.firestore {
       // No-Organization picker), managers write with the `lastActor`
       // integrity check. Small unfiltered collection — no index needed.
       match /organizations/{organizationId} {
-        allow read: if isAnyMember(stakeId);
+        // Superadmin read — see the note above `wards`.
+        allow read: if isAnyMember(stakeId) || isPlatformSuperadmin();
         allow create, update: if isManager(stakeId)
           && lastActorMatchesAuth(request.resource.data);
         allow delete: if isManager(stakeId);
@@ -789,7 +821,8 @@ service cloud.firestore {
       // gate, that very first write would be denied because the
       // bootstrap admin doesn't yet hold a manager claim.
       match /kindooManagers/{memberCanonical} {
-        allow read: if isManager(stakeId) || isBootstrapAdmin(stakeId);
+        // Superadmin read — see the note above `wards`.
+        allow read: if isManager(stakeId) || isBootstrapAdmin(stakeId) || isPlatformSuperadmin();
         allow create, update: if (isManager(stakeId) || isBootstrapAdmin(stakeId))
           && lastActorMatchesAuth(request.resource.data);
         allow delete: if isManager(stakeId) || isBootstrapAdmin(stakeId);

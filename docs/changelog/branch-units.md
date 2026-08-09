@@ -32,12 +32,12 @@ The web copy for the three fields that take a unit name — the bootstrap wizard
 - **`ward_code` is still `buildingSlug(ward_name)` verbatim**, not `buildingSlug(kindooScopeName(ward_name))`. So `"Maple"` lands at `maple` and `"Maple Ward"` at `maple-ward` — the doc ID records which form the operator typed. Normalising it would have been a migration on an immutable foreign key by value (D3), and the code is never rendered and never matched against Kindoo, so the divergence is inert.
 - **No `unit_type` field, no schema change at all.** `stakes/{stakeId}/wards/{wardCode}` is byte-identical to before; branches have always been storable, just not distinguishable.
 - **No new collection.** Branches live in `wards`, which is why `firebase-schema.md` §4.2 now says "unit" where it used to say "ward" and the collection name stays.
-- **The calling tables are untouched.** `callingSortOrder.ts` and `appAccessCallings.ts` remain ward/stake only, so a Branch President parses to a valid scope and an unknown calling: bottom of its sort band, no derived app access. Deliberate — see T-95.
+- **The calling tables are untouched.** `callingSortOrder.ts` and `appAccessCallings.ts` remain ward/stake only, so a Branch President parses to a valid scope and an unknown calling: bottom of its sort band, no derived app access. Deliberate — see T-96.
 - **No rules change.** Nothing about the unit's kind reaches `firestore.rules`.
 
 ## Known issues / deferred
 
-- **T-95 — branch-specific callings.** Fully specified and deliberately not implemented: the six branch callings, the 19 ward-family entries that carry over unchanged, and the four that grant app access — Branch President, Branch Presidency First / Second Counselor, Branch Clerk, plus Elders Quorum President when `stake.eq_president_app_access` is on, which the operator confirmed extends to branches. Matching stays exact with no wildcards; the four "families" are the entries already in `callingSortOrder.ts`, not a prefix rule. What remains open is the implementation shape: `AppAccessOptions` needs a `unitType`, and `syncApplyFix.ts` calls `filterAppAccessCallings` at `:302`, before the ward doc is read at `:311`, under a read that is itself conditional — plus three sibling call sites with no ward read at all.
+- **T-96 — branch-specific callings.** Fully specified and deliberately not implemented: the six branch callings, the 19 ward-family entries that carry over unchanged, and the four that grant app access — Branch President, Branch Presidency First / Second Counselor, Branch Clerk, plus Elders Quorum President when `stake.eq_president_app_access` is on, which the operator confirmed extends to branches. Matching stays exact with no wildcards; the four "families" are the entries already in `callingSortOrder.ts`, not a prefix rule. What remains open is the implementation shape: `AppAccessOptions` needs a `unitType`, and `syncApplyFix.ts` calls `filterAppAccessCallings` at `:302`, before the ward doc is read at `:311`, under a read that is itself conditional — plus three sibling call sites with no ward read at all.
 - **B-20 — `Maple` and `Maple Ward` can both be created.** `duplicateWardNameBlocker` compares raw `ward_name`, so the guard does not know the two forms name the same unit; they slug to different doc IDs, so the transaction backstop misses it too. Low severity (it takes an operator adding the same unit twice under two spellings) but the consequence is silent mis-resolution, since both wards register the same lookup keys and the later one wins.
 
 ## Doc edits
@@ -45,7 +45,7 @@ The web copy for the three fields that take a unit name — the bootstrap wizard
 - `docs/architecture.md` — new **D31**, the unit-name → Kindoo scope-name contract.
 - `docs/spec.md` — §3.2 wards bullet carries the contract; §5.3 gains the ward-form label + hint and the B-20 caveat; §9's email row label is no longer always `Ward`; §10 Step 3 notes the shared label; §15's two "bare form + `" Ward"`-suffixed form" claims replaced with the variants rule.
 - `docs/firebase-schema.md` — §4.2: `ward_name` field comment, the contract table, and the doc-ID note that the slug is not normalised.
-- `docs/TASKS.md` — new **T-95**; T-88's own-ward-collision claim amended.
+- `docs/TASKS.md` — new **T-96**; T-88's own-ward-collision claim amended.
 - `docs/BUGS.md` — new **B-20**.
 - `docs/user-guide/kindoo-managers.html` — §2 gains a "Naming a ward or a branch" callout.
 - `packages/shared/src/types/ward.ts` — the `ward_name` docstring, which said "Display name (`"3rd Ward"`, etc.)" and contradicted the extension.

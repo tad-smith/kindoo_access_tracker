@@ -839,24 +839,20 @@ function HomeKindooSiteSection() {
   const update = useUpdateHomeKindooSiteMutation();
   const [editing, setEditing] = useState(false);
 
-  // Superadmin AND manager of this stake. The rule is
-  // `isManager || isBootstrapAdmin` (T-91 holds back the superadmin
-  // branch), so offering Edit on the superadmin claim alone renders a
-  // button whose save dies on `permission-denied` — reachable now that
-  // the Stake List links here and `resolveActiveStake`'s URL tier is
-  // superadmin-permissive. Gate on what the write actually needs, and
-  // the button reappears on its own when T-91 lands.
-  // Also gated on the stake snapshot arriving. `useForm` captures
+  // Superadmin, with or without a role on this stake. The rule now
+  // admits them (T-91) with `setup_complete` and `bootstrap_admin_email`
+  // pinned, so the grant stays a config edit rather than a route to a
+  // manager claim — the manager half of this gate is no longer what the
+  // write requires.
+  //
+  // Still gated on the stake snapshot arriving. `useForm` captures
   // `defaultValues` once at mount, so opening the editor before
   // `stake.data` lands prefills '' / 0 — and saving then writes the empty
   // form over a real `kindoo_expected_site_name`. Same clobber class the
   // mutation guards for `kindoo_config.site_name`; the tab already gates
   // two other controls on snapshots this way.
   const canEdit =
-    principal.isPlatformSuperadmin &&
-    activeStakeId !== null &&
-    principal.managerStakes.includes(activeStakeId) &&
-    stake.data !== undefined;
+    principal.isPlatformSuperadmin && activeStakeId !== null && stake.data !== undefined;
   const siteName = stake.data?.kindoo_expected_site_name?.trim() || (stake.data?.stake_name ?? '');
   const isDefaultedName = !stake.data?.kindoo_expected_site_name?.trim();
   const eid = stake.data?.kindoo_config?.site_id ?? null;

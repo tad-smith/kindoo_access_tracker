@@ -73,7 +73,7 @@ A door-access tracker that manages Kindoo seat assignments across the units — 
 
 - Phase 12 (multi-stake) — **complete** as of 2026-05-20; all five sub-deliverables (12.1 → 12.5) shipped. See `docs/firebase-migration.md` Phase 12, T-46, and the per-PR changelogs under `docs/changelog/phase-12.N-*.md`.
 - **Remote apply** (PR #250, `architecture.md` D27, `spec.md` §16) — shipped. A manager taps **Apply via extension** on their phone's Requests Queue and their own desktop extension provisions it, via the `remoteApply/{canonicalEmail}` mailbox. The web half is live and inert until a presence doc exists; the extension half is gated on Chrome Web Store review. See `docs/changelog/remote-apply.md`.
-- **Branches** (PR #268, `architecture.md` D31) — shipped. A unit whose name ends in `" Branch"` is a branch; `packages/shared/src/unitName.ts` is the only place that decides. Branch-specific **callings** are specified and deliberately not built — T-95. See `docs/changelog/branch-units.md`.
+- **Branches** (PR #268, `architecture.md` D31) — shipped. A unit whose name ends in `" Branch"` is a branch; `packages/shared/src/unitName.ts` is the only place that decides. Branch-specific **callings** are specified and deliberately not built — T-96. See `docs/changelog/branch-units.md`.
 - B-1 — iPhone PWA notification deep-link.
 - T-26 — finish Phase 11 SA hardening (pin remaining functions to `kindoo-app@`, audit IAM, revoke project-default `roles/editor`).
 - Phase 10.6 (push expansion) — operator-deferred.

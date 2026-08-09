@@ -243,6 +243,92 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       );
     });
 
+    // T-91: a platform superadmin sets a stake's home Kindoo site
+    // without holding a role there. `superadminContext` carries NO
+    // per-stake claims, so these exercise that branch and nothing else.
+    it('platform superadmin (no per-stake role) can update the parent stake doc', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertSucceeds(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            kindoo_expected_site_name: 'Black Forest',
+            kindoo_config: {
+              site_id: 27994,
+              site_name: 'Black Forest',
+              configured_at: new Date(),
+              configured_by: lastActorOf(personas.superadmin),
+            },
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    // The two pins. Together these fields ARE `isBootstrapAdmin`, which
+    // gates `kindooManagers` create, which `syncManagersClaims` turns
+    // into a real manager claim over the stake's data.
+    it('superadmin cannot flip setup_complete on an existing stake', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            setup_complete: false,
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('superadmin cannot repoint bootstrap_admin_email at themselves', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            bootstrap_admin_email: personas.superadmin.email,
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('superadmin update still fails the lastActor integrity check', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(freshStakeDoc({ lastActor: lastActorOf(personas.manager) })),
+      );
+    });
+
+    it('a manager may still change setup_complete (the wizard flip)', async () => {
+      // The pins are on the superadmin branch only — they must not
+      // narrow the manager path the bootstrap wizard runs through.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).set(freshStakeDoc({ setup_complete: false })));
+    });
+
     it('cross-stake: manager of stake A is denied updating stake B', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
