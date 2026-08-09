@@ -114,8 +114,54 @@ export async function clearEmulators(): Promise<void> {
 const RETRYABLE_SWEEP_STATUSES = new Set([409, 429, 503]);
 const SWEEP_ATTEMPTS = 4;
 
-/** `errno` codes that mean the connection dropped, not that nothing is listening. */
-const RETRYABLE_FETCH_CODES = new Set(['ECONNRESET', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT']);
+/**
+ * Codes meaning an established connection dropped — not that nothing was
+ * there to begin with.
+ *
+ * Calibrated to what **undici** actually puts on `err.cause.code`, which is
+ * not the Node socket errno set it resembles. Measured on Node 22.22.2:
+ *
+ * | condition                              | `cause.code`             |
+ * |----------------------------------------|--------------------------|
+ * | connection refused                     | `ECONNREFUSED`           |
+ * | RST mid-request                        | `ECONNRESET`             |
+ * | graceful FIN mid-request               | `UND_ERR_SOCKET`         |
+ * | keep-alive reuse after server closed   | `UND_ERR_HEADERS_TIMEOUT`|
+ * | malformed URL                          | `ERR_INVALID_URL`        |
+ *
+ * The last two are the realistic ones here: ~500 sequential DELETEs over a
+ * pooled connection to a Java emulator with its own idle timeout is the
+ * textbook setup for a closed-socket reuse. An earlier version of this set
+ * listed `ECONNABORTED` / `EPIPE` / `ETIMEDOUT`, which undici never emits —
+ * coverage that read as thorough and matched nothing.
+ *
+ * `ECONNREFUSED` and `UND_ERR_CONNECT_TIMEOUT` stay OUT: both mean the
+ * connection was never established, so retrying only burns the budget.
+ */
+const RETRYABLE_FETCH_CODES = new Set([
+  'ECONNRESET',
+  'UND_ERR_SOCKET',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+
+/**
+ * undici's own message for a transport failure is the information-free
+ * `fetch failed`; the address and errno live on `err.cause`. Fold them in,
+ * or the fail-fast path reports strictly less than the raw throw it
+ * replaced (`connect ECONNREFUSED 127.0.0.1:8080` → `fetch failed`).
+ */
+function describeFetchError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause = (err as { cause?: { code?: unknown; message?: unknown } }).cause;
+  const extra =
+    typeof cause?.message === 'string'
+      ? cause.message
+      : typeof cause?.code === 'string'
+        ? cause.code
+        : undefined;
+  return extra ? `${err.name}: ${err.message} (${extra})` : `${err.name}: ${err.message}`;
+}
 
 /**
  * Whether a thrown `fetch` failure is worth another attempt.
@@ -222,7 +268,9 @@ export async function sweepFirestore(
   // final error still carries the `Transaction lock timeout` body that
   // explains WHY the sweep was slow — the diagnostic this all exists for.
   let lastResponse: string | undefined;
+  let terminalCause: unknown;
   for (let attempt = 1; ; attempt++) {
+    terminalCause = undefined;
     // Bound the ATTEMPT, not merely the decision to start another one.
     // The premise here is that a contended DELETE's duration is unknown,
     // so an unbounded `fetch` would let a single slow answer overrun the
@@ -251,7 +299,8 @@ export async function sweepFirestore(
       // Both used to escape this loop and throw raw, with no attempt count
       // and no context. `isRetryableFetchError` keeps the fail-fast path
       // for the ones no amount of waiting fixes.
-      detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      detail = describeFetchError(err);
+      terminalCause = err;
       retryable = isRetryableFetchError(err);
     }
 
@@ -273,6 +322,7 @@ export async function sweepFirestore(
       throw new Error(
         `clearEmulators(Firestore) failed after ${attempt} attempt(s)` +
           `${outOfTime ? ` (${deadlineMs}ms deadline)` : ''}: ${detail}${carried}`,
+        terminalCause === undefined ? undefined : { cause: terminalCause },
       );
     }
     console.warn(`clearEmulators(Firestore): ${detail} on attempt ${attempt}, retrying`);

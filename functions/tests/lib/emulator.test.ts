@@ -56,9 +56,21 @@ function stubHangingFetch() {
   return calls;
 }
 
-/** undici's shape for a transport failure: `TypeError` carrying an errno cause. */
+/**
+ * undici's shape for a transport failure. The `cause.message` values are
+ * the ones actually observed on Node 22.22.2 — an earlier version of this
+ * helper invented them, which is how a code set undici never emits passed
+ * its own tests.
+ */
+const UNDICI_CAUSE_MESSAGES: Record<string, string> = {
+  ECONNREFUSED: 'connect ECONNREFUSED 127.0.0.1:8080',
+  ECONNRESET: 'read ECONNRESET',
+  UND_ERR_SOCKET: 'other side closed',
+  UND_ERR_HEADERS_TIMEOUT: 'Headers Timeout Error',
+};
 function transportError(code: string) {
-  return new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+  const cause = Object.assign(new Error(UNDICI_CAUSE_MESSAGES[code] ?? code), { code });
+  return new TypeError('fetch failed', { cause });
 }
 
 /** Rejects `rejections` times with `err()`, then serves `then`. */
@@ -185,17 +197,38 @@ describe('sweepFirestore (T-97 retry)', () => {
     expect(calls).toHaveLength(3);
   });
 
-  it('fails fast when nothing is listening, rather than paying the backoff', async () => {
+  it.each(['UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT'])(
+    'retries %s — the shapes a pooled connection actually produces',
+    async (code) => {
+      // A graceful FIN and a keep-alive reuse after the server closed. Both
+      // are realistic for ~500 sequential DELETEs to the emulator, and
+      // neither is a Node socket errno, so the first version of the
+      // classifier fell through to fail-fast on both.
+      const calls = stubRejectingFetch(1, () => transportError(code), ok);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await sweepFirestore(URL_UNDER_TEST);
+
+      expect(calls).toHaveLength(2);
+    },
+  );
+
+  it('fails fast when nothing is listening, and still reports the address', async () => {
     // The Firestore emulator gone while Auth is still up. Retrying costs
     // ~700ms per call across ~500 `clearEmulators` calls — ~6 minutes added
     // to a run that is already red. It must cost one attempt.
     const calls = stubRejectingFetch(99, () => transportError('ECONNREFUSED'), ok);
 
     const started = Date.now();
-    await expect(sweepFirestore(URL_UNDER_TEST)).rejects.toThrow(
-      /failed after 1 attempt\(s\): TypeError: fetch failed/,
-    );
+    const err = await sweepFirestore(URL_UNDER_TEST).catch((e: Error) => e);
 
+    expect(String(err)).toMatch(/failed after 1 attempt\(s\): TypeError: fetch failed/);
+    // `fetch failed` alone is less than the raw throw used to print. The
+    // errno and address must survive, in the message and as a cause.
+    expect(String(err)).toContain('connect ECONNREFUSED 127.0.0.1:8080');
+    expect(((err as Error).cause as { cause?: { code?: string } })?.cause?.code).toBe(
+      'ECONNREFUSED',
+    );
     expect(calls).toHaveLength(1);
     expect(Date.now() - started).toBeLessThan(200);
   });
