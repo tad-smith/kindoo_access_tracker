@@ -11,8 +11,9 @@ import {
   clearEmulators,
   hasEmulators,
   hasFunctionsEmulator,
+  deliveryWaitsAbandoned,
   requireEmulators,
-  waitFor,
+  waitForDelivery,
 } from './lib/emulator.js';
 
 // `.run` is documented for v2 CloudFunctions and exists at runtime for
@@ -43,7 +44,12 @@ type V1Runnable = { run: (data: UserRecord, context: unknown) => Promise<unknown
 async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
   if (await hasFunctionsEmulator()) {
     const { auth } = requireEmulators();
-    await waitFor(async () => {
+    // `waitForDelivery` for its budget (same predicate and same delivery as
+    // `makeSettledUser`) and, just as importantly, for its latch: this file
+    // makes 11 of these, one per test, and unlatched that is ~7.3 minutes
+    // of pure waiting inside a job capped at 20.
+    const wasAbandoned = deliveryWaitsAbandoned();
+    const settled = await waitForDelivery(async () => {
       let u: UserRecord;
       try {
         u = await auth.getUser(user.uid);
@@ -55,7 +61,16 @@ async function runOnAuthUserCreate(user: UserRecord): Promise<void> {
       }
       const claims = (u.customClaims ?? {}) as { canonical?: string };
       return typeof claims.canonical === 'string';
-    }, 20_000);
+    });
+    // Assert rather than discard: a timed-out wait means the in-process
+    // run below is racing the deployed trigger again, and the assertion
+    // that then fails would point at the handler rather than the wait.
+    expect(
+      settled,
+      wasAbandoned
+        ? 'skipped: an earlier delivery wait in this file exhausted its budget'
+        : `onAuthUserCreate never delivered its baseline claim for ${user.email}`,
+    ).toBe(true);
   }
   await (onAuthUserCreate as unknown as V1Runnable).run(user, { eventId: 't', timestamp: '' });
 }
@@ -83,7 +98,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     resetStakeIdsCache();
   });
 
-  it('writes userIndex and stamps an empty-roles claim block', async () => {
+  it('writes userIndex and stamps an empty-roles claim block', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     const user = await auth.createUser({ email: 'plain@example.org' });
 
@@ -101,99 +116,119 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     expect(refreshed.customClaims).toEqual({ canonical: 'plain@example.org' });
   });
 
-  it('seeds manager claim when kindooManagers/{canonical} pre-exists with active=true', async () => {
-    const { auth, db } = requireEmulators();
-    await db
-      .doc('stakes/csnorth/kindooManagers/mgr@gmail.com')
-      .set({ active: true, member_email: 'Mgr@gmail.com' });
+  it(
+    'seeds manager claim when kindooManagers/{canonical} pre-exists with active=true',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      await db
+        .doc('stakes/csnorth/kindooManagers/mgron@gmail.com')
+        .set({ active: true, member_email: 'MgrOn@gmail.com' });
 
-    const user = await auth.createUser({ email: 'Mgr@gmail.com' });
-    await runOnAuthUserCreate(user);
+      const user = await auth.createUser({ email: 'MgrOn@gmail.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    expect(refreshed.customClaims).toMatchObject({
-      canonical: 'mgr@gmail.com',
-      stakes: { csnorth: { manager: true, stake: false, wards: [] } },
-    });
-  });
+      const refreshed = await auth.getUser(user.uid);
+      expect(refreshed.customClaims).toMatchObject({
+        canonical: 'mgron@gmail.com',
+        stakes: { csnorth: { manager: true, stake: false, wards: [] } },
+      });
+    },
+  );
 
-  it('does NOT set the manager claim when kindooManagers active=false', async () => {
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/csnorth/kindooManagers/mgr@gmail.com').set({ active: false });
+  it(
+    'does NOT set the manager claim when kindooManagers active=false',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/csnorth/kindooManagers/mgroff@gmail.com').set({ active: false });
 
-    const user = await auth.createUser({ email: 'mgr@gmail.com' });
-    await runOnAuthUserCreate(user);
+      const user = await auth.createUser({ email: 'mgroff@gmail.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    // Empty stake block omitted — claims carry just the canonical.
-    expect(refreshed.customClaims).toEqual({ canonical: 'mgr@gmail.com' });
-  });
+      const refreshed = await auth.getUser(user.uid);
+      // Empty stake block omitted — claims carry just the canonical.
+      expect(refreshed.customClaims).toEqual({ canonical: 'mgroff@gmail.com' });
+    },
+  );
 
-  it('seeds stake claim from access doc with importer_callings on stake scope', async () => {
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/csnorth/access/stk@gmail.com').set({
-      importer_callings: { stake: ['Stake President'] },
-      manual_grants: {},
-    });
-    const user = await auth.createUser({ email: 'stk@gmail.com' });
-    await runOnAuthUserCreate(user);
+  it(
+    'seeds stake claim from access doc with importer_callings on stake scope',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/csnorth/access/stk@gmail.com').set({
+        importer_callings: { stake: ['Stake President'] },
+        manual_grants: {},
+      });
+      const user = await auth.createUser({ email: 'stk@gmail.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    expect(refreshed.customClaims).toMatchObject({
-      canonical: 'stk@gmail.com',
-      stakes: { csnorth: { manager: false, stake: true, wards: [] } },
-    });
-  });
+      const refreshed = await auth.getUser(user.uid);
+      expect(refreshed.customClaims).toMatchObject({
+        canonical: 'stk@gmail.com',
+        stakes: { csnorth: { manager: false, stake: true, wards: [] } },
+      });
+    },
+  );
 
-  it('seeds ward claims from access doc with multi-ward grants (alphabetical)', async () => {
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/csnorth/access/bish@gmail.com').set({
-      importer_callings: { GE: ['Bishop'] },
-      manual_grants: { CO: [{ grant_id: 'g1', reason: 'covering for X' }] },
-    });
-    const user = await auth.createUser({ email: 'bish@gmail.com' });
-    await runOnAuthUserCreate(user);
+  it(
+    'seeds ward claims from access doc with multi-ward grants (alphabetical)',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/csnorth/access/bish@gmail.com').set({
+        importer_callings: { GE: ['Bishop'] },
+        manual_grants: { CO: [{ grant_id: 'g1', reason: 'covering for X' }] },
+      });
+      const user = await auth.createUser({ email: 'bish@gmail.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    const claims = refreshed.customClaims as {
-      canonical: string;
-      stakes: { csnorth: { wards: string[]; stake: boolean; manager: boolean } };
-    };
-    expect(claims.canonical).toBe('bish@gmail.com');
-    expect(claims.stakes.csnorth.wards).toEqual(['CO', 'GE']);
-    expect(claims.stakes.csnorth.stake).toBe(false);
-    expect(claims.stakes.csnorth.manager).toBe(false);
-  });
+      const refreshed = await auth.getUser(user.uid);
+      const claims = refreshed.customClaims as {
+        canonical: string;
+        stakes: { csnorth: { wards: string[]; stake: boolean; manager: boolean } };
+      };
+      expect(claims.canonical).toBe('bish@gmail.com');
+      expect(claims.stakes.csnorth.wards).toEqual(['CO', 'GE']);
+      expect(claims.stakes.csnorth.stake).toBe(false);
+      expect(claims.stakes.csnorth.manager).toBe(false);
+    },
+  );
 
-  it('canonicalises typed-form Gmail variants when matching pre-existing role data', async () => {
-    // Pre-existing role data stored under canonical form `firstlast@gmail.com`.
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/csnorth/access/firstlast@gmail.com').set({
-      importer_callings: { stake: ['Counselor'] },
-    });
+  it(
+    'canonicalises typed-form Gmail variants when matching pre-existing role data',
+    { timeout: 50_000 },
+    async () => {
+      // Pre-existing role data stored under canonical form `firstlast@gmail.com`.
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/csnorth/access/firstlast@gmail.com').set({
+        importer_callings: { stake: ['Counselor'] },
+      });
 
-    // User signs up with the typed form `First.Last@Gmail.com`. The
-    // canonicaliser folds both spellings to `firstlast@gmail.com`.
-    const user = await auth.createUser({ email: 'First.Last@Gmail.com' });
-    await runOnAuthUserCreate(user);
+      // User signs up with the typed form `First.Last@Gmail.com`. The
+      // canonicaliser folds both spellings to `firstlast@gmail.com`.
+      const user = await auth.createUser({ email: 'First.Last@Gmail.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    expect(refreshed.customClaims).toMatchObject({
-      canonical: 'firstlast@gmail.com',
-      stakes: { csnorth: { stake: true } },
-    });
+      const refreshed = await auth.getUser(user.uid);
+      expect(refreshed.customClaims).toMatchObject({
+        canonical: 'firstlast@gmail.com',
+        stakes: { csnorth: { stake: true } },
+      });
 
-    // userIndex doc lives under the canonical form. `typedEmail` is
-    // preserved as the auth provider returned it; Firebase Auth
-    // lowercases at sign-in, so the typed form on the doc is
-    // already lowercase by the time the trigger sees it (matches
-    // production's behaviour with Google sign-in too).
-    const idx = await db.doc('userIndex/firstlast@gmail.com').get();
-    expect(idx.exists).toBe(true);
-    expect((idx.data() as { typedEmail: string }).typedEmail).toBe('first.last@gmail.com');
-  });
+      // userIndex doc lives under the canonical form. `typedEmail` is
+      // preserved as the auth provider returned it; Firebase Auth
+      // lowercases at sign-in, so the typed form on the doc is
+      // already lowercase by the time the trigger sees it (matches
+      // production's behaviour with Google sign-in too).
+      const idx = await db.doc('userIndex/firstlast@gmail.com').get();
+      expect(idx.exists).toBe(true);
+      expect((idx.data() as { typedEmail: string }).typedEmail).toBe('first.last@gmail.com');
+    },
+  );
 
-  it('seeds claims across multiple stakes discovered at runtime', async () => {
+  it('seeds claims across multiple stakes discovered at runtime', { timeout: 50_000 }, async () => {
     // Exercises the runtime stake-ID discovery path (T-13): the seed
     // helper walks every stake doc under `stakes/`, not a hardcoded
     // list. Three stakes are created (one via a doc set on the stake
@@ -202,9 +237,9 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     // get a claim block per matching stake.
     const { auth, db } = requireEmulators();
     await db.doc('stakes/csnorth').set({ name: 'CS North' });
-    await db.doc('stakes/csnorth/kindooManagers/multi@gmail.com').set({ active: true });
+    await db.doc('stakes/csnorth/kindooManagers/multistake@gmail.com').set({ active: true });
     await db
-      .doc('stakes/south/access/multi@gmail.com')
+      .doc('stakes/south/access/multistake@gmail.com')
       .set({ importer_callings: { GE: ['Bishop'] } });
     // Third stake exists but the user has no role data in it — its
     // empty block must be omitted from the claims payload.
@@ -212,7 +247,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       importer_callings: { stake: ['Stake President'] },
     });
 
-    const user = await auth.createUser({ email: 'multi@gmail.com' });
+    const user = await auth.createUser({ email: 'multistake@gmail.com' });
     await runOnAuthUserCreate(user);
 
     const refreshed = await auth.getUser(user.uid);
@@ -220,16 +255,16 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       canonical: string;
       stakes: Record<string, { manager: boolean; stake: boolean; wards: string[] }>;
     };
-    expect(claims.canonical).toBe('multi@gmail.com');
+    expect(claims.canonical).toBe('multistake@gmail.com');
     expect(Object.keys(claims.stakes).sort()).toEqual(['csnorth', 'south']);
     expect(claims.stakes['csnorth']).toEqual({ manager: true, stake: false, wards: [] });
     expect(claims.stakes['south']).toEqual({ manager: false, stake: false, wards: ['GE'] });
   });
 
-  it('revokes refresh tokens after stamping non-empty claims', async () => {
+  it('revokes refresh tokens after stamping non-empty claims', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
-    await db.doc('stakes/csnorth/kindooManagers/mgr@gmail.com').set({ active: true });
-    const user = await auth.createUser({ email: 'mgr@gmail.com' });
+    await db.doc('stakes/csnorth/kindooManagers/mgrrev@gmail.com').set({ active: true });
+    const user = await auth.createUser({ email: 'mgrrev@gmail.com' });
     const beforeRevoke = user.tokensValidAfterTime;
     await runOnAuthUserCreate(user);
     const refreshed = await auth.getUser(user.uid);
@@ -242,47 +277,55 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     }
   });
 
-  it('seeds the bootstrap marker for the admin of an in-setup stake at first sign-in', async () => {
-    // Models the common ordering: `createStake` writes the stake doc
-    // (and its `bootstrap_admin_email`) before the admin has ever
-    // signed in, so `syncBootstrapClaims` finds no Auth user to stamp.
-    // First sign-in is the next chance to catch it up.
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/boot-stake').set({
-      stake_name: 'Boot Stake',
-      bootstrap_admin_email: 'bootstrap@example.com',
-      setup_complete: false,
-    });
+  it(
+    'seeds the bootstrap marker for the admin of an in-setup stake at first sign-in',
+    { timeout: 50_000 },
+    async () => {
+      // Models the common ordering: `createStake` writes the stake doc
+      // (and its `bootstrap_admin_email`) before the admin has ever
+      // signed in, so `syncBootstrapClaims` finds no Auth user to stamp.
+      // First sign-in is the next chance to catch it up.
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/boot-stake').set({
+        stake_name: 'Boot Stake',
+        bootstrap_admin_email: 'bootstrap@example.com',
+        setup_complete: false,
+      });
 
-    const user = await auth.createUser({ email: 'bootstrap@example.com' });
-    await runOnAuthUserCreate(user);
+      const user = await auth.createUser({ email: 'bootstrap@example.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    const claims = refreshed.customClaims as {
-      stakes?: Record<string, { bootstrap?: boolean }>;
-    };
-    expect(claims.stakes?.['boot-stake']?.bootstrap).toBe(true);
-  });
+      const refreshed = await auth.getUser(user.uid);
+      const claims = refreshed.customClaims as {
+        stakes?: Record<string, { bootstrap?: boolean }>;
+      };
+      expect(claims.stakes?.['boot-stake']?.bootstrap).toBe(true);
+    },
+  );
 
-  it('does NOT seed the bootstrap marker for the admin of a completed stake', async () => {
-    const { auth, db } = requireEmulators();
-    await db.doc('stakes/done-stake').set({
-      stake_name: 'Done Stake',
-      bootstrap_admin_email: 'doneadmin@example.com',
-      setup_complete: true,
-    });
+  it(
+    'does NOT seed the bootstrap marker for the admin of a completed stake',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      await db.doc('stakes/done-stake').set({
+        stake_name: 'Done Stake',
+        bootstrap_admin_email: 'doneadmin@example.com',
+        setup_complete: true,
+      });
 
-    const user = await auth.createUser({ email: 'doneadmin@example.com' });
-    await runOnAuthUserCreate(user);
+      const user = await auth.createUser({ email: 'doneadmin@example.com' });
+      await runOnAuthUserCreate(user);
 
-    const refreshed = await auth.getUser(user.uid);
-    // No role data anywhere, and setup is already complete → plain
-    // empty-roles claim block, same as the "no pre-existing role data"
-    // case.
-    expect(refreshed.customClaims).toEqual({ canonical: 'doneadmin@example.com' });
-  });
+      const refreshed = await auth.getUser(user.uid);
+      // No role data anywhere, and setup is already complete → plain
+      // empty-roles claim block, same as the "no pre-existing role data"
+      // case.
+      expect(refreshed.customClaims).toEqual({ canonical: 'doneadmin@example.com' });
+    },
+  );
 
-  it('no-ops gracefully when the user has no email', async () => {
+  it('no-ops gracefully when the user has no email', { timeout: 50_000 }, async () => {
     // Users created without an email (phone-only flows) shouldn't crash
     // the trigger. We simulate by passing a minimal UserRecord-shaped
     // object — we can't actually `auth.createUser()` without an email
