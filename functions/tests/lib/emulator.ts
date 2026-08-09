@@ -172,7 +172,10 @@ function describeFetchError(err: unknown): string {
 }
 
 /**
- * Whether a thrown `fetch` failure is worth another attempt.
+ * A connection that existed and then dropped — which, unlike silence, is
+ * evidence the emulator is reachable. Serves two purposes in
+ * {@link sweepFirestore}: it is the only thrown failure worth retrying,
+ * and it counts as contact for the purpose of not latching.
  *
  * Treating every throw as transient is the expensive mistake here. If the
  * Firestore emulator is gone while Auth is still up — separate processes,
@@ -181,24 +184,15 @@ function describeFetchError(err: unknown): string {
  * attempts and ~700ms per call, and `clearEmulators` runs in
  * `beforeAll` / `afterEach` / `afterAll` across ~500 integration tests:
  * ~6 minutes of pure backoff added to a run that is already red, under a
- * 20-minute job cap. It threw in ~0ms before this helper existed.
- *
- * So: retry the deadline abort and connection drops; let everything else —
+ * 20-minute job cap. It threw in ~0ms before this helper existed. So
  * `ECONNREFUSED`, and programming errors like
- * `TypeError: Failed to parse URL` — fail on the first attempt.
- */
-function isRetryableFetchError(err: unknown): boolean {
-  return isDeadlineAbort(err) || isTransportDrop(err);
-}
-
-function isDeadlineAbort(err: unknown): boolean {
-  return err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-}
-
-/**
- * A connection that existed and then dropped — which, unlike silence, is
- * evidence the emulator is reachable. {@link sweepFirestore} counts it as
- * contact for the purpose of not latching.
+ * `TypeError: Failed to parse URL`, fail on the first attempt.
+ *
+ * The deadline abort is deliberately absent, though it reads like an
+ * omission: the signal fires AT the deadline, so `outOfTime` is already
+ * true by the time the retry decision is made and the loop exits without
+ * consulting this. Classifying it as retryable would be a branch that can
+ * never be taken.
  */
 function isTransportDrop(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -360,12 +354,12 @@ export async function sweepFirestore(
     } catch (err) {
       // The deadline abort, or a transport failure such as a socket reset.
       // Both used to escape this loop and throw raw, with no attempt count
-      // and no context. `isRetryableFetchError` keeps the fail-fast path
-      // for the ones no amount of waiting fixes.
+      // and no context. `isTransportDrop` keeps the fail-fast path for
+      // the ones no amount of waiting fixes.
       detail = describeFetchError(err);
       terminalCause = err;
       if (isTransportDrop(err)) contactedEmulator = true;
-      retryable = isRetryableFetchError(err);
+      retryable = isTransportDrop(err);
     }
 
     const backoffMs = 100 * 2 ** (attempt - 1);
