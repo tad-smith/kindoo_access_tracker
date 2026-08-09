@@ -74,8 +74,12 @@ import { Switch } from '../../components/ui/Switch';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
-import { WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
-import { canonicalEmail as canonicalEmailFn, unitNameCollisionMessage } from '@kindoo/shared';
+import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
+import {
+  canonicalEmail as canonicalEmailFn,
+  unitNameCollisionMessage,
+  unitType,
+} from '@kindoo/shared';
 import { usePrincipal } from '../../lib/principal';
 import { accessibleStakes } from '../../lib/activeStake';
 import { useActiveStake, useActiveStakeSwitcher } from '../../lib/useActiveStake';
@@ -600,7 +604,10 @@ function Step3Wards() {
     resolver: zodResolver(wardSchema),
     defaultValues: { ward_name: '', building_id: '', seat_cap: 20 },
   });
-  const { register, handleSubmit, reset, setError, formState } = form;
+  const { register, handleSubmit, reset, setError, formState, watch } = form;
+
+  // Advisory, not validation — see WARD_NAME_BRANCH_WARNING.
+  const showsBranchWarning = unitType(watch('ward_name') ?? '') === 'branch';
 
   const buildingOptions = buildings.data ?? [];
 
@@ -668,6 +675,11 @@ function Step3Wards() {
           <Input {...register('ward_name')} placeholder="Maple Ward" />
         </label>
         <p className="kd-form-hint">{WARD_NAME_HINT}</p>
+        {showsBranchWarning ? (
+          <p role="status" className="kd-form-error" data-testid="bootstrap-ward-branch-warning">
+            {WARD_NAME_BRANCH_WARNING}
+          </p>
+        ) : null}
         {formState.errors.ward_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.ward_name.message}
