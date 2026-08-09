@@ -313,6 +313,12 @@ export async function sweepFirestore(
             `clearEmulators(Firestore): swept on attempt ${attempt} of ${SWEEP_ATTEMPTS}`,
           );
         }
+        // A sweep that answered is the clearest evidence the emulator is
+        // alive. Without this the counter means "silent sweeps ever seen in
+        // this file" rather than "in a row", and two slow sweeps any
+        // distance apart would arm the latch — the exact widening the
+        // two-strike rule exists to prevent.
+        consecutiveSilentSweeps = 0;
         return;
       }
       detail = `${res.status} ${await res.text()}`;

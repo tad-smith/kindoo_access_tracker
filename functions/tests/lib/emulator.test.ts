@@ -276,17 +276,25 @@ describe('sweepFirestore (T-97 retry)', () => {
   });
 
   it('resets the strike count when a sweep succeeds', async () => {
+    // Needs FOUR calls to discriminate. An earlier version of this test
+    // stopped at three and so passed identically with and without the
+    // reset — the assertion only bites once the counter would have hit 2.
     stubHangingFetch();
     await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(/failed/);
 
     stubFetch(ok);
     await sweepFirestore(URL_UNDER_TEST);
 
-    // One prior strike must not combine with a later one to short-circuit.
     stubHangingFetch();
+    await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(/failed/);
+
+    // Two strikes have now occurred, but NOT consecutively, so this must
+    // still make a real request rather than short-circuit.
+    const fourth = stubHangingFetch();
     await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 120 })).rejects.toThrow(
       /failed after 1 attempt/,
     );
+    expect(fourth).toHaveLength(1);
   });
 
   it('reports the errno when the cause message is empty (localhost)', async () => {
