@@ -253,6 +253,18 @@ jobs:
         # `.env.<project>` file to load (synthesized by the build step
         # above so the Functions emulator's `defineString` params do
         # not prompt the no-stdin runner).
+        #
+        # RETRY ASYMMETRY, deliberate (T-98). This layer retries —
+        # `playwright.config.ts` sets `retries: 2` on CI — while the
+        # integration step above does not, because no vitest config sets
+        # `retry`. So the same flake fails the branch in integration and is
+        # absorbed here. Kept that way rather than equalised: a retried-
+        # green integration flake is still a bug, and T-95 and T-97 were
+        # both found precisely because integration went red once. The cost
+        # is that an e2e flake hides, which is why T-94 was only ever a
+        # local-developer tax until someone measured it. Recorded as a
+        # position, not left as an accident — change it deliberately or
+        # not at all.
         run: npx --yes firebase-tools emulators:exec --only firestore,auth,functions,hosting --project kindoo-staging "pnpm test:e2e"
         continue-on-error: true
 
@@ -313,24 +325,43 @@ jobs:
         # Fail the workflow if any earlier continue-on-error step failed.
         # `build` doesn't have continue-on-error, so its failure already
         # fails the workflow without this gate.
+        #
+        # NAMES the failing steps, which is the whole point (T-98). Every
+        # step above renders GREEN in the GitHub UI because of
+        # continue-on-error, so this gate is the only red thing on the PR —
+        # and it used to say "One or more checks failed", which is exactly
+        # as much as the red X already told you. Finding out which layer
+        # broke meant pulling `steps[].conclusion` off the API and mapping
+        # an index back to this file; that cost a real diagnosis during
+        # T-95. The `::error::` annotation surfaces the names on the run
+        # summary and the PR, so the answer is visible without opening a
+        # log at all.
+        #
+        # Keep this list in sync when adding a continue-on-error step —
+        # an unlisted one renders green and is never checked, which is
+        # strictly worse than not using continue-on-error at all.
         if: always()
         run: |
-          fail=0
-          for outcome in \
-            "${{ steps.lint.outcome }}" \
-            "${{ steps.typecheck.outcome }}" \
-            "${{ steps.unit.outcome }}" \
-            "${{ steps.rules.outcome }}" \
-            "${{ steps.integration.outcome }}" \
-            "${{ steps.build-functions.outcome }}" \
-            "${{ steps.e2e.outcome }}" \
-            "${{ steps.build.outcome }}"; do
-            if [[ "$outcome" == "failure" ]]; then
-              fail=1
-            fi
-          done
-          if [[ "$fail" -eq 1 ]]; then
-            echo "One or more checks failed. See step outcomes above."
+          failed=()
+          note() {
+            if [[ "$2" == "failure" ]]; then failed+=("$1"); fi
+          }
+          note "Lint"                          "${{ steps.lint.outcome }}"
+          note "Typecheck"                     "${{ steps.typecheck.outcome }}"
+          note "Unit tests"                    "${{ steps.unit.outcome }}"
+          note "Rules tests"                   "${{ steps.rules.outcome }}"
+          note "Build functions for emulator"  "${{ steps.build-functions.outcome }}"
+          note "Integration tests"             "${{ steps.integration.outcome }}"
+          note "E2E tests"                     "${{ steps.e2e.outcome }}"
+          note "Build"                         "${{ steps.build.outcome }}"
+
+          if [[ ${#failed[@]} -gt 0 ]]; then
+            # `${failed[*]}` would join on IFS's FIRST character only, so
+            # `IFS=', '` yields "a,b" rather than "a, b". printf + trim.
+            joined=$(printf '%s, ' "${failed[@]}"); joined=${joined%, }
+            echo "::error title=CI failed::$joined"
+            echo "Failed step(s): $joined"
+            echo "Open the named step above for the actual test output."
             exit 1
           fi
           echo "All checks passed."

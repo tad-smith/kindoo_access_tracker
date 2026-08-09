@@ -33,13 +33,22 @@ Phase: cross-cutting
 The copy is currently machine-checked against the shared table by a conformance suite (`apps/web/src/features/requests/tests/standardCallings.test.ts`): every entry must resolve, the concatenation must be strictly ascending by `callingSortOrder`, and the indices it covers must be gap-free. **That catches an insertion or a rename but not an append to the very end** — the gap check bounds its range at `Math.max(...orders) + 1`, computed from the copy's own entries, so a new entry appended past the copy's last index leaves no hole to find. T-96 is the case that motivates this: seven callings landed in `shared` and silently did not reach the typeahead, which is exactly the shape the test now catches, and the append case is the one hole left in it.
 
 ## [T-98] CI's "Verify all checks passed" gate does not name the step that failed
-Status: pending
+Status: done (2026-08-09 — `fix/ci-gate-names-failing-step`)
 Owner: @infra-engineer
 Phase: cross-cutting
 
-Split out of [T-95]. Every step in `.github/workflows/test.yml` sets `continue-on-error: true` and a final gate aggregates the true `outcome` values — so a failing step renders **green** in the GitHub UI and the only red is the aggregator, whose log is a shell snippet rather than a test name. Diagnosing T-95 meant reading `steps[].conclusion` off the API and mapping the failing index back to the step list in the workflow. Echo the failing step's name in that gate.
+**Done.** Split out of [T-95].
 
-Worth pairing with: unlike the E2E suite, **integration has no retry** — `playwright.config.ts` carries `retries: 2` on CI, `vitest` does not. A flake there fails the branch outright where the equivalent in e2e is silently absorbed. That asymmetry is arguably correct (a retried-green integration flake is still a bug) but it should be a decision, not an accident.
+Every test step sets `continue-on-error: true` so one run collects every failure — which means each renders **green** in the GitHub UI and the aggregating gate is the only red thing on the PR. It said "One or more checks failed", i.e. exactly as much as the red X already conveyed. Finding out which layer broke meant pulling `steps[].conclusion` off the API and mapping an index back to the step list. That cost a real diagnosis during T-95, and again on T-97.
+
+The gate now collects failures with their step names and emits a `::error title=CI failed::Lint, Integration tests` annotation, which GitHub surfaces on the run summary and the PR — so the answer is visible without opening a log. Verified by running the gate body under `bash -e` (what Actions uses) across all-green, one failure, several failures, and skipped/cancelled.
+
+Two things worth keeping in mind:
+
+- **The list is manual.** A `continue-on-error` step missing from it renders green and is never checked — strictly worse than not using `continue-on-error` at all. All seven are currently covered; the workflow comment says to keep it in sync.
+- **`${arr[*]}` joins on IFS's *first character only*,** so the obvious `IFS=', '` yields `a,b`. Uses `printf` + trim instead.
+
+**Retry asymmetry — now a recorded decision rather than an accident, which is what this task asked for.** E2E retries (`playwright.config.ts`, `retries: 2` on CI); integration does not, because no vitest config sets `retry`. The same flake therefore fails the branch in integration and is absorbed in e2e. **Kept**, not equalised: a retried-green integration flake is still a bug, and both T-95 and T-97 were found precisely because integration went red once. The cost is that an e2e flake hides — which is why T-94 stayed a local-developer tax until someone measured it. The reasoning sits beside the e2e step so the next person changes it deliberately or not at all.
 
 ## [T-97] `clearEmulators` can 409 on the Firestore blow-away
 Status: done (2026-08-09 — `fix/clear-emulators-409`)
