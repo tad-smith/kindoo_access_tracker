@@ -164,14 +164,18 @@ describe('sweepFirestore (T-97 retry)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const started = Date.now();
-    // The later attempt aborts rather than answering, because its slice of
-    // the budget is shorter than the response delay — so the terminal shape
-    // is the abort, with the earlier 409 carried alongside it.
+    // Asserts only the deadline LABEL, not which shape happened to be
+    // terminal. Whether the last attempt answers 409 or aborts depends on
+    // where the stub's timer lands relative to the remaining slice — ~79ms
+    // of slack on a runner also hosting three emulators. Pinning that would
+    // add the very load-sensitive flake this PR exists to remove; the
+    // abort-carrying-the-earlier-409 shape is pinned deterministically by
+    // "keeps the 409 body when the terminal attempt is an abort".
     await expect(sweepFirestore(URL_UNDER_TEST, { deadlineMs: 300 })).rejects.toThrow(
-      /\(300ms deadline\): TimeoutError.*last response: 409/s,
+      /\(300ms deadline\)/,
     );
 
-    // Stopped early on time, not on the attempt ceiling.
+    // The point of this test: stopped on time, not on the attempt ceiling.
     expect(calls.length).toBeLessThan(4);
     expect(Date.now() - started).toBeLessThan(1_000);
   });
