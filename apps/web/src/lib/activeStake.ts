@@ -57,9 +57,16 @@
 import type { Principal } from './principal-derive';
 
 const SESSION_KEY = 'kindoo.activeStake';
+// Companion to SESSION_KEY: the value the URL tier itself wrote, so
+// provenance survives a reload. `sessionStorage` is the per-TAB store,
+// which is the semantic this needs — module scope is per-JS-context and
+// dies on F5, leaving a session value that looks exactly like the stale
+// residue the storage narrowing must reject (T-91).
+const SESSION_URL_SOURCE_KEY = 'kindoo.activeStake.fromUrl';
 const LOCAL_KEY = 'kindoo.activeStake';
 
 export const ACTIVE_STAKE_SESSION_KEY = SESSION_KEY;
+export const ACTIVE_STAKE_SESSION_URL_SOURCE_KEY = SESSION_URL_SOURCE_KEY;
 export const ACTIVE_STAKE_LOCAL_KEY = LOCAL_KEY;
 
 /**
@@ -398,6 +405,45 @@ export function persistActiveStakeChoice(stakeId: string): void {
     window.localStorage.setItem(LOCAL_KEY, stakeId);
   } catch {
     // Same.
+  }
+}
+
+/**
+ * Write only the per-tab tier. For an identity whose LOCAL tier can
+ * never resolve (a zero-role platform superadmin — see
+ * `isPermissiveSession`), the symmetric write leaves a value behind
+ * that only ever fires a false invalidation in the next fresh tab.
+ */
+export function persistSessionStakeOnly(stakeId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(SESSION_KEY, stakeId);
+  } catch {
+    // Private-browsing modes; the URL tier still works for this load.
+  }
+}
+
+/**
+ * Record that the URL tier is what put `stakeId` in `sessionStorage`.
+ * Read back by `readUrlDerivedSessionStake` — see
+ * `resolveActiveStake`'s `urlDerivedSessionStake` parameter.
+ */
+export function markSessionStakeUrlDerived(stakeId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(SESSION_URL_SOURCE_KEY, stakeId);
+  } catch {
+    // Private-browsing modes; the URL tier still works for this load.
+  }
+}
+
+/** The stake this tab's URL tier persisted, or `null`. */
+export function readUrlDerivedSessionStake(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(SESSION_URL_SOURCE_KEY);
+  } catch {
+    return null;
   }
 }
 

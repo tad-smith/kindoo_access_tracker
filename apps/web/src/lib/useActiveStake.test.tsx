@@ -650,6 +650,42 @@ describe('useActiveStake — zero-role platform superadmin (T-91)', () => {
     expect(second).toBe('highplains');
   });
 
+  it('survives a page reload', () => {
+    // A reload is: module state gone, sessionStorage kept, URL already
+    // stripped. If provenance lives only in module scope it dies with
+    // the JS context, and the surviving session value looks exactly like
+    // the stale residue `activeStake.test.ts` asserts must invalidate —
+    // false toast, both keys cleared, back to the em-dash page.
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains');
+    render(<Probe onResult={() => {}} />);
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('highplains');
+
+    // Simulate F5: drop the module state, keep storage, keep the
+    // post-strip URL.
+    __resetActiveStakeModuleForTests();
+    let afterReload: string | null = null;
+    render(
+      <Probe
+        onResult={(v) => {
+          afterReload = v;
+        }}
+      />,
+    );
+    expect(afterReload).toBe('highplains');
+  });
+
+  it('does not write the local tier, which can never resolve for this identity', () => {
+    // The local tier stays non-permissive for a superadmin by design, so
+    // a local write only survives into the next fresh tab to fire a
+    // false "no longer available" invalidation and clear both keys.
+    asZeroRoleSuperadmin();
+    setUrl('/manager/configuration?stake=highplains');
+    render(<Probe onResult={() => {}} />);
+    expect(window.sessionStorage.getItem(ACTIVE_STAKE_SESSION_KEY)).toBe('highplains');
+    expect(window.localStorage.getItem(ACTIVE_STAKE_LOCAL_KEY)).toBeNull();
+  });
+
   it('keeps the stake across a re-render once the URL value is gone', () => {
     asZeroRoleSuperadmin();
     setUrl('/manager/configuration?stake=highplains');

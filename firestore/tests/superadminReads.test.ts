@@ -118,17 +118,21 @@ describe('firestore.rules — platform-superadmin per-stake read surface', () =>
     });
   }
 
-  it('the read grant does not carry a write grant', async () => {
-    // Reads widened; writes did not. A superadmin holding no role on the
-    // stake must still not mutate its sub-collections.
-    const { path, doc } = ALLOWED[0]!;
-    await seedAsAdmin(env, async (ctx) => {
-      await ctx
-        .firestore()
-        .doc(path)
-        .set({ ...doc, lastActor: lastActorOf(personas.manager) });
+  // Reads widened; writes did not. Asserted on EVERY collection, not a
+  // sample — `kindooManagers` especially: a widened read sits next to
+  // the one write path that mints a manager claim
+  // (`syncManagersClaims`), so "can read it now" must not drift into
+  // "can write it now".
+  for (const { label, path, doc } of ALLOWED) {
+    it(`the read grant on ${label} does not carry a write grant`, async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(path)
+          .set({ ...doc, lastActor: lastActorOf(personas.manager) });
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(db.doc(path).set({ ...doc, lastActor: lastActorOf(personas.superadmin) }));
     });
-    const db = superadminContext(env).firestore();
-    await assertFails(db.doc(path).set({ ...doc, lastActor: lastActorOf(personas.superadmin) }));
-  });
+  }
 });
