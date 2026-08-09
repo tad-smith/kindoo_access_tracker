@@ -449,6 +449,7 @@ describe('configuration organizationDeleteBlocker', () => {
 const setDocMock = vi.fn().mockResolvedValue(undefined);
 const deleteDocMock = vi.fn().mockResolvedValue(undefined);
 const getDocMock = vi.fn();
+const getDocsMock = vi.fn();
 const updateDocMock = vi.fn().mockResolvedValue(undefined);
 const writeBatchMock = vi.fn();
 const serverTimestampMock = vi.fn(() => '__server_timestamp__');
@@ -471,6 +472,7 @@ vi.mock('firebase/firestore', async () => {
     setDoc: (...args: unknown[]) => setDocMock(...args),
     deleteDoc: (...args: unknown[]) => deleteDocMock(...args),
     getDoc: (...args: unknown[]) => getDocMock(...args),
+    getDocs: (...args: unknown[]) => getDocsMock(...args),
     updateDoc: (...args: unknown[]) => updateDocMock(...args),
     runTransaction: (db: unknown, fn: (tx: unknown) => Promise<unknown>) =>
       runTransactionMock(db, fn),
@@ -508,6 +510,15 @@ vi.mock('../../../lib/docs', async () => {
       path: `stakes/csnorth/organizations/${organizationId}`,
       id: organizationId,
     }),
+    stakeRef: (_db: unknown, stakeId: string) => ({
+      __sentinel: 'stakeRef',
+      path: `stakes/${stakeId}`,
+      id: stakeId,
+    }),
+    kindooSitesCol: (_db: unknown, stakeId: string) => ({
+      __sentinel: 'kindooSitesCol',
+      path: `stakes/${stakeId}/kindooSites`,
+    }),
   };
 });
 
@@ -528,6 +539,7 @@ import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteOrganizationMutation,
+  useUpdateHomeKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
   useUpsertOrganizationMutation,
@@ -545,10 +557,111 @@ beforeEach(() => {
   setDocMock.mockClear();
   deleteDocMock.mockClear();
   getDocMock.mockClear();
+  getDocsMock.mockClear();
+  getDocsMock.mockResolvedValue({ docs: [] });
   updateDocMock.mockClear();
   writeBatchMock.mockClear();
   serverTimestampMock.mockClear();
   runTransactionMock.mockClear();
+});
+
+describe('useUpdateHomeKindooSiteMutation', () => {
+  const stakeSnap = (data: Record<string, unknown> | undefined) => ({
+    exists: () => data !== undefined,
+    data: () => data,
+  });
+  const siteDocs = (sites: Array<Record<string, unknown>>) => ({
+    docs: sites.map((s) => ({ data: () => s })),
+  });
+
+  it('refuses an EID already configured as a foreign site', async () => {
+    // `identifyActiveSite` tests home FIRST, so this collision would
+    // reclassify the foreign site as home for every Sync run. The
+    // extension refuses the same write; this is the hand-entry path.
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    getDocsMock.mockResolvedValue(
+      siteDocs([{ display_name: 'East Stake (Pine)', kindoo_eid: 27994 }]),
+    );
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 }),
+    ).rejects.toThrow(/East Stake \(Pine\)/);
+    expect(updateDocMock).not.toHaveBeenCalled();
+  });
+
+  it('allows an EID that no foreign site claims', async () => {
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    getDocsMock.mockResolvedValue(siteDocs([{ display_name: 'East', kindoo_eid: 111 }]));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({
+      'kindoo_config.site_id': 27994,
+    });
+  });
+
+  it('preserves the wizard-captured kindoo_config.site_name', async () => {
+    // That field is Kindoo's own display name — `homeSiteName()` uses it
+    // to tell a manager which tab to open. The form's name field edits a
+    // different value, so an EID-only edit must not rewrite it.
+    getDocMock.mockResolvedValue(
+      stakeSnap({
+        stake_name: 'High Plains',
+        kindoo_expected_site_name: 'Black Forest',
+        kindoo_config: { site_id: 1, site_name: 'BF Stake Center' },
+      }),
+    );
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({
+      'kindoo_config.site_name': 'BF Stake Center',
+      kindoo_expected_site_name: 'Black Forest',
+    });
+  });
+
+  it('seeds kindoo_config.site_name from the form when the map does not exist', async () => {
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({
+      'kindoo_config.site_name': 'Black Forest',
+    });
+  });
+
+  it('writes dotted paths, never a whole kindoo_config map', async () => {
+    // A whole-map literal drops any key not in it — including the
+    // captured site_name, and anything a later phase adds.
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const body = updateDocMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('kindoo_config');
+    expect(Object.keys(body)).toEqual(expect.arrayContaining(['kindoo_config.site_id']));
+  });
+
+  it('does not freeze the stake-name fallback into an override', async () => {
+    // The form prefills from `stake_name` when no override is set, so an
+    // EID-only edit would otherwise persist today's name and strand it
+    // through any later rename.
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'High Plains', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).not.toHaveProperty('kindoo_expected_site_name');
+  });
+
+  it('writes the override when the operator types a name that differs', async () => {
+    getDocMock.mockResolvedValue(stakeSnap({ stake_name: 'High Plains' }));
+    const { result } = renderHook(() => useUpdateHomeKindooSiteMutation(), { wrapper });
+    await result.current.mutateAsync({ siteName: 'Black Forest', eid: 27994 });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect(updateDocMock.mock.calls[0]![1]).toMatchObject({
+      kindoo_expected_site_name: 'Black Forest',
+    });
+  });
 });
 
 describe('useUpsertKindooSiteMutation', () => {
