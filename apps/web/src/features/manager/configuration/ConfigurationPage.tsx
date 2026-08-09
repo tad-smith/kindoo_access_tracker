@@ -530,13 +530,17 @@ function BuildingsTab() {
   // against [] and a duplicate name slips through on the first click.
   const buildingsReady = buildings.data !== undefined;
 
-  // Gate Edit on the seats + requests snapshots arriving (mirrors
-  // `deleteReady`). Deep-linking ?tab=buildings can land an Edit click
-  // before those snapshots hydrate; without this gate the rename
+  // Gate Edit on the seats + requests + wards snapshots arriving
+  // (mirrors `deleteReady`). Deep-linking ?tab=buildings can land an Edit
+  // click before those snapshots hydrate; without this gate the rename
   // ref-guard runs against [] and a rename slips through on the first
   // click while active seats / pending requests still snapshot the old
-  // name. Add doesn't need this — creates can't rename.
-  const renameRefsReady = seats.data !== undefined && requests.data !== undefined;
+  // name. Wards are in the gate for the mirror-image reason: they are
+  // written through rather than blocked (T-74), so an un-hydrated wards
+  // snapshot would silently leave every ward's `building_name` stale.
+  // Add doesn't need this — creates can't rename.
+  const renameRefsReady =
+    seats.data !== undefined && requests.data !== undefined && wards.data !== undefined;
 
   return (
     <div className="kd-config-section">
@@ -616,6 +620,10 @@ function BuildingsTab() {
             ...(previousBuildingName !== undefined ? { previousBuildingName } : {}),
             seats: seats.data ?? [],
             pendingRequests: requests.data ?? [],
+            // Wards are rewritten by the rename, not blocked by it — the
+            // mutation patches each referencing ward's `building_name`
+            // snapshot in the same transaction (T-74).
+            wards: wards.data ?? [],
           });
           toast('Building saved.', 'success');
         }}

@@ -22,6 +22,7 @@ import {
   duplicateWardNameBlocker,
   kindooSiteDeleteBlocker,
   organizationDeleteBlocker,
+  wardRenamePatches,
 } from './hooks';
 import type { DuplicateGrant, Organization } from '@kindoo/shared';
 
@@ -403,6 +404,103 @@ describe('configuration buildingRenameBlocker', () => {
         [],
       ),
     ).toBeNull();
+  });
+});
+
+// ---- Ward write-through on building rename (T-74) -------------------
+//
+// Wards are NOT blocked by `buildingRenameBlocker` — they are rewritten
+// by the rename. `wardRenamePatches` decides which wards, matching the
+// way the rest of the codebase resolves a ward's building: id-first with
+// a name fallback (`resolveWardBuilding`), against the PRE-rename
+// buildings snapshot.
+
+describe('configuration wardRenamePatches', () => {
+  const before = [
+    building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+    building({ building_id: 'pine-building', building_name: 'Pine Building' }),
+  ];
+
+  it('rewrites building_name on every ward that references the building by id', () => {
+    const patches = wardRenamePatches(
+      'maple-building',
+      'Oak Building',
+      [
+        ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+        ward({ ward_code: 'PR', building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+      before,
+    );
+    expect(patches).toEqual([
+      { ward_code: 'CO', building_name: 'Oak Building' },
+      { ward_code: 'PR', building_name: 'Oak Building' },
+    ]);
+  });
+
+  it('backfills building_id on a legacy ward that matches by name only', () => {
+    // The one genuine orphan: id-first resolution has nothing to fall
+    // back on once the name moves, so the patch carries BOTH fields.
+    const patches = wardRenamePatches(
+      'maple-building',
+      'Oak Building',
+      [ward({ ward_code: 'CO', building_name: 'Maple Building' })], // no building_id
+      before,
+    );
+    expect(patches).toEqual([
+      { ward_code: 'CO', building_id: 'maple-building', building_name: 'Oak Building' },
+    ]);
+  });
+
+  it('leaves a ward pointing at a different building untouched', () => {
+    expect(
+      wardRenamePatches(
+        'maple-building',
+        'Oak Building',
+        [ward({ ward_code: 'PR', building_id: 'pine-building', building_name: 'Pine Building' })],
+        before,
+      ),
+    ).toEqual([]);
+  });
+
+  it('leaves a ward whose slug points elsewhere untouched even when its stale name matches', () => {
+    // Id-first: the slug wins over the name snapshot, so this ward
+    // belongs to Pine and a Maple rename must not touch it.
+    expect(
+      wardRenamePatches(
+        'maple-building',
+        'Oak Building',
+        [ward({ ward_code: 'PR', building_id: 'pine-building', building_name: 'Maple Building' })],
+        before,
+      ),
+    ).toEqual([]);
+  });
+
+  it('rewrites a dangling-slug ward that falls back to the name, without rebinding its slug', () => {
+    // `resolveWardBuilding`'s id-miss → name fallback matches it, so the
+    // stale name is fixed; the dangling slug is left alone rather than
+    // hardening a soft rebind into stored data.
+    const patches = wardRenamePatches(
+      'maple-building',
+      'Oak Building',
+      [ward({ ward_code: 'CO', building_id: 'deleted-building', building_name: 'Maple Building' })],
+      before,
+    );
+    expect(patches).toEqual([{ ward_code: 'CO', building_name: 'Oak Building' }]);
+  });
+
+  it('emits nothing for a ward already carrying the new name and a slug', () => {
+    expect(
+      wardRenamePatches(
+        'maple-building',
+        'Maple Building',
+        [ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' })],
+        before,
+      ),
+    ).toEqual([]);
+  });
+
+  it('emits nothing when no ward references the building', () => {
+    expect(wardRenamePatches('maple-building', 'Oak Building', [], before)).toEqual([]);
   });
 });
 
@@ -1371,6 +1469,149 @@ describe('useUpsertBuildingMutation', () => {
     await waitFor(() => expect(setDocMock).toHaveBeenCalled());
     const [, body] = setDocMock.mock.calls[0]!;
     expect(body).toMatchObject({ building_id: 'maple-building', building_name: 'Oak Building' });
+  });
+
+  // ---- Ward write-through (T-74) ------------------------------------
+  //
+  // A ward's `building_name` is the same kind of display-name snapshot
+  // as a seat's, but the ward also carries the immutable `building_id`
+  // and every consumer resolves id-first — so a rename only stales the
+  // string. Wards are therefore rewritten in the SAME transaction as the
+  // rename, not blocked by it.
+
+  const wardWrites = () =>
+    setDocMock.mock.calls.filter(([ref]) =>
+      String((ref as { path?: string }).path).includes('/wards/'),
+    );
+
+  it('rewrites every referencing ward’s building_name in the same transaction as the rename', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Oak Building', // rename
+      address: '123 Main',
+      kindoo_site_id: null,
+      previousBuildingName: 'Maple Building',
+      seats: [],
+      pendingRequests: [],
+      existingBuildings: [
+        building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+      wards: [
+        ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+        ward({ ward_code: 'PR', building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+    });
+    await waitFor(() => expect(wardWrites()).toHaveLength(2));
+    // One transaction for the building doc AND both ward docs — a
+    // partial write is exactly the inconsistency this closes.
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    for (const [ref, body, options] of wardWrites()) {
+      expect(ref).toMatchObject({ path: expect.stringMatching(/\/wards\/(CO|PR)$/) });
+      expect(body).toMatchObject({
+        building_name: 'Oak Building',
+        last_modified_at: '__server_timestamp__',
+        lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+      });
+      // The slug is already right — the rename must not rewrite it.
+      expect(body).not.toHaveProperty('building_id');
+      expect(options).toEqual({ merge: true });
+    }
+  });
+
+  it('backfills building_id on a legacy ward that referenced the building by name only', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Oak Building', // rename
+      address: '123 Main',
+      kindoo_site_id: null,
+      previousBuildingName: 'Maple Building',
+      seats: [],
+      pendingRequests: [],
+      existingBuildings: [
+        building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+      // No `building_id` — the legacy, name-only reference.
+      wards: [ward({ ward_code: 'CO', building_name: 'Maple Building' })],
+    });
+    await waitFor(() => expect(wardWrites()).toHaveLength(1));
+    const [ref, body] = wardWrites()[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth/wards/CO' });
+    expect(body).toMatchObject({
+      building_id: 'maple-building',
+      building_name: 'Oak Building',
+    });
+  });
+
+  it('leaves a ward assigned to a different building untouched', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Oak Building', // rename
+      address: '123 Main',
+      kindoo_site_id: null,
+      previousBuildingName: 'Maple Building',
+      seats: [],
+      pendingRequests: [],
+      existingBuildings: [
+        building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+        building({ building_id: 'pine-building', building_name: 'Pine Building' }),
+      ],
+      wards: [
+        ward({ ward_code: 'PR', building_id: 'pine-building', building_name: 'Pine Building' }),
+      ],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(wardWrites()).toHaveLength(0);
+  });
+
+  it('writes no ward updates on an address-only edit', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await result.current.mutateAsync({
+      building_id: 'maple-building',
+      building_name: 'Maple Building', // unchanged
+      address: '999 New Address',
+      kindoo_site_id: 'east-stake',
+      previousBuildingName: 'Maple Building',
+      seats: [],
+      pendingRequests: [],
+      existingBuildings: [
+        building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+      wards: [
+        ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+      ],
+    });
+    await waitFor(() => expect(setDocMock).toHaveBeenCalled());
+    expect(wardWrites()).toHaveLength(0);
+  });
+
+  it('writes no ward updates when the rename is blocked by a seat', async () => {
+    getDocMock.mockResolvedValue({ exists: () => true });
+    const { result } = renderHook(() => useUpsertBuildingMutation(), { wrapper });
+    await expect(
+      result.current.mutateAsync({
+        building_id: 'maple-building',
+        building_name: 'Oak Building',
+        address: '123 Main',
+        kindoo_site_id: null,
+        previousBuildingName: 'Maple Building',
+        seats: [seat({ building_names: ['Maple Building'] })],
+        pendingRequests: [],
+        existingBuildings: [
+          building({ building_id: 'maple-building', building_name: 'Maple Building' }),
+        ],
+        wards: [
+          ward({ ward_code: 'CO', building_id: 'maple-building', building_name: 'Maple Building' }),
+        ],
+      }),
+    ).rejects.toThrow(/Can't rename "Maple Building"/i);
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 });
 

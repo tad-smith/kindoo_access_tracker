@@ -20,7 +20,12 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { canonicalEmail, buildingSlug, unitNameCollisionMessage } from '@kindoo/shared';
+import {
+  canonicalEmail,
+  buildingSlug,
+  resolveWardBuilding,
+  unitNameCollisionMessage,
+} from '@kindoo/shared';
 import type {
   AccessRequest,
   BackfillEqPresidentAccessInput,
@@ -361,6 +366,81 @@ export interface BuildingInput {
    * against a renamed building.
    */
   pendingRequests?: ReadonlyArray<AccessRequest>;
+  /**
+   * Live wards snapshot for the rename WRITE-THROUGH (T-74). Wards are
+   * not blocked by the rename guard above — they are rewritten by it.
+   * Caller passes the snapshot it just rendered — no extra read.
+   * Omitting it skips the write-through entirely, so the Buildings tab
+   * gates Edit until `wards` hydrates.
+   */
+  wards?: ReadonlyArray<Ward>;
+}
+
+/** A ward-snapshot patch produced by a building rename. */
+export interface WardRenamePatch {
+  /** Doc id of the ward to rewrite. */
+  ward_code: string;
+  /** The building's NEW display name. */
+  building_name: string;
+  /**
+   * Present only when backfilling an absent FK — see
+   * `wardRenamePatches`. Omitted when the ward already carries a
+   * `building_id`, so a rename never rebinds an existing slug.
+   */
+  building_id?: string;
+}
+
+/**
+ * Pure: the ward-snapshot rewrites a rename of `buildingId` to
+ * `newBuildingName` implies. Wards carry BOTH `building_id` (the
+ * immutable slug FK, D18) and `building_name` (a legacy display-name
+ * snapshot), and every consumer resolves id-first — `resolveWardBuilding`
+ * on the client, `limitedWardBuildingName` in the rules — so for a ward
+ * with a slug a rename breaks nothing and only leaves a stale string.
+ * That is why wards are written through here rather than blocked in
+ * `buildingRenameBlocker` the way seats / pending requests are: those
+ * hold the display name as their ONLY reference, so a rename genuinely
+ * orphans them, while blocking on wards would block essentially every
+ * rename (every ward references a building) with no way forward.
+ *
+ * Matching is the codebase's id-first-then-name resolution, reused
+ * verbatim via `resolveWardBuilding` against the PRE-rename buildings
+ * snapshot (the live catalogue still carries the old display name at
+ * save time — the same snapshot `duplicateBuildingNameBlocker` reads).
+ * Reusing it rather than re-comparing keeps three cases right for free:
+ * a ward whose slug points at a DIFFERENT live building is untouched
+ * even when its stale name matches; a ward with a dangling slug falls
+ * through to the name path and IS matched; and a name-only ward matches.
+ *
+ * **The name-only ward is the real orphan** — id-first resolution has
+ * nothing to fall back on once the name moves — so its patch also
+ * **backfills `building_id`**, closing the hole instead of deferring it.
+ * A ward that already has a slug keeps it: a dangling slug matched by
+ * name is left dangling deliberately, since rebinding it would silently
+ * harden `resolveWardBuilding`'s documented soft-rebind into stored data.
+ *
+ * Wards needing no change (name already current, slug present) are
+ * dropped, so an address / Kindoo-site-only edit writes nothing.
+ */
+export function wardRenamePatches(
+  buildingId: string,
+  newBuildingName: string,
+  wards: ReadonlyArray<Ward>,
+  buildingsBeforeRename: ReadonlyArray<Building>,
+): ReadonlyArray<WardRenamePatch> {
+  const patches: WardRenamePatch[] = [];
+  for (const w of wards) {
+    if (resolveWardBuilding(w, buildingsBeforeRename)?.building_id !== buildingId) continue;
+    const needsName = w.building_name !== newBuildingName;
+    const needsId = !w.building_id;
+    if (!needsName && !needsId) continue;
+    patches.push({
+      ward_code: w.ward_code,
+      building_name: newBuildingName,
+      ...(needsId ? { building_id: buildingId } : {}),
+    });
+  }
+  return patches;
 }
 
 // Requests whose `building_names` snapshot can still be re-saved against
@@ -476,18 +556,26 @@ export function useUpsertBuildingMutation() {
       if (dupBlocker) throw new Error(dupBlocker);
       // Prevent-rename ref-guard: when the display name is actually
       // changing on edit, block if any active seat / pending request
-      // still snapshots the OLD name (display-name arrays — §3.2). The
-      // slug FK is immutable, so wards are unaffected; only the
-      // display-name grant arrays need guarding. Address /
-      // kindoo_site_id-only edits leave `name` unchanged and skip this.
-      if (input.previousBuildingName !== undefined && name !== input.previousBuildingName) {
+      // still snapshots the OLD name (display-name arrays — §3.2).
+      // Address / kindoo_site_id-only edits leave `name` unchanged and
+      // skip this — and skip the ward write-through below with it.
+      const previousName = input.previousBuildingName;
+      const isRename = previousName !== undefined && name !== previousName;
+      if (isRename) {
         const renameBlocker = buildingRenameBlocker(
-          input.previousBuildingName,
+          previousName,
           input.seats ?? [],
           input.pendingRequests ?? [],
         );
         if (renameBlocker) throw new Error(renameBlocker);
       }
+      // Wards are written through, not blocked (T-74) — see
+      // `wardRenamePatches` for why the two reference kinds are treated
+      // differently. At target scale (~12 wards) this is a handful of
+      // extra writes inside the same transaction; no chunking.
+      const wardPatches = isRename
+        ? wardRenamePatches(slug, name, input.wards ?? [], input.existingBuildings ?? [])
+        : [];
       const ref = buildingRef(db, sid, slug);
       // Stamp `created_at` only on the create path. `merge: true` would
       // otherwise re-stamp it on every edit, silently losing the
@@ -513,6 +601,24 @@ export function useUpsertBuildingMutation() {
               ...editBody,
               created_at: serverTimestamp(),
             } as unknown as Building,
+            { merge: true },
+          );
+        }
+        // Ward snapshots ride the SAME transaction as the rename that
+        // invalidated them: a partial write would leave exactly the
+        // inconsistency this closes. Blind merge-writes — the patches
+        // were computed from the live snapshot the operator just saw, and
+        // the client SDK's `Transaction.get` takes a DocumentReference,
+        // not a query, so the wards can't be re-read here anyway.
+        for (const patch of wardPatches) {
+          tx.set(
+            wardRef(db, sid, patch.ward_code),
+            {
+              building_name: patch.building_name,
+              ...(patch.building_id !== undefined ? { building_id: patch.building_id } : {}),
+              last_modified_at: serverTimestamp(),
+              lastActor: actor,
+            } as unknown as Ward,
             { merge: true },
           );
         }
