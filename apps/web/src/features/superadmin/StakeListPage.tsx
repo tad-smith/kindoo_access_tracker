@@ -114,6 +114,20 @@ function StakeRow({ stake }: StakeRowProps) {
       </div>
       <div className="flex items-center gap-3 sm:justify-end">
         <SetupPill complete={setupComplete} />
+        {/* The only entry point to Configuration for a superadmin who
+            holds no role on this stake: the route needs an active stake,
+            and `resolveActiveStake` honours `?stake=` for a superadmin
+            but has no storage or fallback tier that would. Deep-links to
+            Kindoo Config because the Home Kindoo Site editor there is
+            the superadmin-only surface (spec §15). */}
+        <Link
+          to="/manager/configuration"
+          search={{ stake: stake.id, tab: 'kindoo-sites' as const }}
+          className="text-sm text-[color:var(--kd-primary)] hover:underline"
+          data-testid={`superadmin-stake-kindoo-config-${stake.id}`}
+        >
+          Kindoo Config
+        </Link>
         <ApplyFixesMenu stake={stake} />
       </div>
     </li>

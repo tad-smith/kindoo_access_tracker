@@ -31,7 +31,21 @@ export const Route = createFileRoute('/_authed/manager/configuration')({
 });
 
 function ConfigurationRoute() {
-  const { ready, allowed } = useRequireRole('manager');
+  // Platform superadmins get the whole page, not just the Kindoo Config
+  // tab: they can already read every stake's parent doc, and the Home
+  // Kindoo Site editor (spec §15) is superadmin-only, so a superadmin
+  // who holds no role on the stake still needs to reach this route.
+  // Sub-collection writes (Managers / Wards / Buildings / Organizations)
+  // remain gated on `isManager` in `firestore.rules` — a superadmin
+  // browsing those tabs sees them, and a write they aren't entitled to
+  // fails at the rules layer.
+  //
+  // Reaching it needs an active stake, which a zero-role superadmin only
+  // gets from a `?stake=X` deep link — `resolveActiveStake` treats the
+  // URL tier permissively for them (`lib/activeStake.ts`), but no
+  // storage tier and no tier-4 fallback does. The Stake List's per-row
+  // Kindoo Config link is that entry point.
+  const { ready, allowed } = useRequireRole(['manager', 'platformSuperadmin']);
   if (!ready) return <LoadingSpinner />;
   if (!allowed) return null;
   return <ConfigurationContent />;

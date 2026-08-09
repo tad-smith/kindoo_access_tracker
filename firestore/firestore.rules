@@ -687,16 +687,33 @@ service cloud.firestore {
       // Platform superadmins are in the predicate so they can set a
       // stake's HOME Kindoo site (`kindoo_expected_site_name` +
       // `kindoo_config`) without first being made a manager of it —
-      // `spec.md` §15 "Home Kindoo Site surface". That is the operator
-      // need; the grant is deliberately NOT field-scoped, matching the
-      // read rule above, which already lets a superadmin read every
-      // stake's parent doc. A superadmin can already create stakes and
-      // run the platform fix callables, so full write on this one doc
-      // is not a new tier of authority — and a field allowlist here
-      // would have to be kept in step with every future Config-tab key.
-      // The integrity check still applies: the write is stamped with
-      // the superadmin's own identity.
-      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId) || isPlatformSuperadmin())
+      // `spec.md` §15 "Home Kindoo Site surface".
+      //
+      // Their branch PINS `setup_complete` and `bootstrap_admin_email`,
+      // and that is load-bearing, not tidiness. `isBootstrapAdmin` is
+      // exactly `setup_complete == false && bootstrap_admin_email ==
+      // token.email`, so an unscoped grant here is an escalation path
+      // rather than a config edit: write those two fields on any
+      // EXISTING stake, and the bootstrap hatch below re-opens —
+      // `kindooManagers` create is gated on `isBootstrapAdmin`, and
+      // `syncManagersClaims` then mints a real manager claim over that
+      // stake's seats, requests and members. Flipping `setup_complete`
+      // alone also routes every user of the stake to SetupInProgress
+      // (§10). Before this branch a superadmin's only rules write was
+      // `create` on a NEW stake doc, which cannot reach existing data;
+      // pinning the two keeps it that way.
+      //
+      // Everything else on the doc is open to them, matching the read
+      // rule above (a superadmin already reads every parent stake doc)
+      // and sparing us an allowlist that would need updating for every
+      // future Config-tab key. The two integrity conditions below apply
+      // to this branch as well: the write is stamped with the
+      // superadmin's own identity, and `kindoo_config` must be
+      // well-formed.
+      allow update: if (isManager(stakeId) || isBootstrapAdmin(stakeId)
+          || (isPlatformSuperadmin()
+              && request.resource.data.setup_complete == resource.data.setup_complete
+              && request.resource.data.bootstrap_admin_email == resource.data.bootstrap_admin_email))
         && lastActorMatchesAuth(request.resource.data)
         && validKindooConfig(request.resource.data);
       allow delete: if false;

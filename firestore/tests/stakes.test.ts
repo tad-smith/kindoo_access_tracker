@@ -313,6 +313,59 @@ describe('firestore.rules — stakes/{stakeId} parent doc', () => {
       );
     });
 
+    // The superadmin branch pins these two because together they re-open
+    // `isBootstrapAdmin`, which gates `kindooManagers` create, which
+    // `syncManagersClaims` turns into a real manager claim over the
+    // stake's data. Flipping `setup_complete` alone also routes every
+    // user of the stake to SetupInProgress.
+    it('superadmin cannot flip setup_complete on an existing stake', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            setup_complete: false,
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('superadmin cannot repoint bootstrap_admin_email at themselves', async () => {
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx.firestore().doc(PATH).set(freshStakeDoc());
+      });
+      const db = superadminContext(env).firestore();
+      await assertFails(
+        db.doc(PATH).set(
+          freshStakeDoc({
+            bootstrap_admin_email: personas.superadmin.email,
+            lastActor: lastActorOf(personas.superadmin),
+            last_modified_by: lastActorOf(personas.superadmin),
+          }),
+        ),
+      );
+    });
+
+    it('a manager may still change setup_complete / bootstrap_admin_email', async () => {
+      // The pin is on the superadmin branch only — it must not narrow
+      // the manager path the wizard's final flip runs through.
+      await seedAsAdmin(env, async (ctx) => {
+        await ctx
+          .firestore()
+          .doc(PATH)
+          .set(freshStakeDoc({ setup_complete: true }));
+      });
+      const db = managerContext(env, STAKE_ID).firestore();
+      await assertSucceeds(db.doc(PATH).set(freshStakeDoc({ setup_complete: false })));
+    });
+
     it('cross-stake: manager of stake A is denied updating stake B', async () => {
       await seedAsAdmin(env, async (ctx) => {
         await ctx.firestore().doc(OTHER_PATH).set(freshStakeDoc());
