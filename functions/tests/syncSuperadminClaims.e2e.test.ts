@@ -59,8 +59,8 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     { timeout: 50_000 },
     async () => {
       const { auth, db } = requireEmulators();
-      const typedEmail = 'Super.Admin@gmail.com';
-      const canonical = 'superadmin@gmail.com';
+      const typedEmail = 'Super.Admin.Mint@gmail.com';
+      const canonical = 'superadminmint@gmail.com';
 
       // Order: createUser → wait for onAuthUserCreate to finish
       // seeding the baseline claim → THEN write the
@@ -125,8 +125,8 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
 
   it('revokes isPlatformSuperadmin when the doc is deleted', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const typedEmail = 'Super.Admin@gmail.com';
-    const canonical = 'superadmin@gmail.com';
+    const typedEmail = 'Super.Admin.Revoke@gmail.com';
+    const canonical = 'superadminrevoke@gmail.com';
 
     // Same create-first → wait-for-bridge → seed ordering as the mint
     // test (see its comment for the full rationale): make

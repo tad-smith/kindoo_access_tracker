@@ -272,106 +272,122 @@ describe.skipIf(!hasEmulators())('applyClaims — bootstrap claim merge', () => 
     return claims.stakes?.[stakeId] ?? {};
   }
 
-  it('mints bootstrap: true on a stake with no prior claim block, and prunes it back out', async () => {
-    const email = 'boot@gmail.com';
-    const uid = await makeSettledUser(email, functionsEmulatorReachable);
+  it(
+    'mints bootstrap: true on a stake with no prior claim block, and prunes it back out',
+    { timeout: 30_000 },
+    async () => {
+      const email = 'boot@gmail.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
-    await applyBootstrapClaim(uid, email, 'new-stake', true);
-    expect(await readBlock(uid, 'new-stake')).toEqual({
-      manager: false,
-      stake: false,
-      wards: [],
-      bootstrap: true,
-    });
+      await applyBootstrapClaim(uid, email, 'new-stake', true);
+      expect(await readBlock(uid, 'new-stake')).toEqual({
+        manager: false,
+        stake: false,
+        wards: [],
+        bootstrap: true,
+      });
 
-    await applyBootstrapClaim(uid, email, 'new-stake', false);
-    // Nothing else in the block — pruned entirely, not left as an
-    // empty `{ manager: false, stake: false, wards: [] }` object.
-    expect(await readBlock(uid, 'new-stake')).toEqual({});
-  });
+      await applyBootstrapClaim(uid, email, 'new-stake', false);
+      // Nothing else in the block — pruned entirely, not left as an
+      // empty `{ manager: false, stake: false, wards: [] }` object.
+      expect(await readBlock(uid, 'new-stake')).toEqual({});
+    },
+  );
 
-  it('preserves an existing manager/stake block when toggling bootstrap on and off', async () => {
-    const email = 'both@gmail.com';
-    const uid = await makeSettledUser(email, functionsEmulatorReachable);
+  it(
+    'preserves an existing manager/stake block when toggling bootstrap on and off',
+    { timeout: 30_000 },
+    async () => {
+      const email = 'both@gmail.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
-    await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: ['GE'] });
-    await applyBootstrapClaim(uid, email, 'csnorth', true);
-    expect(await readBlock(uid, 'csnorth')).toEqual({
-      manager: true,
-      stake: false,
-      wards: ['GE'],
-      bootstrap: true,
-    });
+      await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: ['GE'] });
+      await applyBootstrapClaim(uid, email, 'csnorth', true);
+      expect(await readBlock(uid, 'csnorth')).toEqual({
+        manager: true,
+        stake: false,
+        wards: ['GE'],
+        bootstrap: true,
+      });
 
-    await applyBootstrapClaim(uid, email, 'csnorth', false);
-    // Real role data keeps the block alive after bootstrap clears.
-    expect(await readBlock(uid, 'csnorth')).toEqual({
-      manager: true,
-      stake: false,
-      wards: ['GE'],
-    });
-  });
+      await applyBootstrapClaim(uid, email, 'csnorth', false);
+      // Real role data keeps the block alive after bootstrap clears.
+      expect(await readBlock(uid, 'csnorth')).toEqual({
+        manager: true,
+        stake: false,
+        wards: ['GE'],
+      });
+    },
+  );
 
-  it('survives a subsequent applyStakeClaims wholesale-replace on the same stake', async () => {
-    // `applyStakeClaims` (called by `syncAccessClaims`/`syncManagersClaims`)
-    // replaces a stake's whole block from freshly-computed role data,
-    // which never carries `bootstrap` itself (a different owner's
-    // field) — the merge must carry the existing flag forward rather
-    // than let it be erased by whichever trigger fires last. Mirrors
-    // `applyBootstrapClaim` already preserving manager/stake/wards in
-    // the other direction.
-    const email = 'reorder@gmail.com';
-    const uid = await makeSettledUser(email, functionsEmulatorReachable);
+  it(
+    'survives a subsequent applyStakeClaims wholesale-replace on the same stake',
+    { timeout: 30_000 },
+    async () => {
+      // `applyStakeClaims` (called by `syncAccessClaims`/`syncManagersClaims`)
+      // replaces a stake's whole block from freshly-computed role data,
+      // which never carries `bootstrap` itself (a different owner's
+      // field) — the merge must carry the existing flag forward rather
+      // than let it be erased by whichever trigger fires last. Mirrors
+      // `applyBootstrapClaim` already preserving manager/stake/wards in
+      // the other direction.
+      const email = 'reorder@gmail.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
-    await applyBootstrapClaim(uid, email, 'csnorth', true);
-    expect((await readBlock(uid, 'csnorth'))['bootstrap']).toBe(true);
+      await applyBootstrapClaim(uid, email, 'csnorth', true);
+      expect((await readBlock(uid, 'csnorth'))['bootstrap']).toBe(true);
 
-    await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: [] });
-    expect(await readBlock(uid, 'csnorth')).toEqual({
-      manager: true,
-      stake: false,
-      wards: [],
-      bootstrap: true,
-    });
-  });
+      await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: [] });
+      expect(await readBlock(uid, 'csnorth')).toEqual({
+        manager: true,
+        stake: false,
+        wards: [],
+        bootstrap: true,
+      });
+    },
+  );
 
-  it('stays discoverable through mint -> manager auto-add -> manager deactivated, all before setup completes', async () => {
-    // The lockout this guards against: a bootstrap admin (B) is
-    // minted `bootstrap: true` while `setup_complete` is still
-    // false. The wizard auto-adds them to `kindooManagers` (spec.md
-    // §10 step 4) — `syncManagersClaims` fires `applyStakeClaims`,
-    // replacing B's whole block. Without the field surviving that
-    // replace, a manager row later going inactive (still mid-setup)
-    // would leave the block with no roles AND no bootstrap marker —
-    // B drops out of `accessibleStakes` with nothing left to route
-    // them back to their own in-progress wizard, and nothing
-    // self-heals it (`syncBootstrapClaims` only fires on stake-doc
-    // writes, and the stake doc never changed).
-    const email = 'lockout@gmail.com';
-    const uid = await makeSettledUser(email, functionsEmulatorReachable);
+  it(
+    'stays discoverable through mint -> manager auto-add -> manager deactivated, all before setup completes',
+    { timeout: 30_000 },
+    async () => {
+      // The lockout this guards against: a bootstrap admin (B) is
+      // minted `bootstrap: true` while `setup_complete` is still
+      // false. The wizard auto-adds them to `kindooManagers` (spec.md
+      // §10 step 4) — `syncManagersClaims` fires `applyStakeClaims`,
+      // replacing B's whole block. Without the field surviving that
+      // replace, a manager row later going inactive (still mid-setup)
+      // would leave the block with no roles AND no bootstrap marker —
+      // B drops out of `accessibleStakes` with nothing left to route
+      // them back to their own in-progress wizard, and nothing
+      // self-heals it (`syncBootstrapClaims` only fires on stake-doc
+      // writes, and the stake doc never changed).
+      const email = 'lockout@gmail.com';
+      const uid = await makeSettledUser(email, functionsEmulatorReachable);
 
-    // 1. Bootstrap admin discoverable.
-    await applyBootstrapClaim(uid, email, 'csnorth', true);
-    expect((await readBlock(uid, 'csnorth'))['bootstrap']).toBe(true);
+      // 1. Bootstrap admin discoverable.
+      await applyBootstrapClaim(uid, email, 'csnorth', true);
+      expect((await readBlock(uid, 'csnorth'))['bootstrap']).toBe(true);
 
-    // 2. Wizard auto-adds them as an active manager.
-    await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: [] });
-    expect(await readBlock(uid, 'csnorth')).toEqual({
-      manager: true,
-      stake: false,
-      wards: [],
-      bootstrap: true,
-    });
+      // 2. Wizard auto-adds them as an active manager.
+      await applyStakeClaims(uid, email, 'csnorth', { manager: true, stake: false, wards: [] });
+      expect(await readBlock(uid, 'csnorth')).toEqual({
+        manager: true,
+        stake: false,
+        wards: [],
+        bootstrap: true,
+      });
 
-    // 3. Manager row deactivated while still mid-setup.
-    await applyStakeClaims(uid, email, 'csnorth', { manager: false, stake: false, wards: [] });
-    const block = await readBlock(uid, 'csnorth');
-    // No role left, but still discoverable via bootstrap.
-    expect(block).toEqual({ manager: false, stake: false, wards: [], bootstrap: true });
-    expect(block['bootstrap']).toBe(true);
-  });
+      // 3. Manager row deactivated while still mid-setup.
+      await applyStakeClaims(uid, email, 'csnorth', { manager: false, stake: false, wards: [] });
+      const block = await readBlock(uid, 'csnorth');
+      // No role left, but still discoverable via bootstrap.
+      expect(block).toEqual({ manager: false, stake: false, wards: [], bootstrap: true });
+      expect(block['bootstrap']).toBe(true);
+    },
+  );
 
-  it('does not clobber a sibling stake block', async () => {
+  it('does not clobber a sibling stake block', { timeout: 30_000 }, async () => {
     const email = 'multi@gmail.com';
     const uid = await makeSettledUser(email, functionsEmulatorReachable);
 

@@ -159,27 +159,43 @@ jobs:
         #   failure in `syncManagersClaims`.
         #
         #   Every suite here now settles that write before touching
-        #   claims: `makeSettledUser()` in `tests/lib/emulator.ts`
-        #   (`applyClaims`, `syncBootstrapClaims`, `syncManagersClaims`,
-        #   `syncAccessClaims`, `syncSuperadminClaims`), the local
-        #   variant in `onAuthUserCreate.test.ts`, and the pre-seed-
-        #   then-createUser pattern in `syncSuperadminClaims.e2e`.
-        #   It waits up to 20s, so its callers carry an explicit
-        #   `{ timeout: 30_000 }` — no `testTimeout` is configured, and
-        #   vitest's 5s default would abort the test first.
+        #   claims — create the user, wait for the baseline, THEN write.
+        #   `makeSettledUser()` in `tests/lib/emulator.ts` does it for
+        #   `applyClaims`, `syncBootstrapClaims`, `syncManagersClaims`,
+        #   `syncAccessClaims` and `syncSuperadminClaims`;
+        #   `onAuthUserCreate.test.ts` and `syncSuperadminClaims.e2e`
+        #   each inline the same order for their own reasons.
         #
-        #   `onAuthUserCreate` is NOT the only late writer. The
-        #   deployed role-sync triggers also fire on the Firestore
-        #   writes these tests make, and `clearEmulators()` cannot
-        #   cancel a delivery already queued — one from test N lands
-        #   during test N+1 and resolves `uidForCanonical` against
-        #   whatever `userIndex` says at that instant. So each test
-        #   also uses a DISTINCT email: a stale delivery then finds no
-        #   entry for its canonical and no-ops.
+        #   Those waits run to 20s, so EVERY test containing one carries
+        #   an explicit timeout override: no `testTimeout` is configured
+        #   anywhere, and vitest's 5s default would abort the test long
+        #   before the wait it was written with. Delivery has been
+        #   observed at ~14.7s on this runner (see the note in
+        #   `syncSuperadminClaims.e2e.test.ts`), so 5s is not academic.
         #
-        #   A NEW test must do both, or it is a coin flip on CI and
-        #   always green locally (`test:integration:local` boots no
-        #   Functions emulator, so none of these triggers fire).
+        #   `onAuthUserCreate` is NOT the only late writer. The deployed
+        #   role-sync triggers also fire on the Firestore writes these
+        #   tests make, and `clearEmulators()` cannot cancel a delivery
+        #   already queued — one from test N lands during test N+1 and
+        #   resolves `uidForCanonical` against whatever `userIndex` says
+        #   at that instant. `syncManagersClaims` / `syncAccessClaims`
+        #   re-read Firestore so they mostly self-heal;
+        #   `syncSuperadminClaims` reads `after.exists` off the event
+        #   payload and does not.
+        #
+        #   So a test that BOTH creates an auth user AND writes a
+        #   claim-sync trigger's own path owns its email outright — no
+        #   sharing with a sibling test. A stale delivery then finds no
+        #   `userIndex` entry for its canonical and no-ops at
+        #   `uidForCanonical`. Emails shared elsewhere are fine and
+        #   plentiful: without a fresh uid behind the same canonical
+        #   there is nothing for a late delivery to mis-resolve.
+        #
+        #   A NEW test must settle, override the timeout, and — if it
+        #   meets that both-conditions bar — own its email. Otherwise it
+        #   is a coin flip on CI and always green locally
+        #   (`test:integration:local` boots no Functions emulator, so
+        #   none of these triggers fire).
         #
         # The Integration step below pins `--project demo-kindoo-tests`
         # so the Functions emulator loads the right env file; the E2E
