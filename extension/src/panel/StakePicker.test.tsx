@@ -33,9 +33,9 @@ describe('StakePicker', () => {
     const csnorth = screen.getByTestId('sba-stake-picker-csnorth');
     const east = screen.getByTestId('sba-stake-picker-east-co');
     expect(csnorth).toHaveTextContent('Colorado Springs North Stake');
-    expect(csnorth).toHaveTextContent('(home site)');
+    expect(csnorth).toHaveTextContent('Home site');
     expect(east).toHaveTextContent('East Colorado Stake');
-    expect(east).toHaveTextContent('(foreign site: Pine Building)');
+    expect(east).toHaveTextContent('Foreign site: Pine Building');
   });
 
   it('surfaces the signed-in email when one is provided', () => {
