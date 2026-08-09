@@ -224,6 +224,13 @@ function WardsTab() {
   // case shows the hint and the populated case enables Add.
   const buildingsReady = buildings.data !== undefined;
   const noBuildings = buildingsReady && buildings.data!.length === 0;
+  // The unique-display-name guard runs against the wards snapshot, and
+  // an empty list reads as "nothing to collide with" — a submit landing
+  // before the snapshot hydrates would save unconditionally, and the
+  // mutation's slug backstop doesn't cover it ("Maple" and "Maple Ward"
+  // slug apart). So Add waits on both catalogues, exactly as
+  // IgnoredWardsSection waits on `wards.data !== undefined`.
+  const ready = buildingsReady && wards.data !== undefined;
 
   return (
     <div className="kd-config-section">
@@ -231,11 +238,11 @@ function WardsTab() {
         title="Wards"
         addLabel="Add Ward"
         onAdd={() => {
-          if (!buildingsReady || noBuildings) return;
+          if (!ready || noBuildings) return;
           setOpenMode('add');
         }}
         testid="config-wards"
-        addDisabled={!buildingsReady || noBuildings}
+        addDisabled={!ready || noBuildings}
         addDisabledHint={noBuildings ? 'Add a building first.' : 'Loading…'}
       />
       {noBuildings ? (

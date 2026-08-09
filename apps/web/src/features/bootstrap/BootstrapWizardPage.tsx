@@ -611,6 +611,18 @@ function Step3Wards() {
 
   const buildingOptions = buildings.data ?? [];
 
+  // The collision guard in `onAdd` runs against the wards snapshot, and
+  // an empty list reads as "nothing to collide with" — a submit landing
+  // before the snapshot hydrates would add a colliding ward
+  // unconditionally, and the mutation's slug backstop doesn't cover it
+  // ("Maple" and "Maple Ward" slug apart). Gate the submit rather than
+  // weakening the guard, matching Configuration → Wards.
+  const noBuildings = buildings.data !== undefined && buildingOptions.length === 0;
+  const submitBlocked = wards.data === undefined || buildings.data === undefined || noBuildings;
+  const blockedHint = noBuildings
+    ? 'Add a building first (Step 2) before adding wards.'
+    : 'Loading…';
+
   async function onAdd(input: WardForm) {
     try {
       // The form carries the immutable `building_id`; resolve the
@@ -711,12 +723,19 @@ function Step3Wards() {
           </p>
         ) : null}
         <div className="form-actions">
-          <Button type="submit" disabled={addMutation.isPending || buildingOptions.length === 0}>
+          <Button
+            type="submit"
+            disabled={addMutation.isPending || submitBlocked}
+            title={submitBlocked ? blockedHint : undefined}
+            data-testid="bootstrap-ward-submit"
+          >
             {addMutation.isPending ? 'Adding…' : 'Add ward'}
           </Button>
         </div>
-        {buildingOptions.length === 0 ? (
-          <p className="kd-form-hint">Add a building first (Step 2) before adding wards.</p>
+        {submitBlocked ? (
+          <p className="kd-form-hint" data-testid="bootstrap-ward-blocked-hint">
+            {blockedHint}
+          </p>
         ) : null}
       </form>
     </div>
