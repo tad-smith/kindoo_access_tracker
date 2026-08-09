@@ -18,11 +18,13 @@ Introduced with [T-88]. Fails intermittently — roughly 1 run in 3 locally — 
 Worth timing the cold path before adding more timeout — if the first navigation after a build is genuinely slow (bundle served cold, Firestore websocket established for the first time), a single warm-up navigation in `beforeEach` fixes it properly where per-assertion timeouts only paper over it.
 
 ## [T-93] Editing the home site name re-keys every existing stake-scope Kindoo Description
-Status: pending — needs an operator decision
+Status: closed (2026-08-09 — accepted risk, operator decision; no code change)
 Owner: @web-engineer
 Phase: Kindoo Sites (§15)
 
-Found by review on PR #263's merged head, after the EID half was settled as write-once ([T-92]). Same class of defect — a value the extension previously only ever moved as a set — but **write-once does not fix this one**, which is why it is filed separately rather than folded in.
+**Decision: keep the field, gated to superadmins — which it already is.** The hazard below is real and unmitigated in the code; the gate is the mitigation. `canEdit` requires a platform superadmin who also manages the stake ([T-92]), so nobody reaches this control by accident, and the operator has accepted that whoever does reach it is expected to know what a rename costs. **No warning text on the form** — declined twice, deliberately; the coupling is documented in `spec.md` §15 for engineers rather than surfaced as a nag. Recorded closed rather than deleted, because the coupling is not obvious from the field's name and the next person to touch it should find this.
+
+Found by review on PR #263's merged head, after the EID half was settled as write-once ([T-92]). Same class of defect — a value the extension previously only ever moved as a set — but **write-once would not have fixed this one**, which is why it was split out rather than folded in.
 
 `stake.kindoo_expected_site_name` is not merely what the wizard compares a Kindoo site header against. It is the **key for stake-scope Descriptions in both directions**:
 
@@ -33,13 +35,13 @@ So changing the field leaves every already-provisioned stake-scope Description c
 
 **Why write-once is not the answer here.** With the field unset the effective key is `stake_name`, so existing Descriptions already carry the stake name. Setting the override for the *first* time to anything different re-keys them just as surely as changing it later would. A write-once rule would forbid the correction while still permitting the initial break.
 
-Options, roughly in order of how much they preserve:
+Options considered, roughly in order of how much they preserve:
 
-1. **Drop the name field.** The EID alone breaks the extension deadlock the surface exists for (§15). The row can still *display* the effective name read-only. Smallest surface; gives up an operator-settable override that currently has no other writer.
-2. **Warn and document.** Keep the field, confirm on change naming the consequence, and state the coupling in §15. Leaves the footgun loaded but visible.
-3. **Re-key on write.** Change the field and rewrite the affected Kindoo Descriptions. Correct in principle, far the largest — it is a bulk Kindoo write from the SPA, which has no such path today (all Kindoo writes go through the extension).
+1. **Drop the name field.** The EID alone breaks the extension deadlock the surface exists for (§15). Smallest surface; gives up an operator-settable override that has no other writer. *Recommended at the time, not taken.*
+2. **Keep it, superadmin-gated.** ← **chosen.** Leaves the hazard loaded, behind a gate only a platform superadmin who also manages the stake can reach.
+3. **Re-key on write.** Change the field and rewrite the affected Kindoo Descriptions. Correct in principle, far the largest — a bulk Kindoo write from the SPA, which has no such path today (every Kindoo write goes through the extension).
 
-Recommend (1) unless the override turns out to be needed: it is the only option with no residual hazard, and nothing else writes the field.
+**If this ever fires**, the recovery is (3) done by hand: the affected members show up as `kindoo-unparseable` on the next Sync, and re-provisioning them through the extension rewrites their Descriptions with the new key. Do *not* use the row's one-click **Update SBA** on them — that writes the raw description text into the seat's calling / reason rather than fixing the Description.
 
 ## [T-92] Home Kindoo Site edit — orphaned `kindoo_rule` mappings, and the unloaded-stake window
 Status: done (2026-08-09 — `fix/home-eid-write-once`)
