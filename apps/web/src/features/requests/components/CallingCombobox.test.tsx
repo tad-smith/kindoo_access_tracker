@@ -106,6 +106,13 @@ describe('<CallingCombobox />', () => {
     expect(option('Bishop')).toBeInTheDocument();
   });
 
+  it('advertises the suggestions in the placeholder of an empty field', () => {
+    // The only signal the list exists — no chevron, no aria-expanded,
+    // and the popover opens on neither focus nor click.
+    const { input } = renderCombobox();
+    expect(input).toHaveAttribute('placeholder', 'Start typing to see suggestions');
+  });
+
   it('filters an arrow-opened list by the text already in the field', () => {
     // How the popover was opened does not change what it shows — cmdk
     // filters on `value` whenever the list is mounted. Edit Seat

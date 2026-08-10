@@ -57,9 +57,18 @@ export interface CallingComboboxProps {
   'data-testid'?: string;
   /** Optional override for the input's name (RHF wires this for us). */
   name?: string;
-  /** Optional placeholder; defaults to a hint about typeahead behaviour. */
+  /** Optional placeholder; defaults to `DEFAULT_PLACEHOLDER`. */
   placeholder?: string;
 }
+
+/**
+ * The field's only advertisement that suggestions exist. Nothing else
+ * says so — there is no chevron and no `aria-expanded`, and the popover
+ * deliberately does not open on focus or click (B-27), so a manager who
+ * never types would otherwise have no way to learn the list is there.
+ * Names the gesture that opens it rather than describing the feature.
+ */
+const DEFAULT_PLACEHOLDER = 'Start typing to see suggestions';
 
 export function CallingCombobox({
   value,
@@ -143,7 +152,7 @@ export function CallingCombobox({
             }, 150);
           }}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
           data-testid={testId}
           className={cn(
             'block w-full rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1',
