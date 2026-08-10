@@ -124,9 +124,10 @@ export interface KindooBlock {
    * seat-type (church-backed) decision. `null` when door-grant
    * derivation was skipped or failed — promote / demote is skipped.
    *
-   * Any-overlap, NOT the strict subset `derivedBuildings` uses: the
-   * church routinely leaves a door of a rule ungranted, and requiring
-   * full coverage read those members as SBA-provisioned (B-25).
+   * Any-overlap, the same predicate `derivedBuildings` uses over the
+   * full door set: the church routinely leaves a door of a rule
+   * ungranted, and requiring full coverage read those members as
+   * SBA-provisioned (B-25).
    */
   directGrantBuildings: string[] | null;
   /**
@@ -981,7 +982,7 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     // 7. buildings-mismatch — Kindoo door-access truth vs SBA building set.
     //
-    // `derivedBuildings` (the per-door grant strict-subset chain, stamped
+    // `derivedBuildings` (the per-door grant any-overlap chain, stamped
     // onto `kuser` by `sync/buildingsFromDoors.ts` BEFORE detect()) is the
     // authoritative Kindoo door-access signal for ALL seat types: it sees
     // both Church Access Automation direct grants AND rule-based grants.

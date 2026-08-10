@@ -434,9 +434,14 @@ an SBA rule covers the same doors).
 > seat is church-backed iff **every** one of its `building_names` is church-granted" (the
 > all-buildings strict subset) — is **superseded** for the type decision: a single church-direct
 > door now suffices, and the seat's own building set no longer enters it. The building-coverage
-> derivation below (`buildRuleDoorMap` → strict subset) still computes *which* buildings the church
-> grants (`directGrantBuildings`) and still drives `buildings-mismatch`; only the type predicate that
-> reads it changed from subset-of-seat-buildings to non-empty.
+> derivation below (`buildRuleDoorMap`) still computes *which* buildings the church grants
+> (`directGrantBuildings`); only the type predicate that reads it changed from
+> subset-of-seat-buildings to non-empty. (This note originally added "and still drives
+> `buildings-mismatch`" — it does not, and never did. That check reads `derivedBuildings`, falling
+> back to `AccessSchedules` for manual/temp seats (`detector.ts`), and never touches
+> `directGrantBuildings`. Corrected here because the B-25 note below attaches to this line, and as
+> written it claimed B-25's any-overlap switch also widened building-set comparison — the one
+> property that makes the provenance half of that change safe.)
 
 > **One predicate, two door subsets (B-25).** The note above says "≥1 church-direct **door**" and
 > "non-empty `directGrantBuildings`" as if they were the same statement. They were not. PR #189
@@ -502,7 +507,8 @@ existing capture; nothing was pending. (The grantor field is already requested v
    **non-empty** (≥1 church-direct building), `manual` iff `[]`, unchanged iff `null`. ~~A seat is
    church-backed iff every one of its `building_names` is church-granted~~ — the all-buildings subset
    rule is superseded; the seat's own `building_names` no longer enter the type decision. (Steps 1–2
-   still build `directGrantBuildings`, which drives `buildings-mismatch` unchanged.)
+   build `directGrantBuildings`, which feeds the type decision **only** — `buildings-mismatch` reads
+   `derivedBuildings`. ~~which drives `buildings-mismatch` unchanged~~ was never true.)
 
 ### Stage 1 — grant classification + sort + soft-deprecation (operator-clicked)
 

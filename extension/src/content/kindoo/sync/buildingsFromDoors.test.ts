@@ -1,8 +1,8 @@
 // Tests for the door-grant → buildings derivation helpers.
-// Pure-function tests exercise the two rule predicates directly —
-// strict subset for access, any-overlap for provenance; the I/O
-// wrappers mock the fetch boundary via the existing fetchImpl
-// injection pattern.
+// Pure-function tests exercise both rule predicates directly —
+// any-overlap, which Sync uses for both building sets, and the strict
+// subset kept for `provision.ts`; the I/O wrappers mock the fetch
+// boundary via the existing fetchImpl injection pattern.
 
 import { describe, expect, it, vi } from 'vitest';
 import type { Building } from '@kindoo/shared';
@@ -98,7 +98,7 @@ describe('deriveOverlappingRuleIds', () => {
     const userDoors = new Set([1]);
     const ruleMap = new Map<number, Set<number>>([[6248, new Set([1, 2, 3])]]);
     expect(deriveOverlappingRuleIds(userDoors, ruleMap)).toEqual(new Set([6248]));
-    // The predicate the access path uses, for contrast.
+    // The strict subset, for contrast — `provision.ts` only.
     expect(deriveEffectiveRuleIds(userDoors, ruleMap)).toEqual(new Set());
   });
 
