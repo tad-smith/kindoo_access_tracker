@@ -2702,6 +2702,40 @@ describe('detect + real door-grant derivation (B-25)', () => {
     expect(rows[0]?.kindoo?.derivedBuildings).toEqual(['Maple Building', 'Pine Creek Building']);
     // Non-empty ⇒ `autoLockedSba` stays false ⇒ Update SBA is clickable.
     expect(rows[0]?.kindoo?.derivedBuildings?.length).toBeGreaterThan(0);
+    // …and the row has to SAY that clicking it widens access. This is
+    // the operator's only signal at the button; without it the copy
+    // reads as a bookkeeping correction.
+    expect(rows[0]?.reason).toContain('Applying this adds [Maple Building]');
+    expect(rows[0]?.reason).toContain('doors the church did not');
+  });
+
+  it('says nothing about widening when the row only REMOVES buildings', async () => {
+    // The notice must not fire on a shrink — the member lost all of
+    // Pine Creek, so applying the row takes it off the seat and grants
+    // nobody anything.
+    const enriched = await enrich(
+      [{ door: 1, church: true }],
+      new Map([
+        [6248, new Set([1, 2, 3])],
+        [6249, new Set([4, 5])],
+      ]),
+    );
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reason).not.toContain('Applying this adds');
   });
 
   it('does not offer to strip a building the member holds ONE door of', async () => {

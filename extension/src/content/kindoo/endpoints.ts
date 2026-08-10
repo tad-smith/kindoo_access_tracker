@@ -716,7 +716,7 @@ export async function listAllEnvironmentUsers(
 // set (and from there, their SBA building access) without depending on
 // the bulk listing's `AccessSchedules` array, which excludes the
 // direct-grant rows. See `sync/buildingsFromDoors.ts` for the
-// strict-subset derivation.
+// any-overlap derivation (one door of a rule claims the building).
 
 /** One door in the environment. */
 export interface KindooDoor {

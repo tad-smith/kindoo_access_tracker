@@ -1011,12 +1011,26 @@ export function detect(inputs: DetectInputs): DetectResult {
     if (kindooBuildingsForCompare !== null) {
       const expectedBuildings = sbaBlock.buildingNames;
       if (!setsEqual(expectedBuildings, kindooBuildingsForCompare)) {
+        // Buildings this row would ADD to the seat. Since B-25 one door
+        // claims a building, so applying the row can hand the member
+        // that building's whole AccessRule on the next provision
+        // (`deriveDirectGrantRids` is strict, so a partly-held rule is
+        // never subtracted) — doors nobody granted them. Intended per
+        // spec.md §8, but the operator is the one clicking, and
+        // "Building access differs" alone doesn't say a write follows.
+        const addedBuildings = kindooBuildingsForCompare.filter(
+          (b) => !expectedBuildings.includes(b),
+        );
+        const widensNote =
+          addedBuildings.length > 0
+            ? ` Applying this adds [${addedBuildings.join(', ')}] to the seat; a later provision may grant every door in ${addedBuildings.length === 1 ? 'that building' : 'those buildings'}'s Kindoo rule, including doors the church did not.`
+            : '';
         discrepancies.push({
           canonical: canon,
           displayEmail,
           code: 'buildings-mismatch',
           severity: 'drift',
-          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
+          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].${widensNote}`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });
