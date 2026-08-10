@@ -371,7 +371,9 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
       // default mount focus landed on `reason` and selected its value —
       // the dialog opened with the calling highlighted and one keystroke
       // from being replaced (B-28). Focus goes to the dialog container
-      // instead; the trap, Escape, and the SR announcement are unchanged.
+      // instead, which is what keeps the focus trap and the screen
+      // reader announcement intact. Escape is unaffected either way —
+      // Radix binds it on the document, not on the focused node.
       autoFocusFirstField={false}
     >
       <form onSubmit={onSubmit} className="kd-wizard-form" data-testid="edit-seat-dialog-form">

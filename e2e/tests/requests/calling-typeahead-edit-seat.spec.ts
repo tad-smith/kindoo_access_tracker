@@ -268,8 +268,11 @@ test.describe('Edit Seat calling typeahead — ward vs branch', () => {
   });
 
   test('closes on Escape straight from open, with nothing clicked first', async ({ page }) => {
-    // The other half a naive focus suppression breaks. No click, no Tab —
-    // Escape as the very first interaction after the dialog appears.
+    // No click, no Tab — Escape as the very first interaction after the
+    // dialog appears. Not a regression pin for B-28's opt-out: Radix
+    // binds Escape on the document, so it fires wherever focus sits and
+    // this passes with or without the fix. It is here because "nothing
+    // is focused" is exactly the state a reader would doubt Escape from.
     await signInAsStakeBishopric(page, 'mount-escape@example.com');
     await openEditSeat(page, WARD_CODE, WARD_SEAT);
 

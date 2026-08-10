@@ -49,11 +49,17 @@ export interface DialogProps {
    *
    * Focus still moves INTO the dialog: it lands on the content node
    * itself, which is the `role="dialog"` element and already carries
-   * `tabIndex={-1}` from Radix's own `FocusScope`. That is what keeps
-   * the three behaviours a bare `preventDefault` would break — the
-   * focus trap stays armed, Escape closes from mount, and screen
-   * readers announce the dialog. Leaving focus on the trigger behind
-   * the overlay breaks all three. Defaults to `true`.
+   * `tabIndex={-1}` from Radix's own `FocusScope`. Redirecting rather
+   * than merely suppressing is what keeps the focus trap armed (the
+   * scope's last-in-scope memo is seeded by this focus; left null, a
+   * focusin from outside refocuses nothing and focus escapes to the
+   * page behind) and what lets screen readers announce the dialog. It
+   * also keeps focus off the trigger, which `hideOthers` has just made
+   * `aria-hidden` — focus on hidden content is its own defect.
+   *
+   * Escape is NOT one of the behaviours this preserves: Radix's
+   * `DismissableLayer` binds it on `ownerDocument`, so it fires
+   * wherever focus sits. Defaults to `true`.
    */
   autoFocusFirstField?: boolean;
 }

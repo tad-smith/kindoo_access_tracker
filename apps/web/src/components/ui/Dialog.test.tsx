@@ -178,10 +178,15 @@ describe('Dialog', () => {
 });
 
 // B-28. Suppressing Radix's mount autofocus is easy; suppressing it
-// without breaking the focus trap, Escape-from-mount, and the screen
-// reader announcement is the part that needs pinning. A bare
-// `e.preventDefault()` leaves focus on the trigger behind the overlay
-// and fails the trap + announcement assertions below.
+// without breaking the focus trap or the screen reader announcement is
+// the part that needs pinning. A bare `e.preventDefault()` leaves focus
+// on the trigger behind the overlay and fails the trap + announcement
+// assertions below.
+//
+// The Escape case is NOT one of those: `DismissableLayer` binds Escape
+// on the document, so it closes wherever focus sits and passes with or
+// without the redirect. It is here as a plain behaviour guarantee for
+// this dialog shape, not as a regression pin for the opt-out.
 describe('Dialog with autoFocusFirstField={false}', () => {
   it('opens with no field focused and no text selected', async () => {
     const user = userEvent.setup();
