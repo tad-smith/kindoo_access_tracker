@@ -4,8 +4,8 @@
 // Two behaviours are pinned here.
 //
 // WHEN THE POPOVER OPENS (B-27). Only on a deliberate ask: a keystroke,
-// or ArrowDown / ArrowUp to browse from an empty value. Focus alone must
-// not open it. `EditSeatDialog` is a Radix Dialog, which autofocuses its
+// or ArrowDown / ArrowUp, which reveal the unfiltered list. Focus alone
+// must not open it. `EditSeatDialog` is a Radix Dialog, which autofocuses its
 // first field on mount — an `onFocus` that opened the list therefore
 // covered the buildings checklist before the operator touched anything.
 // The no-interaction case had no coverage at all, which is why it

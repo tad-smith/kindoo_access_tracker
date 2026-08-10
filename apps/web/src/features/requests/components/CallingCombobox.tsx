@@ -10,11 +10,15 @@
 //   - Typed input edits the underlying value directly; selecting a
 //     suggestion overwrites the value with the exact calling name.
 //   - The popover opens only when the user asks for suggestions:
-//     typing a character, or ArrowDown / ArrowUp to browse from an
-//     empty value. Focus alone does NOT open it — clicking into the
-//     field, and the Dialog autofocus that fires when `EditSeatDialog`
-//     mounts, both leave it closed (B-27). On blur the popover closes
-//     after a brief delay so click-to-select still registers.
+//     typing a character, or pressing ArrowDown / ArrowUp. Focus alone
+//     does NOT open it — clicking into the field, and the Dialog
+//     autofocus that fires when `EditSeatDialog` mounts, both leave it
+//     closed (B-27). On blur the popover closes after a brief delay so
+//     click-to-select still registers. The arrow keys only OPEN the
+//     list; they do not move through it. The visible input is the
+//     PopoverAnchor's child, outside the `Command` subtree, and nothing
+//     forwards its keydowns to cmdk — so selection is mouse-only, and
+//     typing is the only way to narrow the list.
 //   - Scope changes swap the suggestion list immediately but do NOT
 //     clear the typed value (operator decision: free-text survives a
 //     scope flip).
@@ -101,8 +105,10 @@ export function CallingCombobox({
       event.preventDefault();
       setOpen(false);
     } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !open) {
-      // Open on arrow navigation even from an empty value so users can
-      // browse the list without typing.
+      // Reveal the list without typing — including from an empty value,
+      // where there is nothing to filter on. Opening is all this does;
+      // see the header note on why the arrows cannot then move through
+      // the list.
       setOpen(true);
     }
   };

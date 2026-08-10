@@ -772,9 +772,9 @@ describe('<NewRequestForm /> — calling typeahead', () => {
    * scope, which is what the per-scope assertions below need. Clicking
    * the field is not enough — focus deliberately does not open the
    * popover (B-27) — and typing would filter the list down, so the
-   * arrow key is the affordance for browsing from an empty value.
+   * arrow key is the one affordance that reveals it unfiltered.
    */
-  async function browseSuggestions(user: ReturnType<typeof userEvent.setup>) {
+  async function openSuggestions(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByTestId('new-request-reason'));
     await user.keyboard('{ArrowDown}');
   }
@@ -800,7 +800,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
         wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
       />,
     );
-    await browseSuggestions(user);
+    await openSuggestions(user);
     // Sample two entries from the unit list — exhaustive enumeration
     // would add no signal.
     expect(await screen.findByText('Bishop')).toBeInTheDocument();
@@ -816,7 +816,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
     // request (T-96).
     const user = userEvent.setup();
     render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
-    await browseSuggestions(user);
+    await openSuggestions(user);
     expect(await screen.findByText('Branch President')).toBeInTheDocument();
     expect(screen.getByText('Branch Clerk')).toBeInTheDocument();
   });
@@ -824,7 +824,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
   it('hides the ward-only callings when the scope is a branch', async () => {
     const user = userEvent.setup();
     render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
-    await browseSuggestions(user);
+    await openSuggestions(user);
     await screen.findByText('Branch President');
     expect(screen.queryByText('Bishop')).toBeNull();
     expect(screen.queryByText('Ward Clerk')).toBeNull();
@@ -834,7 +834,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
   it('still suggests the shared callings when the scope is a branch', async () => {
     const user = userEvent.setup();
     render(<NewRequestForm scopes={branchScope} buildings={buildings()} wards={branchWards()} />);
-    await browseSuggestions(user);
+    await openSuggestions(user);
     expect(await screen.findByText('Relief Society President')).toBeInTheDocument();
     expect(screen.getByText('Sunday School President')).toBeInTheDocument();
   });
@@ -848,7 +848,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
         wards={wards([{ code: 'CO', building_name: 'Maple Building' }])}
       />,
     );
-    await browseSuggestions(user);
+    await openSuggestions(user);
     await screen.findByText('Bishop');
     expect(screen.queryByText('Branch President')).toBeNull();
     expect(screen.queryByText('Branch Clerk')).toBeNull();
@@ -876,7 +876,7 @@ describe('<NewRequestForm /> — calling typeahead', () => {
         wards={[]}
       />,
     );
-    await browseSuggestions(user);
+    await openSuggestions(user);
     expect(await screen.findByText('Stake President')).toBeInTheDocument();
     expect(screen.getByText('Stake High Councilor')).toBeInTheDocument();
   });
