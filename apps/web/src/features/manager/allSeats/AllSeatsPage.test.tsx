@@ -1388,7 +1388,57 @@ describe('<AllSeatsPage /> — Give Access To Stake Buildings button', () => {
     mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
     render(<AllSeatsPage />);
     expect(screen.queryByTestId('grant-stake-access-btn-roger2@x.com')).toBeNull();
-    expect(screen.getByTestId('already-has-stake-access-roger2@x.com')).toBeInTheDocument();
+    // The ROW matters, not just presence: the primary here IS the stake
+    // grant, so a per-seat placement put the note next to a Scope chip
+    // already reading "Stake" and left the foreign ward row — the one
+    // whose neighbours carry the button — saying nothing.
+    const note = screen.getByTestId('already-has-stake-access-roger2@x.com');
+    expect(note.closest('[data-row-key]')?.getAttribute('data-row-key')).toBe('roger2@x.com/dup-0');
+  });
+
+  it('keeps the note visible when the scope filter isolates the foreign ward', async () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    // The view the gap was noticed in. Filtering to the foreign ward drops
+    // the stake primary row entirely, so a note tied to the primary row
+    // vanished — the change was a no-op in exactly the view it was for.
+    const seat = makeSeat({
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      member_canonical: 'roger3@x.com',
+      member_email: 'roger3@x.com',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'FN', type: 'auto', kindoo_site_id: 'east-stake', detected_at: NOW },
+      ],
+    });
+    mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
+    const u = userEvent.setup();
+    render(<AllSeatsPage />);
+    await u.selectOptions(screen.getByLabelText(/Scope:/), 'FN');
+    expect(screen.getByTestId('already-has-stake-access-roger3@x.com')).toBeInTheDocument();
+  });
+
+  it('stays silent when a home-site ward grant disqualifies the member anyway', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    // The stake grant is NOT the only thing standing between this member
+    // and the button — the home-site CO grant disqualifies them
+    // independently — so naming it as the reason would be false.
+    const seat = makeSeat({
+      scope: 'CO',
+      type: 'manual',
+      callings: [],
+      member_canonical: 'mixed@x.com',
+      member_email: 'mixed@x.com',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'FN', type: 'manual', kindoo_site_id: 'east-stake', detected_at: NOW },
+        { scope: 'stake', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('already-has-stake-access-mixed@x.com')).toBeNull();
   });
 
   it('stays silent for an ordinary home-ward member with a stake seat', () => {

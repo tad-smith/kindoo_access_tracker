@@ -29,9 +29,9 @@ import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { scopeLabel } from '../../../lib/scopeLabel';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
 import {
-  hasForeignSiteGrant,
   hasStakeScopeGrant,
   isForeignSiteOnly,
+  stakeAccessNoteGrant,
 } from '../../../lib/foreignSiteOnly';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
@@ -393,19 +393,25 @@ function GrantRowCard({
     isManager &&
     !hasStakeScopeGrant(seat) &&
     isForeignSiteOnly(seat, wards, buildings);
-  // ...and when the ONLY thing standing between this member and that
+  // ...and when the only thing standing between this member and that
   // button is that they already have what it grants, say so rather than
-  // rendering nothing. A member provisioned on another stake's site is a
-  // candidate for the affordance; a silently absent button on exactly one
-  // row of a ward reads as an inconsistency rather than as an answer.
-  // Deliberately NOT shown for an ordinary home-ward member with a stake
-  // seat — the affordance was never relevant to them, so noting its
-  // absence would be noise on most rows in the stake.
+  // rendering nothing — a silently absent action on exactly one row of a
+  // ward reads as an inconsistency, not as an answer.
+  //
+  // Placed on the row the BUTTON would have occupied (the first
+  // foreign-site grant), not on the seat's primary row. In the shape this
+  // exists for the primary IS the stake grant, so a per-seat placement put
+  // the note beside a Scope chip already reading "Stake" and left the
+  // foreign ward row — the one whose neighbours all carry the button —
+  // saying nothing; under a scope filter for that ward it disappeared
+  // altogether, making the whole thing a no-op in the view where the gap
+  // was noticed.
+  const noteGrant = hasStakeScopeGrant(seat) ? stakeAccessNoteGrant(seat, wards, buildings) : null;
   const alreadyHasStakeAccess =
-    isPrimaryRow &&
     isManager &&
-    hasStakeScopeGrant(seat) &&
-    hasForeignSiteGrant(seat, wards, buildings);
+    noteGrant !== null &&
+    noteGrant.scope === grant.scope &&
+    noteGrant.duplicateIndex === grant.duplicateIndex;
 
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical
