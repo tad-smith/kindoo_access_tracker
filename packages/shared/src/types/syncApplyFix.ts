@@ -131,6 +131,28 @@ export type BuildingsMismatchPayload = {
 export type SbaOnlyRemovePayload = {
   /** Raw (typed) email — server canonicalizes to locate the seat. */
   memberEmail: string;
+  /**
+   * The scope of the grant the drift row was surfaced FROM (B-24).
+   *
+   * A Sync row is a per-site projection: a seat contributes through its
+   * primary or through any `duplicate_grants[]` entry on that site.
+   * Without this the callable could only guess, and its multi-grant
+   * branch guessed `duplicate_grants[0]` — promoting a revoked grant over
+   * a live primary. With it, a row surfaced from a duplicate drops that
+   * duplicate and leaves the primary alone.
+   *
+   * Optional for version skew only: an extension predating this field
+   * sends nothing and gets the old delete-or-promote behaviour, which is
+   * correct whenever the row came from the primary (the common case).
+   */
+  scope?: string;
+  /**
+   * Kindoo site of that same grant — `null` for home, a site id for a
+   * foreign site, omitted when the client can't resolve it. Used only to
+   * disambiguate when more than one grant on the seat carries `scope`;
+   * scope alone identifies the grant in every shape seen in practice.
+   */
+  kindooSiteId?: string | null;
 };
 
 /** Payload for the `kindoo-unparseable` fix. A Kindoo Description that

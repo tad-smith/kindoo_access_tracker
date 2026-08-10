@@ -339,7 +339,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // backend canonicalizes it to locate the orphaned seat.
       return {
         stakeId,
-        fix: { code: 'sba-only', payload: { memberEmail: d.displayEmail } },
+        fix: {
+          code: 'sba-only',
+          payload: {
+            memberEmail: d.displayEmail,
+            // B-24: name the grant this row was surfaced from. Without it
+            // the callable falls back to delete-or-promote and, on a
+            // duplicate-surfaced row, promotes the revoked grant over a
+            // live primary. `d.sba` is the PROJECTION, so its scope/site
+            // are the surfaced grant's, not the primary's.
+            ...(d.sba ? { scope: d.sba.scope, kindooSiteId: d.sba.kindooSiteId ?? null } : {}),
+          },
+        },
       };
     }
     case 'kindoo-unparseable': {

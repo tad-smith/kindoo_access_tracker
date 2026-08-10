@@ -184,12 +184,26 @@ describe('fixActionsFor', () => {
     ).toEqual([]);
   });
 
-  it('withholds the destructive actions on a duplicate-surfaced row (B-16 / B-24)', () => {
+  it('keeps sba-only on a duplicate-surfaced row now that it targets the grant (B-24)', () => {
+    // Withholding this was what left a merged auto grant with no removal
+    // path anywhere: every web Remove gates on `type !== 'auto'`.
+    const actions = fixActionsFor(
+      discrepancy({
+        code: 'sba-only',
+        surfacedFromDuplicate: true,
+        sba: { scope: 'FT', type: 'auto', callings: [], buildingNames: [] },
+        kindoo: null,
+      }),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ testId: 'remove-sba' });
+  });
+
+  it('withholds the destructive actions on a duplicate-surfaced row (B-16)', () => {
     // Every syncApplyFix handler writes the PRIMARY's fields, so on a row
     // projected from a duplicate these two destroy a grant the operator
     // isn't looking at. The row still renders; only the buttons go.
     for (const code of [
-      'sba-only',
       'callings-mismatch',
       'buildings-mismatch',
       'type-mismatch',
@@ -701,7 +715,13 @@ describe('buildCallableInput', () => {
     expect(input.stakeId).toBe('csnorth');
     expect(input.fix.code).toBe('sba-only');
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload).toEqual({ memberEmail: 'Orphan.Seat@Example.com' });
+    // B-24: the payload also names the grant the row was surfaced from,
+    // so the callable targets it instead of guessing duplicate_grants[0].
+    expect(payload).toEqual({
+      memberEmail: 'Orphan.Seat@Example.com',
+      scope: 'CO',
+      kindooSiteId: null,
+    });
   });
 
   it('kindoo-unparseable sends the raw Kindoo description as the church-wide calling', () => {
@@ -771,7 +791,11 @@ describe('applyFix', () => {
     expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
     const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(sent.fix.code).toBe('sba-only');
-    expect(sent.fix.payload).toEqual({ memberEmail: 'orphan@example.com' });
+    expect(sent.fix.payload).toEqual({
+      memberEmail: 'orphan@example.com',
+      scope: 'CO',
+      kindooSiteId: null,
+    });
   });
 
   it('wraps a thrown callable error as a flat error', async () => {

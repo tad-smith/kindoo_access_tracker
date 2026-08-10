@@ -11,7 +11,6 @@
 // Every entry writes the PRIMARY grant's fields, which on such a row is
 // not the grant the operator is looking at (B-16, B-24):
 //
-//   - `sba-only`            promotes `duplicate_grants[0]` over the primary
 //   - `callings-mismatch`   replaces the primary's callings + reaps its access
 //   - `type-mismatch`       DEMOTE clears the primary's callings + reaps access
 //   - `buildings-mismatch`  replaces the primary's buildings with another site's
@@ -31,8 +30,13 @@
 
 import type { DiscrepancyCode } from './detector';
 
+// `sba-only` was the first entry here and is deliberately NO LONGER in
+// the set: B-24's threading landed, so `applySbaOnlyRemove` drops the
+// grant the row names instead of guessing `duplicate_grants[0]`. Keeping
+// it withheld was what left a merged auto grant with no removal path
+// anywhere in the product — Sync withheld it and every web Remove
+// affordance gates on `grant.type !== 'auto'`.
 export const WITHHELD_ON_DUPLICATE_SURFACED: ReadonlySet<DiscrepancyCode> = new Set([
-  'sba-only',
   'callings-mismatch',
   'type-mismatch',
   'buildings-mismatch',

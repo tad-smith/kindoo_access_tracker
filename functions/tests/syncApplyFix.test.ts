@@ -642,6 +642,107 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(seat.lastActor).toEqual({ email: MANAGER_EMAIL, canonical: MANAGER_EMAIL });
       });
 
+      it('B-24: sba-only drops the surfaced duplicate and leaves the primary alone', async () => {
+        await seedManager();
+        // The merged shape at end of life: the ward calling ends, Kindoo
+        // revokes, the foreign run emits sba-only through the duplicate.
+        // Pre-B-24 this promoted the revoked grant and destroyed the
+        // stake primary.
+        await seedSeat({
+          scope: 'stake',
+          type: 'auto',
+          callings: ['Stake Clerk'],
+          building_names: ['Lexington Building'],
+        });
+        await seedAccess({
+          importer_callings: { stake: ['Stake Clerk'] },
+          sort_order: STAKE_CLERK_ORDER,
+        });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+          duplicate_grants: [
+            {
+              scope: 'MR',
+              type: 'auto',
+              callings: ['Ward Clerk'],
+              building_names: ['Black Forest'],
+              kindoo_site_id: 'east-stake',
+              detected_at: Timestamp.now(),
+            },
+          ],
+          duplicate_scopes: ['MR'],
+        });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'sba-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  scope: 'MR',
+                  kindooSiteId: 'east-stake',
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        // Primary intact — scope, type, callings, buildings all unchanged.
+        expect(seat.scope).toBe('stake');
+        expect(seat.type).toBe('auto');
+        expect(seat.callings).toEqual(['Stake Clerk']);
+        expect(seat.building_names).toEqual(['Lexington Building']);
+        // Only the surfaced duplicate is gone, mirror rebuilt.
+        expect(seat.duplicate_grants).toEqual([]);
+        expect(seat.duplicate_scopes).toEqual([]);
+        // Stake app access survives — this is what the old promote reaped.
+        const access = (
+          await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+        ).data() as Access;
+        expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      });
+
+      it('B-24: a payload naming no scope keeps the historical promote (version skew)', async () => {
+        await seedManager();
+        await seedSeat({ scope: 'stake', type: 'auto', callings: ['Stake Clerk'] });
+        const { db } = requireEmulators();
+        await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+          duplicate_grants: [
+            {
+              scope: 'MR',
+              type: 'auto',
+              callings: ['Ward Clerk'],
+              building_names: ['Black Forest'],
+              kindoo_site_id: 'east-stake',
+              detected_at: Timestamp.now(),
+            },
+          ],
+          duplicate_scopes: ['MR'],
+        });
+
+        await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: { code: 'sba-only', payload: { memberEmail: MEMBER_EMAIL } },
+            },
+          }),
+        );
+        // An older extension gets exactly what it got before.
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.scope).toBe('MR');
+      });
+
       it('merges into a matching duplicate grant and rebuilds the scope mirror', async () => {
         await seedManager();
         await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });

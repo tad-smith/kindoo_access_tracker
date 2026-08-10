@@ -20,7 +20,7 @@ So on a foreign run the row can read "Kindoo = Pine Ward" while the click writes
 This is the identical defect [[B-23]] closed for `kindoo-only` by adding `KindooBlock.createScope`; the same fix applies — carry the site-filtered scope and send it. Pre-existing and scoped out of #275, whose own test (`createScope is the site-filtered segment even when primaryScope is not`) demonstrates the divergence with `primaryScope: 'stake'` against a filtered pick of `'FT'`.
 
 ## [B-24] `sba-only` removal promotes the wrong grant when the row was surfaced through a duplicate
-Status: open
+Status: closed (fixed in PR #275) `[FIXED 2026-08-10]`
 Owner: @backend-engineer
 Severity: high (destroys a valid home-site grant and reaps its app access; the trigger is a routine calling change)
 Phase: cross-cutting
@@ -38,7 +38,9 @@ Branch / PR: found reviewing PR #275
 
 **B-23's withholding turned this into a no-removal-path bug (2026-08-10).** PR #275 withholds `sba-only` on duplicate-surfaced rows precisely because this entry makes the button destructive. The side effect is that a merged **auto** parallel-site grant now has no removal path *anywhere*: Sync withholds it, all three web Remove affordances gate on `grant.type !== 'auto'`, and no scheduled reaper exists. So the normal end of life for a merged grant — the calling ends, Kindoo revokes — leaves a permanent phantom duplicate that keeps that ward's `duplicate_scopes` read access, keeps its utilization inflated, and re-emits an unfixable drift row. Fixing this entry is what lifts it.
 
-**Interim guidance for the operator:** on a foreign-site `sba-only` row for a member who also holds a home-site grant, do **not** click Remove From SBA; the row is safe to leave until this is fixed (a stale duplicate grants no access Kindoo hasn't already revoked).
+**Fixed in PR #275** rather than deferred, because B-23's withholding turned it into a no-removal-path bug: with `sba-only` suppressed on these rows and every web Remove affordance gating on `grant.type !== 'auto'`, a merged auto grant could not be deleted at all. `SbaOnlyRemovePayload` now carries the surfaced grant's `scope` (+ `kindooSiteId` as a tiebreaker), taken from the row's `sba` block — which IS the projection, so it names the surfaced grant rather than the primary. `applySbaOnlyRemove` drops that `duplicate_grants[]` entry and rebuilds `duplicate_scopes`, leaving the primary untouched, and reaps no access (a duplicate-only scope never had an `importer_callings` entry — the merge writes none). A payload with no `scope` keeps the historical delete-or-promote, so an extension predating the field behaves exactly as before; both paths have integration tests. `sba-only` is correspondingly **removed** from the duplicate-surfaced withhold list.
+
+**Still open in the same class:** [[B-16]] (`callings-mismatch` / `type-mismatch` / `buildings-mismatch` / `kindoo-unparseable` all still write the primary — their fixes stay withheld on duplicate-surfaced rows) and [[B-25]]. The threading added here is the pattern they need.
 
 ## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
 Status: closed (fixed in PR #275) `[FIXED 2026-08-09]`

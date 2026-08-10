@@ -1285,6 +1285,62 @@ async function applySbaOnlyRemove(
   const seat = seatSnap.data() as Seat;
   const dupes = seat.duplicate_grants ?? [];
 
+  // B-24: which grant did the row come from? A Sync row is a per-site
+  // projection, so a seat can surface through its primary OR through a
+  // `duplicate_grants[]` entry on that site. Without the discriminator
+  // this function guessed `duplicate_grants[0]`, which for a merged seat
+  // meant promoting a just-revoked grant over a live primary.
+  //
+  // A client that predates the field sends nothing: fall through to the
+  // historical delete-or-promote, which is right whenever the row came
+  // from the primary (the common case) and is what shipped before.
+  const surfacedScope =
+    typeof payload.scope === 'string' && payload.scope.trim().length > 0
+      ? payload.scope.trim()
+      : undefined;
+  if (surfacedScope !== undefined && surfacedScope !== seat.scope) {
+    // The row came from a duplicate. Drop THAT entry and nothing else —
+    // the primary is a different grant on a different site and is not
+    // what the operator asked to remove.
+    //
+    // Site is only a tiebreaker: `scope` identifies the grant in every
+    // shape seen in practice, but a seat carrying the same scope twice
+    // would otherwise be ambiguous. An entry with no stamp matches any
+    // requested site, mirroring the read-time ward fallback.
+    const wantSite = payload.kindooSiteId;
+    const matches = (d: DuplicateGrant): boolean => {
+      if (d.scope !== surfacedScope) return false;
+      if (wantSite === undefined || d.kindoo_site_id === undefined) return true;
+      return d.kindoo_site_id === wantSite;
+    };
+    return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+      const freshSnap = await tx.get(seatRef);
+      if (!freshSnap.exists) return { success: false, error: 'seat not found' };
+      const fresh = freshSnap.data() as Seat;
+      const freshDupes = fresh.duplicate_grants ?? [];
+      const idx = freshDupes.findIndex(matches);
+      if (idx < 0) {
+        // Already gone, or the seat changed under us. Soft-fail so the
+        // next Sync run re-derives rather than deleting something else.
+        return { success: false, error: 'that grant is no longer on the seat' };
+      }
+      const remaining = freshDupes.filter((_, i) => i !== idx);
+      tx.update(seatRef, {
+        duplicate_grants: remaining,
+        duplicate_scopes: remaining.map((d) => d.scope),
+        last_modified_at: FieldValue.serverTimestamp(),
+        last_modified_by: { ...actor },
+        lastActor: { ...actor },
+      });
+      // No access reap: a duplicate-only scope never had an
+      // `importer_callings` entry to begin with. `writeAccessForAutoScope`
+      // is only ever called with a PRIMARY scope — the `kindoo-only` merge
+      // deliberately writes no access at all (spec §8) — so reaping here
+      // could only remove an entry some other writer owns.
+      return { success: true, seatId: canonical };
+    });
+  }
+
   if (dupes.length === 0) {
     // Orphan delete, retry-safe. ONE transaction re-reads + re-validates
     // the seat, stamps `lastActor: SyncActor:sba-only`, and reaps the

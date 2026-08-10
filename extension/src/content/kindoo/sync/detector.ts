@@ -107,6 +107,13 @@ export interface SbaBlock {
   callings: string[];
   reason?: string | undefined;
   buildingNames: string[];
+  /**
+   * Kindoo site of the grant this projection was built from — `null`
+   * home, a site id for a foreign site. Sent on the `sba-only` payload
+   * alongside `scope` so the callable can target the surfaced grant
+   * rather than guessing `duplicate_grants[0]` (B-24).
+   */
+  kindooSiteId?: string | null;
 }
 
 export interface KindooBlock {
@@ -382,6 +389,7 @@ function projectSeatForSite(
       callings: first.callings,
       reason: first.reason,
       buildingNames: unioned,
+      kindooSiteId: wantSiteId,
     },
     fromDuplicate,
   };

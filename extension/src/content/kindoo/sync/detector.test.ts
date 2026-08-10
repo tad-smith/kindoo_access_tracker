@@ -2212,7 +2212,7 @@ describe('detect', () => {
     expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum Second Counselor');
   });
 
-  it('B-24: an sba-only row surfaced through a duplicate is flagged and offers no fix', () => {
+  it('B-24: an sba-only row surfaced through a duplicate names that grant and keeps its fix', () => {
     // The normal end of life for a grant B-23 appends: the ward calling
     // ends, Kindoo revokes the user, but the seat still projects onto the
     // foreign site through the duplicate. Removing would promote the
@@ -2247,8 +2247,14 @@ describe('detect', () => {
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('sba-only');
     expect(row.surfacedFromDuplicate).toBe(true);
-    expect(row.reason).toContain('parallel-site grant');
-    expect(fixActionsFor(row)).toEqual([]);
+    // The projection names the DUPLICATE's scope and site, which is what
+    // the payload carries so the callable drops that grant and not the
+    // stake primary.
+    expect(row.sba?.scope).toBe('FT');
+    expect(row.sba?.kindooSiteId).toBe('east-stake');
+    // Removal stays available — withholding it was what left a merged
+    // auto grant undeletable.
+    expect(fixActionsFor(row)).toHaveLength(1);
   });
 
   it('every duplicate-surfaced row carries the flag, whatever its code', () => {
