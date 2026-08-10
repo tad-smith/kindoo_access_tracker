@@ -6,22 +6,6 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
-## [B-29] Dismissing any dialog drops focus to `<body>` instead of the control that opened it
-Status: open
-Owner: @web-engineer
-Severity: medium (WCAG 2.4.3 Focus Order; keyboard and screen-reader users lose their place on every dialog close)
-Phase: cross-cutting
-
-**Symptom.** Close any modal — Escape, Cancel, or a successful submit — and focus lands on `<body>` rather than returning to the affordance that opened it. A keyboard user who opens Edit Seat from a roster row and dismisses it is returned to the top of the document and has to Tab back through the page to reach the next row.
-
-**Cause.** Radix's `DialogContentModal` wires its close path as `onCloseAutoFocus: event.preventDefault(); context.triggerRef.current?.focus()`. `context.triggerRef` is populated only by a rendered `<Dialog.Trigger>`. This app never renders one — every `Dialog` is driven from a controlled `open` prop with a caller-owned button — so `triggerRef.current` is always `null`, the `preventDefault()` suppresses `FocusScope`'s own restore, and nothing focuses anything.
-
-**Found while fixing B-28**, which is how it was verified, but it long predates it and is unrelated to that dialog's mount focus: a differential test in `Dialog.test.tsx` pins that the default and opt-out paths close identically. Sabotaging B-28's focus redirect to a bare `preventDefault` makes the opt-out path report `BUTTON` against the default path's `body` — confirming the default path genuinely does not restore focus to the opener.
-
-**Scope.** Every dialog in the app (~10 call sites), so the fix belongs in the shared `Dialog` wrapper, not per-caller. The likely shape is for the wrapper to capture `document.activeElement` on open and restore it in `onCloseAutoFocus` — deliberately not attempted in PR #281, which was scoped to Edit Seat's mount focus only. Whatever lands needs a test per dismissal path (Escape, Cancel, submit-close), since they run through different Radix code.
-
----
-
 ## [B-28] Edit Seat opens with the Calling field focused and its text selected
 Status: closed (fixed) `[FIXED 2026-08-10]`
 Owner: @web-engineer
@@ -42,8 +26,6 @@ Branch / PR: `fix/b28-edit-seat-dialog-no-autofocus`
 **Scope.** Only Edit Seat opts out. Other pre-filled edit dialogs (Configuration's Edit ward / Edit building / Edit organization) still open with their first field focused and selected; select-on-open is a defensible edit-in-place idiom and the operator reported only Edit Seat, so nothing was ruled either way for them.
 
 **Why the tests were green.** Same class of gap as B-27: no test asserted the untouched mount render. `Dialog.test.tsx`'s focus test asserted only "focus is somewhere inside the dialog", which is true of the buggy state, and `EditSeatDialog.test.tsx` began every case with an interaction. Coverage added at both layers for no-field-focused, no-text-selected, Tab-from-mount staying inside, the trap pulling focus back from outside, and Escape-from-mount — plus a test pinning the unchanged **default** so a future flip of `autoFocusFirstField`'s default is caught here rather than in whichever dialog notices.
-
-**Found while fixing, not fixed here.** Dismissing a dialog does not return focus to the control that opened it. Verified as identical with and without this fix (differential test in `Dialog.test.tsx`), so B-28 neither caused nor worsened it. Filed as **B-29**.
 
 ---
 
