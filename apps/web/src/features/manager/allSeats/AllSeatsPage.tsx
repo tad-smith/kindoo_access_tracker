@@ -406,7 +406,7 @@ function GrantRowCard({
   // saying nothing; under a scope filter for that ward it disappeared
   // altogether, making the whole thing a no-op in the view where the gap
   // was noticed.
-  const noteGrant = hasStakeScopeGrant(seat) ? stakeAccessNoteGrant(seat, wards, buildings) : null;
+  const noteGrant = stakeAccessNoteGrant(seat, wards, buildings);
   const alreadyHasStakeAccess =
     isManager &&
     noteGrant !== null &&

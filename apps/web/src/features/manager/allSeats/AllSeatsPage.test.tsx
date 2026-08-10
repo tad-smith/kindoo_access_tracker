@@ -818,10 +818,6 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     );
   });
 
-  // T-43 follow-up: a parallel-site duplicate without its own
-  // `building_names` (legacy / pre-migration shape) MUST NOT inherit
-  // the seat's home-site building_names — those are on a different
-  // Kindoo site. Empty list is the correct graceful-degradation shape.
   // The shape B-23's merge produces: a stake-calling holder in a
   // foreign-site unit. The Kettle Creek grant is real and independent —
   // often the member's ONLY access to those buildings — so labelling its
@@ -901,6 +897,10 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(dupRow.textContent).not.toContain('duplicate');
   });
 
+  // T-43 follow-up: a parallel-site duplicate without its own
+  // `building_names` (legacy / pre-migration shape) MUST NOT inherit
+  // the seat's home-site building_names — those are on a different
+  // Kindoo site. Empty list is the correct graceful-degradation shape.
   it('parallel-site duplicate without building_names does not leak home buildings onto the foreign-site row', () => {
     mockAll({
       seats: [

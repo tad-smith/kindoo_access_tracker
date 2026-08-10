@@ -87,6 +87,11 @@ export function stakeAccessNoteGrant(
   wards: readonly Ward[],
   buildings: readonly Building[],
 ): GrantView | null {
+  // The precondition lives here, not in the caller: without it this
+  // returns a grant for a seat with NO stake grant — the foreign-site-only
+  // member who should get the BUTTON — so a second caller forgetting the
+  // check would tell them they already have access they don't have.
+  if (!hasStakeScopeGrant(seat)) return null;
   const nonStake = grantsForDisplay(seat).filter((g) => g.scope !== 'stake');
   if (nonStake.length === 0) return null;
   if (!nonStake.every((g) => grantSiteId(g, wards, buildings) !== null)) return null;
