@@ -28,7 +28,11 @@ import { useAllSeats, useBuildings, useKindooSites, useWards } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { scopeLabel } from '../../../lib/scopeLabel';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
-import { hasStakeScopeGrant, isForeignSiteOnly } from '../../../lib/foreignSiteOnly';
+import {
+  hasStakeScopeGrant,
+  isForeignSiteOnly,
+  stakeAccessNoteGrant,
+} from '../../../lib/foreignSiteOnly';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
@@ -389,6 +393,25 @@ function GrantRowCard({
     isManager &&
     !hasStakeScopeGrant(seat) &&
     isForeignSiteOnly(seat, wards, buildings);
+  // ...and when the only thing standing between this member and that
+  // button is that they already have what it grants, say so rather than
+  // rendering nothing — a silently absent action on exactly one row of a
+  // ward reads as an inconsistency, not as an answer.
+  //
+  // Placed on the row the BUTTON would have occupied (the first
+  // foreign-site grant), not on the seat's primary row. In the shape this
+  // exists for the primary IS the stake grant, so a per-seat placement put
+  // the note beside a Scope chip already reading "Stake" and left the
+  // foreign ward row — the one whose neighbours all carry the button —
+  // saying nothing; under a scope filter for that ward it disappeared
+  // altogether, making the whole thing a no-op in the view where the gap
+  // was noticed.
+  const noteGrant = stakeAccessNoteGrant(seat, wards, buildings);
+  const alreadyHasStakeAccess =
+    isManager &&
+    noteGrant !== null &&
+    noteGrant.scope === grant.scope &&
+    noteGrant.duplicateIndex === grant.duplicateIndex;
 
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical
@@ -443,21 +466,32 @@ function GrantRowCard({
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
-          {grant.isPrimary && !grant.hasSameScopeDuplicates ? null : (
+          {/* The badge marks a row that FOLDS more than one grant, and
+              nothing else. `collapseSameScopeGrants` merges same-scope
+              duplicates into their primary, so every row that renders
+              standalone is a DIFFERENT scope — a distinct grant, not a
+              redundant copy of anything, and often the member's only
+              access to those buildings. Calling those "duplicate" said
+              the opposite of what's true.
+
+              Keying this on site (`isParallelSite`) was the first attempt
+              and was wrong on the axis: the category is scope. It left the
+              identical manager-granted stake grant bare on a foreign-site
+              member and badged on a home-site one — the same mislabel,
+              kept for the more common half.
+
+              What survives is the collapsed case, where the badge earns
+              its place: `edited` when an auto primary was manually
+              extended, `duplicate` when a manual one was. */}
+          {grant.hasSameScopeDuplicates ? (
             <Badge
               variant="manual"
               data-testid={`grant-duplicate-badge-${testIdSuffix}`}
-              title={
-                grant.hasSameScopeDuplicates
-                  ? 'This user was manually granted access to additional buildings.'
-                  : grant.isParallelSite
-                    ? 'Parallel-site grant — needs its own Kindoo write.'
-                    : 'Within-site priority loser — covered by the primary write.'
-              }
+              title="This user was manually granted access to additional buildings."
             >
-              {grant.hasSameScopeDuplicates && grant.type === 'auto' ? 'edited' : 'duplicate'}
+              {grant.type === 'auto' ? 'edited' : 'duplicate'}
             </Badge>
-          )}
+          ) : null}
           {siteLabel ? (
             <Badge variant="info" data-testid={`kindoo-site-badge-${testIdSuffix}`}>
               {siteLabel}
@@ -476,6 +510,14 @@ function GrantRowCard({
             >
               Give Access To Stake Buildings
             </Button>
+          ) : null}
+          {alreadyHasStakeAccess ? (
+            <span
+              className="roster-card-note"
+              data-testid={`already-has-stake-access-${seat.member_canonical}`}
+            >
+              Already has stake access
+            </span>
           ) : null}
           {canRemove ? (
             <RemovalAffordance

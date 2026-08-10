@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Building, DuplicateGrant, Ward } from '@kindoo/shared';
 import { makeSeat, makeWard } from '../../test/fixtures';
-import { hasStakeScopeGrant, isForeignSiteOnly } from './foreignSiteOnly';
+import { hasStakeScopeGrant, isForeignSiteOnly, stakeAccessNoteGrant } from './foreignSiteOnly';
 
 const stamp = { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 };
 const NOW: DuplicateGrant['detected_at'] = stamp;
@@ -120,5 +120,54 @@ describe('hasStakeScopeGrant', () => {
 
   it('returns false when no grant is stake-scope', () => {
     expect(hasStakeScopeGrant(makeSeat({ scope: 'FN' }))).toBe(false);
+  });
+});
+
+describe('stakeAccessNoteGrant', () => {
+  const call = (seat: Parameters<typeof stakeAccessNoteGrant>[0]) =>
+    stakeAccessNoteGrant(seat, WARDS, BUILDINGS);
+
+  it('returns null without a stake grant — that member should get the BUTTON', () => {
+    // The precondition that used to live in the caller. Without it the
+    // helper answers for a foreign-site-only member, and a second caller
+    // would tell them they already have access they don't have.
+    expect(call(makeSeat({ scope: 'FN', type: 'manual', callings: [] }))).toBeNull();
+  });
+
+  it('returns the foreign grant for a stake primary + foreign duplicate (B-23 shape)', () => {
+    const seat = makeSeat({
+      scope: 'stake',
+      duplicate_grants: [
+        { scope: 'FN', type: 'auto', kindoo_site_id: 'east-stake', detected_at: NOW },
+      ],
+    });
+    expect(call(seat)?.scope).toBe('FN');
+  });
+
+  it('returns the foreign grant for a foreign primary + stake duplicate', () => {
+    const seat = makeSeat({
+      scope: 'FN',
+      duplicate_grants: [
+        { scope: 'stake', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    expect(call(seat)?.scope).toBe('FN');
+  });
+
+  it('returns null when a HOME-site ward grant disqualifies the member anyway', () => {
+    // The stake grant is then not the only thing standing between them and
+    // the button, so naming it as the reason would be false.
+    const seat = makeSeat({
+      scope: 'CO',
+      duplicate_grants: [
+        { scope: 'FN', type: 'manual', kindoo_site_id: 'east-stake', detected_at: NOW },
+        { scope: 'stake', type: 'manual', kindoo_site_id: null, detected_at: NOW },
+      ],
+    });
+    expect(call(seat)).toBeNull();
+  });
+
+  it('returns null for a stake-only seat — the affordance was never relevant', () => {
+    expect(call(makeSeat({ scope: 'stake' }))).toBeNull();
   });
 });

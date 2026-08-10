@@ -64,6 +64,41 @@ export function isForeignSiteOnly(
 }
 
 /**
+ * The grant that should carry the "Already has stake access" note, or
+ * `null` when the seat shouldn't carry one.
+ *
+ * Answers the narrow question: *would this seat qualify for the "Give
+ * Access To Stake Buildings" button if the stake grant weren't already
+ * there?* So every NON-stake grant must resolve to a foreign site — a
+ * member with a home-site ward grant is disqualified from the button
+ * independently, and telling them the stake grant is the reason would be
+ * false.
+ *
+ * Returns the FIRST foreign-site grant, which is the row the button would
+ * have appeared on. Placing the note per-seat instead put it on the
+ * primary — and in the shape this exists for (B-23: stake primary +
+ * foreign ward duplicate) the primary IS the stake row, so the note landed
+ * next to a Scope chip already reading "Stake" while the foreign ward row,
+ * the one whose neighbours all carry the button, said nothing. Under a
+ * scope filter for that ward it vanished entirely.
+ */
+export function stakeAccessNoteGrant(
+  seat: Seat,
+  wards: readonly Ward[],
+  buildings: readonly Building[],
+): GrantView | null {
+  // The precondition lives here, not in the caller: without it this
+  // returns a grant for a seat with NO stake grant — the foreign-site-only
+  // member who should get the BUTTON — so a second caller forgetting the
+  // check would tell them they already have access they don't have.
+  if (!hasStakeScopeGrant(seat)) return null;
+  const nonStake = grantsForDisplay(seat).filter((g) => g.scope !== 'stake');
+  if (nonStake.length === 0) return null;
+  if (!nonStake.every((g) => grantSiteId(g, wards, buildings) !== null)) return null;
+  return nonStake[0] ?? null;
+}
+
+/**
  * `true` when the seat already holds a stake-scope grant (primary or
  * any duplicate). Drives the hide/disable of the "Give Access" button —
  * a member who already has home-site stake access has nothing to grant.

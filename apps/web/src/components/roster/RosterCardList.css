@@ -84,6 +84,16 @@
   color: var(--kd-fg-1);
 }
 
+/* Sits where an action button would, explaining its absence. Muted and
+   unboxed so it reads as a note rather than as a disabled control the
+   user might try to click. */
+.roster-card-note {
+  color: var(--kd-fg-3);
+  font-size: 0.9em;
+  white-space: nowrap;
+  align-self: center;
+}
+
 .roster-card-chip {
   color: var(--kd-fg-2);
   white-space: nowrap;
