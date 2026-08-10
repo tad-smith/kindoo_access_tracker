@@ -2378,15 +2378,28 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest', 'Annex']);
     });
 
-    it('scope-mismatch moves the duplicate, leaving the primary at stake', async () => {
+    it('scope-mismatch moves the duplicate and takes its access with it', async () => {
       await seedMergedSeat();
       await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
       await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
+
       await run('scope-mismatch', { memberEmail: MEMBER_EMAIL, newScope: 'CO', ...ref() });
+
       const seat = await readSeat();
       expect(seat.scope).toBe('stake');
       expect(seat.duplicate_grants[0]!.scope).toBe('CO');
       expect(seat.duplicate_scopes).toEqual(['CO']);
+      // `MR` no longer exists on the seat, and no payload could ever name
+      // it again — left behind it is a permanent `wards` claim for a
+      // calling that ended. The primary's stake entry is untouched.
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
     });
 
     it('kindoo-unparseable restakes the duplicate, not the primary', async () => {
@@ -2403,6 +2416,16 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(dup.scope).toBe('stake');
       expect(dup.callings).toEqual(['Some Church Wide Calling']);
       expect(dup.kindoo_site_id).toBeNull();
+      // The access half — asserting only the seat is what let the
+      // scope-blind stake reap through review. `writeStakeScopeAccessForUnparseable`
+      // drops `importer_callings['stake']` unconditionally, which on a
+      // duplicate-surfaced row would delete this doc outright and revoke
+      // the member's stake app access. A duplicate restake writes no access.
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
     });
 
     it('soft-fails when the named grant is no longer on the seat', async () => {

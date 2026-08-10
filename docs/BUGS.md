@@ -36,6 +36,19 @@ The first pass at this bug fixed only the provenance side and rationalised the s
 
 ---
 
+## [B-27] `applyScopeMismatch` orphans the PRIMARY's `importer_callings` when it moves scope
+Status: open
+Owner: @backend-engineer
+Severity: medium (leaves a `wards` / stake app-access claim for a calling the member no longer holds, with no in-product way to remove it)
+Phase: cross-cutting
+Branch / PR: found reviewing PR #278
+
+`applyScopeMismatch` rewrites a grant's `scope` and never touches `importer_callings`. When the moved grant is the **primary**, the old scope's entry stays on the access doc with no grant behind it, and nothing can reap it: every reaper takes its scope from a payload, and no payload can name a scope once no grant on the seat carries it. `seedClaims` turns that key straight into a claim, so it is a standing app-access grant for a calling that ended.
+
+**Pre-existing**, and deliberately left alone by PR #278: reaping on the primary path would revoke access on every ordinary `scope-mismatch` until the following `callings-mismatch` re-granted it, which is a behaviour change for the common case rather than a bug fix. PR #278 *did* close the duplicate half, because that half is one it created — it is what started writing access for duplicate scopes.
+
+**Fix shape:** reconcile in the same write — reap `oldScope`, and for an auto grant write `newScope` from the grant's own callings filtered against the new scope's app-access set (which needs the new unit's kind, so one extra `tx.get`, same pattern as `appAccessOptsForScope`). Doing both together avoids the revoke-then-regrant flicker that reaping alone would cause.
+
 ## [B-26] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
 Status: closed (fixed in PR #278) `[FIXED 2026-08-10]`
 Owner: @extension-engineer

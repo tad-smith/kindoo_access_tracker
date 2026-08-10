@@ -47,7 +47,7 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
   // A `kindoo-only` row whose Description resolved no segment on this
-  // site (`createScope === null`, only reachable on a home run) has no
+  // site (`siteScope === null`, only reachable on a home run) has no
   // scope to merge onto. The payload's `?? 'stake'` fallback was safe
   // while the callable refused an existing seat; now it would append a
   // FABRICATED stake-scope duplicate with no callings and no reason —
@@ -210,7 +210,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
-      // Scope comes from the SITE-FILTERED segment (`createScope`) — the
+      // Scope comes from the SITE-FILTERED segment (`siteScope`) — the
       // same segment `intendedCallings` / `intendedFreeText` above are
       // built from. Deliberately NOT `primaryScope`, whose unfiltered
       // tiebreaker prefers an app-access segment then `'stake'`: on a

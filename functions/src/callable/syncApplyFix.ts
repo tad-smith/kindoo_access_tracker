@@ -441,7 +441,7 @@ async function applyKindooOnly(
 
     if (existingSeat) {
       // Version gate. Everything that makes the merge safe ships in the
-      // extension — `createScope`, the duplicate-surfaced withholding,
+      // extension — `siteScope`, the per-grant payload discriminators,
       // `sba-only`'s grant discriminator — while THIS is a server change
       // that lands for every client at once. Chrome updates extensions on
       // its own schedule after a Web Store review measured in days, so
@@ -591,7 +591,7 @@ const SLOT_ALREADY_ON_SITE =
  *
  *   - **Version skew.** Dropping the old `seatSnap.exists` guard changed
  *     server behaviour for clients already in the field. An extension at
- *     ≤1.1.11 sends the UNFILTERED primary scope (the defect `createScope`
+ *     ≤1.1.11 sends the UNFILTERED primary scope (the defect `siteScope`
  *     fixes), and functions deploy the day the operator runs the script
  *     while the extension waits on Chrome Web Store review. Through that
  *     window a foreign-site click for a member with a multi-segment
@@ -1044,6 +1044,7 @@ async function applyScopeMismatch(
 
   const db = getDb();
   const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const accessRef = db.doc(`stakes/${stakeId}/access/${canonical}`);
   const wardRef = newScope !== 'stake' ? db.doc(`stakes/${stakeId}/wards/${newScope}`) : null;
   const buildingsRef = db.collection(`stakes/${stakeId}/buildings`);
   const actor = syncActor('scope-mismatch');
@@ -1076,6 +1077,24 @@ async function applyScopeMismatch(
     // access, and orphaned the primary scope's `importer_callings`.
     const slot = resolveGrantSlot(seat, payload);
     if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+    const movedGrant = grantAt(seat, slot);
+    // A DUPLICATE's scope moving must take its `importer_callings` with it.
+    // This PR is what starts writing access for duplicate scopes, so leaving
+    // the old key behind strands it permanently: every reaper takes its scope
+    // from a payload, and no payload can name a scope once no grant carries
+    // it — `seedClaims` turns that key straight into a `wards` claim, so it
+    // would be app access for a calling that ended. Reap only; the new
+    // scope's grant is written by the `callings-mismatch` that owns its
+    // callings, which keeps this fail-closed rather than minting access from
+    // a set this row never saw.
+    //
+    // Primary-surfaced moves are deliberately untouched: the same orphan
+    // exists there and predates this PR, and reaping on that path would
+    // revoke access for every ordinary scope-mismatch. Filed as B-27.
+    const accessSnap =
+      slot.kind === 'duplicate' && movedGrant.scope !== newScope
+        ? await tx.get(accessRef)
+        : undefined;
 
     const update: Record<string, unknown> = {
       ...patchGrant(seat, slot, {
@@ -1105,6 +1124,13 @@ async function applyScopeMismatch(
         wards,
         buildings,
         context: 'syncApplyFix(scope-mismatch)',
+      });
+    }
+    if (accessSnap?.exists) {
+      clearImporterCallingsForScope(tx, accessRef, {
+        access: accessSnap.data() as Access,
+        scope: movedGrant.scope,
+        actor,
       });
     }
     tx.update(seatRef, update);
@@ -1344,6 +1370,25 @@ async function applyKindooUnparseable(
       // app-access set separately.
       if (slot.kind === 'primary') update.sort_order = stakeSort;
 
+      // Access, on a PRIMARY-surfaced row only.
+      //
+      // `writeStakeScopeAccessForUnparseable` drops `importer_callings`
+      // for BOTH the old scope and `'stake'`, then re-adds stake from this
+      // row's calling. That is right when the seat's whole identity is
+      // moving to stake — the primary case it was written for. On a
+      // duplicate-surfaced row it would reap a stake entry belonging to a
+      // DIFFERENT grant (the primary's), and re-add it from a calling that
+      // grant doesn't hold: on the merged steady state that deletes the
+      // access doc outright and revokes the member's stake app access.
+      //
+      // So a duplicate-surfaced restake writes no access at all. Neither
+      // reaping another grant's entry nor minting one this row can't
+      // justify is acceptable, and the duplicate's own access is picked up
+      // by the `callings-mismatch` that owns its callings.
+      if (slot.kind !== 'primary') {
+        tx.update(seatRef, { ...update, ...patchGrant(seat, slot, grantPatch) });
+        return { success: true, seatId: canonical };
+      }
       writeStakeScopeAccessForUnparseable(tx, accessRef, {
         canonical,
         memberEmail: seat.member_email ?? memberEmail,
