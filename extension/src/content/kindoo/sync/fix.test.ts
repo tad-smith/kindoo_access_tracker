@@ -182,15 +182,14 @@ describe('fixActionsFor', () => {
     }
   });
 
-  it('keeps the reshaping actions on a duplicate-surfaced row', () => {
-    // Same B-16 class, but these change one axis of a grant that still
-    // exists rather than destroying one, and Sync re-emits until it
-    // converges. Withholding them would strand reconciliation outright.
-    for (const code of ['scope-mismatch', 'type-mismatch'] as const) {
-      const actions = fixActionsFor(discrepancy({ code, surfacedFromDuplicate: true }));
-      expect(actions).toHaveLength(1);
-      expect(actions[0]).toMatchObject({ testId: 'update-sba' });
-    }
+  it('keeps only scope-mismatch on a duplicate-surfaced row', () => {
+    // The one axis with no other route to convergence. Everything else
+    // either reaps a grant or replaces a set wholesale on the primary.
+    const actions = fixActionsFor(
+      discrepancy({ code: 'scope-mismatch', surfacedFromDuplicate: true }),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ testId: 'update-sba' });
   });
 
   it('any review-severity row returns no actions regardless of code (invariant)', () => {

@@ -2251,6 +2251,58 @@ describe('detect', () => {
     expect(fixActionsFor(row)).toEqual([]);
   });
 
+  it('every duplicate-surfaced row carries the flag, whatever its code', () => {
+    // Regression for the review-5 gap: the flag was attached per-code, on
+    // two pushes out of ten, so the `buildings-mismatch` withholding was
+    // dead code while spec + sync-design + the commit message all claimed
+    // it worked. `fix.test.ts` set the flag by hand and could not see it.
+    // Drive the DETECTOR and hand the real row to `fixActionsFor`.
+    const merged = seat({
+      member_canonical: 'roger@example.com',
+      member_email: 'roger@example.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Lexington Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          // Partial set — the AccessSchedules fallback misses church-direct
+          // grants, which is the NORMAL state of a freshly merged grant.
+          building_names: [],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [merged],
+        kindooUsers: [
+          kuser({
+            username: 'roger@example.com',
+            description: 'Pine Ward (Sunday School Teacher)',
+            accessSchedules: [{ ruleId: 6250 }],
+            derivedBuildings: ['Pine Building'],
+            directGrantBuildings: ['Pine Building'],
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    // Whatever code this shape produces, it is duplicate-surfaced and the
+    // destructive fixes must be absent.
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.surfacedFromDuplicate).toBe(true);
+    if (row.code !== 'scope-mismatch') {
+      expect(fixActionsFor(row)).toEqual([]);
+    }
+  });
+
   it('a primary-surfaced sba-only row keeps its Remove action', () => {
     const result = detect(
       mixedInputs({

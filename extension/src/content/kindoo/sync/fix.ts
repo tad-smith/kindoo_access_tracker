@@ -60,6 +60,16 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   //     primary's `callings[]` and reconciles ITS scope (B-16), which for
   //     a stake primary filters to no app-access calling and revokes
   //     access outright. Trigger is an ordinary calling change.
+  //   - `type-mismatch` → `applyTypeMismatch`'s DEMOTE branch clears the
+  //     primary's `callings[]`, folds them into `reason`, drops
+  //     `sort_order`, and reaps `importer_callings[seat.scope]` — the same
+  //     destruction `callings-mismatch` is withheld for. Reachable on this
+  //     population precisely BECAUSE the merged duplicate is `auto`: when
+  //     the church-direct grant behind it is withdrawn while the Kindoo
+  //     user remains, the foreign run sees auto-with-no-grants and offers
+  //     DEMOTE. Withholding strands nothing — PROMOTE on such a row reads
+  //     the PRIMARY's already-`auto` type and is a no-op that never
+  //     converges either way.
   //   - `buildings-mismatch` → `applyBuildingsMismatch` replaces the
   //     PRIMARY's `building_names` wholesale, and on a duplicate-surfaced
   //     row the incoming set is the FOREIGN site's derived buildings. One
@@ -72,16 +82,24 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // `(scope, kindoo_site_id)` threading B-16 and B-24 both need lands and
   // the handlers target the surfaced grant.
   //
-  // Deliberately NOT withheld: `scope-mismatch` and `type-mismatch` are
-  // B-16's class too, but they move one field of a grant that still
-  // exists rather than destroying a set, and Sync re-emits the row until
-  // it converges. Withholding them would strand reconciliation for the
-  // whole population with no data loss to prevent. That line was first
-  // drawn to include `buildings-mismatch` as well, which was wrong — its
-  // write is a wholesale replace with ANOTHER SITE's building set.
+  // `scope-mismatch` is the only one left available, and it is not clean
+  // either: it rewrites the primary's `scope`, re-stamps
+  // `kindoo_site_id`, and deletes `organization_id` — and it sends the
+  // UNFILTERED pick (see `primaryScope`), so the scope it writes need not
+  // be the segment that surfaced the row. It stays because scope drift is
+  // the one axis with no other route to convergence, and its write
+  // replaces a field rather than reaping a grant. Revisit with B-16.
+  //
+  // This list was twice drawn too narrowly — first excluding
+  // `buildings-mismatch` (a wholesale replace with ANOTHER SITE's set),
+  // then `type-mismatch` (whose DEMOTE reaps access identically to
+  // `callings-mismatch`). Both were justified as "reshaping"; neither was.
   if (
     d.surfacedFromDuplicate &&
-    (d.code === 'sba-only' || d.code === 'callings-mismatch' || d.code === 'buildings-mismatch')
+    (d.code === 'sba-only' ||
+      d.code === 'callings-mismatch' ||
+      d.code === 'buildings-mismatch' ||
+      d.code === 'type-mismatch')
   ) {
     return [];
   }

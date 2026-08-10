@@ -771,7 +771,7 @@ export function detect(inputs: DetectInputs): DetectResult {
     // every primary-writing handler would write the wrong grant.
     const fromDup = projected?.fromDuplicate === true;
     const dupNote =
-      ' This row was surfaced through a parallel-site grant, not the seat’s primary, so the fix is unavailable — applying it would write the primary instead (see B-16 / B-24).';
+      ' Surfaced through a parallel-site grant rather than the seat’s primary, so any fix that would write the primary is unavailable on this row (B-16 / B-24).';
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
@@ -794,8 +794,8 @@ export function detect(inputs: DetectInputs): DetectResult {
             : 'SBA has a seat for this member, but the user is not present in Kindoo.') +
           (fromDup ? dupNote : ''),
         sba: sbaBlock,
-        kindoo: null,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
+        kindoo: null,
       });
       continue;
     }
@@ -909,6 +909,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
         sba: sbaBlock,
+        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts, 'auto'),
       });
       continue;
@@ -943,6 +944,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'review',
           reason: 'Kindoo description is blank — nothing to reconcile; manual review.',
           sba: sbaBlock,
+          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
         });
         continue;
@@ -959,6 +961,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         reason:
           "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
+        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
@@ -979,6 +982,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'review',
         reason: 'Kindoo description has no resolvable primary segment; review manually.',
         sba: sbaBlock,
+        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
@@ -994,6 +998,7 @@ export function detect(inputs: DetectInputs): DetectResult {
         severity: 'drift',
         reason: `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.`,
         sba: sbaBlock,
+        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
       });
       continue;
@@ -1041,6 +1046,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
           sba: sbaBlock,
+          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'auto'),
         });
         continue;
@@ -1056,6 +1062,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           reason:
             'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
           sba: sbaBlock,
+          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
         });
         continue;
@@ -1093,6 +1100,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
           sba: sbaBlock,
+          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });
         continue;
