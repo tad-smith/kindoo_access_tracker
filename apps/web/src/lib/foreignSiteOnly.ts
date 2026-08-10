@@ -64,11 +64,6 @@ export function isForeignSiteOnly(
 }
 
 /**
- * `true` when the seat already holds a stake-scope grant (primary or
- * any duplicate). Drives the hide/disable of the "Give Access" button —
- * a member who already has home-site stake access has nothing to grant.
- */
-/**
  * `true` when at least one grant sits on a FOREIGN Kindoo site.
  *
  * Distinct from {@link isForeignSiteOnly}, which is false the moment the
@@ -88,6 +83,11 @@ export function hasForeignSiteGrant(
   );
 }
 
+/**
+ * `true` when the seat already holds a stake-scope grant (primary or
+ * any duplicate). Drives the hide/disable of the "Give Access" button —
+ * a member who already has home-site stake access has nothing to grant.
+ */
 export function hasStakeScopeGrant(seat: Seat): boolean {
   return grantsForDisplay(seat).some((g) => g.scope === 'stake');
 }

@@ -863,9 +863,14 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     expect(dupRow.textContent).toContain('High Plains');
   });
 
-  // Two grants for ONE scope on ONE site is a genuine collision — one of
-  // them didn't win — so that row keeps the word.
-  it('a within-site duplicate row still carries the duplicate badge', () => {
+  // A CROSS-SCOPE duplicate is a distinct grant for a different scope, so
+  // it isn't a duplicate of the primary in any sense a reader would mean.
+  // This is the common shape — `planAddMerge` appends a stake grant onto an
+  // existing seat every time this page's own "Give Access To Stake
+  // Buildings" request completes — and it renders on a HOME-site member
+  // too, which is why keying the badge on site rather than scope left the
+  // same mislabel in place for half the population.
+  it('a cross-scope same-site duplicate row carries no badge either', () => {
     mockAll({
       seats: [
         makeSeat({
@@ -892,7 +897,8 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
     render(<AllSeatsPage />);
     const dupRow = document.querySelector('[data-row-key="within@x.com/dup-0"]') as HTMLElement;
     expect(dupRow).not.toBeNull();
-    expect(dupRow.querySelector('[data-testid^="grant-duplicate-badge-"]')).not.toBeNull();
+    expect(dupRow.querySelector('[data-testid^="grant-duplicate-badge-"]')).toBeNull();
+    expect(dupRow.textContent).not.toContain('duplicate');
   });
 
   it('parallel-site duplicate without building_names does not leak home buildings onto the foreign-site row', () => {

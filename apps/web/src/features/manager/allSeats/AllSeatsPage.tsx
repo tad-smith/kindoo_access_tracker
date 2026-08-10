@@ -460,28 +460,32 @@ function GrantRowCard({
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
-          {/* A PARALLEL-SITE grant carries no badge. "duplicate" was wrong
-              for it in the way that matters to a reader: it is not a
-              redundant copy of anything but an independent grant on another
-              Kindoo site, and often the member's only access to those
-              buildings. The site badge rendered beside it already names
-              exactly what makes the row different. The word stays for a
-              genuine within-site duplicate (two grants for one scope, one
-              of which didn't win), and "edited" stays for the
-              manually-extended auto seat. */}
-          {!grant.hasSameScopeDuplicates && (grant.isPrimary || grant.isParallelSite) ? null : (
+          {/* The badge marks a row that FOLDS more than one grant, and
+              nothing else. `collapseSameScopeGrants` merges same-scope
+              duplicates into their primary, so every row that renders
+              standalone is a DIFFERENT scope — a distinct grant, not a
+              redundant copy of anything, and often the member's only
+              access to those buildings. Calling those "duplicate" said
+              the opposite of what's true.
+
+              Keying this on site (`isParallelSite`) was the first attempt
+              and was wrong on the axis: the category is scope. It left the
+              identical manager-granted stake grant bare on a foreign-site
+              member and badged on a home-site one — the same mislabel,
+              kept for the more common half.
+
+              What survives is the collapsed case, where the badge earns
+              its place: `edited` when an auto primary was manually
+              extended, `duplicate` when a manual one was. */}
+          {grant.hasSameScopeDuplicates ? (
             <Badge
               variant="manual"
               data-testid={`grant-duplicate-badge-${testIdSuffix}`}
-              title={
-                grant.hasSameScopeDuplicates
-                  ? 'This user was manually granted access to additional buildings.'
-                  : 'Within-site priority loser — covered by the primary write.'
-              }
+              title="This user was manually granted access to additional buildings."
             >
-              {grant.hasSameScopeDuplicates && grant.type === 'auto' ? 'edited' : 'duplicate'}
+              {grant.type === 'auto' ? 'edited' : 'duplicate'}
             </Badge>
-          )}
+          ) : null}
           {siteLabel ? (
             <Badge variant="info" data-testid={`kindoo-site-badge-${testIdSuffix}`}>
               {siteLabel}
