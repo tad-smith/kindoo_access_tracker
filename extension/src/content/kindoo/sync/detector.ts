@@ -117,12 +117,17 @@ export interface KindooBlock {
    */
   derivedBuildings: string[] | null;
   /**
-   * Buildings the user holds via doors granted by the Church Access
-   * Automation **only** (`GrantedBy` = `sentry@groups.churchofjesuschrist.org`
+   * Buildings whose access rule the Church Access Automation grants at
+   * least one door of (`GrantedBy` = `sentry@groups.churchofjesuschrist.org`
    * or `IsSuperApi`, NOT an `AccessScheduleID` value — real church
    * grants carry `AccessScheduleID: -1`). Drives the grant-based
    * seat-type (church-backed) decision. `null` when door-grant
    * derivation was skipped or failed — promote / demote is skipped.
+   *
+   * Any-overlap, the same predicate `derivedBuildings` uses over the
+   * full door set: the church routinely leaves a door of a rule
+   * ungranted, and requiring full coverage read those members as
+   * SBA-provisioned (B-25).
    */
   directGrantBuildings: string[] | null;
   /**
@@ -408,10 +413,18 @@ function setsEqual(a: string[], b: string[]): boolean {
 /**
  * Grant-based provenance predicate (Guest seats only): a seat is
  * "church-backed" iff the member holds **at least one** Church Access
- * Automation DIRECT grant. The seat's own building set no longer enters
- * this decision — ANY church-direct grant means the church is
- * provisioning the user, so the seat is `auto`; zero church-direct
- * grants means every door is SBA-rule-provisioned, so `manual`.
+ * Automation DIRECT grant on a door some SBA building's rule contains.
+ * The seat's own building set does not enter this decision — ANY
+ * church-direct grant means the church is provisioning the user, so the
+ * seat is `auto`; zero church-direct grants means every door is
+ * SBA-rule-provisioned, so `manual`.
+ *
+ * "At least one grant" is load-bearing at the DOOR level, and the
+ * caller-supplied list has to have been derived that way. Projecting the
+ * church-only door set through a strict subset first (as this did before
+ * B-25) silently restores full-coverage semantics: a member the church
+ * grants two of three doors projects to no building at all, and reads
+ * here as if the church granted them nothing.
  *
  *   - `directGrantBuildings === null` (derivation failed) → `false`
  *     ("can't determine" — caller leaves the type unchanged).
@@ -920,7 +933,8 @@ export function detect(inputs: DetectInputs): DetectResult {
     //
     // The test is "ANY church-direct grant" — the seat's own building set
     // no longer enters the decision (it still drives `buildings-mismatch`
-    // below):
+    // below), and neither does whether the church reached every door of a
+    // building's rule (B-25; `deriveOverlappingRuleIds`):
     //   - manual seat + ≥1 church-direct grant → PROMOTE to `auto`.
     //   - auto seat + ZERO church-direct grants → DEMOTE to `manual`.
     //   - directGrantBuildings === null (derivation failed) → skip;
@@ -943,7 +957,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
-          reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
+          reason: `Promote to auto: the church directly grants this member door access in building(s) [${directList}], so Kindoo provisioning is church-owned.`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'auto'),
         });
@@ -957,8 +971,15 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
+          // Says what `[]` actually means, not what it usually means. An
+          // empty set is "no church-granted door falls inside a building
+          // rule SBA knows about" — which is also what an unmapped (or
+          // not-yet-mapped) building produces for every one of its
+          // members. Wording this as "the church grants nothing" invites
+          // the operator to flip a working auto seat on a claim that is
+          // false for that case (B-25, one level up).
           reason:
-            'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
+            'Demote to manual: no church-granted door falls inside a building rule SBA knows about for this member, so SBA owns the access ⇒ manual. If their building has no Kindoo rule mapped in Configuration → Buildings, map it and re-run Sync before applying this.',
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
         });
@@ -968,7 +989,7 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     // 7. buildings-mismatch — Kindoo door-access truth vs SBA building set.
     //
-    // `derivedBuildings` (the per-door grant strict-subset chain, stamped
+    // `derivedBuildings` (the per-door grant any-overlap chain, stamped
     // onto `kuser` by `sync/buildingsFromDoors.ts` BEFORE detect()) is the
     // authoritative Kindoo door-access signal for ALL seat types: it sees
     // both Church Access Automation direct grants AND rule-based grants.
@@ -990,12 +1011,30 @@ export function detect(inputs: DetectInputs): DetectResult {
     if (kindooBuildingsForCompare !== null) {
       const expectedBuildings = sbaBlock.buildingNames;
       if (!setsEqual(expectedBuildings, kindooBuildingsForCompare)) {
+        // Buildings this row would ADD to the seat. Since B-25 one door
+        // claims a building, so applying the row can hand the member
+        // that building's whole AccessRule on the next provision
+        // (`deriveDirectGrantRids` is strict, so a partly-held rule is
+        // never subtracted) — doors nobody granted them. Intended per
+        // spec.md §8, but the operator is the one clicking, and
+        // "Building access differs" alone doesn't say a write follows.
+        const addedBuildings = kindooBuildingsForCompare.filter(
+          (b) => !expectedBuildings.includes(b),
+        );
+        // Only on the door-grant path. The AccessSchedules fallback runs
+        // when derivation FAILED, and `autoLockedSba` disables Update SBA
+        // on exactly that condition — so nothing can be applied, nothing
+        // gets granted, and the warning would be false.
+        const widensNote =
+          addedBuildings.length > 0 && kuser.derivedBuildings != null
+            ? ` Applying this adds [${addedBuildings.join(', ')}] to the seat; a later provision may grant every door in ${addedBuildings.length === 1 ? 'that building' : 'those buildings'}'s Kindoo rule, including doors the church did not.`
+            : '';
         discrepancies.push({
           canonical: canon,
           displayEmail,
           code: 'buildings-mismatch',
           severity: 'drift',
-          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
+          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].${widensNote}`,
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });

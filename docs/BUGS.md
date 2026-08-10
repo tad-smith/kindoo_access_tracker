@@ -6,6 +6,36 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-25] Sync required EVERY door of a building's rule, so partial door grants read as nothing
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @extension-engineer
+Severity: high (silently mislabels seat provenance, and actively proposes demoting working `auto` seats)
+Phase: cross-cutting
+Branch / PR: `fix/b-25-partial-church-coverage`
+
+**Symptom (operator-reported, production).** In one ward the Church Access Automation granted a group of members access to two of a building's three doors and missed the third. A Kindoo Manager granted that third door directly — a permanent per-user grant, not an AccessRule. Sync then classified those members' seats as `manual` instead of `auto`.
+
+**The governing rule, operator-stated:** *a member is in a building if they can open **any** of its doors — they do not need all of them.* A door you can open is a way in; there is no partial entry.
+
+**Cause.** Both Kindoo-side building sets projected doors through the buildings' access rules with `deriveEffectiveRuleIds`, a **strict subset**: a building was claimed only when *every* door in its rule was present. That is not what building access means, and it is not what "≥1 church-direct grant" means either.
+
+For these members — `direct = {D1, D2}`, `all = {D1, D2, D3}` against a rule of `{D1, D2, D3}`:
+
+- `directGrantBuildings = []` — the identical value produced by a member the church grants **nothing at all**. New seats minted `manual`, and members who already held `auto` seats hit the demote branch, so Sync raised drift rows proposing `auto → manual` on correctly-classified seats.
+- `derivedBuildings` happened to be right *here* (the manager's hand-granted door completed the rule), but for any member holding only **some** of a building's doors it omitted a building they can walk into — and `buildings-mismatch` sources its Update SBA from `derivedBuildings` (`fix.ts`), so the offered fix **removed that building from their seat**. The reachable shape is a **multi-building** seat where one building keeps full coverage and another is partly held: the derived set is non-empty, so `SyncPanel`'s `autoLockedSba` guard (which disables Update SBA only when `derivedBuildings` is `null` or `[]`) does not fire, and the partly-held building is written away. A single-building seat degraded to `[]` and was blocked by that guard — so the bug surfaced as an unfixable row there, not a destructive write. No test covered any of it: the suite had no case of a member holding a strict subset of a building's doors on the all-doors set.
+
+The first pass at this bug fixed only the provenance side and rationalised the split as "access needs every door, provenance needs one" — wrong on the access half, and it left the fix action pointed at a building the member holds. Corrected before merge on the operator's ruling.
+
+**Provenance.** PR #189 relaxed the OUTER predicate (from "every seat building is church-granted" to "non-empty") and left the INNER strict subset in place, so full-coverage semantics survived one level down wearing the relaxed rule's name. `sync-design.md` recorded the two as equivalent — "non-empty (≥1 church-direct door)" — which they only are when the church happens to cover a whole rule.
+
+**Why the tests were green.** Both layers were covered and both were individually correct. `buildingsFromDoors.test.ts` asserted the strict behaviour *on purpose* ("partial church coverage does NOT claim the rule … (strict subset)"), written when the outer predicate still wanted full coverage and never revisited when PR #189 changed what the caller meant. Every detector test passes both building fields in as literals, so none could observe the derivation. And nothing anywhere exercised a member holding a strict subset of a building's doors on the all-doors set — the access half had no coverage at all. The defect lived only in the composition.
+
+**Accepted consequence (operator ruling).** Any-overlap on the all-doors set makes `derivedBuildings` a superset, so a member holding one door of building X now gets X *added* to their seat by `buildings-mismatch`, and the next provision writes X's whole rule — granting doors the church didn't. Ruled intended: if one door puts them in the building, the seat records it and SBA provisions it. Recorded in `spec.md` §8 and covered by a test asserting the add direction is actionable (non-empty `derivedBuildings`, so `autoLockedSba` doesn't block it).
+
+**Fix.** `deriveOverlappingRuleIds` — claim a rule on **one** shared door — and **both** sets derive through it, over their respective door subsets (all doors → `derivedBuildings`, church-granted → `directGrantBuildings`). `deriveEffectiveRuleIds` survives for `provision.ts` alone, where the question genuinely is "would writing this rule add a door". A grant on a door in no SBA-mapped rule counts for nothing on either side (operator's ruling). Regression coverage runs the real derivation into `detect`, at the seam, in four directions: promote fires, an existing `auto` seat is left alone, a member holding one door of a building gets no row offering to strip it, and a member holding one door of a building their seat omits gets an actionable row offering to add it.
+
+---
+
 ## [B-22] Every Popover inside a modal rendered behind it and could not be used
 Status: closed (fixed) `[FIXED 2026-08-09]`
 Owner: @web-engineer
