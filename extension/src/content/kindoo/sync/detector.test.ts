@@ -2709,6 +2709,33 @@ describe('detect + real door-grant derivation (B-25)', () => {
     expect(rows[0]?.reason).toContain('doors the church did not');
   });
 
+  it('says nothing about widening on the AccessSchedules fallback path', () => {
+    // Derivation failed (`derivedBuildings` absent) and the seat is
+    // manual, so the compare set comes from AccessSchedules. That is
+    // precisely the condition `autoLockedSba` disables Update SBA on —
+    // the row can't be applied, so nothing gets granted and the warning
+    // would be false.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: [],
+          }),
+        ],
+        kindooUsers: [kuser({ accessSchedules: [{ ruleId: 6248 }] })],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kindoo?.derivedBuildings).toBeNull();
+    expect(rows[0]?.reason).toContain('Building access differs');
+    expect(rows[0]?.reason).not.toContain('Applying this adds');
+  });
+
   it('says nothing about widening when the row only REMOVES buildings', async () => {
     // The notice must not fire on a shrink — the member lost all of
     // Pine Creek, so applying the row takes it off the seat and grants

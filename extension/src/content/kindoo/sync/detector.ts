@@ -1021,8 +1021,12 @@ export function detect(inputs: DetectInputs): DetectResult {
         const addedBuildings = kindooBuildingsForCompare.filter(
           (b) => !expectedBuildings.includes(b),
         );
+        // Only on the door-grant path. The AccessSchedules fallback runs
+        // when derivation FAILED, and `autoLockedSba` disables Update SBA
+        // on exactly that condition — so nothing can be applied, nothing
+        // gets granted, and the warning would be false.
         const widensNote =
-          addedBuildings.length > 0
+          addedBuildings.length > 0 && kuser.derivedBuildings != null
             ? ` Applying this adds [${addedBuildings.join(', ')}] to the seat; a later provision may grant every door in ${addedBuildings.length === 1 ? 'that building' : 'those buildings'}'s Kindoo rule, including doors the church did not.`
             : '';
         discrepancies.push({
