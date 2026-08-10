@@ -8,7 +8,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Dialog } from './Dialog';
 
@@ -24,6 +24,39 @@ function Harness({ initialOpen = false }: { initialOpen?: boolean }) {
         <Dialog.Footer>
           <Dialog.CancelButton>Cancel</Dialog.CancelButton>
           <Dialog.ConfirmButton onClick={() => setOpen(false)}>Confirm</Dialog.ConfirmButton>
+        </Dialog.Footer>
+      </Dialog>
+    </>
+  );
+}
+
+/** A dialog whose first field arrives pre-filled — the shape B-28 is about. */
+function PrefilledHarness({
+  initialOpen = false,
+  autoFocusFirstField,
+}: {
+  initialOpen?: boolean;
+  autoFocusFirstField?: boolean;
+}) {
+  const [open, setOpen] = useState(initialOpen);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open
+      </button>
+      <button type="button" data-testid="outside">
+        Outside
+      </button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Edit seat"
+        {...(autoFocusFirstField === undefined ? {} : { autoFocusFirstField })}
+      >
+        <input data-testid="calling" defaultValue="Ward Clerk" />
+        <input data-testid="comment" defaultValue="" />
+        <Dialog.Footer>
+          <Dialog.CancelButton>Cancel</Dialog.CancelButton>
         </Dialog.Footer>
       </Dialog>
     </>
@@ -114,6 +147,18 @@ describe('Dialog', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('focuses the first field and selects its text by default', async () => {
+    // Pins Radix's default so a future change to `autoFocusFirstField`'s
+    // default is caught here rather than in whichever dialog notices.
+    const user = userEvent.setup();
+    render(<PrefilledHarness />);
+    await user.click(screen.getByRole('button', { name: /^Open$/ }));
+    const field = screen.getByTestId('calling') as HTMLInputElement;
+    expect(document.activeElement).toBe(field);
+    expect(field.selectionStart).toBe(0);
+    expect(field.selectionEnd).toBe('Ward Clerk'.length);
+  });
+
   it('calls onOpenChange(false) when the dialog closes', async () => {
     const onOpenChange = vi.fn();
     function ControlledHarness() {
@@ -129,5 +174,96 @@ describe('Dialog', () => {
     render(<ControlledHarness />);
     await user.keyboard('{Escape}');
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+});
+
+// B-28. Suppressing Radix's mount autofocus is easy; suppressing it
+// without breaking the focus trap, Escape-from-mount, and the screen
+// reader announcement is the part that needs pinning. A bare
+// `e.preventDefault()` leaves focus on the trigger behind the overlay
+// and fails the trap + announcement assertions below.
+describe('Dialog with autoFocusFirstField={false}', () => {
+  it('opens with no field focused and no text selected', async () => {
+    const user = userEvent.setup();
+    render(<PrefilledHarness autoFocusFirstField={false} />);
+    await user.click(screen.getByRole('button', { name: /^Open$/ }));
+    const field = screen.getByTestId('calling') as HTMLInputElement;
+    expect(document.activeElement).not.toBe(field);
+    // Nothing anywhere in the dialog holds focus.
+    expect(screen.getByRole('dialog').querySelector(':focus')).toBeNull();
+    // And the pre-filled value is not selected — a collapsed range.
+    expect(field.selectionStart).toBe(field.selectionEnd);
+  });
+
+  it('still moves focus into the dialog so screen readers announce it', async () => {
+    const user = userEvent.setup();
+    render(<PrefilledHarness autoFocusFirstField={false} />);
+    const opener = screen.getByRole('button', { name: /^Open$/ });
+    await user.click(opener);
+    const dialog = screen.getByRole('dialog');
+    // Focus lands on the dialog node itself — not left on the trigger
+    // behind the overlay, which is what a bare preventDefault would do.
+    expect(document.activeElement).toBe(dialog);
+    expect(document.activeElement).not.toBe(opener);
+    expect(dialog).toHaveAccessibleName('Edit seat');
+  });
+
+  it('holds the focus trap — Tab from mount lands on the first field inside the dialog', async () => {
+    const user = userEvent.setup();
+    render(<PrefilledHarness initialOpen autoFocusFirstField={false} />);
+    const dialog = screen.getByRole('dialog');
+    await user.tab();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(screen.getByTestId('calling'));
+  });
+
+  it('pulls focus back when something outside the dialog takes it', async () => {
+    // The trap's own mechanism, independent of Tab: FocusScope refocuses
+    // its last in-scope element on a focusin from outside. That memo is
+    // seeded by the open-focus, so a suppressed-and-not-redirected mount
+    // would leave it null and let focus escape to the page behind.
+    render(<PrefilledHarness initialOpen autoFocusFirstField={false} />);
+    const dialog = screen.getByRole('dialog');
+    const outside = screen.getByTestId('outside') as HTMLButtonElement;
+    outside.focus();
+    expect(document.activeElement).not.toBe(outside);
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes on Escape from mount with no prior click', async () => {
+    const user = userEvent.setup();
+    render(<PrefilledHarness initialOpen autoFocusFirstField={false} />);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('leaves focus on close exactly where the default dialog leaves it', async () => {
+    // The opt-out changes mount focus only. Radix's close-focus path is
+    // `onCloseAutoFocus`, which we never touch, so dismissing must land
+    // focus in the same place either way. Asserted as a differential
+    // rather than against a fixed element on purpose: this app drives
+    // every Dialog from a controlled `open` prop instead of
+    // `Dialog.Trigger`, so Radix's `triggerRef` is null and its close
+    // handler restores focus to nothing — both paths land on <body>.
+    // Pinning the difference is what's in scope here; the shared gap is
+    // pre-existing and identical for all dialogs.
+    async function closeAndReportActive(autoFocusFirstField?: boolean) {
+      const user = userEvent.setup();
+      const view = render(
+        <PrefilledHarness
+          {...(autoFocusFirstField === undefined ? {} : { autoFocusFirstField })}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: /^Open$/ }));
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      const active = document.activeElement;
+      view.unmount();
+      return active === document.body ? 'body' : (active?.tagName ?? 'none');
+    }
+    const withDefault = await closeAndReportActive(undefined);
+    const withOptOut = await closeAndReportActive(false);
+    expect(withOptOut).toBe(withDefault);
   });
 });

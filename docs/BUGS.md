@@ -6,6 +6,27 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-28] Edit Seat opens with the Calling field focused and its text selected
+Status: closed (fixed) `[FIXED 2026-08-10]`
+Owner: @web-engineer
+Severity: low (cosmetic on open, but one keystroke from silently replacing the calling)
+Phase: cross-cutting
+Branch / PR: `fix/b28-edit-seat-dialog-no-autofocus`
+
+**Follow-up to B-27.** PR #280 stopped the suggestion popover from opening on focus; the underlying autofocus that triggered it was left in place. Operator: "fixes the problem, but not cleanly." The dialog still opened with the Calling field ringed and "Ward Clerk" highlighted.
+
+**Symptom (operator-reported).** Edit Seat opens with the Calling text field active and its value selected. Nothing should be focused or selected on open.
+
+**Cause (verified, not assumed).** Radix's `FocusScope` dispatches `focusScope.autoFocusOnMount` — which `Dialog.Content` exposes as `onOpenAutoFocus` — and when it is not default-prevented runs `focusFirst(tabbableCandidates, { select: true })`. The `select: true` is the load-bearing half: `focus()` calls `element.select()` on any focused `HTMLInputElement`. Confirmed in jsdom against the real dialog before changing anything — on mount `document.activeElement` was the Calling input with `selectionStart..selectionEnd` of `0..10`, exactly `"Ward Clerk"`. Every field in this dialog is pre-filled from the seat, so the default lands on a populated input every time.
+
+**Fix.** A narrow opt-in `autoFocusFirstField` prop on the shared `Dialog` (defaults to `true`; only `EditSeatDialog` passes `false`). It prevents the mount autofocus **and redirects focus to the dialog content node**, which is the `role="dialog"` element and already carries `tabIndex={-1}` from Radix's own `FocusScope` — no `tabIndex` of ours was needed. The redirect is the whole point: a bare `e.preventDefault()` leaves focus on the trigger behind the overlay, which breaks the focus trap (`FocusScope`'s last-in-scope memo stays `null`, so a focusin from outside refocuses nothing and focus escapes to the page behind), and leaves the dialog unannounced to screen readers. Pinned by test — sabotaging the redirect to a bare `preventDefault` fails four assertions.
+
+**Why the tests were green.** Same class of gap as B-27: no test asserted the untouched mount render. `Dialog.test.tsx`'s focus test asserted only "focus is somewhere inside the dialog", which is true of the buggy state, and `EditSeatDialog.test.tsx` began every case with an interaction. Coverage added at both layers for no-field-focused, no-text-selected, Tab-from-mount staying inside, the trap pulling focus back from outside, and Escape-from-mount — plus a test pinning the unchanged **default** so a future flip of `autoFocusFirstField`'s default is caught here rather than in whichever dialog notices.
+
+**Found while fixing, not fixed here (pre-existing, all dialogs).** Dismissing a dialog does not return focus to the control that opened it — focus lands on `<body>`. Radix's `DialogContentModal.onCloseAutoFocus` calls `event.preventDefault()` then `context.triggerRef.current?.focus()`, but this app drives every `Dialog` from a controlled `open` prop and never renders `<Dialog.Trigger>`, so `triggerRef` is always `null` and the restore is a no-op. Verified as identical with and without this fix (differential test in `Dialog.test.tsx`), so B-28 neither caused nor worsened it. Fixing it means changing close-focus for every dialog in the app, which was explicitly out of scope for this PR.
+
+---
+
 ## [B-27] Edit Seat opens with the calling suggestions already covering the buildings checklist
 Status: closed (fixed in PR #280) `[FIXED 2026-08-10]`
 Owner: @web-engineer

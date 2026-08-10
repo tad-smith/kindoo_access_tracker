@@ -367,6 +367,12 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
       onOpenChange={onOpenChange}
       title={title}
       description={`Submits an edit request for ${seat.member_email}. A Kindoo Manager reviews and completes it.`}
+      // Every field here arrives pre-filled from the seat, so Radix's
+      // default mount focus landed on `reason` and selected its value —
+      // the dialog opened with the calling highlighted and one keystroke
+      // from being replaced (B-28). Focus goes to the dialog container
+      // instead; the trap, Escape, and the SR announcement are unchanged.
+      autoFocusFirstField={false}
     >
       <form onSubmit={onSubmit} className="kd-wizard-form" data-testid="edit-seat-dialog-form">
         {editType !== 'edit_auto' ? (
