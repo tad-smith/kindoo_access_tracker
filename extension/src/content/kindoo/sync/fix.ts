@@ -287,7 +287,16 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         stakeId,
         fix: {
           code: 'scope-mismatch',
-          payload: { memberEmail: d.displayEmail, newScope, ...surfacedGrantRef(d) },
+          payload: {
+            memberEmail: d.displayEmail,
+            newScope,
+            // Kindoo's parsed calling(s) for this grant, from the same
+            // site-filtered segment `newScope` came from — what the new
+            // scope's access is written from. The seat's own `callings[]`
+            // are stale on this path by construction.
+            callings: combineParsedCallings(d.kindoo!.intendedCallings, d.kindoo!.intendedFreeText),
+            ...surfacedGrantRef(d),
+          },
         },
       };
     }

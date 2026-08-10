@@ -130,6 +130,23 @@ export type ScopeMismatchPayload = SurfacedGrantRef & {
   memberEmail: string;
   /** `'stake'` or a ward_code. */
   newScope: string;
+  /**
+   * KINDOO's parsed calling(s) for the moved grant, from the same
+   * site-filtered segment `newScope` comes from.
+   *
+   * The move reaps the old scope's `importer_callings`; this is what the
+   * new scope's is written from, so access crosses with the grant instead
+   * of being lost. It must come from Kindoo, not from the seat: a scope
+   * change usually accompanies a CALLING change, so SBA's `callings[]` is
+   * stale on exactly this path and would grant the old unit's calling at
+   * the new scope. Kindoo's set is by definition the one the row was
+   * detected against.
+   *
+   * Absent ⇒ reap-only, which is what an extension predating the field
+   * sends. That loses access until a later `callings-mismatch`, so it is
+   * the fallback rather than the design.
+   */
+  callings?: string[];
 };
 
 /** Payload for the `type-mismatch` fix (sync direction: kindoo-to-sba).

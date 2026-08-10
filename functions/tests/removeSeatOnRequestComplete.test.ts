@@ -331,6 +331,46 @@ describe.skipIf(!hasEmulators())('removeSeatOnRequestComplete', () => {
       expect(seat.duplicate_grants[0]!.scope).toBe('ST');
     });
 
+    it('duplicate remove reaps that scope access; the primary scope survives', async () => {
+      await seedStake();
+      await seedSeat({
+        scope: 'PC',
+        type: 'auto',
+        duplicate_grants: [
+          {
+            scope: 'MO',
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['MO Building'],
+            detected_at: Timestamp.now(),
+          },
+        ],
+      });
+      const { db } = requireEmulators();
+      // A duplicate scope can hold access since the surfaced-grant threading
+      // (B-16); a completed remove request is the ORDINARY way a grant ends,
+      // so without a reap here the `wards.MO` claim outlives the grant and
+      // nothing can name that scope again.
+      await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).set({
+        member_canonical: 'alice@gmail.com',
+        member_email: 'alice@gmail.com',
+        member_name: 'Alice',
+        importer_callings: { PC: ['Bishop'], MO: ['Ward Clerk'] },
+        manual_grants: {},
+        created_at: Timestamp.now(),
+        last_modified_at: Timestamp.now(),
+        last_modified_by: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+        lastActor: { email: 'admin@gmail.com', canonical: 'admin@gmail.com' },
+      });
+
+      await removeSeatOnRequestComplete.run(removeEvent({ scope: 'MO' }));
+
+      const access = (await db.doc(`stakes/${STAKE_ID}/access/alice@gmail.com`).get()).data() as {
+        importer_callings: Record<string, string[]>;
+      };
+      expect(access.importer_callings).toEqual({ PC: ['Bishop'] });
+    });
+
     it('duplicate remove (last duplicate): primary stays, duplicates empty; seat NOT deleted', async () => {
       await seedStake();
       await seedSeat({

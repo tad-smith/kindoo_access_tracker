@@ -119,6 +119,7 @@ import type {
   Ward,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
+import { buildLimitedMap, clearImporterCallingsForScope } from '../lib/accessScopes.js';
 import { syncActor } from '../lib/systemActors.js';
 
 /** Seat type values the callable accepts. Matches `SeatType` in the
@@ -296,7 +297,7 @@ export const syncApplyFix = onCall(
           appAccessOpts,
         );
       case 'scope-mismatch':
-        return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
+        return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload, appAccessOpts);
       case 'type-mismatch':
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload, appAccessOpts);
       case 'kindoo-unparseable':
@@ -1031,12 +1032,14 @@ async function applyCallingsMismatch(
 async function applyScopeMismatch(
   stakeId: string,
   payload: ScopeMismatchPayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
   }
   const memberEmail = requireString(payload.memberEmail, 'memberEmail');
   const newScope = requireString(payload.newScope, 'newScope');
+  const payloadCallings = cleanStringArray(payload.callings ?? [], 'callings');
   const canonical = canonicalEmail(memberEmail);
   if (canonical === '') {
     throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
@@ -1119,30 +1122,77 @@ async function applyScopeMismatch(
         context: 'syncApplyFix(scope-mismatch)',
       });
     }
-    if (accessSnap?.exists) {
-      // Reap the scope the grant is LEAVING, and grant nothing at the new
-      // one. `movedGrant.callings` is SBA's copy, and a scope change nearly
-      // always ACCOMPANIES a calling change — a member moving units gets a
-      // new calling — so re-granting from them would mint app access at the
-      // new scope from the OLD unit's calling: full ward tier, another
-      // unit's roster and member PII, for someone holding no calling there.
-      // The detector emits at most one row per member per run, so that
-      // wrong grant would stand until the operator re-runs Sync and clicks
-      // `callings-mismatch` — days at 1–2 runs a week.
+    if (accessSnap !== undefined) {
+      const prior = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
+      // Access crosses WITH the grant: reap the scope it leaves, and write
+      // the new one from KINDOO's parsed callings.
       //
-      // An earlier revision wrote the new scope to avoid a revocation
-      // window. That trades a temporary revocation for a temporary wrong
-      // grant, which is the opposite lean to the fail-closed convention
-      // this file follows elsewhere (the merge writes no access;
-      // `eq_president_app_access` defaults off). The revocation also loses
-      // nothing that isn't already lost the moment the calling changed:
-      // `callings-mismatch` owns the grant's callings and grants access
-      // from Kindoo's set, not SBA's stale one.
-      clearImporterCallingsForScope(tx, accessRef, {
-        access: accessSnap.data() as Access,
-        scope: movedGrant.scope,
-        actor,
-      });
+      // The source matters. A scope change usually accompanies a calling
+      // change, so the seat's own `callings[]` are stale on exactly this
+      // path — granting from them would mint the OLD unit's calling at the
+      // new scope. Kindoo's set is the one the row was detected against, so
+      // it can't be stale by construction.
+      //
+      // Reaping alone is not an option either, which an earlier revision
+      // got wrong: `callings-mismatch` only fires when the seat's callings
+      // DIFFER from Kindoo's, so a move that keeps the calling — a
+      // corrected Description, a ward re-code, the same standard calling in
+      // a new unit — emits no later row at all, and `importer_callings` has
+      // no other writer since the importer was removed (T-45). The member
+      // would lose SBA app access permanently and silently.
+      //
+      // No payload callings (a client predating the field) ⇒ reap-only,
+      // which is the old behaviour rather than the intended one.
+      const kindooCallings = payloadCallings;
+      const opts: AppAccessOptions =
+        newScope === 'stake'
+          ? appAccessOpts
+          : {
+              ...appAccessOpts,
+              unitType: unitKindOrWard(
+                newScope,
+                wards[0]?.ward_name ? unitType(wards[0].ward_name) : undefined,
+                'scope-mismatch',
+              ),
+            };
+      const accessCallings =
+        kindooCallings.length > 0 ? filterAppAccessCallings(newScope, kindooCallings, opts) : [];
+      if (accessCallings.length > 0) {
+        // Drop the old key by handing the helper a prior without it: it
+        // preserves every OTHER scope and replaces the one it writes, so a
+        // single call moves the entry with no window in between.
+        const priorMinusOld: Access | undefined = prior
+          ? {
+              ...prior,
+              importer_callings: Object.fromEntries(
+                Object.entries(prior.importer_callings ?? {}).filter(
+                  ([k]) => k !== movedGrant.scope,
+                ),
+              ),
+              importer_limited_callings: Object.fromEntries(
+                Object.entries(prior.importer_limited_callings ?? {}).filter(
+                  ([k]) => k !== movedGrant.scope,
+                ),
+              ),
+            }
+          : undefined;
+        writeAccessForAutoScope(tx, accessRef, {
+          canonical,
+          memberEmail: seat.member_email ?? memberEmail,
+          memberName: seat.member_name ?? '',
+          scope: newScope,
+          callings: accessCallings,
+          sortOrder: seatCallingOrder(accessCallings),
+          priorAccess: priorMinusOld,
+          actor,
+        });
+      } else if (prior) {
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: prior,
+          scope: movedGrant.scope,
+          actor,
+        });
+      }
     }
     tx.update(seatRef, update);
     return { success: true, seatId: canonical };
@@ -1397,25 +1447,66 @@ async function applyKindooUnparseable(
       // justify is acceptable, and the duplicate's own access is picked up
       // by the `callings-mismatch` that owns its callings.
       if (slot.kind !== 'primary') {
-        // Reap the scope the duplicate is LEAVING. Skipping all access work
-        // here would strand that key forever: after the write no grant on
-        // the seat carries it, and every reaper keys off a scope the seat
-        // still holds — `resolveGrantSlot` soft-fails on an unmatched scope,
-        // and `applySbaOnlyRemove`'s drop branch reaps the scope the payload
-        // names, which is now `stake`. So no payload could ever name it
-        // again while `syncAccessClaims` kept minting its claim.
+        // Access crosses with the duplicate, same as everywhere else: reap
+        // the scope it leaves, and grant at `stake` when the calling earns
+        // it. An earlier revision reaped only, claiming `callings-mismatch`
+        // would restore it — it can't: after this write the duplicate is
+        // `scope==='stake'` with `callings===[calling]`, which is exactly
+        // `unparseableAligned`, so the detector suppresses the row; and an
+        // unparseable Description never reaches the callings comparison
+        // anyway. That made the reap one-way.
         //
-        // The `oldScope !== 'stake'` guard is load-bearing: the detector
-        // still emits this row for a grant already AT stake whose calling
-        // doesn't match (`unparseableAligned` checks scope and calling), and
-        // reaping `'stake'` there would take the PRIMARY's entry — the exact
-        // cross-grant clobber this branch exists to avoid.
-        if (oldScope !== 'stake' && accessSnap.exists) {
-          clearImporterCallingsForScope(tx, accessRef, {
-            access: accessSnap.data() as Access,
-            scope: oldScope,
-            actor,
-          });
+        // The reachable shape is a foreign-site PRIMARY plus a home-site
+        // duplicate (§8 gates the actionable unparseable row to home), so
+        // `oldScope` is a home ward whose entry may be the member's only
+        // access.
+        //
+        // MERGE into `stake` rather than `writeStakeScopeAccessForUnparseable`'s
+        // wholesale rewrite: that helper drops the stake key and re-adds it
+        // from this row alone, which would take the PRIMARY's stake entry
+        // with it. Union keeps both grants' callings.
+        //
+        // `oldScope !== 'stake'` guards the reap: the detector still emits
+        // this row for a grant already AT stake whose calling doesn't match
+        // (`unparseableAligned` checks scope and calling), and reaping there
+        // would clear the entry this branch is trying to protect.
+        const prior = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
+        if (prior && grant.type === 'auto') {
+          const stakeGrants = filterAppAccessCallings('stake', [calling], appAccessOpts);
+          const priorStake = prior.importer_callings?.['stake'] ?? [];
+          const mergedStake = dedupePreserveOrder([...priorStake, ...stakeGrants]);
+          const priorMinusOld: Access =
+            oldScope === 'stake'
+              ? prior
+              : {
+                  ...prior,
+                  importer_callings: Object.fromEntries(
+                    Object.entries(prior.importer_callings ?? {}).filter(([k]) => k !== oldScope),
+                  ),
+                  importer_limited_callings: Object.fromEntries(
+                    Object.entries(prior.importer_limited_callings ?? {}).filter(
+                      ([k]) => k !== oldScope,
+                    ),
+                  ),
+                };
+          if (mergedStake.length > 0) {
+            writeAccessForAutoScope(tx, accessRef, {
+              canonical,
+              memberEmail: seat.member_email ?? memberEmail,
+              memberName: seat.member_name ?? '',
+              scope: 'stake',
+              callings: mergedStake,
+              sortOrder: seatCallingOrder(mergedStake),
+              priorAccess: priorMinusOld,
+              actor,
+            });
+          } else if (oldScope !== 'stake') {
+            clearImporterCallingsForScope(tx, accessRef, {
+              access: prior,
+              scope: oldScope,
+              actor,
+            });
+          }
         }
         tx.update(seatRef, { ...update, ...patchGrant(seat, slot, grantPatch) });
         return { success: true, seatId: canonical };
@@ -1585,21 +1676,26 @@ async function applySbaOnlyRemove(
     typeof payload.scope === 'string' && payload.scope.trim().length > 0
       ? payload.scope.trim()
       : undefined;
-  if (surfacedScope !== undefined && surfacedScope !== seat.scope) {
+  // Resolve through the SAME helper the other five handlers use. Deciding
+  // "is this the primary?" on `scope` alone short-circuits before the site,
+  // which is the one shape `resolveGrantSlot`'s own comment says must never
+  // be guessed at: a seat CAN hold one scope twice on two sites (re-map a
+  // ward's building to another site and a `kindoo-only` merge appends a
+  // same-scope duplicate, since it matches `(scope, type)`). Guessing there
+  // sent Remove down the promote path and overwrote the primary with the
+  // grant the operator asked to remove.
+  const removeSlot = surfacedScope === undefined ? null : resolveGrantSlot(seat, payload);
+  if (surfacedScope !== undefined && removeSlot === null) {
+    // Named a grant this seat doesn't hold. Soft-fail; never fall back.
+    return { success: false, error: 'that grant is no longer on the seat' };
+  }
+  if (removeSlot?.kind === 'duplicate') {
     // The row came from a duplicate. Drop THAT entry and nothing else —
-    // the primary is a different grant on a different site and is not
-    // what the operator asked to remove.
-    //
-    // Site is only a tiebreaker: `scope` identifies the grant in every
-    // shape seen in practice, but a seat carrying the same scope twice
-    // would otherwise be ambiguous. An entry with no stamp matches any
-    // requested site, mirroring the read-time ward fallback.
-    const wantSite = payload.kindooSiteId;
-    const matches = (d: DuplicateGrant): boolean => {
-      if (d.scope !== surfacedScope) return false;
-      if (wantSite === undefined || d.kindoo_site_id === undefined) return true;
-      return d.kindoo_site_id === wantSite;
-    };
+    // the primary is a different grant and is not what was asked for.
+    const targetIndex = removeSlot.index;
+    const target = (seat.duplicate_grants ?? [])[targetIndex]!;
+    const matches = (d: DuplicateGrant): boolean =>
+      d.scope === target.scope && d.kindoo_site_id === target.kindoo_site_id;
     return db.runTransaction<SyncApplyFixResult>(async (tx) => {
       const freshSnap = await tx.get(seatRef);
       if (!freshSnap.exists) return { success: false, error: 'seat not found' };
@@ -1638,7 +1734,8 @@ async function applySbaOnlyRemove(
       if (accessSnap.exists) {
         clearImporterCallingsForScope(tx, accessRef, {
           access: accessSnap.data() as Access,
-          scope: surfacedScope,
+          // The dropped grant's own scope, from the resolved slot.
+          scope: target.scope,
           actor,
         });
       }
@@ -1781,32 +1878,6 @@ async function applySbaOnlyRemove(
 // ---------------------------------------------------------------------------
 
 /**
- * Recompute `importer_limited_callings` for a write that has just
- * resolved `finalImporter`. Scopes other than `scope` keep their prior
- * stamp (and are dropped when the scope itself is gone from
- * `finalImporter`); `scope` is re-stamped from the writer-side policy
- * against the callings being written.
- */
-function buildLimitedMap(opts: {
-  priorLimited: Record<string, string[]> | undefined;
-  finalImporter: Record<string, string[]>;
-  scope: string;
-  callings: string[];
-}): Record<string, string[]> {
-  const { priorLimited, finalImporter, scope, callings } = opts;
-  const out: Record<string, string[]> = {};
-  for (const [s, c] of Object.entries(priorLimited ?? {})) {
-    if (s === scope) continue;
-    // Never strand a stamp for a scope that no longer has callings.
-    if (!(s in finalImporter)) continue;
-    if (Array.isArray(c) && c.length > 0) out[s] = [...c];
-  }
-  const limited = filterLimitedTierCallings(callings);
-  if (limited.length > 0) out[scope] = limited;
-  return out;
-}
-
-/**
  * Write an `access` doc for a sync-created/extended auto seat:
  *   - merges with any existing doc (preserves `manual_grants` and other
  *     scopes' `importer_callings`)
@@ -1898,63 +1969,6 @@ function pickMin(a: number | null, b: number | null): number | null {
   if (a === null) return b;
   if (b === null) return a;
   return a < b ? a : b;
-}
-
-/**
- * Clear `importer_callings[scope]` (and its `importer_limited_callings`
- * tier stamp) for an access doc when its corresponding auto seat flips
- * away from auto. If the final `importer_callings` is empty AND
- * `manual_grants` is empty, the access doc is deleted; otherwise it is
- * updated in place.
- *
- * The doc-existence test deliberately ignores `importer_limited_callings`:
- * it is a stamp ON grants, never a grant, so it must not keep an
- * otherwise-empty doc alive.
- */
-function clearImporterCallingsForScope(
-  tx: Transaction,
-  ref: DocumentReference,
-  opts: {
-    access: Access;
-    scope: string;
-    actor: ActorRef;
-  },
-): void {
-  const { access, scope, actor } = opts;
-  const finalImporter: Record<string, string[]> = {};
-  for (const [s, c] of Object.entries(access.importer_callings ?? {})) {
-    if (s === scope) continue;
-    if (c && c.length > 0) finalImporter[s] = [...c];
-  }
-  // Nothing granted for `scope` any more, so nothing to stamp for it.
-  const finalLimited = buildLimitedMap({
-    priorLimited: access.importer_limited_callings,
-    finalImporter,
-    scope,
-    callings: [],
-  });
-  const hasManual = Object.values(access.manual_grants ?? {}).some((arr) => arr && arr.length > 0);
-  const finalImporterEmpty = Object.keys(finalImporter).length === 0;
-
-  if (finalImporterEmpty && !hasManual) {
-    tx.delete(ref);
-    return;
-  }
-
-  // `tx.update` (not `tx.set merge`) so both maps are REPLACED
-  // wholesale. A `set merge` deep-merges nested maps key-by-key, which
-  // would leave the cleared scope's stale entry behind whenever another
-  // scope survives. `update` replaces the named fields entirely while
-  // leaving `manual_grants` (and every other unmentioned field)
-  // untouched.
-  tx.update(ref, {
-    importer_callings: finalImporter,
-    importer_limited_callings: finalLimited,
-    sort_order: finalImporterEmpty ? null : (access.sort_order ?? null),
-    last_modified_at: FieldValue.serverTimestamp(),
-    last_modified_by: actor,
-    lastActor: actor,
-  });
 }
 
 /**
