@@ -17,8 +17,11 @@
 //     click-to-select still registers. The arrow keys only OPEN the
 //     list; they do not move through it. The visible input is the
 //     PopoverAnchor's child, outside the `Command` subtree, and nothing
-//     forwards its keydowns to cmdk — so selection is mouse-only, and
-//     typing is the only way to narrow the list.
+//     forwards its keydowns to cmdk — so selection is mouse-only.
+//   - cmdk filters against `value` whenever the list is mounted, so how
+//     the popover was opened does not affect what it shows: arrows on a
+//     pre-filled field open a list already narrowed to that text. Only
+//     an empty field yields the whole scope list.
 //   - Scope changes swap the suggestion list immediately but do NOT
 //     clear the typed value (operator decision: free-text survives a
 //     scope flip).
@@ -106,9 +109,9 @@ export function CallingCombobox({
       setOpen(false);
     } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !open) {
       // Reveal the list without typing — including from an empty value,
-      // where there is nothing to filter on. Opening is all this does;
-      // see the header note on why the arrows cannot then move through
-      // the list.
+      // where there is nothing to filter on and the whole scope list
+      // shows. Opening is all this does; see the header note on why the
+      // arrows cannot then move through it.
       setOpen(true);
     }
   };

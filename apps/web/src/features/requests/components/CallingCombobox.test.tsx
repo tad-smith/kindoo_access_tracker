@@ -4,8 +4,7 @@
 // Two behaviours are pinned here.
 //
 // WHEN THE POPOVER OPENS (B-27). Only on a deliberate ask: a keystroke,
-// or ArrowDown / ArrowUp, which reveal the unfiltered list. Focus alone
-// must not open it. `EditSeatDialog` is a Radix Dialog, which autofocuses its
+// or ArrowDown / ArrowUp. Focus alone must not open it. `EditSeatDialog` is a Radix Dialog, which autofocuses its
 // first field on mount — an `onFocus` that opened the list therefore
 // covered the buildings checklist before the operator touched anything.
 // The no-interaction case had no coverage at all, which is why it
@@ -105,6 +104,23 @@ describe('<CallingCombobox />', () => {
 
     expect(list()).toBeInTheDocument();
     expect(option('Bishop')).toBeInTheDocument();
+  });
+
+  it('filters an arrow-opened list by the text already in the field', () => {
+    // How the popover was opened does not change what it shows — cmdk
+    // filters on `value` whenever the list is mounted. Edit Seat
+    // pre-fills `reason` with the seat's calling, so the arrows there
+    // open a list already narrowed to it, never the whole scope list.
+    const { input } = renderCombobox('Bishop');
+
+    act(() => {
+      fireEvent.focus(input);
+      fireEvent.keyDown(input, { key: 'ArrowDown' });
+    });
+
+    expect(list()).toBeInTheDocument();
+    expect(option('Bishop')).toBeInTheDocument();
+    expect(option('Relief Society President')).not.toBeInTheDocument();
   });
 
   it('opens the suggestion list on ArrowUp from an empty focused field', () => {

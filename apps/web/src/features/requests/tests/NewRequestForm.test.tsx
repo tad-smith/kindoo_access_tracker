@@ -772,7 +772,9 @@ describe('<NewRequestForm /> — calling typeahead', () => {
    * scope, which is what the per-scope assertions below need. Clicking
    * the field is not enough — focus deliberately does not open the
    * popover (B-27) — and typing would filter the list down, so the
-   * arrow key is the one affordance that reveals it unfiltered.
+   * arrow key is the only way in. It shows everything here because the
+   * form's `reason` starts empty; cmdk filters on the field's text no
+   * matter how the popover was opened.
    */
   async function openSuggestions(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByTestId('new-request-reason'));
