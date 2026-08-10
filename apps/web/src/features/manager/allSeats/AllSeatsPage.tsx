@@ -28,7 +28,11 @@ import { useAllSeats, useBuildings, useKindooSites, useWards } from './hooks';
 import { siteLabelForGrant } from '../../../lib/kindooSites';
 import { scopeLabel } from '../../../lib/scopeLabel';
 import { collapseSameScopeGrants, grantsForDisplay, type GrantView } from '../../../lib/grants';
-import { hasStakeScopeGrant, isForeignSiteOnly } from '../../../lib/foreignSiteOnly';
+import {
+  hasForeignSiteGrant,
+  hasStakeScopeGrant,
+  isForeignSiteOnly,
+} from '../../../lib/foreignSiteOnly';
 import { sortSeatsAcrossScopes, sortSeatsWithinScope } from '../../../lib/sort/seats';
 import { useStakeDoc } from '../dashboard/hooks';
 import { stakeAvailablePoolSize } from '../../../lib/render/stakePool';
@@ -389,6 +393,19 @@ function GrantRowCard({
     isManager &&
     !hasStakeScopeGrant(seat) &&
     isForeignSiteOnly(seat, wards, buildings);
+  // ...and when the ONLY thing standing between this member and that
+  // button is that they already have what it grants, say so rather than
+  // rendering nothing. A member provisioned on another stake's site is a
+  // candidate for the affordance; a silently absent button on exactly one
+  // row of a ward reads as an inconsistency rather than as an answer.
+  // Deliberately NOT shown for an ordinary home-ward member with a stake
+  // seat — the affordance was never relevant to them, so noting its
+  // absence would be noise on most rows in the stake.
+  const alreadyHasStakeAccess =
+    isPrimaryRow &&
+    isManager &&
+    hasStakeScopeGrant(seat) &&
+    hasForeignSiteGrant(seat, wards, buildings);
 
   const testIdSuffix = isPrimaryRow
     ? seat.member_canonical
@@ -443,16 +460,23 @@ function GrantRowCard({
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
-          {grant.isPrimary && !grant.hasSameScopeDuplicates ? null : (
+          {/* A PARALLEL-SITE grant carries no badge. "duplicate" was wrong
+              for it in the way that matters to a reader: it is not a
+              redundant copy of anything but an independent grant on another
+              Kindoo site, and often the member's only access to those
+              buildings. The site badge rendered beside it already names
+              exactly what makes the row different. The word stays for a
+              genuine within-site duplicate (two grants for one scope, one
+              of which didn't win), and "edited" stays for the
+              manually-extended auto seat. */}
+          {!grant.hasSameScopeDuplicates && (grant.isPrimary || grant.isParallelSite) ? null : (
             <Badge
               variant="manual"
               data-testid={`grant-duplicate-badge-${testIdSuffix}`}
               title={
                 grant.hasSameScopeDuplicates
                   ? 'This user was manually granted access to additional buildings.'
-                  : grant.isParallelSite
-                    ? 'Parallel-site grant — needs its own Kindoo write.'
-                    : 'Within-site priority loser — covered by the primary write.'
+                  : 'Within-site priority loser — covered by the primary write.'
               }
             >
               {grant.hasSameScopeDuplicates && grant.type === 'auto' ? 'edited' : 'duplicate'}
@@ -476,6 +500,14 @@ function GrantRowCard({
             >
               Give Access To Stake Buildings
             </Button>
+          ) : null}
+          {alreadyHasStakeAccess ? (
+            <span
+              className="roster-card-note"
+              data-testid={`already-has-stake-access-${seat.member_canonical}`}
+            >
+              Already has stake access
+            </span>
           ) : null}
           {canRemove ? (
             <RemovalAffordance

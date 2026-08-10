@@ -68,6 +68,26 @@ export function isForeignSiteOnly(
  * any duplicate). Drives the hide/disable of the "Give Access" button —
  * a member who already has home-site stake access has nothing to grant.
  */
+/**
+ * `true` when at least one grant sits on a FOREIGN Kindoo site.
+ *
+ * Distinct from {@link isForeignSiteOnly}, which is false the moment the
+ * seat holds any stake-scope or home-site grant. This asks the weaker
+ * question — "is this member provisioned on another stake's site at
+ * all?" — which is what decides whether the "Give Access To Stake
+ * Buildings" affordance is *relevant* to them, separately from whether
+ * they still need it.
+ */
+export function hasForeignSiteGrant(
+  seat: Seat,
+  wards: readonly Ward[],
+  buildings: readonly Building[],
+): boolean {
+  return grantsForDisplay(seat).some(
+    (g) => g.scope !== 'stake' && grantSiteId(g, wards, buildings) !== null,
+  );
+}
+
 export function hasStakeScopeGrant(seat: Seat): boolean {
   return grantsForDisplay(seat).some((g) => g.scope === 'stake');
 }

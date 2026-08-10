@@ -822,6 +822,79 @@ describe('<AllSeatsPage /> — Phase B multi-row rendering (T-43)', () => {
   // `building_names` (legacy / pre-migration shape) MUST NOT inherit
   // the seat's home-site building_names — those are on a different
   // Kindoo site. Empty list is the correct graceful-degradation shape.
+  // The shape B-23's merge produces: a stake-calling holder in a
+  // foreign-site unit. The Kettle Creek grant is real and independent —
+  // often the member's ONLY access to those buildings — so labelling its
+  // row "duplicate" said the opposite of what's true. The site badge
+  // beside it already names what makes the row different.
+  it('a parallel-site grant row carries no duplicate badge, only its site', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          kindoo_site_id: null,
+          member_canonical: 'roger@x.com',
+          member_email: 'roger@x.com',
+          building_names: ['Lexington Building'],
+          duplicate_grants: [
+            {
+              scope: 'KC',
+              type: 'auto',
+              callings: ['Elders Quorum Second Counselor'],
+              building_names: ['Black Forest'],
+              kindoo_site_id: 'high-plains',
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      wards: [makeWard({ ward_code: 'KC', kindoo_site_id: 'high-plains' } as any)],
+      buildings: [],
+      kindooSites: [{ id: 'high-plains', display_name: 'High Plains' }],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const dupRow = document.querySelector('[data-row-key="roger@x.com/dup-0"]') as HTMLElement;
+    expect(dupRow).not.toBeNull();
+    expect(dupRow.querySelector('[data-testid^="grant-duplicate-badge-"]')).toBeNull();
+    expect(dupRow.textContent).not.toContain('duplicate');
+    // The site badge is what explains the row, and it stays.
+    expect(dupRow.textContent).toContain('High Plains');
+  });
+
+  // Two grants for ONE scope on ONE site is a genuine collision — one of
+  // them didn't win — so that row keeps the word.
+  it('a within-site duplicate row still carries the duplicate badge', () => {
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'CO',
+          kindoo_site_id: null,
+          member_canonical: 'within@x.com',
+          member_email: 'within@x.com',
+          type: 'manual',
+          duplicate_grants: [
+            {
+              scope: 'MR',
+              type: 'manual',
+              building_names: ['Maple Building'],
+              kindoo_site_id: null,
+              detected_at: NOW,
+            },
+          ],
+        }),
+      ],
+      wards: [makeWard({ ward_code: 'CO' }), makeWard({ ward_code: 'MR' })],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+    const dupRow = document.querySelector('[data-row-key="within@x.com/dup-0"]') as HTMLElement;
+    expect(dupRow).not.toBeNull();
+    expect(dupRow.querySelector('[data-testid^="grant-duplicate-badge-"]')).not.toBeNull();
+  });
+
   it('parallel-site duplicate without building_names does not leak home buildings onto the foreign-site row', () => {
     mockAll({
       seats: [
@@ -1283,6 +1356,55 @@ describe('<AllSeatsPage /> — Give Access To Stake Buildings button', () => {
     mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
     render(<AllSeatsPage />);
     expect(screen.queryByTestId('grant-stake-access-btn-foreign@x.com')).toBeNull();
+    // ...and says why, rather than leaving one row of a ward silently
+    // short an action its neighbours all have.
+    expect(screen.getByTestId('already-has-stake-access-foreign@x.com')).toHaveTextContent(
+      'Already has stake access',
+    );
+  });
+
+  it('notes stake access on a foreign-site member who already has it (the B-23 shape)', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    // Stake-calling holder in a foreign-site unit: home stake primary plus
+    // the merged foreign ward grant. The button is correctly absent — he
+    // already has what it grants — so the row explains itself instead.
+    const seat = makeSeat({
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      member_canonical: 'roger2@x.com',
+      member_email: 'roger2@x.com',
+      kindoo_site_id: null,
+      duplicate_grants: [
+        { scope: 'FN', type: 'auto', kindoo_site_id: 'foreign-1', detected_at: NOW },
+      ],
+    });
+    mockAll({ seats: [seat], ...FOREIGN_FIXTURE });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-roger2@x.com')).toBeNull();
+    expect(screen.getByTestId('already-has-stake-access-roger2@x.com')).toBeInTheDocument();
+  });
+
+  it('stays silent for an ordinary home-ward member with a stake seat', () => {
+    usePrincipalMock.mockReturnValue(principal({}));
+    // No foreign-site grant, so the affordance was never relevant — noting
+    // its absence here would put a note on most rows in the stake.
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          type: 'manual',
+          callings: [],
+          member_canonical: 'plainstake@x.com',
+          member_email: 'plainstake@x.com',
+          kindoo_site_id: null,
+        }),
+      ],
+      ...FOREIGN_FIXTURE,
+    });
+    render(<AllSeatsPage />);
+    expect(screen.queryByTestId('grant-stake-access-btn-plainstake@x.com')).toBeNull();
+    expect(screen.queryByTestId('already-has-stake-access-plainstake@x.com')).toBeNull();
   });
 
   it('renders the button only once per member (primary row), not on duplicate rows', () => {
