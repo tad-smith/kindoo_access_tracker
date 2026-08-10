@@ -2378,6 +2378,42 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest', 'Annex']);
     });
 
+    it('a duplicate ALREADY at stake keeps the primary stake entry', async () => {
+      await seedManager();
+      // `unparseableAligned` checks scope AND calling, so the detector still
+      // emits this row for a grant already at stake whose calling doesn't
+      // match. Reaping `oldScope` there would take the PRIMARY's entry —
+      // which is the clobber this whole branch exists to avoid.
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'] });
+      await seedAccess({ importer_callings: { CO: ['Bishop'], stake: ['Stake Clerk'] } });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        duplicate_grants: [
+          {
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: [],
+            kindoo_site_id: null,
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['stake'],
+      });
+
+      await run('kindoo-unparseable', {
+        memberEmail: MEMBER_EMAIL,
+        calling: 'Some Church Wide Calling',
+        scope: 'stake',
+        kindooSiteId: null,
+      });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ CO: ['Bishop'], stake: ['Stake Clerk'] });
+    });
+
     it('scope-mismatch moves the duplicate and takes its access with it', async () => {
       await seedMergedSeat();
       await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
@@ -2395,17 +2431,22 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.duplicate_scopes).toEqual(['CO']);
       // `MR` no longer exists on the seat, and no payload could ever name
       // it again — left behind it is a permanent `wards` claim for a
-      // calling that ended. Its access moves with it to `CO` (the grant is
-      // auto and `Ward Clerk` is in the ward set), and the PRIMARY's stake
-      // entry is untouched throughout.
+      // calling that ended. Reaped, and nothing granted at `CO`; the
+      // PRIMARY's stake entry is untouched throughout.
       const access = (
         await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
       ).data() as Access;
-      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'], CO: ['Ward Clerk'] });
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
     });
 
     it('kindoo-unparseable restakes the duplicate, not the primary', async () => {
       await seedMergedSeat();
+      // Seed the duplicate's OWN access entry — without it the strand is
+      // invisible, which is how the first version of this test passed.
+      const seeded = requireEmulators().db;
+      await seeded.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
       await run('kindoo-unparseable', {
         memberEmail: MEMBER_EMAIL,
         calling: 'Some Church Wide Calling',
@@ -2418,11 +2459,12 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(dup.scope).toBe('stake');
       expect(dup.callings).toEqual(['Some Church Wide Calling']);
       expect(dup.kindoo_site_id).toBeNull();
-      // The access half — asserting only the seat is what let the
-      // scope-blind stake reap through review. `writeStakeScopeAccessForUnparseable`
-      // drops `importer_callings['stake']` unconditionally, which on a
-      // duplicate-surfaced row would delete this doc outright and revoke
-      // the member's stake app access. A duplicate restake writes no access.
+      // Both halves of the access story. The PRIMARY's `stake` entry
+      // survives — `writeStakeScopeAccessForUnparseable` drops it
+      // unconditionally, which on a duplicate-surfaced row would delete the
+      // doc outright — and the scope the duplicate LEFT is reaped, since
+      // after this write no grant carries `MR` and no payload could ever
+      // name it again.
       const { db } = requireEmulators();
       const access = (
         await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
@@ -2443,7 +2485,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect((await readSeat()).building_names).toEqual(['Lexington Building']);
     });
 
-    it('a PRIMARY scope move carries its access across in one write', async () => {
+    it('a PRIMARY scope move reaps the old scope and grants nothing new', async () => {
       await seedMergedSeat();
       // Reaping alone would revoke access until the next callings-mismatch
       // re-granted it; leaving the old key strands it forever. So the move
@@ -2456,12 +2498,14 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
 
       await run('scope-mismatch', { memberEmail: MEMBER_EMAIL, newScope: 'CO' });
 
-      const access = (
-        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
-      ).data() as Access;
-      // `stake` is gone (no grant holds it now) and `CO` carries the
-      // grant's own calling — no window where the member has neither.
-      expect(access.importer_callings).toEqual({ CO: ['Bishop'] });
+      // `stake` is gone — no grant holds it — and with `manual_grants`
+      // empty the doc goes too. Nothing is granted at `CO`: a scope change
+      // nearly always accompanies a CALLING change, so re-granting from
+      // SBA's stale callings would mint ward-tier access (another unit's
+      // roster and member PII) for someone holding no calling there.
+      // `callings-mismatch` grants it from Kindoo's set on the next run.
+      const snap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+      expect(snap.exists).toBe(false);
       expect((await readSeat()).scope).toBe('CO');
     });
 
