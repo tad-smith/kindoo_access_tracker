@@ -6,25 +6,31 @@
 // (~310 of 313 csnorth users in production), so we can't derive
 // auto-user buildings from it. This module fills the gap:
 //
-//   per-rule doors  ─┐   ┌─ strict subset ─► effective rule ids ─┐
-//                    ├───┤                                       ├─► buildings
-//   per-user doors  ─┘   └─ any overlap ───► church rule ids ────┘
+//   per-rule doors  ─┐
+//                    ├─► any-overlap → claimed rule ids → buildings
+//   per-user doors  ─┘
 //
-// Two building sets come out of the same per-user door fetch, and they
-// ask DIFFERENT questions, so they use different rule predicates:
-//   - `derivedBuildings` — what the user can actually open, over ALL of
-//     their doors (direct + rule-derived). Access, so strict subset:
-//     holding two of a building's three doors is not access to it.
-//   - `directGrantBuildings` — who provisions the user, over only the
-//     doors held via a grant from the Church Access Automation
-//     (`churchGranted` rows). Provenance, so ANY-OVERLAP: one
-//     church-granted door in a building's rule proves the church is
-//     provisioning this member, whether or not it reached every door.
-//     Drives the grant-based seat-type decision (B-25).
+// ONE rule predicate, applied to two door subsets. **A member is in a
+// building if they can open ANY of its doors** — a door they can open is
+// a way in, and holding two of three is not two-thirds of a building
+// (B-25). So `deriveOverlappingRuleIds` claims a rule on a single shared
+// door, and both sets below use it. What differs is which doors go in:
+//   - `derivedBuildings` — over ALL of the user's doors (church-direct +
+//     rule-derived). Where the member can go. Drives
+//     `buildings-mismatch` and is the source `applyKindooOnly` writes a
+//     new seat's `building_names` from.
+//   - `directGrantBuildings` — over only the doors held via a grant from
+//     the Church Access Automation (`churchGranted` rows). Who
+//     provisions the member. Drives the seat-type decision.
+//
+// `deriveEffectiveRuleIds` (strict subset — EVERY door) is a different
+// question and has one remaining caller: `provision.ts`, deciding
+// whether writing an AccessRule would be redundant. Nothing in Sync
+// should use it; see B-25 for what happens when access is read that way.
 //
 // `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
-// `deriveEffectiveRuleIds` / `deriveOverlappingRuleIds` +
-// `derivedBuildingNames` are pure and test-friendly.
+// `deriveOverlappingRuleIds` + `derivedBuildingNames` are pure and
+// test-friendly.
 
 import type { Building } from '@kindoo/shared';
 import type { KindooSession } from '../auth';
@@ -131,23 +137,31 @@ export function deriveEffectiveRuleIds(
 }
 
 /**
- * Provenance derivation: returns the set of RuleIDs whose door set the
- * user's doors TOUCH — at least one door in common. The counterpart to
- * `deriveEffectiveRuleIds`, and deliberately not the same predicate.
+ * Returns the set of RuleIDs whose door set the user's doors TOUCH — at
+ * least one door in common. The predicate BOTH Sync derivations use.
  *
- * Access needs every door; provenance needs one. The Church Access
- * Automation does not always reach every door of a building's rule (it
- * missed one in a production ward — B-25), and a Kindoo Manager filling
- * the gap by hand is a manual grant on a member the church is plainly
- * provisioning. Under a strict subset the church-only door set then
- * claims NO rule, `directGrantBuildings` comes back `[]`, and the seat
- * reads as `manual` — for new seats, and as an active `auto → manual`
- * demotion for existing ones.
+ * A member is in a building if they can open any of its doors. One door
+ * is a way in; there is no partial entry. A rule's door set is the
+ * building's doors, so sharing one of them means the member gets inside.
  *
- * Over-claim is possible where two rules share a door: a church grant on
- * the shared door alone names both buildings. That only widens the
- * promote row's reason text — the seat-type answer (church-backed at
- * all?) is the same either way.
+ * Reading that as a strict subset was B-25, and it was wrong twice over.
+ * The Church Access Automation does not reliably reach every door of a
+ * rule — it granted a production ward's members two of three and missed
+ * the third, which a Kindoo Manager then granted by hand:
+ *   - Over the church-only doors, no rule was claimed, so
+ *     `directGrantBuildings` came back `[]` — the value a member the
+ *     church grants NOTHING produces. Their seats read `manual`, and
+ *     the ones already `auto` were offered up for demotion.
+ *   - Over all doors, a member holding some of a building's doors
+ *     claimed nothing either, so `derivedBuildings` omitted a building
+ *     they can walk into — and `buildings-mismatch` sources its Update
+ *     SBA from that set, so the offered fix was to strip the building
+ *     off their seat.
+ *
+ * Over-claim is possible where two rules share a door: one grant on the
+ * shared door names both buildings. Physical doors belong to one
+ * building, so this needs a rule that selects another building's door —
+ * a mapping error, and one this surfaces rather than hides.
  *
  * Empty rule door sets are NEVER claimed, matching
  * `deriveEffectiveRuleIds`.
@@ -198,12 +212,13 @@ export function derivedBuildingNames(
  * time stays tolerable for 313-user sync runs without hammering
  * Kindoo's API.
  *
- *   - `derivedBuildings` — strict-subset over the user's full door set
- *     (direct + rule-derived). The effective-access signal.
- *   - `directGrantBuildings` — any-overlap over the user's
- *     church-granted door subset only. The provenance signal that
- *     drives promote / demote; see `deriveOverlappingRuleIds` for why
- *     the two predicates differ.
+ *   - `derivedBuildings` — over the user's full door set (church-direct
+ *     + rule-derived). Where the member can go.
+ *   - `directGrantBuildings` — over the church-granted subset only. Who
+ *     provisions them; drives promote / demote.
+ *
+ * Same predicate for both (`deriveOverlappingRuleIds` — any door claims
+ * the building); only the door subset differs.
  *
  * On per-user error: log with the `[sba-ext]` prefix, set BOTH fields
  * to `null`, continue. One user's network blip never fails the whole
@@ -249,7 +264,7 @@ export async function enrichUsersWithDerivedBuildings(
           options.fetchImpl,
         );
         user.derivedBuildings = derivedBuildingNames(
-          deriveEffectiveRuleIds(all, ruleDoorMap),
+          deriveOverlappingRuleIds(all, ruleDoorMap),
           buildings,
         );
         user.directGrantBuildings = derivedBuildingNames(

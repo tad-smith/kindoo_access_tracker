@@ -448,12 +448,12 @@ describe('enrichUsersWithDerivedBuildings', () => {
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
   });
 
-  it('a church door the member cannot complete claims provenance but NOT access', async () => {
-    // The other half of B-25: the church granted door 1, nobody granted
-    // door 2. The member can't open Maple (no derivedBuildings), but the
-    // church is still provisioning them, so the seat stays church-backed
-    // and must not be demoted to manual.
-    const users = [ku({ userId: 'u1', username: 'incomplete@example.com' })];
+  it('one door of a building is access to that building (B-25)', async () => {
+    // The church granted door 1 and nobody granted door 2. The member
+    // can open a Maple door, so they can walk into Maple —
+    // derivedBuildings claims it. Reading this as a strict subset made
+    // `buildings-mismatch` offer to strip Maple off their seat.
+    const users = [ku({ userId: 'u1', username: 'onedoor@example.com' })];
     const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
     const buildings = [building('Maple Building', 6248)];
     const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 1, church: true }], 1));
@@ -465,8 +465,47 @@ describe('enrichUsersWithDerivedBuildings', () => {
       buildings,
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
-    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
     expect(enriched[0]?.directGrantBuildings).toEqual(['Maple Building']);
+  });
+
+  it('one MANAGER-granted door is access too — provenance stays empty', async () => {
+    // Access and provenance read the same predicate over different door
+    // subsets, so this is the pair to the test above: the member can get
+    // into Maple, but no church grant backs them, so the seat is manual.
+    const users = [ku({ userId: 'u1', username: 'mgrdoor@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 1, church: false }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
+  });
+
+  it('a door in no mapped rule claims nothing on either side', async () => {
+    // Door 9 belongs to no building SBA models, so it is neither access
+    // to a building SBA tracks nor provenance for one.
+    const users = [ku({ userId: 'u1', username: 'unmapped@example.com' })];
+    const ruleDoorMap = new Map<number, Set<number>>([[6248, new Set([1, 2])]]);
+    const buildings = [building('Maple Building', 6248)];
+    const fetchImpl = vi.fn(async () => pageResp([{ DoorID: 9, church: true }], 1));
+    const enriched = await enrichUsersWithDerivedBuildings(
+      SESSION,
+      27994,
+      users,
+      ruleDoorMap,
+      buildings,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    expect(enriched[0]?.derivedBuildings).toEqual([]);
+    expect(enriched[0]?.directGrantBuildings).toEqual([]);
   });
 
   it('sets BOTH derivedBuildings and directGrantBuildings to null when a per-user call throws', async () => {

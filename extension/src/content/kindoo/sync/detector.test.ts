@@ -2555,14 +2555,14 @@ describe('detect — stake.kindoo_ignored_wards', () => {
   });
 });
 
-// B-25 — the seam between `buildingsFromDoors` and the type decision.
-// Both sides were individually correct and composed into the wrong
-// answer: the derivation projected the church-only door set through a
-// STRICT subset, so a member the church grants two of three doors
-// arrived here as `directGrantBuildings: []` — indistinguishable from a
-// member the church grants nothing. Every other detector test hands
-// `directGrantBuildings` in as a literal, which is exactly why none of
-// them could see it. These two run the real derivation.
+// B-25 — the seam between `buildingsFromDoors` and the detector. Both
+// sides were individually correct and composed into the wrong answer:
+// the derivation ran each door subset through a STRICT subset, so a
+// member holding some of a building's doors claimed no building at all
+// and arrived here as `[]` — indistinguishable from a member with
+// nothing. Every other detector test hands both fields in as literals,
+// which is exactly why none of them could see it. These run the real
+// derivation.
 describe('detect + real door-grant derivation (B-25)', () => {
   const CHURCH_GRANTOR = {
     DisplayName: 'Church Access Automation',
@@ -2571,20 +2571,21 @@ describe('detect + real door-grant derivation (B-25)', () => {
   };
   const MANAGER_GRANTOR = { DisplayName: 'A Manager', IsSuperApi: false };
 
-  /** Maple's rule is doors [1,2,3]. The church granted 1 and 2 and
-   * missed 3; a Kindoo Manager granted 3 by hand — direct, not via an
-   * AccessRule, so its grantor is the manager. */
-  async function enrichPartiallyCovered(): Promise<KindooEnvironmentUser> {
+  /** Maple's rule is doors [1,2,3]. Enrich one member against it from
+   * the given grant rows. */
+  async function enrich(
+    rows: Array<{ door: number; church: boolean }>,
+  ): Promise<KindooEnvironmentUser> {
     const fetchImpl = async () =>
       new Response(
         JSON.stringify({
-          CurrentNumberOfRows: 3,
-          TotalRecordNumber: 3,
-          RulesList: [
-            { DoorID: 1, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR },
-            { DoorID: 2, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR },
-            { DoorID: 3, AccessScheduleID: 6248, GrantedBy: MANAGER_GRANTOR },
-          ],
+          CurrentNumberOfRows: rows.length,
+          TotalRecordNumber: rows.length,
+          RulesList: rows.map((r) =>
+            r.church
+              ? { DoorID: r.door, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR }
+              : { DoorID: r.door, AccessScheduleID: 6248, GrantedBy: MANAGER_GRANTOR },
+          ),
         }),
         { status: 200 },
       );
@@ -2598,6 +2599,16 @@ describe('detect + real door-grant derivation (B-25)', () => {
     );
     return enriched[0]!;
   }
+
+  /** The reported production shape: the church granted doors 1 and 2 and
+   * missed 3; a Kindoo Manager granted 3 by hand — direct, not via an
+   * AccessRule, so its grantor is the manager. */
+  const enrichPartiallyCovered = () =>
+    enrich([
+      { door: 1, church: true },
+      { door: 2, church: true },
+      { door: 3, church: false },
+    ]);
 
   it('promotes the manual seat — two church doors are still church provisioning', async () => {
     const enriched = await enrichPartiallyCovered();
@@ -2639,6 +2650,31 @@ describe('detect + real door-grant derivation (B-25)', () => {
           }),
         ],
         kindooUsers: [await enrichPartiallyCovered()],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('does not offer to strip a building the member holds ONE door of', async () => {
+    // The access half of B-25, and the destructive one:
+    // `buildings-mismatch` sources its Update SBA from `derivedBuildings`
+    // (`fix.ts`), so a strict subset here proposed writing the member's
+    // `building_names` down to [] — removing a building they can walk
+    // into. One door of Maple is Maple.
+    const enriched = await enrich([{ door: 1, church: true }]);
+    expect(enriched.derivedBuildings).toEqual(['Maple Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
       }),
     );
     expect(result.discrepancies).toEqual([]);
