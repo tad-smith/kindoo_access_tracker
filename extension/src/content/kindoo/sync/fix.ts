@@ -196,7 +196,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // Prefer the door-grant-derived building set for ALL seat types
       // when available. The bulk listing's AccessSchedules (the source of
       // `buildingNames`) misses Church Access Automation's direct grants;
-      // `derivedBuildings` is the strict-subset chain that covers BOTH
+      // `derivedBuildings` is the any-overlap chain that covers BOTH
       // direct and rule-based grants, so it is the authoritative Kindoo
       // door-access signal. Fall back to `buildingNames` only when
       // derivation failed (null/undefined) so the seat still gets created
@@ -314,7 +314,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
     }
     case 'buildings-mismatch': {
       if (!d.kindoo) throw new Error('buildings-mismatch row missing Kindoo block');
-      // `derivedBuildings` (the door-grant strict-subset chain) is the
+      // `derivedBuildings` (the door-grant any-overlap chain) is the
       // authoritative Kindoo door-access truth for ALL seat types — it
       // sees both Church Access Automation direct grants and rule-based
       // grants. The bulk listing's AccessSchedules-derived `buildingNames`

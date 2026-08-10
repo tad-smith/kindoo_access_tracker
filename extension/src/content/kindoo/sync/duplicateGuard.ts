@@ -33,7 +33,7 @@
 // `scope`), rules-based read access flips, `organization_id` is deleted,
 // and `importer_callings.stake` is orphaned with nothing left to reap it.
 // Strictly more destructive than the `type-mismatch` PROMOTE next to it.
-// It also sends the UNFILTERED segment (B-25).
+// It also sends the UNFILTERED segment (B-26).
 //
 // Delete this module — don't extend it — once the handlers take the
 // surfaced grant's `(scope, kindoo_site_id)`; then every code can act on

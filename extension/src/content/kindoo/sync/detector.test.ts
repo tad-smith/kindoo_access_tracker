@@ -12,6 +12,7 @@ import {
   parseKindooCallings,
 } from './detector';
 import { fixActionsFor } from './fix';
+import { enrichUsersWithDerivedBuildings } from './buildingsFromDoors';
 
 describe('isChurchBacked', () => {
   it('true when the member holds ANY church-direct grant', () => {
@@ -2754,5 +2755,241 @@ describe('detect — stake.kindoo_ignored_wards', () => {
     });
     expect(result.discrepancies).toEqual([]);
     expect(result.ignoredCount).toBe(1);
+  });
+});
+
+// B-25 — the seam between `buildingsFromDoors` and the detector. Both
+// sides were individually correct and composed into the wrong answer:
+// the derivation ran each door subset through a STRICT subset, so a
+// member holding some of a building's doors claimed no building at all
+// and arrived here as `[]` — indistinguishable from a member with
+// nothing. Every other detector test hands both fields in as literals,
+// which is exactly why none of them could see it. These run the real
+// derivation.
+describe('detect + real door-grant derivation (B-25)', () => {
+  const CHURCH_GRANTOR = {
+    DisplayName: 'Church Access Automation',
+    Username: 'sentry@groups.churchofjesuschrist.org',
+    IsSuperApi: true,
+  };
+  const MANAGER_GRANTOR = { DisplayName: 'A Manager', IsSuperApi: false };
+
+  /** Maple's rule is doors [1,2,3]. Enrich one member against it from
+   * the given grant rows. */
+  async function enrich(
+    rows: Array<{ door: number; church: boolean }>,
+    ruleDoorMap?: Map<number, Set<number>>,
+  ): Promise<KindooEnvironmentUser> {
+    const fetchImpl = async () =>
+      new Response(
+        JSON.stringify({
+          CurrentNumberOfRows: rows.length,
+          TotalRecordNumber: rows.length,
+          RulesList: rows.map((r) =>
+            r.church
+              ? { DoorID: r.door, AccessScheduleID: -1, GrantedBy: CHURCH_GRANTOR }
+              : { DoorID: r.door, AccessScheduleID: 6248, GrantedBy: MANAGER_GRANTOR },
+          ),
+        }),
+        { status: 200 },
+      );
+    const enriched = await enrichUsersWithDerivedBuildings(
+      { token: 'sess', eid: 27994 },
+      27994,
+      [kuser({ description: 'Maple Ward (Sunday School Teacher)' })],
+      ruleDoorMap ?? new Map([[6248, new Set([1, 2, 3])]]),
+      BUILDINGS,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    return enriched[0]!;
+  }
+
+  /** The reported production shape: the church granted doors 1 and 2 and
+   * missed 3; a Kindoo Manager granted 3 by hand — direct, not via an
+   * AccessRule, so its grantor is the manager. */
+  const enrichPartiallyCovered = () =>
+    enrich([
+      { door: 1, church: true },
+      { door: 2, church: true },
+      { door: 3, church: false },
+    ]);
+
+  it('promotes the manual seat — two church doors are still church provisioning', async () => {
+    const enriched = await enrichPartiallyCovered();
+    expect(enriched.derivedBuildings).toEqual(['Maple Building']);
+    expect(enriched.directGrantBuildings).toEqual(['Maple Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const typeRows = result.discrepancies.filter((d) => d.code === 'type-mismatch');
+    expect(typeRows).toHaveLength(1);
+    expect(typeRows[0]?.kindoo?.grantTargetType).toBe('auto');
+    expect(typeRows[0]?.reason).toContain('Promote to auto');
+  });
+
+  it('leaves an already-auto seat alone — no demotion row', async () => {
+    // The worse half of the defect: these members mostly already HAD
+    // auto seats, so the empty church set fired the demote branch and
+    // Sync proposed flipping working auto seats to manual.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [await enrichPartiallyCovered()],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('offers to ADD a building the member holds one door of, and the row is actionable', async () => {
+    // The direction the any-overlap access rule newly enables, and the
+    // one with a write behind it. The member holds all of Pine Creek
+    // plus a single Maple door; their seat lists Pine Creek only. Sync
+    // now reports Maple on the Kindoo side, so Update SBA adds it to
+    // `building_names` — and the next provision writes Maple's whole
+    // rule, granting the doors the church didn't. Ruled correct by the
+    // operator: if one door puts them in the building, the seat says so
+    // and SBA provisions the building. Recorded in spec.md §8.
+    //
+    // `derivedBuildings` must be NON-EMPTY for that to be reachable —
+    // `SyncPanel`'s `autoLockedSba` disables Update SBA on `null` / `[]`,
+    // so an empty set would leave the row unfixable rather than
+    // actionable. Asserted below.
+    const enriched = await enrich(
+      [
+        { door: 1, church: true }, // one Maple door
+        { door: 4, church: true }, // all of Pine Creek
+        { door: 5, church: true },
+      ],
+      new Map([
+        [6248, new Set([1, 2, 3])],
+        [6249, new Set([4, 5])],
+      ]),
+    );
+    expect(enriched.derivedBuildings).toEqual(['Maple Building', 'Pine Creek Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sba?.buildingNames).toEqual(['Pine Creek Building']);
+    expect(rows[0]?.kindoo?.derivedBuildings).toEqual(['Maple Building', 'Pine Creek Building']);
+    // Non-empty ⇒ `autoLockedSba` stays false ⇒ Update SBA is clickable.
+    expect(rows[0]?.kindoo?.derivedBuildings?.length).toBeGreaterThan(0);
+    // …and the row has to SAY that clicking it widens access. This is
+    // the operator's only signal at the button; without it the copy
+    // reads as a bookkeeping correction.
+    expect(rows[0]?.reason).toContain('Applying this adds [Maple Building]');
+    expect(rows[0]?.reason).toContain('doors the church did not');
+  });
+
+  it('says nothing about widening on the AccessSchedules fallback path', () => {
+    // Derivation failed (`derivedBuildings` absent) and the seat is
+    // manual, so the compare set comes from AccessSchedules. That is
+    // precisely the condition `autoLockedSba` disables Update SBA on —
+    // the row can't be applied, so nothing gets granted and the warning
+    // would be false.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            reason: 'Sunday School Teacher',
+            building_names: [],
+          }),
+        ],
+        kindooUsers: [kuser({ accessSchedules: [{ ruleId: 6248 }] })],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kindoo?.derivedBuildings).toBeNull();
+    expect(rows[0]?.reason).toContain('Building access differs');
+    expect(rows[0]?.reason).not.toContain('Applying this adds');
+  });
+
+  it('says nothing about widening when the row only REMOVES buildings', async () => {
+    // The notice must not fire on a shrink — the member lost all of
+    // Pine Creek, so applying the row takes it off the seat and grants
+    // nobody anything.
+    const enriched = await enrich(
+      [{ door: 1, church: true }],
+      new Map([
+        [6248, new Set([1, 2, 3])],
+        [6249, new Set([4, 5])],
+      ]),
+    );
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reason).not.toContain('Applying this adds');
+  });
+
+  it('does not offer to strip a building the member holds ONE door of', async () => {
+    // The access half of B-25, and the destructive one:
+    // `buildings-mismatch` sources its Update SBA from `derivedBuildings`
+    // (`fix.ts`), so a strict subset here proposed writing the member's
+    // `building_names` down to [] — removing a building they can walk
+    // into. One door of Maple is Maple.
+    const enriched = await enrich([{ door: 1, church: true }]);
+    expect(enriched.derivedBuildings).toEqual(['Maple Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
   });
 });

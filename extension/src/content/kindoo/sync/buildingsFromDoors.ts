@@ -7,24 +7,30 @@
 // auto-user buildings from it. This module fills the gap:
 //
 //   per-rule doors  ─┐
-//                    ├─► strict-subset → effective rule ids → buildings
+//                    ├─► any-overlap → claimed rule ids → buildings
 //   per-user doors  ─┘
 //
-// A user is considered to "have" a rule iff EVERY DoorID in that rule's
-// door set is present in the user's door set. Strict subset; partial
-// overlap doesn't claim the rule.
+// ONE rule predicate, applied to two door subsets. **A member is in a
+// building if they can open ANY of its doors** — a door they can open is
+// a way in, and holding two of three is not two-thirds of a building
+// (B-25). So `deriveOverlappingRuleIds` claims a rule on a single shared
+// door, and both sets below use it. What differs is which doors go in:
+//   - `derivedBuildings` — over ALL of the user's doors (church-direct +
+//     rule-derived). Where the member can go. Drives
+//     `buildings-mismatch` and is the source `applyKindooOnly` writes a
+//     new seat's `building_names` from.
+//   - `directGrantBuildings` — over only the doors held via a grant from
+//     the Church Access Automation (`churchGranted` rows). Who
+//     provisions the member. Drives the seat-type decision.
 //
-// Two building sets come out of the same per-user door fetch:
-//   - `derivedBuildings` — strict-subset over ALL of the user's doors
-//     (direct + rule-derived). The authoritative effective-access set.
-//   - `directGrantBuildings` — strict-subset over only the doors held
-//     via a grant from the Church Access Automation (`churchGranted`
-//     rows). Drives the grant-based seat-type decision: a seat is
-//     church-backed iff every one of its buildings is church-granted.
+// `deriveEffectiveRuleIds` (strict subset — EVERY door) is a different
+// question and has one remaining caller: `provision.ts`, deciding
+// whether writing an AccessRule would be redundant. Nothing in Sync
+// should use it; see B-25 for what happens when access is read that way.
 //
 // `buildRuleDoorMap` + `getUserDoorGrants` do the I/O;
-// `deriveEffectiveRuleIds` + `derivedBuildingNames` are pure and
-// test-friendly and run twice (once per door subset).
+// `deriveOverlappingRuleIds` + `derivedBuildingNames` are pure and
+// test-friendly.
 
 import type { Building } from '@kindoo/shared';
 import type { KindooSession } from '../auth';
@@ -131,6 +137,54 @@ export function deriveEffectiveRuleIds(
 }
 
 /**
+ * Returns the set of RuleIDs whose door set the user's doors TOUCH — at
+ * least one door in common. The predicate BOTH Sync derivations use.
+ *
+ * A member is in a building if they can open any of its doors. One door
+ * is a way in; there is no partial entry. A rule's door set is the
+ * building's doors, so sharing one of them means the member gets inside.
+ *
+ * Reading that as a strict subset was B-25, and it was wrong twice over.
+ * The Church Access Automation does not reliably reach every door of a
+ * rule — it granted a production ward's members two of three and missed
+ * the third, which a Kindoo Manager then granted by hand:
+ *   - Over the church-only doors, no rule was claimed, so
+ *     `directGrantBuildings` came back `[]` — the value a member the
+ *     church grants NOTHING produces. Their seats read `manual`, and
+ *     the ones already `auto` were offered up for demotion.
+ *   - Over all doors, a member holding some of a building's doors
+ *     claimed nothing either, so `derivedBuildings` omitted a building
+ *     they can walk into — and `buildings-mismatch` sources its Update
+ *     SBA from that set, so the offered fix was to strip the building
+ *     off their seat.
+ *
+ * Over-claim is possible where two rules share a door: one grant on the
+ * shared door names both buildings. Physical doors belong to one
+ * building, so this needs a rule that selects another building's door —
+ * a mapping error, and one this surfaces rather than hides.
+ *
+ * Empty rule door sets are NEVER claimed, matching
+ * `deriveEffectiveRuleIds`.
+ *
+ * Pure function — no I/O.
+ */
+export function deriveOverlappingRuleIds(
+  userDoorIds: Set<number>,
+  ruleDoorMap: Map<number, Set<number>>,
+): Set<number> {
+  const out = new Set<number>();
+  for (const [ruleId, doorIds] of ruleDoorMap) {
+    for (const did of doorIds) {
+      if (userDoorIds.has(did)) {
+        out.add(ruleId);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Map effective RuleIDs to SBA building names via
  * `building.kindoo_rule.rule_id`. Buildings whose `kindoo_rule.rule_id`
  * is not in `effectiveRuleIds` are excluded.
@@ -158,11 +212,13 @@ export function derivedBuildingNames(
  * time stays tolerable for 313-user sync runs without hammering
  * Kindoo's API.
  *
- *   - `derivedBuildings` — strict-subset over the user's full door set
- *     (direct + rule-derived). The effective-access signal.
- *   - `directGrantBuildings` — strict-subset over the user's
- *     direct-granted door subset only. The provenance signal that
- *     drives promote / demote.
+ *   - `derivedBuildings` — over the user's full door set (church-direct
+ *     + rule-derived). Where the member can go.
+ *   - `directGrantBuildings` — over the church-granted subset only. Who
+ *     provisions them; drives promote / demote.
+ *
+ * Same predicate for both (`deriveOverlappingRuleIds` — any door claims
+ * the building); only the door subset differs.
  *
  * On per-user error: log with the `[sba-ext]` prefix, set BOTH fields
  * to `null`, continue. One user's network blip never fails the whole
@@ -208,11 +264,11 @@ export async function enrichUsersWithDerivedBuildings(
           options.fetchImpl,
         );
         user.derivedBuildings = derivedBuildingNames(
-          deriveEffectiveRuleIds(all, ruleDoorMap),
+          deriveOverlappingRuleIds(all, ruleDoorMap),
           buildings,
         );
         user.directGrantBuildings = derivedBuildingNames(
-          deriveEffectiveRuleIds(direct, ruleDoorMap),
+          deriveOverlappingRuleIds(direct, ruleDoorMap),
           buildings,
         );
       } catch (err) {

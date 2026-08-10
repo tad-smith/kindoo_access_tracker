@@ -6,7 +6,37 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
-## [B-25] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
+## [B-25] Sync required EVERY door of a building's rule, so partial door grants read as nothing
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @extension-engineer
+Severity: high (silently mislabels seat provenance, and actively proposes demoting working `auto` seats)
+Phase: cross-cutting
+Branch / PR: `fix/b-25-partial-church-coverage`
+
+**Symptom (operator-reported, production).** In one ward the Church Access Automation granted a group of members access to two of a building's three doors and missed the third. A Kindoo Manager granted that third door directly — a permanent per-user grant, not an AccessRule. Sync then classified those members' seats as `manual` instead of `auto`.
+
+**The governing rule, operator-stated:** *a member is in a building if they can open **any** of its doors — they do not need all of them.* A door you can open is a way in; there is no partial entry.
+
+**Cause.** Both Kindoo-side building sets projected doors through the buildings' access rules with `deriveEffectiveRuleIds`, a **strict subset**: a building was claimed only when *every* door in its rule was present. That is not what building access means, and it is not what "≥1 church-direct grant" means either.
+
+For these members — `direct = {D1, D2}`, `all = {D1, D2, D3}` against a rule of `{D1, D2, D3}`:
+
+- `directGrantBuildings = []` — the identical value produced by a member the church grants **nothing at all**. New seats minted `manual`, and members who already held `auto` seats hit the demote branch, so Sync raised drift rows proposing `auto → manual` on correctly-classified seats.
+- `derivedBuildings` happened to be right *here* (the manager's hand-granted door completed the rule), but for any member holding only **some** of a building's doors it omitted a building they can walk into — and `buildings-mismatch` sources its Update SBA from `derivedBuildings` (`fix.ts`), so the offered fix **removed that building from their seat**. The reachable shape is a **multi-building** seat where one building keeps full coverage and another is partly held: the derived set is non-empty, so `SyncPanel`'s `autoLockedSba` guard (which disables Update SBA only when `derivedBuildings` is `null` or `[]`) does not fire, and the partly-held building is written away. A single-building seat degraded to `[]` and was blocked by that guard — so the bug surfaced as an unfixable row there, not a destructive write. No test covered any of it: the suite had no case of a member holding a strict subset of a building's doors on the all-doors set.
+
+The first pass at this bug fixed only the provenance side and rationalised the split as "access needs every door, provenance needs one" — wrong on the access half, and it left the fix action pointed at a building the member holds. Corrected before merge on the operator's ruling.
+
+**Provenance.** PR #189 relaxed the OUTER predicate (from "every seat building is church-granted" to "non-empty") and left the INNER strict subset in place, so full-coverage semantics survived one level down wearing the relaxed rule's name. `sync-design.md` recorded the two as equivalent — "non-empty (≥1 church-direct door)" — which they only are when the church happens to cover a whole rule.
+
+**Why the tests were green.** Both layers were covered and both were individually correct. `buildingsFromDoors.test.ts` asserted the strict behaviour *on purpose* ("partial church coverage does NOT claim the rule … (strict subset)"), written when the outer predicate still wanted full coverage and never revisited when PR #189 changed what the caller meant. Every detector test passes both building fields in as literals, so none could observe the derivation. And nothing anywhere exercised a member holding a strict subset of a building's doors on the all-doors set — the access half had no coverage at all. The defect lived only in the composition.
+
+**Accepted consequence (operator ruling).** Any-overlap on the all-doors set makes `derivedBuildings` a superset, so a member holding one door of building X now gets X *added* to their seat by `buildings-mismatch`, and the next provision writes X's whole rule — granting doors the church didn't. Ruled intended: if one door puts them in the building, the seat records it and SBA provisions it. Recorded in `spec.md` §8 and covered by a test asserting the add direction is actionable (non-empty `derivedBuildings`, so `autoLockedSba` doesn't block it).
+
+**Fix.** `deriveOverlappingRuleIds` — claim a rule on **one** shared door — and **both** sets derive through it, over their respective door subsets (all doors → `derivedBuildings`, church-granted → `directGrantBuildings`). `deriveEffectiveRuleIds` survives for `provision.ts` alone, where the question genuinely is "would writing this rule add a door". A grant on a door in no SBA-mapped rule counts for nothing on either side (operator's ruling). Regression coverage runs the real derivation into `detect`, at the seam, in four directions: promote fires, an existing `auto` seat is left alone, a member holding one door of a building gets no row offering to strip it, and a member holding one door of a building their seat omits gets an actionable row offering to add it.
+
+---
+
+## [B-26] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
 Status: open
 Owner: @extension-engineer
 Severity: medium (writes the wrong `scope` — the field utilization counts — plus `kindoo_site_id` / `organization_id` side effects; needs a multi-site Kindoo Description)
@@ -40,7 +70,7 @@ Branch / PR: found reviewing PR #275
 
 **Fixed in PR #275** rather than deferred, because B-23's withholding turned it into a no-removal-path bug: with `sba-only` suppressed on these rows and every web Remove affordance gating on `grant.type !== 'auto'`, a merged auto grant could not be deleted at all. `SbaOnlyRemovePayload` now carries the surfaced grant's `scope` (+ `kindooSiteId` as a tiebreaker), taken from the row's `sba` block — which IS the projection, so it names the surfaced grant rather than the primary. `applySbaOnlyRemove` drops that `duplicate_grants[]` entry and rebuilds `duplicate_scopes`, leaving the primary untouched, and reaps no access (a duplicate-only scope never had an `importer_callings` entry — the merge writes none). A payload with no `scope` keeps the historical delete-or-promote, so an extension predating the field behaves exactly as before; both paths have integration tests. `sba-only` is correspondingly **removed** from the duplicate-surfaced withhold list.
 
-**Still open in the same class:** [[B-16]] (`callings-mismatch` / `type-mismatch` / `buildings-mismatch` / `kindoo-unparseable` all still write the primary — their fixes stay withheld on duplicate-surfaced rows) and [[B-25]]. The threading added here is the pattern they need.
+**Still open in the same class:** [[B-16]] (`callings-mismatch` / `type-mismatch` / `buildings-mismatch` / `kindoo-unparseable` all still write the primary — their fixes stay withheld on duplicate-surfaced rows) and [[B-26]]. The threading added here is the pattern they need.
 
 ## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
 Status: closed (fixed in PR #275) `[FIXED 2026-08-09]`
@@ -70,7 +100,7 @@ The data model already has the right home for this grant: `DuplicateGrant` with 
 - Callings are deliberately **not** rewritten on a slot hit: `callings-mismatch` is the code that owns that axis, and it fires on the next run once the grant is visible on the site.
 - Detector + panel: when the member has a seat that projected to no grant on the active site, the row says so and the button reads **Add SBA grant**.
 
-**A second, pre-existing defect the merge would have amplified — found in review.** The `kindoo-only` payload's `scope` came from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment` — while `intendedCallings` / `intendedFreeText` on the same payload come from the **site-filtered** `pickSegmentForSite`. On a multi-site Description the two disagree: the unfiltered tiebreaker prefers an app-access segment and then `'stake'`, so a foreign-site row arrived carrying the foreign ward's callings under a home segment's scope. Creating a seat that way was already wrong; merging made it worse, because a `scope: 'stake'` payload matches the stake primary's slot, folds the foreign building into the home grant, re-stamps nothing, and returns `success: true` — turning a loud failure into a silent wrong write that still never converges. The home-ward variant appends a wrong-scope duplicate, which also widens that ward's bishopric read access (`duplicate_scopes` is a rules predicate) and its utilization bar. Fixed upstream of the callable: `KindooBlock.createScope` carries the site-filtered segment's scope — the one `intendedShape` was built from — and the dispatcher uses it for `kindoo-only`. `primaryScope` itself is unchanged and is now documented as display-only — **not** because `scope-mismatch` wants the unfiltered pick (an earlier revision of this entry said so, wrongly): `scope-mismatch` *detects* on the site-filtered pick and *sends* the unfiltered one, the same detect-one/write-another split, still open. Tracked as [[B-25]].
+**A second, pre-existing defect the merge would have amplified — found in review.** The `kindoo-only` payload's `scope` came from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment` — while `intendedCallings` / `intendedFreeText` on the same payload come from the **site-filtered** `pickSegmentForSite`. On a multi-site Description the two disagree: the unfiltered tiebreaker prefers an app-access segment and then `'stake'`, so a foreign-site row arrived carrying the foreign ward's callings under a home segment's scope. Creating a seat that way was already wrong; merging made it worse, because a `scope: 'stake'` payload matches the stake primary's slot, folds the foreign building into the home grant, re-stamps nothing, and returns `success: true` — turning a loud failure into a silent wrong write that still never converges. The home-ward variant appends a wrong-scope duplicate, which also widens that ward's bishopric read access (`duplicate_scopes` is a rules predicate) and its utilization bar. Fixed upstream of the callable: `KindooBlock.createScope` carries the site-filtered segment's scope — the one `intendedShape` was built from — and the dispatcher uses it for `kindoo-only`. `primaryScope` itself is unchanged and is now documented as display-only — **not** because `scope-mismatch` wants the unfiltered pick (an earlier revision of this entry said so, wrongly): `scope-mismatch` *detects* on the site-filtered pick and *sends* the unfiltered one, the same detect-one/write-another split, still open. Tracked as [[B-26]].
 
 **Not fixed here.** Two adjacent defects, both still open, both about a fix path that can't tell WHICH grant a row was surfaced from:
 
