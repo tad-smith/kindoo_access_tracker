@@ -20,7 +20,7 @@
 // without poking the DOM.
 
 import * as RadixDialog from '@radix-ui/react-dialog';
-import { useEffect, useId, type ReactNode, type ButtonHTMLAttributes } from 'react';
+import { useEffect, useId, useRef, type ReactNode, type ButtonHTMLAttributes } from 'react';
 import { useModalStackStore } from '../../lib/store/modalStack';
 import './Dialog.css';
 
@@ -40,6 +40,28 @@ export interface DialogProps {
    * result. Defaults to `true` (normal dismissable modal).
    */
   dismissable?: boolean;
+  /**
+   * When `false`, the dialog opens with **no field focused and no text
+   * selected**. Radix's default is to focus the first tabbable
+   * descendant and, if it is an input, `select()` its value — so a
+   * dialog that opens pre-filled greets the operator with its first
+   * field highlighted and one keystroke from being overwritten (B-28).
+   *
+   * Focus still moves INTO the dialog: it lands on the content node
+   * itself, which is the `role="dialog"` element and already carries
+   * `tabIndex={-1}` from Radix's own `FocusScope`. Redirecting rather
+   * than merely suppressing is what keeps the focus trap armed (the
+   * scope's last-in-scope memo is seeded by this focus; left null, a
+   * focusin from outside refocuses nothing and focus escapes to the
+   * page behind) and what lets screen readers announce the dialog. It
+   * also keeps focus off the trigger, which `hideOthers` has just made
+   * `aria-hidden` — focus on hidden content is its own defect.
+   *
+   * Escape is NOT one of the behaviours this preserves: Radix's
+   * `DismissableLayer` binds it on `ownerDocument`, so it fires
+   * wherever focus sits. Defaults to `true`.
+   */
+  autoFocusFirstField?: boolean;
 }
 
 export function Dialog({
@@ -50,6 +72,7 @@ export function Dialog({
   children,
   stackId,
   dismissable = true,
+  autoFocusFirstField = true,
 }: DialogProps) {
   const generatedId = useId();
   const id = stackId ?? generatedId;
@@ -69,12 +92,26 @@ export function Dialog({
   // Cancel button), so the caller's explicit controls keep working.
   const blockIfLocked = dismissable ? undefined : (e: Event) => e.preventDefault();
 
+  // Opt-out of Radix's focus-the-first-field-and-select-its-text mount
+  // behaviour. We redirect focus to the content node rather than merely
+  // suppressing it — see `autoFocusFirstField`. `preventScroll` matches
+  // what Radix's own `focus()` helper does; the content node is the
+  // scroll container, so focusing it without the flag can jump a tall
+  // dialog away from its top.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const focusContentInstead = (e: Event) => {
+    e.preventDefault();
+    contentRef.current?.focus({ preventScroll: true });
+  };
+
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="kd-modal" />
         <RadixDialog.Content
+          ref={contentRef}
           className="kd-modal-positioner"
+          {...(autoFocusFirstField ? {} : { onOpenAutoFocus: focusContentInstead })}
           {...(blockIfLocked
             ? { onEscapeKeyDown: blockIfLocked, onPointerDownOutside: blockIfLocked }
             : {})}

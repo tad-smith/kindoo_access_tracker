@@ -21,6 +21,17 @@
   pointer-events: none;
 }
 
+/* The positioner IS the `role="dialog"` node, and it spans the viewport,
+   so a focus ring on it would draw a box around the whole screen. It
+   carries `tabindex="-1"` from Radix's FocusScope and is never a Tab
+   stop, so it only ever receives focus programmatically — which happens
+   when a dialog opts out of first-field autofocus (`autoFocusFirstField`
+   / B-28). There is no keyboard affordance to preserve here; the field
+   the user Tabs to next keeps its own ring. */
+.kd-modal-positioner:focus {
+  outline: none;
+}
+
 .kd-modal-inner {
   background: #fff;
   border-radius: 8px;

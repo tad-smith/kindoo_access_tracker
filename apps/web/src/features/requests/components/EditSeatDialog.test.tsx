@@ -969,6 +969,79 @@ describe('<EditSeatDialog /> — dialog lifecycle', () => {
   });
 });
 
+// B-28. Every field in this dialog arrives pre-filled from the seat, so
+// Radix's default mount focus put the caret in Calling and selected the
+// calling name — one keystroke from replacing it. The assertions run on
+// the untouched mount render: no interaction precedes them, which is the
+// coverage gap that let B-27 and then B-28 ship.
+describe('<EditSeatDialog /> — mount focus', () => {
+  function renderManualSeat() {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'Ward Clerk',
+      building_names: ['Maple Building'],
+    });
+    return render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+  }
+
+  it('opens with no field focused', () => {
+    renderManualSeat();
+    const calling = screen.getByTestId('edit-seat-reason') as HTMLInputElement;
+    expect(document.activeElement).not.toBe(calling);
+    expect(screen.getByRole('dialog').querySelector(':focus')).toBeNull();
+  });
+
+  it('opens with the pre-filled calling not selected', () => {
+    renderManualSeat();
+    const calling = screen.getByTestId('edit-seat-reason') as HTMLInputElement;
+    expect(calling.value).toBe('Ward Clerk');
+    // A collapsed range — nothing highlighted for a keystroke to replace.
+    expect(calling.selectionStart).toBe(calling.selectionEnd);
+  });
+
+  it('still holds focus inside the dialog so the trap is armed and Tab lands on Calling', async () => {
+    const user = userEvent.setup();
+    renderManualSeat();
+    const dialog = screen.getByRole('dialog');
+    expect(document.activeElement).toBe(dialog);
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByTestId('edit-seat-reason'));
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('closes on Escape from mount with no prior click', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+    const seat = makeSeat({
+      type: 'manual',
+      scope: 'CO',
+      callings: [],
+      reason: 'Ward Clerk',
+      building_names: ['Maple Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={onOpenChange} />);
+    await user.keyboard('{Escape}');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves the buildings checklist unobscured on mount (no suggestion popover)', () => {
+    // The B-27 half of the pair: nothing may cover the checklist on open.
+    renderManualSeat();
+    expect(screen.queryByTestId('edit-seat-reason-list')).toBeNull();
+    expect(screen.getByTestId('edit-seat-building-maple')).toBeInTheDocument();
+  });
+});
+
 describe('<EditSeatDialog /> — organization selector (stake scope only)', () => {
   it('does not render the org selector for a ward-scope manual seat', () => {
     mockCatalogue(
