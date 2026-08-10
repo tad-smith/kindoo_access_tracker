@@ -36,6 +36,8 @@ Branch / PR: found reviewing PR #275
 
 **Fix shape.** Carry the surfaced grant's `(scope, kindoo_site_id)` on `SbaOnlyRemovePayload` (the detector has both), and give `applySbaOnlyRemove` a `drop_duplicate` branch keyed on that discriminator: drop just the matching `duplicate_grants[]` entry and rebuild `duplicate_scopes`, leaving the primary alone; keep the existing delete / promote branches for a row surfaced from the primary. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses, and is the same threading B-16's fix needs — the two should probably land together.
 
+**B-23's withholding turned this into a no-removal-path bug (2026-08-10).** PR #275 withholds `sba-only` on duplicate-surfaced rows precisely because this entry makes the button destructive. The side effect is that a merged **auto** parallel-site grant now has no removal path *anywhere*: Sync withholds it, all three web Remove affordances gate on `grant.type !== 'auto'`, and no scheduled reaper exists. So the normal end of life for a merged grant — the calling ends, Kindoo revokes — leaves a permanent phantom duplicate that keeps that ward's `duplicate_scopes` read access, keeps its utilization inflated, and re-emits an unfixable drift row. Fixing this entry is what lifts it.
+
 **Interim guidance for the operator:** on a foreign-site `sba-only` row for a member who also holds a home-site grant, do **not** click Remove From SBA; the row is safe to leave until this is fixed (a stale duplicate grants no access Kindoo hasn't already revoked).
 
 ## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging

@@ -11,6 +11,7 @@
 
 import type { SyncApplyFixInput, SyncApplyFixResult } from '@kindoo/shared';
 import type { Discrepancy } from './detector';
+import { WITHHELD_ON_DUPLICATE_SURFACED } from './duplicateGuard';
 import { syncApplyFix as callSyncApplyFix } from '../../../lib/extensionApi';
 
 /** Result envelope the panel renders. Success → splice the row; error
@@ -47,60 +48,24 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
   // Second invariant, same shape as the review guard: a row surfaced
-  // through a `duplicate_grants[]` entry offers no DESTRUCTIVE action.
-  // Every `syncApplyFix` handler writes the PRIMARY grant's fields, so
-  // on such a row these two write somewhere the operator isn't looking:
-  //
-  //   - `sba-only` → `applySbaOnlyRemove` promotes `duplicate_grants[0]`
-  //     and drops the primary (B-24). This is the NORMAL end of life for
-  //     every grant B-23's merge appends — the ward calling ends, Kindoo
-  //     revokes, the seat still projects through the duplicate — so one
-  //     click destroys the member's home grant and reaps its app access.
-  //   - `callings-mismatch` → `applyCallingsMismatch` replaces the
-  //     primary's `callings[]` and reconciles ITS scope (B-16), which for
-  //     a stake primary filters to no app-access calling and revokes
-  //     access outright. Trigger is an ordinary calling change.
-  //   - `type-mismatch` → `applyTypeMismatch`'s DEMOTE branch clears the
-  //     primary's `callings[]`, folds them into `reason`, drops
-  //     `sort_order`, and reaps `importer_callings[seat.scope]` — the same
-  //     destruction `callings-mismatch` is withheld for. Reachable on this
-  //     population precisely BECAUSE the merged duplicate is `auto`: when
-  //     the church-direct grant behind it is withdrawn while the Kindoo
-  //     user remains, the foreign run sees auto-with-no-grants and offers
-  //     DEMOTE. Withholding strands nothing — PROMOTE on such a row reads
-  //     the PRIMARY's already-`auto` type and is a no-op that never
-  //     converges either way.
-  //   - `buildings-mismatch` → `applyBuildingsMismatch` replaces the
-  //     PRIMARY's `building_names` wholesale, and on a duplicate-surfaced
-  //     row the incoming set is the FOREIGN site's derived buildings. One
-  //     click rewrites the home grant's buildings with another site's —
-  //     a cross-site wholesale replace, not a reshape. `building_names`
-  //     is not display-only; `provision.ts` reads it.
-  //
-  // The rows still render, with the reason saying why the fix is absent;
-  // only the known-wrong writes are withheld. Lift this once the
-  // `(scope, kindoo_site_id)` threading B-16 and B-24 both need lands and
-  // the handlers target the surfaced grant.
-  //
-  // `scope-mismatch` is the only one left available, and it is not clean
-  // either: it rewrites the primary's `scope`, re-stamps
-  // `kindoo_site_id`, and deletes `organization_id` — and it sends the
-  // UNFILTERED pick (see `primaryScope`), so the scope it writes need not
-  // be the segment that surfaced the row. It stays because scope drift is
-  // the one axis with no other route to convergence, and its write
-  // replaces a field rather than reaping a grant. Revisit with B-16.
-  //
-  // This list was twice drawn too narrowly — first excluding
-  // `buildings-mismatch` (a wholesale replace with ANOTHER SITE's set),
-  // then `type-mismatch` (whose DEMOTE reaps access identically to
-  // `callings-mismatch`). Both were justified as "reshaping"; neither was.
-  if (
-    d.surfacedFromDuplicate &&
-    (d.code === 'sba-only' ||
-      d.code === 'callings-mismatch' ||
-      d.code === 'buildings-mismatch' ||
-      d.code === 'type-mismatch')
-  ) {
+  // through a `duplicate_grants[]` entry offers no fix that would write
+  // the PRIMARY's fields, which on such a row is not the grant the
+  // operator is looking at. The list — and the note the detector appends
+  // to the row's reason — live in `duplicateGuard.ts`, because keeping
+  // them in two places is how the note came to cover two codes while the
+  // withholding covered four.
+  if (d.surfacedFromDuplicate && WITHHELD_ON_DUPLICATE_SURFACED.has(d.code)) return [];
+  // A `kindoo-only` row whose Description resolved no segment on this
+  // site (`createScope === null`, only reachable on a home run) has no
+  // scope to merge onto. The payload's `?? 'stake'` fallback was safe
+  // while the callable refused an existing seat; now it would append a
+  // FABRICATED stake-scope duplicate with no callings and no reason —
+  // which is not inert (`duplicate_scopes` is a rules predicate, and
+  // `overCaps` folds a stake duplicate on a foreign-primary seat into the
+  // home pool) and is step one of the `kindoo-unparseable` path above.
+  // Withhold rather than guess; creating a NEW seat from the same
+  // fallback is unchanged, being the pre-existing behaviour.
+  if (d.code === 'kindoo-only' && d.mergesOntoExistingSeat && d.kindoo?.createScope == null) {
     return [];
   }
   switch (d.code) {

@@ -18,6 +18,7 @@ import {
   type SegmentAppAccessOptions,
 } from './parser';
 import type { ActiveSite } from './activeSite';
+import { DUPLICATE_SURFACED_NOTE, WITHHELD_ON_DUPLICATE_SURFACED } from './duplicateGuard';
 
 /**
  * The seat shape derived from a parsed primary segment. Template-based
@@ -770,8 +771,11 @@ export function detect(inputs: DetectInputs): DetectResult {
     // The row's grant provenance: a projection led by a duplicate means
     // every primary-writing handler would write the wrong grant.
     const fromDup = projected?.fromDuplicate === true;
-    const dupNote =
-      ' Surfaced through a parallel-site grant rather than the seat’s primary, so any fix that would write the primary is unavailable on this row (B-16 / B-24).';
+    // Appended to a withheld row's reason so a missing button is never
+    // the operator's only signal. Keyed off the SAME set `fixActionsFor`
+    // uses, so the two cannot disagree.
+    const dupNote = (code: DiscrepancyCode): string =>
+      fromDup && WITHHELD_ON_DUPLICATE_SURFACED.has(code) ? DUPLICATE_SURFACED_NOTE : '';
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
@@ -792,7 +796,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           (ignoredCanonicals.has(canon)
             ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
             : 'SBA has a seat for this member, but the user is not present in Kindoo.') +
-          (fromDup ? dupNote : ''),
+          dupNote('sba-only'),
         sba: sbaBlock,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: null,
@@ -907,7 +911,8 @@ export function detect(inputs: DetectInputs): DetectResult {
         code: 'type-mismatch',
         severity: 'drift',
         reason:
-          'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
+          'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.' +
+          dupNote('type-mismatch'),
         sba: sbaBlock,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts, 'auto'),
@@ -959,7 +964,8 @@ export function detect(inputs: DetectInputs): DetectResult {
         code: 'kindoo-unparseable',
         severity: 'drift',
         reason:
-          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
+          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA." +
+          dupNote('kindoo-unparseable'),
         sba: sbaBlock,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
@@ -980,7 +986,9 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'kindoo-unparseable',
         severity: 'review',
-        reason: 'Kindoo description has no resolvable primary segment; review manually.',
+        reason:
+          'Kindoo description has no resolvable primary segment; review manually.' +
+          dupNote('kindoo-unparseable'),
         sba: sbaBlock,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
@@ -1044,7 +1052,9 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
-          reason: `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.`,
+          reason:
+            `Promote to auto: the church directly grants door access for this member (church-direct building(s) [${directList}]), so Kindoo provisioning is church-owned.` +
+            dupNote('type-mismatch'),
           sba: sbaBlock,
           ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'auto'),
@@ -1060,7 +1070,8 @@ export function detect(inputs: DetectInputs): DetectResult {
           code: 'type-mismatch',
           severity: 'drift',
           reason:
-            'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
+            'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.' +
+            dupNote('type-mismatch'),
           sba: sbaBlock,
           ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
@@ -1098,7 +1109,9 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'buildings-mismatch',
           severity: 'drift',
-          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].`,
+          reason:
+            `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].` +
+            dupNote('buildings-mismatch'),
           sba: sbaBlock,
           ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
@@ -1137,7 +1150,7 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'drift',
           reason:
             `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.` +
-            (fromDup ? dupNote : ''),
+            dupNote('callings-mismatch'),
           sba: sbaBlock,
           ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(

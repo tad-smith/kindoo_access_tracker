@@ -79,6 +79,25 @@ describe('fixActionsFor', () => {
     });
   });
 
+  it('withholds kindoo-only when a merge has no site-resolved scope', () => {
+    // `createScope: null` + an existing seat: the `?? 'stake'` fallback
+    // would append a fabricated stake-scope duplicate, which is not inert
+    // (`duplicate_scopes` is a rules predicate; overCaps folds it into the
+    // home pool). Creating a NEW seat from the same fallback is unchanged.
+    expect(
+      fixActionsFor(
+        discrepancy({
+          code: 'kindoo-only',
+          mergesOntoExistingSeat: true,
+          kindoo: kb({ createScope: null, grantTargetType: 'auto' }),
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      fixActionsFor(discrepancy({ code: 'kindoo-only', kindoo: kb({ createScope: null }) })),
+    ).toHaveLength(1);
+  });
+
   it('kindoo-only onto an existing seat reads Add SBA grant (B-23)', () => {
     // The member already holds a seat; the callable merges the grant onto
     // it rather than creating a second one. Same action, same payload —
@@ -169,7 +188,13 @@ describe('fixActionsFor', () => {
     // Every syncApplyFix handler writes the PRIMARY's fields, so on a row
     // projected from a duplicate these two destroy a grant the operator
     // isn't looking at. The row still renders; only the buttons go.
-    for (const code of ['sba-only', 'callings-mismatch', 'buildings-mismatch'] as const) {
+    for (const code of [
+      'sba-only',
+      'callings-mismatch',
+      'buildings-mismatch',
+      'type-mismatch',
+      'kindoo-unparseable',
+    ] as const) {
       expect(
         fixActionsFor(
           discrepancy({
