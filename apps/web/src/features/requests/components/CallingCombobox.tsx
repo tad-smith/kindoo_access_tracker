@@ -9,10 +9,12 @@
 //     into react-hook-form via `Controller`.
 //   - Typed input edits the underlying value directly; selecting a
 //     suggestion overwrites the value with the exact calling name.
-//   - The popover only opens when there is something to show (the
-//     input is focused OR a non-empty value is being filtered). On
-//     blur the popover closes after a brief delay so click-to-select
-//     still registers.
+//   - The popover opens only when the user asks for suggestions:
+//     typing a character, or ArrowDown / ArrowUp to browse from an
+//     empty value. Focus alone does NOT open it — clicking into the
+//     field, and the Dialog autofocus that fires when `EditSeatDialog`
+//     mounts, both leave it closed (B-27). On blur the popover closes
+//     after a brief delay so click-to-select still registers.
 //   - Scope changes swap the suggestion list immediately but do NOT
 //     clear the typed value (operator decision: free-text survives a
 //     scope flip).
@@ -119,10 +121,13 @@ export function CallingCombobox({
             onChange(e.target.value);
             if (!open) setOpen(true);
           }}
-          onFocus={() => {
-            cancelBlurTimer();
-            setOpen(true);
-          }}
+          // Focus must not open the popover — a Dialog autofocuses its
+          // first field, which would cover the form on mount (B-27).
+          // The pending blur-close timer is still released: `handleSelect`
+          // refocuses here, and the timer armed by the blur that preceded
+          // the click would otherwise close a popover the user reopens
+          // within its 150ms window.
+          onFocus={cancelBlurTimer}
           onBlur={() => {
             blurTimer.current = window.setTimeout(() => {
               setOpen(false);

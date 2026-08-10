@@ -163,18 +163,24 @@ function option(page: Page, calling: string) {
   return page.getByTestId(`edit-seat-reason-option-${calling}`);
 }
 
-/**
- * Open Ward Rosters at `wardCode`, click Edit on `seatCanonical`, and
- * empty the calling field so the popover lists every suggestion for
- * that scope rather than the seat's current calling filtered down.
- */
-async function openCallingList(page: Page, wardCode: string, seatCanonical: string) {
+/** Open Ward Rosters at `wardCode` and click Edit on `seatCanonical`. */
+async function openEditSeat(page: Page, wardCode: string, seatCanonical: string) {
   await page.goto(`/stake/wards?ward=${wardCode}`);
   await expect(page.getByRole('heading', { name: /^Ward Rosters$/ })).toBeVisible();
   await expect(page.locator(`[data-seat-id="${seatCanonical}"]`)).toBeVisible({ timeout: 10_000 });
 
   await page.getByTestId(`edit-btn-${seatCanonical}`).click();
   await expect(page.getByTestId('edit-seat-dialog-form')).toBeVisible();
+}
+
+/**
+ * Open the dialog and empty the calling field so the popover lists every
+ * suggestion for that scope rather than the seat's current calling
+ * filtered down. Typing is what opens it — focus does not (B-27) — so
+ * the `fill` below is load-bearing, not setup.
+ */
+async function openCallingList(page: Page, wardCode: string, seatCanonical: string) {
+  await openEditSeat(page, wardCode, seatCanonical);
 
   const reason = page.getByTestId('edit-seat-reason');
   await reason.click();
@@ -190,6 +196,37 @@ test.describe('Edit Seat calling typeahead — ward vs branch', () => {
     await clearAuth();
     await clearFirestore();
     await seedStakeWardAndBranch();
+  });
+
+  test('opens the dialog with no suggestion list covering the buildings checklist', async ({
+    page,
+  }) => {
+    // B-27. The Dialog autofocuses `reason` on mount; an `onFocus` that
+    // opened the popover therefore dropped ~50 suggestions over the
+    // checklist before the operator touched anything. Focus alone must
+    // not open it.
+    await signInAsStakeBishopric(page, 'mount-typeahead@example.com');
+    await openEditSeat(page, WARD_CODE, WARD_SEAT);
+
+    const reason = page.getByTestId('edit-seat-reason');
+    await expect(reason).toBeFocused();
+    await expect(page.getByTestId('edit-seat-reason-list')).toHaveCount(0);
+
+    // `toBeVisible` is DOM visibility and says nothing about occlusion
+    // (see the header note) — the checkbox is clicked, which hit-tests,
+    // so a popover painted over it fails here.
+    const building = page.getByTestId('edit-seat-building-maple-building');
+    await expect(building).toBeVisible();
+    await building.click();
+    await expect(building).toBeChecked({ checked: false });
+
+    // Clicking into the field is still not an ask for suggestions.
+    await reason.click();
+    await expect(page.getByTestId('edit-seat-reason-list')).toHaveCount(0);
+
+    // Typing is.
+    await reason.fill('Ward Cl');
+    await expect(option(page, 'Ward Clerk')).toBeVisible();
   });
 
   test('offers branch callings and hides the ward-only ones when editing a branch seat', async ({
