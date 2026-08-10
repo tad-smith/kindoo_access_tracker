@@ -244,19 +244,22 @@ test.describe('Edit Seat calling typeahead — ward vs branch', () => {
     await expect(reason).toHaveValue('Ward Clerk');
     await expect(reason).not.toBeFocused();
 
-    // Nothing inside the dialog holds focus, and nothing is selected.
-    const state = await page.evaluate(() => {
-      const active = document.activeElement as HTMLElement | null;
-      return {
-        activeIsDialog: active?.getAttribute('role') === 'dialog',
-        selection: String(window.getSelection() ?? ''),
-      };
-    });
+    // The `select: true` half of Radix's autofocus, pinned where it
+    // actually lives: a text field's selection is the control's own, not
+    // the document selection, so `window.getSelection()` reads empty
+    // either way and would pin nothing. A collapsed range is the claim.
+    const selectedLength = await reason.evaluate(
+      (el) => (el as HTMLInputElement).selectionEnd! - (el as HTMLInputElement).selectionStart!,
+    );
+    expect(selectedLength).toBe(0);
+
     // Focus sits on the dialog itself — NOT on the trigger behind the
     // overlay, which is what a bare preventDefault would leave. That is
     // what keeps the trap armed and the dialog announced.
-    expect(state.activeIsDialog).toBe(true);
-    expect(state.selection).toBe('');
+    const activeIsDialog = await page.evaluate(
+      () => document.activeElement?.getAttribute('role') === 'dialog',
+    );
+    expect(activeIsDialog).toBe(true);
 
     // The trap holds: Tab from mount lands on the first field INSIDE the
     // dialog, never on the roster page behind it.
