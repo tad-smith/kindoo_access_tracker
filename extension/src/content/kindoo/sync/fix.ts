@@ -11,7 +11,6 @@
 
 import type { SyncApplyFixInput, SyncApplyFixResult } from '@kindoo/shared';
 import type { Discrepancy } from './detector';
-import { WITHHELD_ON_DUPLICATE_SURFACED } from './duplicateGuard';
 import { syncApplyFix as callSyncApplyFix } from '../../../lib/extensionApi';
 
 /** Result envelope the panel renders. Success → splice the row; error
@@ -47,14 +46,6 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // cases, where no SBA-side action can be safely derived, and
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
-  // Second invariant, same shape as the review guard: a row surfaced
-  // through a `duplicate_grants[]` entry offers no fix that would write
-  // the PRIMARY's fields, which on such a row is not the grant the
-  // operator is looking at. The list — and the note the detector appends
-  // to the row's reason — live in `duplicateGuard.ts`, because keeping
-  // them in two places is how the note came to cover two codes while the
-  // withholding covered four.
-  if (d.surfacedFromDuplicate && WITHHELD_ON_DUPLICATE_SURFACED.has(d.code)) return [];
   // A `kindoo-only` row whose Description resolved no segment on this
   // site (`createScope === null`, only reachable on a home run) has no
   // scope to merge onto. The payload's `?? 'stake'` fallback was safe
@@ -65,7 +56,7 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // home pool) and is step one of the `kindoo-unparseable` path above.
   // Withhold rather than guess; creating a NEW seat from the same
   // fallback is unchanged, being the pre-existing behaviour.
-  if (d.code === 'kindoo-only' && d.mergesOntoExistingSeat && d.kindoo?.createScope == null) {
+  if (d.code === 'kindoo-only' && d.mergesOntoExistingSeat && d.kindoo?.siteScope == null) {
     return [];
   }
   switch (d.code) {
@@ -169,6 +160,17 @@ async function dispatchSbaFix(d: Discrepancy, ctx: DispatchContext): Promise<Syn
  * Exported for tests that want to assert the wire payload without
  * mocking the dispatcher.
  */
+/**
+ * The `(scope, kindooSiteId)` discriminator naming the grant a row was
+ * surfaced from (B-16 / B-24). `d.sba` IS the per-site projection, so its
+ * scope and site are the surfaced grant's — not the primary's. Absent when
+ * the row carries no SBA side, which is only `kindoo-only`.
+ */
+function surfacedGrantRef(d: Discrepancy): { scope?: string; kindooSiteId?: string | null } {
+  if (!d.sba) return {};
+  return { scope: d.sba.scope, kindooSiteId: d.sba.kindooSiteId ?? null };
+}
+
 export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFixInput {
   switch (d.code) {
     case 'kindoo-only': {
@@ -216,7 +218,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // another site's scope, writing the grant onto the wrong slot and
       // never converging. `null` (nothing resolved) falls back to stake
       // as before; the server validates either way.
-      const scope = d.kindoo.createScope ?? 'stake';
+      const scope = d.kindoo.siteScope ?? 'stake';
       const payload: SyncApplyFixInput['fix']['payload'] = {
         memberEmail: d.displayEmail,
         memberName: d.kindoo.memberName,
@@ -272,14 +274,19 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       };
     }
     case 'scope-mismatch': {
-      if (!d.kindoo || d.kindoo.primaryScope === null) {
+      // B-26: `siteScope` is the SITE-FILTERED segment — the one the
+      // detector compared against to emit this row. `primaryScope` is the
+      // unfiltered pick and can name a segment on another site entirely,
+      // so sending it moved the grant somewhere the row never mentioned.
+      const newScope = d.kindoo?.siteScope;
+      if (!newScope) {
         throw new Error('scope-mismatch row missing resolved Kindoo scope');
       }
       return {
         stakeId,
         fix: {
           code: 'scope-mismatch',
-          payload: { memberEmail: d.displayEmail, newScope: d.kindoo.primaryScope },
+          payload: { memberEmail: d.displayEmail, newScope, ...surfacedGrantRef(d) },
         },
       };
     }
@@ -292,6 +299,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         throw new Error('type-mismatch row missing grant-derived target type');
       }
       const payload: SyncApplyFixInput['fix']['payload'] = {
+        ...surfacedGrantRef(d),
         memberEmail: d.displayEmail,
         newType: d.kindoo.grantTargetType,
       };
@@ -331,6 +339,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         fix: {
           code: 'buildings-mismatch',
           payload: {
+            ...surfacedGrantRef(d),
             memberEmail: d.displayEmail,
             newBuildingNames,
           },
@@ -375,7 +384,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         stakeId,
         fix: {
           code: 'kindoo-unparseable',
-          payload: { memberEmail: d.displayEmail, calling },
+          payload: { memberEmail: d.displayEmail, calling, ...surfacedGrantRef(d) },
         },
       };
     }

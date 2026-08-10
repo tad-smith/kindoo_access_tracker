@@ -618,6 +618,153 @@ function slotAlreadyOnGrantSite(
 }
 
 /**
+ * Which grant a fix should write (B-16 / B-24).
+ *
+ * A Sync row is a per-SITE projection: a seat surfaces through its primary
+ * OR through any `duplicate_grants[]` entry that targets the active site
+ * (`projectSeatForSite`). Every handler here used to write the primary
+ * unconditionally, so a row surfaced through a duplicate mutated a grant
+ * the operator was not looking at — restaking their home grant, reaping
+ * its access, or replacing its buildings with another site's.
+ *
+ * The payload now names the surfaced grant, so the write follows the row.
+ */
+type GrantSlot = { kind: 'primary' } | { kind: 'duplicate'; index: number };
+
+/** The `(scope, kindooSiteId)` discriminator every mismatch payload carries. */
+type SurfacedGrantRef = { scope?: string | undefined; kindooSiteId?: string | null | undefined };
+
+/**
+ * Resolve the payload's discriminator to a slot on this seat.
+ *
+ * `undefined` scope ⇒ primary. That is the **version-skew path**: an
+ * extension predating the discriminator sends no scope and keeps the
+ * historical primary-writing behaviour, which is correct whenever the row
+ * came from the primary — the only case those builds could produce before
+ * B-23's merge existed to make duplicates common.
+ *
+ * `null` return ⇒ a scope was named and matches nothing on the seat. Soft-
+ * fail rather than fall back to the primary: falling back is precisely the
+ * bug, and a stale report re-derives on the next run.
+ *
+ * Site is a tiebreaker only. `scope` identifies the grant in every shape
+ * seen in practice; an entry carrying no stamp matches any requested site,
+ * mirroring the read-time ward fallback.
+ */
+function resolveGrantSlot(seat: Seat, ref: SurfacedGrantRef): GrantSlot | null {
+  const scope =
+    typeof ref.scope === 'string' && ref.scope.trim().length > 0 ? ref.scope.trim() : undefined;
+  if (scope === undefined || scope === seat.scope) return { kind: 'primary' };
+  const dupes = seat.duplicate_grants ?? [];
+  const want = ref.kindooSiteId;
+  const index = dupes.findIndex(
+    (d) =>
+      d.scope === scope &&
+      (want === undefined || d.kindoo_site_id === undefined || d.kindoo_site_id === want),
+  );
+  return index >= 0 ? { kind: 'duplicate', index } : null;
+}
+
+/** The grant a slot points at, for reading its current scope / type / callings. */
+function grantAt(
+  seat: Seat,
+  slot: GrantSlot,
+): { scope: string; type: Seat['type']; callings: string[]; reason: string | undefined } {
+  if (slot.kind === 'primary') {
+    return {
+      scope: seat.scope,
+      type: seat.type,
+      callings: seat.callings ?? [],
+      reason: seat.reason,
+    };
+  }
+  const d = (seat.duplicate_grants ?? [])[slot.index]!;
+  return { scope: d.scope, type: d.type, callings: d.callings ?? [], reason: d.reason };
+}
+
+/**
+ * Translate a per-grant field patch into the seat-doc update for `slot`.
+ *
+ * On the PRIMARY the fields are top-level and `null` means delete. On a
+ * DUPLICATE they live inside the array entry, so the entry is rebuilt and
+ * `duplicate_scopes` recomputed alongside — the mirror rules read, which
+ * must never lag the array it mirrors.
+ *
+ * `sort_order` is deliberately NOT here: it is a denormalised mirror of the
+ * PRIMARY's `callings[]` (`Seat.sort_order`), so each handler writes it
+ * itself, only when the slot is the primary. Its two writers also differ —
+ * `callings-mismatch` stores `null` when nothing ranks, the demote path
+ * deletes the field — which one flag could not express.
+ */
+function patchGrant(
+  seat: Seat,
+  slot: GrantSlot,
+  patch: {
+    scope?: string;
+    type?: Seat['type'];
+    /** `null` clears (auto→manual folds them into `reason`). */
+    callings?: string[] | null;
+    reason?: string | null;
+    building_names?: string[];
+    /**
+     * Explicit because delete and write-`null` are different writes and the
+     * handlers need both: `scope-mismatch` DELETES on a move to stake (the
+     * absent field is the home representation, B-15) but writes an explicit
+     * `null` for a resolved home ward. Omit to leave the stamp alone.
+     */
+    site?: { op: 'delete' } | { op: 'set'; value: string | null } | undefined;
+    start_date?: string | null;
+    end_date?: string | null;
+    /** Only ever cleared — organizations are stake-scope-only. */
+    organization_id?: null;
+  },
+): Record<string, unknown> {
+  if (slot.kind === 'primary') {
+    const out: Record<string, unknown> = {};
+    if (patch.scope !== undefined) out.scope = patch.scope;
+    if (patch.type !== undefined) out.type = patch.type;
+    if (patch.callings !== undefined) out.callings = patch.callings ?? [];
+    if (patch.reason !== undefined) out.reason = patch.reason ?? FieldValue.delete();
+    if (patch.building_names !== undefined) out.building_names = patch.building_names;
+    if (patch.site) {
+      out.kindoo_site_id = patch.site.op === 'delete' ? FieldValue.delete() : patch.site.value;
+    }
+    if (patch.start_date !== undefined) out.start_date = patch.start_date ?? FieldValue.delete();
+    if (patch.end_date !== undefined) out.end_date = patch.end_date ?? FieldValue.delete();
+    if (patch.organization_id === null) out.organization_id = FieldValue.delete();
+    return out;
+  }
+  const dupes = (seat.duplicate_grants ?? []).slice();
+  const cur = dupes[slot.index]!;
+  const next: DuplicateGrant = { ...cur };
+  if (patch.scope !== undefined) next.scope = patch.scope;
+  if (patch.type !== undefined) next.type = patch.type;
+  if (patch.callings !== undefined) {
+    if (patch.callings && patch.callings.length > 0) next.callings = patch.callings;
+    else delete next.callings;
+  }
+  if (patch.reason !== undefined) {
+    if (patch.reason) next.reason = patch.reason;
+    else delete next.reason;
+  }
+  if (patch.building_names !== undefined) next.building_names = patch.building_names;
+  // On a duplicate entry `null` IS the home representation, so a delete and
+  // a set-to-home land on the same value.
+  if (patch.site) next.kindoo_site_id = patch.site.op === 'delete' ? null : patch.site.value;
+  if (patch.start_date !== undefined) {
+    if (patch.start_date) next.start_date = patch.start_date;
+    else delete next.start_date;
+  }
+  if (patch.end_date !== undefined) {
+    if (patch.end_date) next.end_date = patch.end_date;
+    else delete next.end_date;
+  }
+  if (patch.organization_id === null) delete next.organization_id;
+  dupes[slot.index] = next;
+  return { duplicate_grants: dupes, duplicate_scopes: dupes.map((d) => d.scope) };
+}
+
+/**
  * Seat fields that fold a `kindoo-only` grant into a seat the member
  * ALREADY has (B-23) — the case where the grant lives on a Kindoo site
  * none of the seat's existing grants target.
@@ -797,24 +944,31 @@ async function applyCallingsMismatch(
     }
     const seat = snap.data() as Seat;
 
-    // `callings-mismatch` mirrors Kindoo's calling onto an AUTO seat's
-    // `callings[]` (§6.1: auto seats carry the calling there, no `reason`).
-    // The detector only emits it for auto seats, so a non-auto seat here
-    // is a malformed request — replacing `callings[]` on a manual / temp
-    // seat would mint a §6.1-violating hybrid (callings AND reason). Reject
-    // rather than write it.
-    if (seat.type !== 'auto') {
+    // B-16: write the grant the ROW came from, not the primary.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+    const grant = grantAt(seat, slot);
+
+    // `callings-mismatch` mirrors Kindoo's calling onto an AUTO grant's
+    // `callings[]` (§6.1: auto carries the calling there, no `reason`).
+    // The detector only emits it for auto, so a non-auto grant here is a
+    // malformed request — replacing `callings[]` on a manual / temp grant
+    // would mint a §6.1-violating hybrid (callings AND reason). Reject
+    // rather than write it. Checked on the SURFACED grant: a duplicate can
+    // be auto while the primary isn't, and vice versa.
+    if (grant.type !== 'auto') {
       throw new HttpsError('failed-precondition', 'callings-mismatch applies to auto seats only');
     }
 
+    const sortOrder = seatCallingOrder(newCallings);
     const update: Record<string, unknown> = {
-      callings: newCallings,
+      ...patchGrant(seat, slot, { callings: newCallings }),
+      // Primary-only mirror; a duplicate's callings must not move it.
+      ...(slot.kind === 'primary' ? { sort_order: sortOrder } : {}),
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
     };
-
-    update.sort_order = seatCallingOrder(newCallings);
 
     // REPLACE can remove access: recompute the grant set from the NEW
     // callings against the scope's app-access set, then either rewrite the
@@ -828,20 +982,20 @@ async function applyCallingsMismatch(
     const opts = await appAccessOptsForScope(
       tx,
       stakeId,
-      seat.scope,
+      grant.scope,
       appAccessOpts,
       'callings-mismatch',
     );
-    const accessCallings = filterAppAccessCallings(seat.scope, newCallings, opts);
+    const accessCallings = filterAppAccessCallings(grant.scope, newCallings, opts);
     const accessSnap = await tx.get(accessRef);
     if (accessCallings.length > 0) {
       writeAccessForAutoScope(tx, accessRef, {
         canonical,
         memberEmail: seat.member_email ?? memberEmail,
         memberName: seat.member_name ?? '',
-        scope: seat.scope,
+        scope: grant.scope,
         callings: accessCallings,
-        sortOrder: update.sort_order as number | null,
+        sortOrder,
         priorAccess: accessSnap.exists ? (accessSnap.data() as Access) : undefined,
         actor,
       });
@@ -850,7 +1004,7 @@ async function applyCallingsMismatch(
       // (deletes the doc when both maps go empty).
       clearImporterCallingsForScope(tx, accessRef, {
         access: accessSnap.data() as Access,
-        scope: seat.scope,
+        scope: grant.scope,
         actor,
       });
     }
@@ -902,45 +1056,43 @@ async function applyScopeMismatch(
       }
     }
 
+    const seat = snap.data() as Seat;
+    // B-16: move the grant the ROW came from. Restaking the primary off a
+    // duplicate-surfaced row moved licence pools, flipped rules-based read
+    // access, and orphaned the primary scope's `importer_callings`.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+
     const update: Record<string, unknown> = {
-      scope: newScope,
+      ...patchGrant(seat, slot, {
+        scope: newScope,
+        site:
+          newScope === 'stake'
+            ? ({ op: 'delete' } as const)
+            : newSiteId !== undefined
+              ? ({ op: 'set', value: newSiteId } as const)
+              : undefined,
+        // Organization is stake-scope-only, so a grant LEAVING stake for a
+        // ward sheds it. Other paths preserve it; only this departure
+        // clears it.
+        ...(newScope === 'stake' ? {} : { organization_id: null as null }),
+      }),
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
     };
-    if (newScope === 'stake') {
-      // Stake-scope primaries resolve to the home site (spec §15 Phase 1):
-      // `kindoo_site_id` must be null/absent. A foreign-site ward seat
-      // that scope-mismatches to stake would otherwise keep its foreign
-      // site id and `projectSeatForSite` would resolve it off-home.
-      // Mirrors `applyKindooUnparseable`.
-      update.kindoo_site_id = FieldValue.delete();
-    } else {
-      // Moving to a WARD scope: organization is a stake-scope-only
-      // concept, so a seat carrying an `organization_id` from its prior
-      // stake scope must shed it on the move to ward. Other paths
-      // (update / merge) preserve `organization_id`; only this scope
-      // departure-from-stake clears it.
-      update.organization_id = FieldValue.delete();
-    }
-    if (newScope !== 'stake' && newSiteId !== undefined) {
-      // Ward `newScope`: stamp the new ward's building-derived site.
-      // `null` (home ward) stores explicit null; a foreign id stores it.
-      // An unresolvable ward leaves `newSiteId === undefined`, so the
-      // field is left untouched and the ward-fallback handles it.
-      update.kindoo_site_id = newSiteId;
-    }
     // Write-time invariant: a known foreign-site ward seat must carry the
-    // site after this move. `newSiteId` is the post-write value for a
-    // resolved ward (the stake branch deletes it → home, scope-gated; an
-    // unresolvable ward isn't in `wards`, so the guard short-circuits).
-    assertSeatSiteStamped({
-      scope: newScope,
-      body: { kindoo_site_id: newSiteId ?? null },
-      wards,
-      buildings,
-      context: 'syncApplyFix(scope-mismatch)',
-    });
+    // site after this move. Primary-only — the guard reads a seat's primary
+    // `scope`, and a duplicate's site lives on its own entry.
+    if (slot.kind === 'primary') {
+      assertSeatSiteStamped({
+        scope: newScope,
+        body: { kindoo_site_id: newSiteId ?? null },
+        wards,
+        buildings,
+        context: 'syncApplyFix(scope-mismatch)',
+      });
+    }
     tx.update(seatRef, update);
     return { success: true, seatId: canonical };
   });
@@ -976,8 +1128,15 @@ async function applyTypeMismatch(
       return { success: false, error: 'seat not found' };
     }
     const seat = snap.data() as Seat;
+    // B-16: flip the grant the ROW came from. On a duplicate-surfaced row
+    // DEMOTE used to clear the PRIMARY's callings and reap its access.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+    const grant = grantAt(seat, slot);
+    // `type` rides in the grant patch, NOT here: a top-level `type` on a
+    // duplicate-surfaced fix would flip the PRIMARY's type as a side effect.
+    const grantPatch: Parameters<typeof patchGrant>[2] = { type: newType };
     const update: Record<string, unknown> = {
-      type: newType,
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
@@ -995,16 +1154,16 @@ async function applyTypeMismatch(
     //   existing callings, clear `callings[]`, clear sort_order, drop
     //   importer_callings for the seat's scope; if both importer_callings
     //   and manual_grants end up empty, the access doc is deleted.
-    if (newType === 'auto' && seat.type !== 'auto') {
-      const reason = typeof seat.reason === 'string' ? seat.reason.trim() : '';
+    if (newType === 'auto' && grant.type !== 'auto') {
+      const reason = typeof grant.reason === 'string' ? grant.reason.trim() : '';
       const autoCallings = dedupePreserveOrder(
         payloadCallings.length > 0 ? payloadCallings : reason.length > 0 ? [reason] : [],
       );
-      update.callings = autoCallings;
-      update.reason = FieldValue.delete();
+      grantPatch.callings = autoCallings;
+      grantPatch.reason = null;
 
       const newSortOrder = seatCallingOrder(autoCallings);
-      update.sort_order = newSortOrder;
+      if (slot.kind === 'primary') update.sort_order = newSortOrder;
       // Promote only. The demote branch below clears the whole scope entry,
       // which is correct in either toggle state and needs no calling set,
       // so it takes no options and reads no unit doc.
@@ -1015,11 +1174,11 @@ async function applyTypeMismatch(
       const opts = await appAccessOptsForScope(
         tx,
         stakeId,
-        seat.scope,
+        grant.scope,
         appAccessOpts,
         'type-mismatch',
       );
-      const accessCallings = filterAppAccessCallings(seat.scope, autoCallings, opts);
+      const accessCallings = filterAppAccessCallings(grant.scope, autoCallings, opts);
       if (accessCallings.length > 0) {
         const accessSnap = await tx.get(accessRef);
         const priorAccess = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
@@ -1027,35 +1186,35 @@ async function applyTypeMismatch(
           canonical,
           memberEmail: seat.member_email ?? memberEmail,
           memberName: seat.member_name ?? '',
-          scope: seat.scope,
+          scope: grant.scope,
           callings: accessCallings,
           sortOrder: newSortOrder,
           priorAccess,
           actor,
         });
       }
-    } else if (newType !== 'auto' && seat.type === 'auto') {
+    } else if (newType !== 'auto' && grant.type === 'auto') {
       // Demote: fold the auto calling(s) into the free-text reason and
       // clear `callings[]` (manual / temp convention). Preserve an
       // existing non-empty reason if the seat somehow already had one.
-      const existingReason = typeof seat.reason === 'string' ? seat.reason.trim() : '';
-      const reasonFromCallings = (seat.callings ?? []).join(', ').trim();
+      const existingReason = typeof grant.reason === 'string' ? grant.reason.trim() : '';
+      const reasonFromCallings = grant.callings.join(', ').trim();
       const reason = existingReason.length > 0 ? existingReason : reasonFromCallings;
-      if (reason.length > 0) update.reason = reason;
-      update.callings = [];
+      if (reason.length > 0) grantPatch.reason = reason;
+      grantPatch.callings = null;
 
-      update.sort_order = FieldValue.delete();
+      if (slot.kind === 'primary') update.sort_order = FieldValue.delete();
       const accessSnap = await tx.get(accessRef);
       if (accessSnap.exists) {
         clearImporterCallingsForScope(tx, accessRef, {
           access: accessSnap.data() as Access,
-          scope: seat.scope,
+          scope: grant.scope,
           actor,
         });
       }
     }
 
-    tx.update(seatRef, update);
+    tx.update(seatRef, { ...update, ...patchGrant(seat, slot, grantPatch) });
     return { success: true, seatId: canonical };
   });
 }
@@ -1120,24 +1279,32 @@ async function applyKindooUnparseable(
       return { success: false, error: 'seat not found' };
     }
     const seat = snap.data() as Seat;
-    const oldScope = seat.scope;
+    // B-16: restake the grant the ROW came from. This is the most
+    // destructive handler of the set — scope, site stamp, callings and the
+    // old scope's access all move — so writing the primary off a
+    // duplicate-surfaced row was the worst of the class.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+    const grant = grantAt(seat, slot);
+    const oldScope = grant.scope;
 
-    const update: Record<string, unknown> = {
+    // Stake scope resolves to the home site (spec §15 Phase 1), so the
+    // stamp is cleared on every type — the grant may have carried a foreign
+    // id from a Sync run against that site.
+    const grantPatch: Parameters<typeof patchGrant>[2] = {
       scope: 'stake',
-      // Stake-scope primary grants resolve to the home site (spec §15
-      // Phase 1): `kindoo_site_id` must be null/absent. The seat may have
-      // carried a foreign site id (Sync run against a foreign site), so
-      // clear it on every type. See packages/shared/src/types/seat.ts.
-      kindoo_site_id: FieldValue.delete(),
+      site: { op: 'delete' },
+    };
+    const update: Record<string, unknown> = {
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,
     };
 
-    if (seat.type === 'auto') {
+    if (grant.type === 'auto') {
       // §6.1 auto convention: calling lives in `callings[]`, no `reason`.
-      update.callings = dedupePreserveOrder([calling]);
-      update.reason = FieldValue.delete();
+      grantPatch.callings = dedupePreserveOrder([calling]);
+      grantPatch.reason = null;
 
       // Access doc: reap the OLD scope's calling-derived grant, then —
       // iff `calling` is in the STAKE app-access set — write a fresh
@@ -1161,7 +1328,7 @@ async function applyKindooUnparseable(
       // (parity with `applyKindooOnly` / `applyCallingsMismatch`); `null`
       // for an unknown calling. The access grant is gated on the stake
       // app-access set separately.
-      update.sort_order = stakeSort;
+      if (slot.kind === 'primary') update.sort_order = stakeSort;
 
       writeStakeScopeAccessForUnparseable(tx, accessRef, {
         canonical,
@@ -1177,11 +1344,14 @@ async function applyKindooUnparseable(
     } else {
       // §6.1 manual / temp convention: calling lives in free-text `reason`,
       // `callings[]` cleared. Temp seats keep their existing dates.
-      update.reason = calling;
-      update.callings = [];
+      grantPatch.reason = calling;
+      grantPatch.callings = null;
     }
 
-    tx.update(seatRef, update);
+    tx.update(seatRef, {
+      ...update,
+      ...patchGrant(seat, slot, grantPatch),
+    });
     return { success: true, seatId: canonical };
   });
 }
@@ -1220,8 +1390,14 @@ async function applyBuildingsMismatch(
     if (!snap.exists) {
       return { success: false, error: 'seat not found' };
     }
+    const seat = snap.data() as Seat;
+    // B-16: replace the SURFACED grant's buildings. On a duplicate-surfaced
+    // row the incoming set is the FOREIGN site's, so writing the primary
+    // replaced the home grant's buildings with another site's.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
     tx.update(seatRef, {
-      building_names: newBuildingNames,
+      ...patchGrant(seat, slot, { building_names: newBuildingNames }),
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,

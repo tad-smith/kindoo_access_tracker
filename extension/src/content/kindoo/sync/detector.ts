@@ -18,7 +18,6 @@ import {
   type SegmentAppAccessOptions,
 } from './parser';
 import type { ActiveSite } from './activeSite';
-import { DUPLICATE_SURFACED_NOTE, WITHHELD_ON_DUPLICATE_SURFACED } from './duplicateGuard';
 
 /**
  * The seat shape derived from a parsed primary segment. Template-based
@@ -76,19 +75,6 @@ export interface Discrepancy {
   /** Kindoo side block — `null` when the user only exists in SBA. */
   kindoo: KindooBlock | null;
   /**
-   * True when the row was surfaced through a `duplicate_grants[]` entry
-   * rather than the seat's primary grant.
-   *
-   * Every `syncApplyFix` handler writes the PRIMARY's fields, so on such
-   * a row the write would land on a grant the operator isn't looking at
-   * (B-16, B-24). `fixActionsFor` withholds the two actions whose wrong
-   * write destroys data — `sba-only`'s Remove and `callings-mismatch`'s
-   * Update — until the `(scope, kindoo_site_id)` threading both bugs
-   * need is in place. The rows still surface; only the known-wrong
-   * buttons are absent.
-   */
-  surfacedFromDuplicate?: boolean;
-  /**
    * `kindoo-only` rows only. True when SBA DOES hold a seat for this
    * member — just no grant on the active site, so the seat projected to
    * nothing and the row is "missing grant", not "missing member" (B-23).
@@ -134,21 +120,22 @@ export interface KindooBlock {
    * scoped out of the change that added `createScope`. */
   primaryScope: 'stake' | string | null;
   /**
-   * `kindoo-only` rows only: the scope the created — or merged —
-   * grant targets, taken from the **site-filtered** segment
-   * (`pickSegmentForSite`), which is the same segment
-   * `intendedCallings` / `intendedFreeText` are built from.
+   * The scope of the **site-filtered** segment (`pickSegmentForSite`) —
+   * the same segment `intendedCallings` / `intendedFreeText` are built
+   * from. Consumed by `kindoo-only` (the created / merged grant's scope)
+   * and by `scope-mismatch` (the scope to move the grant to).
    *
    * `primaryScope` is not usable here. Its unfiltered tiebreaker
    * prefers an app-access segment and then `'stake'`, so a foreign-site
    * row for a member whose Description also names a home segment would
    * arrive carrying the foreign ward's CALLINGS under the home
    * segment's SCOPE — writing the grant onto the wrong slot, on the
-   * wrong site, and never converging. `null` when no segment resolves
-   * (home-site unparseable); the dispatcher falls back to `'stake'`,
-   * as it did before.
+   * wrong site, and never converging. `scope-mismatch` had the same split
+   * (B-26): it DETECTED on the filtered segment and SENT the unfiltered
+   * one, so the row could name one ward and the write move the grant to
+   * another. `null` when no segment resolves (home-site unparseable).
    */
-  createScope?: 'stake' | string | null;
+  siteScope?: 'stake' | string | null;
   /**
    * `kindoo-only` rows only: the Kindoo site this row was surfaced from
    * (`null` home, a site id for a foreign site). Sent on the payload as
@@ -323,7 +310,7 @@ function projectSeatForSite(
   wards: Ward[],
   buildings: Building[],
   activeSite: ActiveSite | undefined,
-): { block: SbaBlock; fromDuplicate: boolean } | null {
+): SbaBlock | null {
   if (!activeSite || activeSite.kind === 'unknown') return null;
   const wardSite = (wardCode: string): string | null => {
     if (wardCode === 'stake') return null;
@@ -355,8 +342,7 @@ function projectSeatForSite(
   const contributors: Contributor[] = [];
   // Primary first (preserves "primary wins on scope/type" when it
   // matches the active site).
-  const primaryContributed = grantSite(seat.kindoo_site_id, seat.scope) === wantSiteId;
-  if (primaryContributed) {
+  if (grantSite(seat.kindoo_site_id, seat.scope) === wantSiteId) {
     contributors.push({
       scope: seat.scope,
       type: seat.type,
@@ -380,12 +366,6 @@ function projectSeatForSite(
   }
   if (contributors.length === 0) return null;
   const first = contributors[0]!;
-  // Primary is pushed first when it targets the site, so a projection
-  // whose lead contributor is NOT the primary was surfaced through a
-  // `duplicate_grants[]` entry. Every fix handler writes the primary's
-  // fields, so that distinction decides which actions are safe to offer
-  // (B-16 / B-24).
-  const fromDuplicate = !primaryContributed;
   const unioned: string[] = [];
   const seen = new Set<string>();
   for (const c of contributors) {
@@ -396,15 +376,12 @@ function projectSeatForSite(
     }
   }
   return {
-    block: {
-      scope: first.scope,
-      type: first.type,
-      callings: first.callings,
-      reason: first.reason,
-      buildingNames: unioned,
-      kindooSiteId: wantSiteId,
-    },
-    fromDuplicate,
+    scope: first.scope,
+    type: first.type,
+    callings: first.callings,
+    reason: first.reason,
+    buildingNames: unioned,
+    kindooSiteId: wantSiteId,
   };
 }
 
@@ -745,23 +722,17 @@ export function detect(inputs: DetectInputs): DetectResult {
   // `kindoo_site_id` matches; else any same-site duplicate). Seats
   // with no grant on the active site are filtered out — they belong
   // to a different site's manager view.
-  type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock; fromDuplicate: boolean };
+  type ProjectedSeat = { seat: Seat; sbaBlock: SbaBlock };
   const projectedSeats: ProjectedSeat[] = [];
   for (const seat of inputs.seats) {
     if (!inputs.activeSite) {
       // No active-site context — preserve pre-T-42 behaviour (don't
       // filter; project against the seat's primary fields directly).
-      projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat), fromDuplicate: false });
+      projectedSeats.push({ seat, sbaBlock: toSbaBlock(seat) });
       continue;
     }
     const projected = projectSeatForSite(seat, inputs.wards, inputs.buildings, inputs.activeSite);
-    if (projected) {
-      projectedSeats.push({
-        seat,
-        sbaBlock: projected.block,
-        fromDuplicate: projected.fromDuplicate,
-      });
-    }
+    if (projected) projectedSeats.push({ seat, sbaBlock: projected });
   }
   const filteredKindooUsers = filterKindooUsersByActiveSite(
     consideredKindooUsers,
@@ -797,14 +768,6 @@ export function detect(inputs: DetectInputs): DetectResult {
     const projected = seatsByEmail.get(canon) ?? null;
     const seat = projected?.seat ?? null;
     const sbaBlock = projected?.sbaBlock ?? null;
-    // The row's grant provenance: a projection led by a duplicate means
-    // every primary-writing handler would write the wrong grant.
-    const fromDup = projected?.fromDuplicate === true;
-    // Appended to a withheld row's reason so a missing button is never
-    // the operator's only signal. Keyed off the SAME set `fixActionsFor`
-    // uses, so the two cannot disagree.
-    const dupNote = (code: DiscrepancyCode): string =>
-      fromDup && WITHHELD_ON_DUPLICATE_SURFACED.has(code) ? DUPLICATE_SURFACED_NOTE : '';
     const kuser = kindooByEmail.get(canon) ?? null;
     const displayEmail = kuser?.username ?? seat?.member_email ?? canon;
 
@@ -821,13 +784,10 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'sba-only',
         severity: 'drift',
-        reason:
-          (ignoredCanonicals.has(canon)
-            ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
-            : 'SBA has a seat for this member, but the user is not present in Kindoo.') +
-          dupNote('sba-only'),
+        reason: ignoredCanonicals.has(canon)
+          ? "SBA has a seat for this member, but their Kindoo ward is on this stake's ignore list — another stake manages them."
+          : 'SBA has a seat for this member, but the user is not present in Kindoo.',
         sba: sbaBlock,
-        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: null,
       });
       continue;
@@ -901,7 +861,7 @@ export function detect(inputs: DetectInputs): DetectResult {
       // The grant goes onto the site the row was surfaced from, so its
       // scope is the SITE-FILTERED segment's — the one `intended` above
       // was built from — not the block's unfiltered `primaryScope`.
-      block.createScope = primary?.scope ?? null;
+      block.siteScope = primary?.scope ?? null;
       // Marks this build as carrying the guards, and lets the callable
       // check the payload's scope actually lives on this site.
       block.activeSiteId = inputs.activeSite
@@ -955,10 +915,8 @@ export function detect(inputs: DetectInputs): DetectResult {
         code: 'type-mismatch',
         severity: 'drift',
         reason:
-          'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.' +
-          dupNote('type-mismatch'),
+          'Promote to auto: this Kindoo user is an Administrator/Manager (non-Guest), so the seat is church-owned ⇒ auto.',
         sba: sbaBlock,
-        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts, 'auto'),
       });
       continue;
@@ -993,7 +951,6 @@ export function detect(inputs: DetectInputs): DetectResult {
           severity: 'review',
           reason: 'Kindoo description is blank — nothing to reconcile; manual review.',
           sba: sbaBlock,
-          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
         });
         continue;
@@ -1008,10 +965,8 @@ export function detect(inputs: DetectInputs): DetectResult {
         code: 'kindoo-unparseable',
         severity: 'drift',
         reason:
-          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA." +
-          dupNote('kindoo-unparseable'),
+          "Kindoo description doesn't match 'Scope (Calling)'; treat as a stake-scope (church-wide) calling and Update SBA.",
         sba: sbaBlock,
-        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
@@ -1030,11 +985,8 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'kindoo-unparseable',
         severity: 'review',
-        reason:
-          'Kindoo description has no resolvable primary segment; review manually.' +
-          dupNote('kindoo-unparseable'),
+        reason: 'Kindoo description has no resolvable primary segment; review manually.',
         sba: sbaBlock,
-        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, null, inputs.buildings, eqOpts),
       });
       continue;
@@ -1043,17 +995,18 @@ export function detect(inputs: DetectInputs): DetectResult {
 
     // 5. scope-mismatch — parsed primary scope differs from seat.scope.
     if (primary.scope !== sbaBlock.scope) {
+      // B-26: the payload must send the segment this comparison used.
       discrepancies.push({
         canonical: canon,
         displayEmail,
         code: 'scope-mismatch',
         severity: 'drift',
-        reason:
-          `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.` +
-          dupNote('scope-mismatch'),
+        reason: `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.`,
         sba: sbaBlock,
-        ...(fromDup ? { surfacedFromDuplicate: true } : {}),
-        kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
+        kindoo: {
+          ...buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
+          siteScope: primary.scope,
+        },
       });
       continue;
     }
@@ -1099,11 +1052,8 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
-          reason:
-            `Promote to auto: the church directly grants this member door access in building(s) [${directList}], so Kindoo provisioning is church-owned.` +
-            dupNote('type-mismatch'),
+          reason: `Promote to auto: the church directly grants this member door access in building(s) [${directList}], so Kindoo provisioning is church-owned.`,
           sba: sbaBlock,
-          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'auto'),
         });
         continue;
@@ -1124,10 +1074,8 @@ export function detect(inputs: DetectInputs): DetectResult {
           // the operator to flip a working auto seat on a claim that is
           // false for that case (B-25, one level up).
           reason:
-            'Demote to manual: no church-granted door falls inside a building rule SBA knows about for this member, so SBA owns the access ⇒ manual. If their building has no Kindoo rule mapped in Configuration → Buildings, map it and re-run Sync before applying this.' +
-            dupNote('type-mismatch'),
+            'Demote to manual: no church-granted door falls inside a building rule SBA knows about for this member, so SBA owns the access ⇒ manual. If their building has no Kindoo rule mapped in Configuration → Buildings, map it and re-run Sync before applying this.',
           sba: sbaBlock,
-          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
         });
         continue;
@@ -1181,11 +1129,8 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'buildings-mismatch',
           severity: 'drift',
-          reason:
-            `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].${widensNote}` +
-            dupNote('buildings-mismatch'),
+          reason: `Building access differs: SBA=[${expectedBuildings.join(', ')}], Kindoo=[${kindooBuildingsForCompare.join(', ')}].${widensNote}`,
           sba: sbaBlock,
-          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });
         continue;
@@ -1220,11 +1165,8 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'callings-mismatch',
           severity: 'drift',
-          reason:
-            `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.` +
-            dupNote('callings-mismatch'),
+          reason: `Kindoo lists calling(s) [${kindooCallings.join(', ')}]; the seat has [${seatLabel}] — update SBA to match Kindoo.`,
           sba: sbaBlock,
-          ...(fromDup ? { surfacedFromDuplicate: true } : {}),
           kindoo: buildKindooBlock(
             kuser,
             parsed,

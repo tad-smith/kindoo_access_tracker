@@ -2273,6 +2273,163 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // orphan branch. The re-assert is the guard against true mid-call
   // concurrency, which we don't fake-inject — no test theater.
 
+  // B-16 — every handler writes the grant its ROW was surfaced from, not
+  // the primary. The shape below is what a B-23 merge produces and makes
+  // routine: a `stake` primary on the home site plus a foreign ward
+  // duplicate. Each test asserts BOTH halves — the duplicate changed, the
+  // primary untouched — because writing the primary is exactly the bug.
+  describe('duplicate-surfaced fixes target the surfaced grant (B-16)', () => {
+    async function seedMergedSeat(): Promise<void> {
+      await seedManager();
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+      await seedSeat({
+        scope: 'stake',
+        type: 'auto',
+        callings: ['Stake Clerk'],
+        building_names: ['Lexington Building'],
+        sort_order: STAKE_CLERK_ORDER,
+      });
+      await seedAccess({
+        importer_callings: { stake: ['Stake Clerk'] },
+        sort_order: STAKE_CLERK_ORDER,
+      });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        duplicate_grants: [
+          {
+            scope: 'MR',
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['Black Forest'],
+            kindoo_site_id: 'east-stake',
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['MR'],
+      });
+    }
+
+    function ref(): { scope: string; kindooSiteId: string } {
+      return { scope: 'MR', kindooSiteId: 'east-stake' };
+    }
+
+    async function readSeat(): Promise<Seat> {
+      const { db } = requireEmulators();
+      return (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+    }
+
+    async function run(code: string, payload: Record<string, unknown>): Promise<unknown> {
+      return syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, fix: { code, payload } },
+        }),
+      );
+    }
+
+    it('callings-mismatch rewrites the duplicate, not the primary', async () => {
+      await seedMergedSeat();
+      await run('callings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        callings: ['Bishop'],
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      expect(seat.sort_order).toBe(STAKE_CLERK_ORDER);
+      expect(seat.duplicate_grants[0]!.callings).toEqual(['Bishop']);
+      // Access follows the SURFACED scope; the stake grant keeps its own.
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings.stake).toEqual(['Stake Clerk']);
+      expect(access.importer_callings.MR).toEqual(['Bishop']);
+    });
+
+    it('type-mismatch DEMOTE clears the duplicate callings, leaving the stake grant whole', async () => {
+      await seedMergedSeat();
+      await run('type-mismatch', { memberEmail: MEMBER_EMAIL, newType: 'manual', ...ref() });
+      const seat = await readSeat();
+      // The write that used to revoke the member's stake app access.
+      expect(seat.type).toBe('auto');
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.type).toBe('manual');
+      expect(dup.callings).toBeUndefined();
+      expect(dup.reason).toBe('Ward Clerk');
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings.stake).toEqual(['Stake Clerk']);
+    });
+
+    it('buildings-mismatch replaces the duplicate buildings, not the home ones', async () => {
+      await seedMergedSeat();
+      await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Black Forest', 'Annex'],
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.building_names).toEqual(['Lexington Building']);
+      expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest', 'Annex']);
+    });
+
+    it('scope-mismatch moves the duplicate, leaving the primary at stake', async () => {
+      await seedMergedSeat();
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      await run('scope-mismatch', { memberEmail: MEMBER_EMAIL, newScope: 'CO', ...ref() });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.duplicate_grants[0]!.scope).toBe('CO');
+      expect(seat.duplicate_scopes).toEqual(['CO']);
+    });
+
+    it('kindoo-unparseable restakes the duplicate, not the primary', async () => {
+      await seedMergedSeat();
+      await run('kindoo-unparseable', {
+        memberEmail: MEMBER_EMAIL,
+        calling: 'Some Church Wide Calling',
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.scope).toBe('stake');
+      expect(dup.callings).toEqual(['Some Church Wide Calling']);
+      expect(dup.kindoo_site_id).toBeNull();
+    });
+
+    it('soft-fails when the named grant is no longer on the seat', async () => {
+      await seedMergedSeat();
+      const result = await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Annex'],
+        scope: 'GONE',
+        kindooSiteId: 'east-stake',
+      });
+      // Never fall back to the primary — falling back IS the bug.
+      expect(result).toMatchObject({ success: false });
+      expect((await readSeat()).building_names).toEqual(['Lexington Building']);
+    });
+
+    it('a payload naming no scope still writes the primary (version skew)', async () => {
+      await seedMergedSeat();
+      await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Annex'],
+      });
+      const seat = await readSeat();
+      expect(seat.building_names).toEqual(['Annex']);
+      expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest']);
+    });
+  });
+
   describe("code='sba-only'", () => {
     it('deletes the orphaned seat and returns success + seatId', async () => {
       await seedManager();
