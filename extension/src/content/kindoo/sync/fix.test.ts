@@ -205,6 +205,7 @@ describe('fixActionsFor', () => {
     // isn't looking at. The row still renders; only the buttons go.
     for (const code of [
       'callings-mismatch',
+      'scope-mismatch',
       'buildings-mismatch',
       'type-mismatch',
       'kindoo-unparseable',
@@ -221,14 +222,16 @@ describe('fixActionsFor', () => {
     }
   });
 
-  it('keeps only scope-mismatch on a duplicate-surfaced row', () => {
-    // The one axis with no other route to convergence. Everything else
-    // either reaps a grant or replaces a set wholesale on the primary.
-    const actions = fixActionsFor(
-      discrepancy({ code: 'scope-mismatch', surfacedFromDuplicate: true }),
-    );
-    expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ testId: 'update-sba' });
+  it('withholds scope-mismatch on a duplicate-surfaced row too', () => {
+    // Exempted twice as "the one axis with no other route to
+    // convergence" — the property it lacks, since the write never touches
+    // the duplicate that produced the row. It rewrites the field that
+    // decides which grant the primary IS.
+    expect(
+      fixActionsFor(discrepancy({ code: 'scope-mismatch', surfacedFromDuplicate: true })),
+    ).toEqual([]);
+    // Primary-surfaced is unaffected.
+    expect(fixActionsFor(discrepancy({ code: 'scope-mismatch' }))).toHaveLength(1);
   });
 
   it('any review-severity row returns no actions regardless of code (invariant)', () => {

@@ -2304,7 +2304,9 @@ describe('detect', () => {
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
     expect(row.surfacedFromDuplicate).toBe(true);
-    if (row.code !== 'scope-mismatch') {
+    // Every code that writes the primary is withheld; `sba-only` is the
+    // one exception, and it targets the surfaced grant (B-24).
+    if (row.code !== 'sba-only') {
       expect(fixActionsFor(row)).toEqual([]);
     }
   });

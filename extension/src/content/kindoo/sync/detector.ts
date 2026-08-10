@@ -886,9 +886,17 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'kindoo-only',
         severity: 'drift',
-        reason: mergeTarget
-          ? 'Kindoo grants this member access on this site, but their SBA seat holds no grant here — it will be added to their existing seat.'
-          : 'Kindoo has a user for this email, but SBA has no seat for them.',
+        reason: !mergeTarget
+          ? 'Kindoo has a user for this email, but SBA has no seat for them.'
+          : primary
+            ? // The merge will happen, and the operator should know the
+              // grant carries door access only — app access is a separate,
+              // manual step (spec §8).
+              'Kindoo grants this member access on this site, but their SBA seat holds no grant here — it will be added to their existing seat. Door access only; grant SBA app access separately if they need it.'
+            : // No segment resolved on this site, so there is no scope to
+              // merge onto and `fixActionsFor` withholds the action. Say so
+              // rather than promising a write that won't be offered.
+              'Kindoo grants this member access on this site, but their Description names no ward or stake we can resolve here, so there is nothing to merge onto their existing seat — fix the Kindoo Description, then re-run Sync.',
         sba: null,
         kindoo: block,
         ...(mergeTarget ? { mergesOntoExistingSeat: true } : {}),
@@ -1012,7 +1020,9 @@ export function detect(inputs: DetectInputs): DetectResult {
         displayEmail,
         code: 'scope-mismatch',
         severity: 'drift',
-        reason: `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.`,
+        reason:
+          `Primary scope differs: SBA=${scopeLabel(sbaBlock.scope, inputs.wards)}, Kindoo=${primary.scope !== null ? scopeLabel(primary.scope, inputs.wards) : '(unresolved)'}.` +
+          dupNote('scope-mismatch'),
         sba: sbaBlock,
         ...(fromDup ? { surfacedFromDuplicate: true } : {}),
         kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),

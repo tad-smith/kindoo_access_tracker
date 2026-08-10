@@ -17,12 +17,23 @@
 //   - `kindoo-unparseable`  restakes the primary to `stake`, drops its site
 //                           stamp, overwrites callings, reaps the old scope —
 //                           a strict superset of the rest
+//   - `scope-mismatch`      rewrites the primary's `scope` — the field that
+//                           decides which grant it IS — plus its site stamp,
+//                           and deletes `organization_id`
 //
-// `scope-mismatch` is deliberately absent, and it is not clean either: it
-// rewrites the primary's `scope`, re-stamps `kindoo_site_id`, deletes
-// `organization_id`, and sends the UNFILTERED segment (B-25). It stays
-// because scope drift has no other route to convergence and its write
-// replaces a field rather than reaping a grant. Revisit with B-16.
+// `scope-mismatch` was exempted twice on the grounds that "scope drift has
+// no other route to convergence". That is the one property it lacks here:
+// the write never touches the duplicate that produced the row, so the row
+// stops re-emitting only because the PRIMARY has been dragged onto the
+// duplicate's site. Concretely, on a merged seat (`stake` primary + foreign
+// ward duplicate) whose member moves to another ward on that foreign site,
+// the row reads "SBA=Kettle Creek, Kindoo=Meadow Ridge" — the operator is
+// looking at the duplicate — and the click restakes their STAKE grant to a
+// foreign ward: licence pools move (`computeOverCaps` counts the primary's
+// `scope`), rules-based read access flips, `organization_id` is deleted,
+// and `importer_callings.stake` is orphaned with nothing left to reap it.
+// Strictly more destructive than the `type-mismatch` PROMOTE next to it.
+// It also sends the UNFILTERED segment (B-25).
 //
 // Delete this module — don't extend it — once the handlers take the
 // surfaced grant's `(scope, kindoo_site_id)`; then every code can act on
@@ -38,6 +49,7 @@ import type { DiscrepancyCode } from './detector';
 // affordance gates on `grant.type !== 'auto'`.
 export const WITHHELD_ON_DUPLICATE_SURFACED: ReadonlySet<DiscrepancyCode> = new Set([
   'callings-mismatch',
+  'scope-mismatch',
   'type-mismatch',
   'buildings-mismatch',
   'kindoo-unparseable',
