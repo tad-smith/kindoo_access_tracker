@@ -440,6 +440,31 @@ async function applyKindooOnly(
     const grantSite: string | null | undefined = isUnitScope ? newSeatSite : null;
 
     if (existingSeat) {
+      // Version gate. Everything that makes the merge safe ships in the
+      // extension — `createScope`, the duplicate-surfaced withholding,
+      // `sba-only`'s grant discriminator — while THIS is a server change
+      // that lands for every client at once. Chrome updates extensions on
+      // its own schedule after a Web Store review measured in days, so
+      // "deploy the extension first" cannot be relied on. A build that
+      // omits `activeSiteId` predates the guards and keeps the pre-B-23
+      // soft failure: loud, harmless, and exactly what it got yesterday.
+      if (payload.activeSiteId === undefined) {
+        return { success: false, error: 'seat already exists for that member' };
+      }
+      // With the marker present the caller also tells us which site the
+      // row came from, so the payload's own scope can be checked against
+      // it. This closes the APPEND path too — `slotAlreadyOnGrantSite`
+      // only ever covered a slot hit, so a wrong scope with no matching
+      // slot still appended a junk grant that widens `duplicate_scopes`
+      // (a rules read predicate) and can inflate the home licence pool.
+      // `undefined` means the unit doc was unreadable, which proves
+      // nothing either way — proceed, as every other path here does.
+      if (grantSite !== undefined && grantSite !== payload.activeSiteId) {
+        return {
+          success: false,
+          error: `that grant's scope does not live on this Kindoo site — re-run Sync`,
+        };
+      }
       const merge = planKindooOnlyMerge({
         existingSeat,
         scope,
@@ -544,7 +569,7 @@ async function applyKindooOnly(
 /** What `planKindooOnlyMerge` decided: the seat fields to write, or a
  * refusal carrying the message the extension shows inline. */
 type KindooOnlyMergePlan =
-  | { kind: 'write'; update: Record<string, unknown>; appended: boolean }
+  | { kind: 'write'; update: Record<string, unknown> }
   | { kind: 'refuse'; error: string };
 
 const SLOT_ALREADY_ON_SITE =
@@ -563,7 +588,7 @@ const SLOT_ALREADY_ON_SITE =
  *
  *   - **Version skew.** Dropping the old `seatSnap.exists` guard changed
  *     server behaviour for clients already in the field. An extension at
- *     ≤1.1.8 sends the UNFILTERED primary scope (the defect `createScope`
+ *     ≤1.1.11 sends the UNFILTERED primary scope (the defect `createScope`
  *     fixes), and functions deploy the day the operator runs the script
  *     while the extension waits on Chrome Web Store review. Through that
  *     window a foreign-site click for a member with a multi-segment
@@ -619,9 +644,7 @@ function slotAlreadyOnGrantSite(
  *
  * Callings are deliberately NOT rewritten on a hit: `callings-mismatch`
  * owns that axis, and it fires on the following run once the grant is
- * visible on the site. `appended` reports which branch ran so the caller
- * can hold the auto access reconcile to the append — on a hit, writing
- * access from callings the seat doesn't record would split the two.
+ * visible on the site.
  *
  * `siteId`: `null` home, a string foreign, `undefined` when the unit doc
  * was missing — the last leaves the field off so the read-time ward
@@ -671,7 +694,7 @@ function planKindooOnlyMerge(opts: {
     if (siteId !== undefined) {
       update.kindoo_site_id = siteId === null ? FieldValue.delete() : siteId;
     }
-    return { kind: 'write', update, appended: false };
+    return { kind: 'write', update };
   }
 
   const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === type);
@@ -692,7 +715,6 @@ function planKindooOnlyMerge(opts: {
     return {
       kind: 'write',
       update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
-      appended: false,
     };
   }
 
@@ -715,7 +737,6 @@ function planKindooOnlyMerge(opts: {
   return {
     kind: 'write',
     update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
-    appended: true,
   };
 }
 

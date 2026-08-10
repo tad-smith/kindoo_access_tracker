@@ -68,6 +68,27 @@ export type KindooOnlyPayload = {
   endDate?: string;
   /** Reserved — Kindoo's temp-user flag carried through for parity. */
   isTempUser: boolean;
+  /**
+   * The Kindoo site the drift row was surfaced from — `null` home, a
+   * site id for a foreign site. **Absence is load-bearing.**
+   *
+   * The merge-onto-existing-seat behaviour (B-23) is a SERVER change,
+   * but everything that makes it safe ships in the EXTENSION:
+   * `createScope`, the duplicate-surfaced withholding, and `sba-only`'s
+   * `(scope, kindooSiteId)`. Functions deploy in minutes; the extension
+   * goes through Chrome Web Store review and then updates on each
+   * manager's own schedule, so "deploy the extension first" is not
+   * enforceable (`firebase-schema.md` §3.4 already treats the
+   * independent cadence as a hard constraint).
+   *
+   * A build predating those guards omits this field, and the callable
+   * then refuses to merge — it keeps the pre-B-23 `seat already exists`
+   * soft failure, which is loud and harmless. So the server change
+   * cannot outrun the client guards no matter what order anything ships
+   * in. Present ⇒ the caller also has the guards, and the callable can
+   * additionally verify the payload's scope really lives on this site.
+   */
+  activeSiteId?: string | null;
 };
 
 /** Payload for the `callings-mismatch` fix. REPLACES an auto seat's

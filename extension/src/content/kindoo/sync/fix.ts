@@ -225,6 +225,10 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         callings,
         buildingNames,
         isTempUser: d.kindoo.isTempUser,
+        // Version marker + site check. Omitted only by a build that
+        // predates the guards, which is exactly when the callable must
+        // refuse to merge.
+        ...(d.kindoo.activeSiteId !== undefined ? { activeSiteId: d.kindoo.activeSiteId } : {}),
       };
       // Manual / temp seats record their calling text in `reason` — the
       // FULL parsed calling list (not just `intendedFreeText`, which is

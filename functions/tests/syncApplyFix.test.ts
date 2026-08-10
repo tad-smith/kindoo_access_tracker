@@ -370,6 +370,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: ['Elders Quorum Second Counselor'],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: 'high-plains',
                 },
               },
             },
@@ -427,6 +428,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   startDate: '2026-08-01',
                   endDate: '2026-08-31',
                   isTempUser: true,
+                  activeSiteId: 'east-stake',
                 },
               },
             },
@@ -471,6 +473,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: ['Ward Clerk'],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: 'east-stake',
                 },
               },
             },
@@ -517,6 +520,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: [],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: 'east-stake',
                 },
               },
             },
@@ -569,6 +573,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: ['Ward Clerk'],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: 'east-stake',
                 },
               },
             },
@@ -590,9 +595,87 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         expect(access.sort_order).toBe(BISHOP_ORDER);
       });
 
+      it('refuses to merge for a client that predates the guards (no activeSiteId)', async () => {
+        await seedManager();
+        // Everything that makes the merge safe ships in the extension, and
+        // Chrome updates on its own schedule — so the server change gates
+        // itself on a field only a guarded build sends, rather than on
+        // deploy order. An older build gets exactly yesterday's behaviour.
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'stake', type: 'auto', callings: ['Stake Clerk'] });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR',
+                  type: 'auto',
+                  callings: ['Ward Clerk'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                  // activeSiteId deliberately absent.
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toEqual({ success: false, error: 'seat already exists for that member' });
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants).toEqual([]);
+      });
+
+      it('refuses an append whose scope does not live on the row site', async () => {
+        await seedManager();
+        // The append hole: `slotAlreadyOnGrantSite` only ever covered a
+        // slot HIT, so a wrong scope with no matching slot still appended
+        // a junk grant. With the site the row came from in hand, the
+        // payload's own scope can be checked against it.
+        await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+        await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+        await seedSeat({ scope: 'stake', type: 'auto', callings: ['Stake Clerk'] });
+
+        const result = await syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'kindoo-only',
+                payload: {
+                  memberEmail: MEMBER_EMAIL,
+                  memberName: 'Alice',
+                  scope: 'MR', // lives on east-stake
+                  type: 'auto',
+                  callings: ['Ward Clerk'],
+                  buildingNames: ['Black Forest'],
+                  isTempUser: false,
+                  activeSiteId: null, // ...but the row came from home
+                },
+              },
+            },
+          }),
+        );
+        expect(result).toMatchObject({ success: false });
+        const { db } = requireEmulators();
+        const seat = (
+          await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()
+        ).data() as Seat;
+        expect(seat.duplicate_grants).toEqual([]);
+      });
+
       it('refuses a slot hit whose site already matches the incoming grant', async () => {
         await seedManager();
-        // The version-skew shape: an extension at <=1.1.8 sends the
+        // The version-skew shape: an extension at <=1.1.11 sends the
         // UNFILTERED primary scope, so a foreign-site row for a member
         // with a multi-segment Description arrives as `scope: 'stake'`
         // and matches the stake primary. That slot already resolves to
@@ -624,6 +707,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: ['Elders Quorum Second Counselor'],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: null,
                 },
               },
             },
@@ -777,6 +861,7 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
                   callings: [],
                   buildingNames: ['Black Forest'],
                   isTempUser: false,
+                  activeSiteId: 'east-stake',
                 },
               },
             },

@@ -149,6 +149,14 @@ export interface KindooBlock {
    * as it did before.
    */
   createScope?: 'stake' | string | null;
+  /**
+   * `kindoo-only` rows only: the Kindoo site this row was surfaced from
+   * (`null` home, a site id for a foreign site). Sent on the payload as
+   * the marker that this build carries the B-23 guards — the callable
+   * refuses to merge without it, so an older extension can never trigger
+   * the merge path. See `KindooOnlyPayload.activeSiteId`.
+   */
+  activeSiteId?: string | null;
   /** Parser-derived seat shape from the primary segment. Informational
    * only — `temp` when `IsTempUser`, else `manual`; the authoritative
    * seat type is `grantTargetType` (role + door-grant derived). */
@@ -881,6 +889,13 @@ export function detect(inputs: DetectInputs): DetectResult {
       // scope is the SITE-FILTERED segment's — the one `intended` above
       // was built from — not the block's unfiltered `primaryScope`.
       block.createScope = primary?.scope ?? null;
+      // Marks this build as carrying the guards, and lets the callable
+      // check the payload's scope actually lives on this site.
+      block.activeSiteId = inputs.activeSite
+        ? inputs.activeSite.kind === 'home'
+          ? null
+          : inputs.activeSite.siteId
+        : null;
       discrepancies.push({
         canonical: canon,
         displayEmail,
