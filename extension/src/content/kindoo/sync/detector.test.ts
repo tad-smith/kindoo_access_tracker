@@ -2575,6 +2575,7 @@ describe('detect + real door-grant derivation (B-25)', () => {
    * the given grant rows. */
   async function enrich(
     rows: Array<{ door: number; church: boolean }>,
+    ruleDoorMap?: Map<number, Set<number>>,
   ): Promise<KindooEnvironmentUser> {
     const fetchImpl = async () =>
       new Response(
@@ -2593,7 +2594,7 @@ describe('detect + real door-grant derivation (B-25)', () => {
       { token: 'sess', eid: 27994 },
       27994,
       [kuser({ description: 'Maple Ward (Sunday School Teacher)' })],
-      new Map([[6248, new Set([1, 2, 3])]]),
+      ruleDoorMap ?? new Map([[6248, new Set([1, 2, 3])]]),
       BUILDINGS,
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
@@ -2653,6 +2654,54 @@ describe('detect + real door-grant derivation (B-25)', () => {
       }),
     );
     expect(result.discrepancies).toEqual([]);
+  });
+
+  it('offers to ADD a building the member holds one door of, and the row is actionable', async () => {
+    // The direction the any-overlap access rule newly enables, and the
+    // one with a write behind it. The member holds all of Pine Creek
+    // plus a single Maple door; their seat lists Pine Creek only. Sync
+    // now reports Maple on the Kindoo side, so Update SBA adds it to
+    // `building_names` — and the next provision writes Maple's whole
+    // rule, granting the doors the church didn't. Ruled correct by the
+    // operator: if one door puts them in the building, the seat says so
+    // and SBA provisions the building. Recorded in spec.md §8.
+    //
+    // `derivedBuildings` must be NON-EMPTY for that to be reachable —
+    // `SyncPanel`'s `autoLockedSba` disables Update SBA on `null` / `[]`,
+    // so an empty set would leave the row unfixable rather than
+    // actionable. Asserted below.
+    const enriched = await enrich(
+      [
+        { door: 1, church: true }, // one Maple door
+        { door: 4, church: true }, // all of Pine Creek
+        { door: 5, church: true },
+      ],
+      new Map([
+        [6248, new Set([1, 2, 3])],
+        [6249, new Set([4, 5])],
+      ]),
+    );
+    expect(enriched.derivedBuildings).toEqual(['Maple Building', 'Pine Creek Building']);
+
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Pine Creek Building'],
+          }),
+        ],
+        kindooUsers: [enriched],
+      }),
+    );
+    const rows = result.discrepancies.filter((d) => d.code === 'buildings-mismatch');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sba?.buildingNames).toEqual(['Pine Creek Building']);
+    expect(rows[0]?.kindoo?.derivedBuildings).toEqual(['Maple Building', 'Pine Creek Building']);
+    // Non-empty ⇒ `autoLockedSba` stays false ⇒ Update SBA is clickable.
+    expect(rows[0]?.kindoo?.derivedBuildings?.length).toBeGreaterThan(0);
   });
 
   it('does not offer to strip a building the member holds ONE door of', async () => {
