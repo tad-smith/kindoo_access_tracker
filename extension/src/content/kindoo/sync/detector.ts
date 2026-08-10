@@ -971,8 +971,15 @@ export function detect(inputs: DetectInputs): DetectResult {
           displayEmail,
           code: 'type-mismatch',
           severity: 'drift',
+          // Says what `[]` actually means, not what it usually means. An
+          // empty set is "no church-granted door falls inside a building
+          // rule SBA knows about" — which is also what an unmapped (or
+          // not-yet-mapped) building produces for every one of its
+          // members. Wording this as "the church grants nothing" invites
+          // the operator to flip a working auto seat on a claim that is
+          // false for that case (B-25, one level up).
           reason:
-            'Demote to manual: the church no longer directly grants any door access for this member; SBA owns the access ⇒ manual.',
+            'Demote to manual: no church-granted door falls inside a building rule SBA knows about for this member, so SBA owns the access ⇒ manual. If their building has no Kindoo rule mapped in Configuration → Buildings, map it and re-run Sync before applying this.',
           sba: sbaBlock,
           kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts, 'manual'),
         });
