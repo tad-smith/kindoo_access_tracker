@@ -201,15 +201,16 @@ test.describe('Edit Seat calling typeahead — ward vs branch', () => {
   test('opens the dialog with no suggestion list covering the buildings checklist', async ({
     page,
   }) => {
-    // B-27. The Dialog autofocuses `reason` on mount; an `onFocus` that
-    // opened the popover therefore dropped ~50 suggestions over the
+    // B-27. The Dialog used to autofocus `reason` on mount; an `onFocus`
+    // that opened the popover therefore dropped ~50 suggestions over the
     // checklist before the operator touched anything. Focus alone must
-    // not open it.
+    // not open it — and as of B-28 nothing is focused on mount at all,
+    // so this now asserts the weaker precondition too.
     await signInAsStakeBishopric(page, 'mount-typeahead@example.com');
     await openEditSeat(page, WARD_CODE, WARD_SEAT);
 
     const reason = page.getByTestId('edit-seat-reason');
-    await expect(reason).toBeFocused();
+    await expect(reason).not.toBeFocused();
     await expect(page.getByTestId('edit-seat-reason-list')).toHaveCount(0);
 
     // `toBeVisible` is DOM visibility and says nothing about occlusion
@@ -227,6 +228,50 @@ test.describe('Edit Seat calling typeahead — ward vs branch', () => {
     // Typing is.
     await reason.fill('Ward Cl');
     await expect(option(page, 'Ward Clerk')).toBeVisible();
+  });
+
+  test('opens with no field focused and the pre-filled calling not selected', async ({ page }) => {
+    // B-28, the follow-up to B-27. Radix's mount autofocus does not just
+    // focus the first field, it `select()`s it — so this dialog, whose
+    // every field is pre-filled from the seat, opened with the calling
+    // highlighted and one keystroke from being replaced. jsdom can pin
+    // the focus and the selection range; only a real browser shows that
+    // the trap, Escape, and the Tab order all survive the opt-out.
+    await signInAsStakeBishopric(page, 'mount-focus@example.com');
+    await openEditSeat(page, WARD_CODE, WARD_SEAT);
+
+    const reason = page.getByTestId('edit-seat-reason');
+    await expect(reason).toHaveValue('Ward Clerk');
+    await expect(reason).not.toBeFocused();
+
+    // Nothing inside the dialog holds focus, and nothing is selected.
+    const state = await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return {
+        activeIsDialog: active?.getAttribute('role') === 'dialog',
+        selection: String(window.getSelection() ?? ''),
+      };
+    });
+    // Focus sits on the dialog itself — NOT on the trigger behind the
+    // overlay, which is what a bare preventDefault would leave. That is
+    // what keeps the trap armed and the dialog announced.
+    expect(state.activeIsDialog).toBe(true);
+    expect(state.selection).toBe('');
+
+    // The trap holds: Tab from mount lands on the first field INSIDE the
+    // dialog, never on the roster page behind it.
+    await page.keyboard.press('Tab');
+    await expect(reason).toBeFocused();
+  });
+
+  test('closes on Escape straight from open, with nothing clicked first', async ({ page }) => {
+    // The other half a naive focus suppression breaks. No click, no Tab —
+    // Escape as the very first interaction after the dialog appears.
+    await signInAsStakeBishopric(page, 'mount-escape@example.com');
+    await openEditSeat(page, WARD_CODE, WARD_SEAT);
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('edit-seat-dialog-form')).toHaveCount(0);
   });
 
   test('offers branch callings and hides the ward-only ones when editing a branch seat', async ({
