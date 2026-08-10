@@ -52,6 +52,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { FieldValue } from 'firebase-admin/firestore';
 import type {
+  Access,
   AccessRequest,
   Building,
   DuplicateGrant,
@@ -64,6 +65,7 @@ import { getDb } from '../lib/admin.js';
 import { computeOverCaps } from '../lib/overCaps.js';
 import { wardSiteMap } from '../lib/wardSites.js';
 import { REMOVE_TRIGGER_ACTOR } from '../lib/systemActors.js';
+import { clearImporterCallingsForScope } from '../lib/accessScopes.js';
 
 /** Plan output: how the seat write should resolve. */
 type SeatPlan =
@@ -206,6 +208,7 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
 
     const db = getDb();
     const seatRef = db.doc(`stakes/${stakeId}/seats/${memberCanonical}`);
+    const accessRef = db.doc(`stakes/${stakeId}/access/${memberCanonical}`);
     const stakeRef = db.doc(`stakes/${stakeId}`);
     const seatsCol = db.collection(`stakes/${stakeId}/seats`);
     const wardsCol = db.collection(`stakes/${stakeId}/wards`);
@@ -221,6 +224,9 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         return;
       }
       const currentSeat = seatSnap.data() as Seat;
+      // Read before any write. Only consumed on the drop-duplicate branch,
+      // where the dropped grant's calling-derived access has to go with it.
+      const accessSnap = await tx.get(accessRef);
       // T-43 Phase B: thread `kindoo_site_id` through when the
       // request carries it (duplicate-row remove). Legacy requests
       // omit the field; `planRemove` falls back to scope-only
@@ -350,7 +356,29 @@ export const removeSeatOnRequestComplete = onDocumentWritten(
         };
         tx.update(seatRef, update);
       } else {
-        // drop_duplicate
+        // drop_duplicate — reap the dropped grant's calling-derived access.
+        //
+        // A duplicate scope can hold `importer_callings` since the surfaced-
+        // grant threading (B-16) let `callings-mismatch` / `type-mismatch`
+        // PROMOTE / `kindoo-unparseable` write it. A completed remove
+        // request is the ORDINARY way a grant ends — `sba-only` only fires
+        // once Kindoo has already lost the user — so without this the
+        // request path leaves a live `wards.<scope>` claim that
+        // `syncAccessClaims` keeps minting, and nothing can name that scope
+        // again once no grant carries it.
+        //
+        // Guarded on the scope being genuinely gone: the primary or another
+        // duplicate may still hold it, and reaping then would revoke access
+        // the member still earns.
+        const stillHeld =
+          currentSeat.scope === after.scope || plan.remaining.some((d) => d.scope === after.scope);
+        if (!stillHeld && accessSnap.exists) {
+          clearImporterCallingsForScope(tx, accessRef, {
+            access: accessSnap.data() as Access,
+            scope: after.scope,
+            actor: REMOVE_TRIGGER_ACTOR,
+          });
+        }
         tx.update(seatRef, {
           duplicate_grants: plan.remaining,
           // T-42 / T-43: keep the primitive mirror in sync.

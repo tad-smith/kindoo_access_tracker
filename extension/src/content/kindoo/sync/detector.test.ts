@@ -11,7 +11,7 @@ import {
   kindooRole,
   parseKindooCallings,
 } from './detector';
-import { fixActionsFor } from './fix';
+import { buildCallableInput, fixActionsFor } from './fix';
 import { enrichUsersWithDerivedBuildings } from './buildingsFromDoors';
 
 describe('isChurchBacked', () => {
@@ -2185,11 +2185,11 @@ describe('detect', () => {
     );
   });
 
-  it('B-23: createScope is the site-filtered segment even when primaryScope is not', () => {
+  it('B-23: siteScope is the site-filtered segment even when primaryScope is not', () => {
     // Multi-site Description on the foreign site. The unfiltered
     // tiebreaker prefers the app-access stake segment, so `primaryScope`
     // says `stake` — home-only by policy, and NOT where this grant lives.
-    // `createScope` must name the segment that put the row on this site,
+    // `siteScope` must name the segment that put the row on this site,
     // the same one `intendedFreeText` came from. Sending `primaryScope`
     // as the payload scope wrote the grant onto the home slot.
     const result = detect(
@@ -2209,7 +2209,7 @@ describe('detect', () => {
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('kindoo-only');
     expect(row.kindoo?.primaryScope).toBe('stake');
-    expect(row.kindoo?.createScope).toBe('FT');
+    expect(row.kindoo?.siteScope).toBe('FT');
     expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum Second Counselor');
   });
 
@@ -2247,7 +2247,6 @@ describe('detect', () => {
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('sba-only');
-    expect(row.surfacedFromDuplicate).toBe(true);
     // The projection names the DUPLICATE's scope and site, which is what
     // the payload carries so the callable drops that grant and not the
     // stake primary.
@@ -2258,12 +2257,11 @@ describe('detect', () => {
     expect(fixActionsFor(row)).toHaveLength(1);
   });
 
-  it('every duplicate-surfaced row carries the flag, whatever its code', () => {
-    // Regression for the review-5 gap: the flag was attached per-code, on
-    // two pushes out of ten, so the `buildings-mismatch` withholding was
-    // dead code while spec + sync-design + the commit message all claimed
-    // it worked. `fix.test.ts` set the flag by hand and could not see it.
-    // Drive the DETECTOR and hand the real row to `fixActionsFor`.
+  it('a duplicate-surfaced row names that grant on its payload, whatever its code', () => {
+    // Regression for B-16: the fix must write the grant the row came from.
+    // Before the threading, every handler wrote the primary. The row's `sba`
+    // block IS the projection, so its scope/site are the surfaced grant's —
+    // assert that, not an intermediate flag.
     const merged = seat({
       member_canonical: 'roger@example.com',
       member_email: 'roger@example.com',
@@ -2277,8 +2275,6 @@ describe('detect', () => {
           scope: 'FT',
           type: 'auto',
           callings: ['Sunday School Teacher'],
-          // Partial set — the AccessSchedules fallback misses church-direct
-          // grants, which is the NORMAL state of a freshly merged grant.
           building_names: [],
           kindoo_site_id: 'east-stake',
           detected_at: ts(),
@@ -2300,16 +2296,16 @@ describe('detect', () => {
         activeSite: { kind: 'foreign', siteId: 'east-stake' },
       }),
     );
-    // Whatever code this shape produces, it is duplicate-surfaced and the
-    // destructive fixes must be absent.
     expect(result.discrepancies).toHaveLength(1);
     const row = result.discrepancies[0]!;
-    expect(row.surfacedFromDuplicate).toBe(true);
-    // Every code that writes the primary is withheld; `sba-only` is the
-    // one exception, and it targets the surfaced grant (B-24).
-    if (row.code !== 'sba-only') {
-      expect(fixActionsFor(row)).toEqual([]);
-    }
+    // The projection names the DUPLICATE, never the stake primary.
+    expect(row.sba?.scope).toBe('FT');
+    expect(row.sba?.kindooSiteId).toBe('east-stake');
+    const payload = buildCallableInput('csnorth', row).fix.payload as Record<string, unknown>;
+    expect(payload.scope).toBe('FT');
+    expect(payload.kindooSiteId).toBe('east-stake');
+    // And the fix is offered again — withholding it was the interim guard.
+    expect(fixActionsFor(row)).toHaveLength(1);
   });
 
   it('a primary-surfaced sba-only row keeps its Remove action', () => {
@@ -2328,7 +2324,6 @@ describe('detect', () => {
     );
     const row = result.discrepancies[0]!;
     expect(row.code).toBe('sba-only');
-    expect(row.surfacedFromDuplicate).toBeUndefined();
     expect(fixActionsFor(row)).toHaveLength(1);
   });
 

@@ -37,7 +37,7 @@ The first pass at this bug fixed only the provenance side and rationalised the s
 ---
 
 ## [B-26] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
-Status: open
+Status: closed (fixed in PR #278) `[FIXED 2026-08-10]`
 Owner: @extension-engineer
 Severity: medium (writes the wrong `scope` — the field utilization counts — plus `kindoo_site_id` / `organization_id` side effects; needs a multi-site Kindoo Description)
 Phase: cross-cutting
@@ -248,7 +248,7 @@ The three claim appliers in `functions/src/lib/applyClaims.ts` — `applyStakeCl
 **Fix (PR #218):** `getUser` is wrapped by `loadExistingClaims`, which catches `auth/user-not-found` (by Admin SDK error `code`, not message string), emits a `logger.info` skip, and returns a `USER_GONE` sentinel; each applier returns cleanly on the sentinel — no throw, no retry. The claim write is wrapped by `writeClaims`, which tolerates a late `auth/user-not-found` from `setCustomUserClaims` / `revokeRefreshTokens` (the user can vanish mid-apply). Any other error still throws and still retries. Consistent with the existing `uidForCanonical → null` no-op contract the sync triggers already carry (`spec.md` §4). Ships with an emulator-driven test across all three appliers plus a present-user control; de-flakes `syncSuperadminClaims.e2e.test.ts`. See `docs/changelog/fix-claim-sync-deleted-user-noop.md`.
 
 ## [B-16] Per-row Sync fixes write the primary grant's fields even when the row was surfaced via a projected duplicate
-Status: open
+Status: closed (fixed in PR #278) `[FIXED 2026-08-10]`
 Owner: @backend-engineer
 Severity: **high** (re-scored 2026-08-09 — see "Severity re-scored" below; was: low, "requires a rare data shape — parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member; 1–2 requests/week at v1 scale")
 
@@ -268,7 +268,9 @@ Severity: **high** (re-scored 2026-08-09 — see "Severity re-scored" below; was
 
 **The old severity basis no longer holds.** It rested on the trigger being rare — "parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member." B-23's merge makes `stake primary + foreign ward duplicate` the **designed steady state** for every stake-calling holder in a foreign-site unit, and the trigger for `callings-mismatch` is an ordinary calling change, not an unparseable Description. The population is now structural rather than accidental, so: **high**.
 
-**Fix shape (unchanged in kind, wider in scope):** thread the surfaced grant's `(scope, kindoo_site_id)` through the fix handlers and target that slot instead of the primary. [[B-24]] needs exactly the same threading for `applySbaOnlyRemove`, and the detector already has the discriminator — an `sba-only` / mismatch row's `sba` block IS the projection. The two should land together.
+**Fixed in PR #278.** Every mismatch payload now carries `SurfacedGrantRef` — the `(scope, kindooSiteId)` of the grant the row came from, read off the row's `sba` block, which IS the per-site projection. `resolveGrantSlot` maps it to the primary or a `duplicate_grants[]` index and `patchGrant` writes that slot, rebuilding `duplicate_scopes` alongside the array so the rules mirror never lags. All five handlers use it: `callings-mismatch`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `kindoo-unparseable`. Access reconciliation follows the surfaced grant's scope, and `sort_order` stays primary-only (it mirrors the primary's `callings[]`, so a duplicate's callings must not move it). A payload naming a scope the seat doesn't hold **soft-fails rather than falling back to the primary** — falling back is the bug. A payload with no scope keeps the historical primary write, which is the version-skew path and correct whenever the row came from the primary. `duplicateGuard.ts`, the interim withholding, is deleted: every code can act on the grant that produced its row.
+
+**Original fix shape (as filed):** thread the surfaced grant's `(scope, kindoo_site_id)` through the fix handlers and target that slot instead of the primary. [[B-24]] needs exactly the same threading for `applySbaOnlyRemove`, and the detector already has the discriminator — an `sba-only` / mismatch row's `sba` block IS the projection. The two should land together.
 
 **Reference:** surfaced in PR #184 review; extended and re-scored in the PR #275 review.
 

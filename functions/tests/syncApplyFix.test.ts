@@ -2273,6 +2273,451 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // orphan branch. The re-assert is the guard against true mid-call
   // concurrency, which we don't fake-inject — no test theater.
 
+  // B-16 — every handler writes the grant its ROW was surfaced from, not
+  // the primary. The shape below is what a B-23 merge produces and makes
+  // routine: a `stake` primary on the home site plus a foreign ward
+  // duplicate. Each test asserts BOTH halves — the duplicate changed, the
+  // primary untouched — because writing the primary is exactly the bug.
+  describe('duplicate-surfaced fixes target the surfaced grant (B-16)', () => {
+    async function seedMergedSeat(): Promise<void> {
+      await seedManager();
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+      await seedSeat({
+        scope: 'stake',
+        type: 'auto',
+        callings: ['Stake Clerk'],
+        building_names: ['Lexington Building'],
+        sort_order: STAKE_CLERK_ORDER,
+      });
+      await seedAccess({
+        importer_callings: { stake: ['Stake Clerk'] },
+        sort_order: STAKE_CLERK_ORDER,
+      });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        duplicate_grants: [
+          {
+            scope: 'MR',
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['Black Forest'],
+            kindoo_site_id: 'east-stake',
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['MR'],
+      });
+    }
+
+    function ref(): { scope: string; kindooSiteId: string } {
+      return { scope: 'MR', kindooSiteId: 'east-stake' };
+    }
+
+    async function readSeat(): Promise<Seat> {
+      const { db } = requireEmulators();
+      return (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+    }
+
+    async function run(code: string, payload: Record<string, unknown>): Promise<unknown> {
+      return syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: { stakeId: STAKE_ID, fix: { code, payload } },
+        }),
+      );
+    }
+
+    it('callings-mismatch rewrites the duplicate, not the primary', async () => {
+      await seedMergedSeat();
+      await run('callings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        callings: ['Bishop'],
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      expect(seat.sort_order).toBe(STAKE_CLERK_ORDER);
+      expect(seat.duplicate_grants[0]!.callings).toEqual(['Bishop']);
+      // Access follows the SURFACED scope; the stake grant keeps its own.
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings.stake).toEqual(['Stake Clerk']);
+      expect(access.importer_callings.MR).toEqual(['Bishop']);
+    });
+
+    it('type-mismatch DEMOTE clears the duplicate callings, leaving the stake grant whole', async () => {
+      await seedMergedSeat();
+      await run('type-mismatch', { memberEmail: MEMBER_EMAIL, newType: 'manual', ...ref() });
+      const seat = await readSeat();
+      // The write that used to revoke the member's stake app access.
+      expect(seat.type).toBe('auto');
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.type).toBe('manual');
+      expect(dup.callings).toBeUndefined();
+      expect(dup.reason).toBe('Ward Clerk');
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings.stake).toEqual(['Stake Clerk']);
+    });
+
+    it('buildings-mismatch replaces the duplicate buildings, not the home ones', async () => {
+      await seedMergedSeat();
+      await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Black Forest', 'Annex'],
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.building_names).toEqual(['Lexington Building']);
+      expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest', 'Annex']);
+    });
+
+    it('kindoo-unparseable on a HOME duplicate keeps access rather than reaping one-way', async () => {
+      await seedManager();
+      // The shape the detector can actually emit: the actionable
+      // unparseable row is home-site only, so a duplicate-surfaced one
+      // means a FOREIGN primary plus a HOME duplicate. `CO` is then the
+      // member's only access, and a one-way reap loses it — no later row
+      // restores it, since after the write the grant is `unparseableAligned`
+      // and an unparseable Description never yields a callings-mismatch.
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+      await seedSeat({ scope: 'MR', type: 'auto', callings: ['Ward Clerk'] });
+      await seedAccess({ importer_callings: { CO: ['Bishop'] } });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        kindoo_site_id: 'east-stake',
+        duplicate_grants: [
+          {
+            scope: 'CO',
+            type: 'auto',
+            callings: ['Bishop'],
+            building_names: ['Maple Building'],
+            kindoo_site_id: null,
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['CO'],
+      });
+
+      await run('kindoo-unparseable', {
+        memberEmail: MEMBER_EMAIL,
+        calling: 'Stake Clerk',
+        scope: 'CO',
+        kindooSiteId: null,
+      });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // `CO` reaped (no grant carries it now) and `stake` granted, since
+      // `Stake Clerk` is in the stake app-access set.
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('MR');
+      expect(seat.duplicate_grants[0]!.scope).toBe('stake');
+    });
+
+    it('a MANUAL grant moving scope earns no app access', async () => {
+      await seedManager();
+      // `scope-mismatch` is emitted for every seat type and the payload
+      // always carries the parsed Description calling, so without an auto
+      // gate a manual grant would mint app access at its new scope —
+      // contradicting the invariant every sibling handler enforces.
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      await seedSeat({ scope: 'MR', type: 'manual', building_names: ['Black Forest'] });
+
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Bishop'],
+      });
+
+      const { db } = requireEmulators();
+      const snap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+      expect(snap.exists).toBe(false);
+      expect((await readSeat()).scope).toBe('CO');
+    });
+
+    it('a scope move does not reap a scope another grant still holds', async () => {
+      await seedManager();
+      // The primary and a duplicate both at `MR`; moving the duplicate must
+      // not take the primary's access with it.
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+      await seedSeat({ scope: 'MR', type: 'auto', callings: ['Bishop'] });
+      await seedAccess({ importer_callings: { MR: ['Bishop'] } });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        kindoo_site_id: null,
+        duplicate_grants: [
+          {
+            scope: 'MR',
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['Black Forest'],
+            kindoo_site_id: 'east-stake',
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['MR'],
+      });
+
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Ward Clerk'],
+        scope: 'MR',
+        kindooSiteId: 'east-stake',
+      });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      // `MR` survives — the primary still holds it — and `CO` is added.
+      expect(access.importer_callings).toEqual({ MR: ['Bishop'], CO: ['Ward Clerk'] });
+    });
+
+    it('a duplicate ALREADY at stake keeps the primary stake entry', async () => {
+      await seedManager();
+      // `unparseableAligned` checks scope AND calling, so the detector still
+      // emits this row for a grant already at stake whose calling doesn't
+      // match. Reaping `oldScope` there would take the PRIMARY's entry —
+      // which is the clobber this whole branch exists to avoid.
+      await seedSeat({ scope: 'CO', type: 'auto', callings: ['Bishop'] });
+      await seedAccess({ importer_callings: { CO: ['Bishop'], stake: ['Stake Clerk'] } });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        duplicate_grants: [
+          {
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: [],
+            kindoo_site_id: null,
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['stake'],
+      });
+
+      await run('kindoo-unparseable', {
+        memberEmail: MEMBER_EMAIL,
+        calling: 'Some Church Wide Calling',
+        scope: 'stake',
+        kindooSiteId: null,
+      });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ CO: ['Bishop'], stake: ['Stake Clerk'] });
+    });
+
+    it('scope-mismatch moves the duplicate and takes its access with it', async () => {
+      await seedMergedSeat();
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
+
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Ward Clerk'],
+        ...ref(),
+      });
+
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.duplicate_grants[0]!.scope).toBe('CO');
+      expect(seat.duplicate_scopes).toEqual(['CO']);
+      // `MR` is reaped — no grant carries it now, and no payload could
+      // ever name it again — and `CO` is granted from Kindoo's callings.
+      // The PRIMARY's stake entry is untouched throughout.
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'], CO: ['Ward Clerk'] });
+    });
+
+    it('kindoo-unparseable restakes the duplicate, not the primary', async () => {
+      await seedMergedSeat();
+      // Seed the duplicate's OWN access entry — without it the strand is
+      // invisible, which is how the first version of this test passed.
+      const seeded = requireEmulators().db;
+      await seeded.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
+      await run('kindoo-unparseable', {
+        memberEmail: MEMBER_EMAIL,
+        calling: 'Some Church Wide Calling',
+        ...ref(),
+      });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.callings).toEqual(['Stake Clerk']);
+      const dup = seat.duplicate_grants[0]!;
+      expect(dup.scope).toBe('stake');
+      expect(dup.callings).toEqual(['Some Church Wide Calling']);
+      expect(dup.kindoo_site_id).toBeNull();
+      // Both halves of the access story. The PRIMARY's `stake` entry
+      // survives — `writeStakeScopeAccessForUnparseable` drops it
+      // unconditionally, which on a duplicate-surfaced row would delete the
+      // doc outright — and the scope the duplicate LEFT is reaped, since
+      // after this write no grant carries `MR` and no payload could ever
+      // name it again.
+      const { db } = requireEmulators();
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+    });
+
+    it('soft-fails when the named grant is no longer on the seat', async () => {
+      await seedMergedSeat();
+      const result = await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Annex'],
+        scope: 'GONE',
+        kindooSiteId: 'east-stake',
+      });
+      // Never fall back to the primary — falling back IS the bug.
+      expect(result).toMatchObject({ success: false });
+      expect((await readSeat()).building_names).toEqual(['Lexington Building']);
+    });
+
+    it('a PRIMARY scope move carries access across from Kindoo callings', async () => {
+      await seedMergedSeat();
+      // Leaving the old key strands it forever; reaping alone loses access
+      // permanently when the calling name doesn't change, since
+      // `callings-mismatch` never fires then. So the move does both — and
+      // the grant comes from KINDOO's callings, not the seat's.
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      const { db } = requireEmulators();
+      // The seat's copy is deliberately WRONG here: if it were consulted the
+      // member would be granted `Bishop` at CO, a calling they don't hold.
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({ callings: ['Bishop'] });
+
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Ward Clerk'],
+      });
+
+      // `stake` is reaped and `CO` is granted from KINDOO's callings — not
+      // the seat's, which are stale on this path by construction. Access
+      // crosses with the grant, with no window in between and no chance of
+      // granting the old unit's calling at the new scope.
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ CO: ['Ward Clerk'] });
+      expect((await readSeat()).scope).toBe('CO');
+    });
+
+    it('a scope move that earns no access at the new scope just reaps', async () => {
+      await seedMergedSeat();
+      await seedWard({ ward_code: 'CO', building_name: 'Maple Building' });
+      await seedBuilding({ building_name: 'Maple Building', kindoo_site_id: null });
+      const { db } = requireEmulators();
+      // `Stake Clerk` is a STAKE app-access calling; at ward scope it earns
+      // nothing, so the entry is dropped and the doc goes with it.
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Stake Clerk'],
+      });
+      const snap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
+      expect(snap.exists).toBe(false);
+    });
+
+    it('dropping a duplicate reaps ITS access scope and nothing else', async () => {
+      await seedMergedSeat();
+      // B-16 lets a fix write access for a duplicate's scope, so dropping
+      // that grant has to take its access with it — otherwise the member
+      // keeps app access for a calling they no longer hold, with no
+      // in-product way to remove it.
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
+
+      await run('sba-only', { memberEmail: MEMBER_EMAIL, ...ref() });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.duplicate_grants).toEqual([]);
+    });
+
+    it('sba-only removes the right grant when the seat holds one scope twice', async () => {
+      await seedManager();
+      // Re-map a ward's building to another site and the primary keeps a
+      // stale stamp, so a `kindoo-only` row appears on the new site and the
+      // merge appends a same-scope duplicate (it matches `(scope, type)`).
+      // Deciding "is this the primary?" on scope alone then sent Remove
+      // down the promote path and overwrote the primary with the very grant
+      // the operator asked to remove.
+      await seedWard({ ward_code: 'MR', building_name: 'Black Forest' });
+      await seedBuilding({ building_name: 'Black Forest', kindoo_site_id: 'east-stake' });
+      await seedSeat({ scope: 'MR', type: 'manual', building_names: ['Maple Building'] });
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        kindoo_site_id: null,
+        duplicate_grants: [
+          {
+            scope: 'MR',
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['Black Forest'],
+            kindoo_site_id: 'east-stake',
+            detected_at: Timestamp.now(),
+          },
+        ],
+        duplicate_scopes: ['MR'],
+      });
+
+      await run('sba-only', {
+        memberEmail: MEMBER_EMAIL,
+        scope: 'MR',
+        kindooSiteId: 'east-stake',
+      });
+
+      const seat = await readSeat();
+      // The duplicate is gone; the manual primary is untouched.
+      expect(seat.type).toBe('manual');
+      expect(seat.building_names).toEqual(['Maple Building']);
+      expect(seat.duplicate_grants).toEqual([]);
+    });
+
+    it('a payload naming no scope still writes the primary (version skew)', async () => {
+      await seedMergedSeat();
+      await run('buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newBuildingNames: ['Annex'],
+      });
+      const seat = await readSeat();
+      expect(seat.building_names).toEqual(['Annex']);
+      expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest']);
+    });
+  });
+
   describe("code='sba-only'", () => {
     it('deletes the orphaned seat and returns success + seatId', async () => {
       await seedManager();

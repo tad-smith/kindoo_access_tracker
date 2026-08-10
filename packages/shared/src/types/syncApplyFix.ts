@@ -45,6 +45,29 @@
 
 import type { SeatType } from './seat.js';
 
+/**
+ * Which grant a per-row fix should write (B-16 / B-24).
+ *
+ * A Sync row is a per-SITE projection: a seat surfaces through its primary
+ * OR through a `duplicate_grants[]` entry on the active site. Without this,
+ * every handler wrote the primary, so a duplicate-surfaced row mutated a
+ * grant the operator was not looking at — restaking their home grant,
+ * reaping its access, or replacing its buildings with another site's.
+ *
+ * Both fields come off the row's `sba` block, which IS the projection.
+ *
+ * **Optional for version skew only.** An extension predating them sends
+ * neither and keeps the historical primary-writing behaviour, which is
+ * correct whenever the row came from the primary. `scope` naming a grant
+ * the seat doesn't hold is a soft failure, never a fallback to the primary.
+ */
+export type SurfacedGrantRef = {
+  /** Scope of the surfaced grant. Absent ⇒ the primary. */
+  scope?: string;
+  /** Its Kindoo site — `null` home, a site id foreign. Tiebreaker only. */
+  kindooSiteId?: string | null;
+};
+
 /** Payload for the `kindoo-only` discrepancy fix. Creates a new SBA
  * seat, or merges the grant onto the member's existing seat when one is
  * already there (B-23). */
@@ -74,7 +97,7 @@ export type KindooOnlyPayload = {
    *
    * The merge-onto-existing-seat behaviour (B-23) is a SERVER change,
    * but everything that makes it safe ships in the EXTENSION:
-   * `createScope`, the duplicate-surfaced withholding, and `sba-only`'s
+   * `siteScope`, the per-grant payload discriminators, and `sba-only`'s
    * `(scope, kindooSiteId)`. Functions deploy in minutes; the extension
    * goes through Chrome Web Store review and then updates on each
    * manager's own schedule, so "deploy the extension first" is not
@@ -94,7 +117,7 @@ export type KindooOnlyPayload = {
 /** Payload for the `callings-mismatch` fix. REPLACES an auto seat's
  * `callings[]` wholesale with Kindoo's parsed calling(s) (Kindoo is
  * authoritative), then reconciles the scope's `importer_callings`. */
-export type CallingsMismatchPayload = {
+export type CallingsMismatchPayload = SurfacedGrantRef & {
   /** Raw (typed) email — server canonicalizes. */
   memberEmail: string;
   /** The FULL target set = Kindoo's parsed calling(s). Replaces the
@@ -103,10 +126,27 @@ export type CallingsMismatchPayload = {
 };
 
 /** Payload for the `scope-mismatch` fix (sync direction: kindoo-to-sba). */
-export type ScopeMismatchPayload = {
+export type ScopeMismatchPayload = SurfacedGrantRef & {
   memberEmail: string;
   /** `'stake'` or a ward_code. */
   newScope: string;
+  /**
+   * KINDOO's parsed calling(s) for the moved grant, from the same
+   * site-filtered segment `newScope` comes from.
+   *
+   * The move reaps the old scope's `importer_callings`; this is what the
+   * new scope's is written from, so access crosses with the grant instead
+   * of being lost. It must come from Kindoo, not from the seat: a scope
+   * change usually accompanies a CALLING change, so SBA's `callings[]` is
+   * stale on exactly this path and would grant the old unit's calling at
+   * the new scope. Kindoo's set is by definition the one the row was
+   * detected against.
+   *
+   * Absent ⇒ reap-only, which is what an extension predating the field
+   * sends. That loses access until a later `callings-mismatch`, so it is
+   * the fallback rather than the design.
+   */
+  callings?: string[];
 };
 
 /** Payload for the `type-mismatch` fix (sync direction: kindoo-to-sba).
@@ -125,7 +165,7 @@ export type ScopeMismatchPayload = {
  * existing `callings[]`); on promote an empty / absent value falls back
  * to `[seat.reason]` when the seat carries a non-empty reason, else
  * `[]`. */
-export type TypeMismatchPayload = {
+export type TypeMismatchPayload = SurfacedGrantRef & {
   memberEmail: string;
   newType: SeatType;
   /**
@@ -142,7 +182,7 @@ export type TypeMismatchPayload = {
 
 /** Payload for the `buildings-mismatch` fix (sync direction: kindoo-to-sba).
  * Replaces `building_names` wholesale (no merge). */
-export type BuildingsMismatchPayload = {
+export type BuildingsMismatchPayload = SurfacedGrantRef & {
   memberEmail: string;
   newBuildingNames: string[];
 };
@@ -180,7 +220,7 @@ export type SbaOnlyRemovePayload = {
  * is present but doesn't parse as `Scope (Calling)` is treated as a
  * church-wide calling: the seat is moved to stake scope and the calling
  * is set from the raw Kindoo description text. */
-export type KindooUnparseablePayload = {
+export type KindooUnparseablePayload = SurfacedGrantRef & {
   /** Raw (typed) email — server canonicalizes to locate the seat. */
   memberEmail: string;
   /** The church-wide calling text, taken from the raw Kindoo description. */
