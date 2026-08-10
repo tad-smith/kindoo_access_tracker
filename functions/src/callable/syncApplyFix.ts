@@ -1122,8 +1122,30 @@ async function applyScopeMismatch(
         context: 'syncApplyFix(scope-mismatch)',
       });
     }
-    if (accessSnap !== undefined) {
+    // AUTO grants only. `scope-mismatch` is emitted for every seat type —
+    // the detector's rule sits above the type/callings rules with no type
+    // condition — and the payload always carries the parsed Description
+    // calling, so without this gate a MANUAL or TEMP grant would earn app
+    // access here. Every sibling enforces the opposite (`applyKindooOnly`
+    // gates on `isAuto`, `applyCallingsMismatch` rejects non-auto,
+    // `applyTypeMismatch` writes only on promote-to-auto,
+    // `applyKindooUnparseable`'s access block is auto-only), and §8 states
+    // it as an invariant: manual and temp derive no app access.
+    if (accessSnap !== undefined && movedGrant.type === 'auto') {
       const prior = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
+      // Another grant on the seat may still carry the scope being left —
+      // same guard as the remove trigger's duplicate splice. Reaping then
+      // would revoke access the member still earns.
+      const otherScopes =
+        slot.kind === 'primary'
+          ? (seat.duplicate_grants ?? []).map((d) => d.scope)
+          : [
+              seat.scope,
+              ...(seat.duplicate_grants ?? [])
+                .filter((_, i) => i !== slot.index)
+                .map((d) => d.scope),
+            ];
+      const oldStillHeld = otherScopes.includes(movedGrant.scope);
       // Access crosses WITH the grant: reap the scope it leaves, and write
       // the new one from KINDOO's parsed callings.
       //
@@ -1161,21 +1183,23 @@ async function applyScopeMismatch(
         // Drop the old key by handing the helper a prior without it: it
         // preserves every OTHER scope and replaces the one it writes, so a
         // single call moves the entry with no window in between.
-        const priorMinusOld: Access | undefined = prior
-          ? {
-              ...prior,
-              importer_callings: Object.fromEntries(
-                Object.entries(prior.importer_callings ?? {}).filter(
-                  ([k]) => k !== movedGrant.scope,
+        const priorMinusOld: Access | undefined = !prior
+          ? undefined
+          : oldStillHeld
+            ? prior
+            : {
+                ...prior,
+                importer_callings: Object.fromEntries(
+                  Object.entries(prior.importer_callings ?? {}).filter(
+                    ([k]) => k !== movedGrant.scope,
+                  ),
                 ),
-              ),
-              importer_limited_callings: Object.fromEntries(
-                Object.entries(prior.importer_limited_callings ?? {}).filter(
-                  ([k]) => k !== movedGrant.scope,
+                importer_limited_callings: Object.fromEntries(
+                  Object.entries(prior.importer_limited_callings ?? {}).filter(
+                    ([k]) => k !== movedGrant.scope,
+                  ),
                 ),
-              ),
-            }
-          : undefined;
+              };
         writeAccessForAutoScope(tx, accessRef, {
           canonical,
           memberEmail: seat.member_email ?? memberEmail,
@@ -1186,7 +1210,7 @@ async function applyScopeMismatch(
           priorAccess: priorMinusOld,
           actor,
         });
-      } else if (prior) {
+      } else if (prior && !oldStillHeld) {
         clearImporterCallingsForScope(tx, accessRef, {
           access: prior,
           scope: movedGrant.scope,
