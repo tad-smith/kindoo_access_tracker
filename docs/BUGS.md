@@ -36,6 +36,79 @@ The first pass at this bug fixed only the provenance side and rationalised the s
 
 ---
 
+## [B-26] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
+Status: open
+Owner: @extension-engineer
+Severity: medium (writes the wrong `scope` — the field utilization counts — plus `kindoo_site_id` / `organization_id` side effects; needs a multi-site Kindoo Description)
+Phase: cross-cutting
+Branch / PR: found reviewing PR #275
+
+The detector emits `scope-mismatch` off `pickSegmentForSite` (the site-filtered pick) but `fix.ts` builds the payload's `newScope` from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment`. On a multi-site Description those resolve to different segments — the unfiltered tiebreaker prefers an app-access segment and then `'stake'`.
+
+So on a foreign run the row can read "Kindoo = Pine Ward" while the click writes `scope: 'stake'` to the seat's primary, along with `applyScopeMismatch`'s `kindoo_site_id` re-stamp and `organization_id` delete.
+
+This is the identical defect [[B-23]] closed for `kindoo-only` by adding `KindooBlock.createScope`; the same fix applies — carry the site-filtered scope and send it. Pre-existing and scoped out of #275, whose own test (`createScope is the site-filtered segment even when primaryScope is not`) demonstrates the divergence with `primaryScope: 'stake'` against a filtered pick of `'FT'`.
+
+## [B-24] `sba-only` removal promotes the wrong grant when the row was surfaced through a duplicate
+Status: closed (fixed in PR #275) `[FIXED 2026-08-10]`
+Owner: @backend-engineer
+Severity: high (destroys a valid home-site grant and reaps its app access; the trigger is a routine calling change)
+Phase: cross-cutting
+Branch / PR: found reviewing PR #275
+
+`SbaOnlyRemovePayload` is `{ memberEmail }` — no scope, no site. So `applySbaOnlyRemove` (`functions/src/callable/syncApplyFix.ts`) cannot tell **which** grant the drift row was surfaced from, and its multi-grant branch unconditionally promotes `duplicate_grants[0]` to primary, drops the current primary, and reaps `importer_callings[removedScope]`.
+
+**Symptom.** A member with `primary = (stake, home)` and `duplicate_grants[0] = (ward, foreign)` loses their ward calling. Kindoo drops the grant on the foreign site; the seat still projects onto that site through the duplicate, so the foreign Sync run emits `sba-only` and offers **Remove From SBA**. Clicking it **promotes the revoked ward grant to primary, destroys the home stake grant, and reaps the member's stake-scope app access** — the opposite of the intended removal on every axis.
+
+**Why the sibling path gets it right.** `removeSeatOnRequestComplete` has three plan kinds — `delete` / `promote` / `drop_duplicate` — because a remove *request* names the grant it targets. The Sync row carries no grant identity, so `applySbaOnlyRemove` has no `drop_duplicate` branch to take. The detector does know: the `sba-only` row's `sba` block is the **projection** (`projectSeatForSite`), so `sba.scope` already names the surfaced grant; nothing carries it to the callable.
+
+**Pre-existing, but B-23 makes it common.** The shape was reachable before via `planAddMerge` (a foreign-ward add landing on a member who already had a seat) and was rare. B-23's merge makes `stake primary + foreign ward duplicate` the **designed steady state** for a whole class of members — every stake-calling holder in a foreign-site unit — and the ward calling ending is a routine event, not an edge case.
+
+**Fix shape.** Carry the surfaced grant's `(scope, kindoo_site_id)` on `SbaOnlyRemovePayload` (the detector has both), and give `applySbaOnlyRemove` a `drop_duplicate` branch keyed on that discriminator: drop just the matching `duplicate_grants[]` entry and rebuild `duplicate_scopes`, leaving the primary alone; keep the existing delete / promote branches for a row surfaced from the primary. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses, and is the same threading B-16's fix needs — the two should probably land together.
+
+**B-23's withholding turned this into a no-removal-path bug (2026-08-10).** PR #275 withholds `sba-only` on duplicate-surfaced rows precisely because this entry makes the button destructive. The side effect is that a merged **auto** parallel-site grant now has no removal path *anywhere*: Sync withholds it, all three web Remove affordances gate on `grant.type !== 'auto'`, and no scheduled reaper exists. So the normal end of life for a merged grant — the calling ends, Kindoo revokes — leaves a permanent phantom duplicate that keeps that ward's `duplicate_scopes` read access, keeps its utilization inflated, and re-emits an unfixable drift row. Fixing this entry is what lifts it.
+
+**Fixed in PR #275** rather than deferred, because B-23's withholding turned it into a no-removal-path bug: with `sba-only` suppressed on these rows and every web Remove affordance gating on `grant.type !== 'auto'`, a merged auto grant could not be deleted at all. `SbaOnlyRemovePayload` now carries the surfaced grant's `scope` (+ `kindooSiteId` as a tiebreaker), taken from the row's `sba` block — which IS the projection, so it names the surfaced grant rather than the primary. `applySbaOnlyRemove` drops that `duplicate_grants[]` entry and rebuilds `duplicate_scopes`, leaving the primary untouched, and reaps no access (a duplicate-only scope never had an `importer_callings` entry — the merge writes none). A payload with no `scope` keeps the historical delete-or-promote, so an extension predating the field behaves exactly as before; both paths have integration tests. `sba-only` is correspondingly **removed** from the duplicate-surfaced withhold list.
+
+**Still open in the same class:** [[B-16]] (`callings-mismatch` / `type-mismatch` / `buildings-mismatch` / `kindoo-unparseable` all still write the primary — their fixes stay withheld on duplicate-surfaced rows) and [[B-26]]. The threading added here is the pattern they need.
+
+## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
+Status: closed (fixed in PR #275) `[FIXED 2026-08-09]`
+Owner: @backend-engineer
+Severity: high (the drift row is unfixable — Sync re-reports it on every run and the operator has no in-product remedy)
+Phase: cross-cutting
+Branch / PR: `fix/b-23-kindoo-only-merge-existing-seat`
+
+**Symptom.** On a **foreign**-site Sync run, a member whose only SBA grant lives on the **home** site surfaces as `kindoo-only` drift. Clicking **Create SBA seat** fails with the inline error `seat already exists for that member`. The row cannot be fixed, and it re-emits on every subsequent Sync run.
+
+**Reported repro (production).** CS North configures High Plains's Kindoo site as a foreign site to reach the Black Forest building. Kettle Creek is a CS North ward that meets in Black Forest, so its scope lives on that foreign site. Roger is a Kettle Creek member with a **stake** calling, so his SBA seat is `scope: 'stake'` — home site, Lexington building. Church Access Automation then grants him Black Forest access in the High Plains Kindoo site for a new ward calling (Elders Quorum Second Counselor). Syncing the foreign site emits `kindoo-only` for him; the fix fails.
+
+**Mechanism.** Two correct behaviours meet at a path that only knows how to create.
+
+1. `projectSeatForSite` (`extension/src/content/kindoo/sync/detector.ts`) projects each seat onto the active site: a seat contributes only when its primary — or one of its `duplicate_grants[]` — carries that site. Roger's seat is stake-scope ⇒ home, so on the foreign run it projects to `null`, he is absent from `seatsByEmail`, and the `!seat && kuser` branch emits `kindoo-only`. That detection is **right**: the member genuinely has no grant on this site.
+2. `applyKindooOnly` (`functions/src/callable/syncApplyFix.ts:376`) opens with `if (seatSnap.exists) return { success: false, error: 'seat already exists for that member' }`. Seats are keyed by canonical email (one per member per stake, per Q3), so the *doc* exists even though the *grant* doesn't. The guard reads doc-existence as grant-existence and refuses.
+
+The data model already has the right home for this grant: `DuplicateGrant` with a differing `kindoo_site_id` is defined (`packages/shared/src/types/seat.ts`) as a **parallel-site grant** — "a legitimate independent grant on another Kindoo site" (T-42) — and `markRequestComplete`'s `planAddMerge` already appends exactly that shape when an add lands on a member who already has a seat. `applyKindooOnly` is the one grant-creating path that never learned to merge.
+
+**Scope of the failure.** Any member holding grants on two Kindoo sites where SBA learned about them in the order (other site first, this site second). Guaranteed for a stake-calling holder in a foreign-site unit — the stake grant is home-only by policy (spec §15), so it can never satisfy a foreign-site row. The seat cap is not implicated: `scope` (primary) is what counts toward utilization, and a duplicate grant is informational, so merging does not consume a second licence.
+
+**Two rows also lie.** The `kindoo-only` reason reads "Kindoo has a user for this email, but SBA has no seat for them," and the button reads **Create SBA seat**. Both are false for this member — SBA has a seat, on another site.
+
+**Fix (this branch).**
+- `applyKindooOnly` merges when the seat doc exists rather than soft-failing. Slot resolution mirrors `planAddMerge`: match `(scope, type)` against the primary, then `duplicate_grants[]`; on a hit union `building_names` and re-stamp the slot's `kindoo_site_id` to the site the row was surfaced from; on a miss append a `DuplicateGrant` carrying the incoming scope / type / callings / reason / dates / buildings / site. The primary grant's identity is never modified. Auto grants reconcile `importer_callings[scope]` through the same `writeAccessForAutoScope` the create path uses, which is already per-scope merge-safe.
+- The site re-stamp on a slot hit is what makes the fix converge. The row exists precisely because no grant on the seat targeted the active site, so a merge that leaves the stale site in place would clear nothing and the operator would re-click forever.
+- Callings are deliberately **not** rewritten on a slot hit: `callings-mismatch` is the code that owns that axis, and it fires on the next run once the grant is visible on the site.
+- Detector + panel: when the member has a seat that projected to no grant on the active site, the row says so and the button reads **Add SBA grant**.
+
+**A second, pre-existing defect the merge would have amplified — found in review.** The `kindoo-only` payload's `scope` came from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment` — while `intendedCallings` / `intendedFreeText` on the same payload come from the **site-filtered** `pickSegmentForSite`. On a multi-site Description the two disagree: the unfiltered tiebreaker prefers an app-access segment and then `'stake'`, so a foreign-site row arrived carrying the foreign ward's callings under a home segment's scope. Creating a seat that way was already wrong; merging made it worse, because a `scope: 'stake'` payload matches the stake primary's slot, folds the foreign building into the home grant, re-stamps nothing, and returns `success: true` — turning a loud failure into a silent wrong write that still never converges. The home-ward variant appends a wrong-scope duplicate, which also widens that ward's bishopric read access (`duplicate_scopes` is a rules predicate) and its utilization bar. Fixed upstream of the callable: `KindooBlock.createScope` carries the site-filtered segment's scope — the one `intendedShape` was built from — and the dispatcher uses it for `kindoo-only`. `primaryScope` itself is unchanged and is now documented as display-only — **not** because `scope-mismatch` wants the unfiltered pick (an earlier revision of this entry said so, wrongly): `scope-mismatch` *detects* on the site-filtered pick and *sends* the unfiltered one, the same detect-one/write-another split, still open. Tracked as [[B-26]].
+
+**Not fixed here.** Two adjacent defects, both still open, both about a fix path that can't tell WHICH grant a row was surfaced from:
+
+- **B-16** — per-row fixes write the primary's fields even when the row came through a projected duplicate. This entry's own write is not an instance: it *adds* a grant rather than editing one, and targets by `(scope, type)` rather than assuming the primary. But it **does widen B-16's blast radius**, for the same reason it widens B-24 — the trigger for both is the population, not the write. Making `stake primary + foreign ward duplicate` the designed steady state multiplies the members every primary-assuming handler can be pointed at. B-16 was re-scored to **high** and `applyCallingsMismatch` added to its list on the strength of that; the worst case there is a routine ward-calling change silently revoking a member's stake app access. An earlier revision of this entry claimed B-23 "does not widen B-16" — that was wrong, and inconsistent with what this same section says about B-24.
+- **B-24** — `sba-only` removal promotes `duplicate_grants[0]` unconditionally. This entry **does** make B-24 materially more likely: `stake primary + foreign ward duplicate` becomes the designed steady state for every stake-calling holder in a foreign-site unit, and that ward calling ending is routine. Read B-24's interim guidance before actioning a foreign-site `sba-only` row.
+
+**Utilization is a counting rule, not a claim the grant is free.** A merged parallel-site grant consumes no second licence *in the home pool* because `computeOverCaps` counts the primary `scope` only — but the member is a real licensed Kindoo user on the foreign site. `overCaps.ts` folds in parallel-site **stake** duplicates and has no equivalent for the parallel-site **ward** duplicate this fix appends, so that unit's `over_cap_warning` never fires on them. Pre-existing, and an accepted gap: Kindoo is authoritative for what it provisioned, and Sync reconciling to it must not be gated on an SBA cap.
+
 ## [B-22] Every Popover inside a modal rendered behind it and could not be used
 Status: closed (fixed) `[FIXED 2026-08-09]`
 Owner: @web-engineer
@@ -177,7 +250,7 @@ The three claim appliers in `functions/src/lib/applyClaims.ts` — `applyStakeCl
 ## [B-16] Per-row Sync fixes write the primary grant's fields even when the row was surfaced via a projected duplicate
 Status: open
 Owner: @backend-engineer
-Severity: low (requires a rare data shape — parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member; 1–2 requests/week at v1 scale)
+Severity: **high** (re-scored 2026-08-09 — see "Severity re-scored" below; was: low, "requires a rare data shape — parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member; 1–2 requests/week at v1 scale")
 
 **Pre-existing** (not a regression). Surfaced by the PR #184 review.
 
@@ -189,7 +262,15 @@ Severity: low (requires a rare data shape — parallel-site `duplicate_grants[]`
 
 **Fix shape (deferred):** the fix handlers need to target the grant the row was surfaced from — thread the projected duplicate's `(scope, kindoo_site_id)` discriminator through `syncApplyFix` and splice/update that `duplicate_grants[]` entry instead of the primary when the row originated from a projection. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses (§485, §552). Out of scope for #184 (review-row actionability).
 
-**Reference:** surfaced in PR #184 review.
+**Severity re-scored, and the handler list extended (2026-08-09, reviewing PR #275).** Two corrections to the entry above; the mechanism is unchanged.
+
+**`applyCallingsMismatch` belongs on the list** and was never on it — it post-dates this entry and has the same defect. It writes `seat.callings` and reconciles `importer_callings[seat.scope]` — the **primary's**, unconditionally — while the detector emits `callings-mismatch` off the projected `sbaBlock`, which on a foreign run is the duplicate. It is also the worst member of the list, because its wrong write is not confined to the seat: for a member with primary `(stake, auto, ['Stake Clerk'])` and a foreign ward duplicate, applying a foreign-run `callings-mismatch` replaces the **stake** grant's callings with the ward calling, and `filterAppAccessCallings('stake', [<ward calling>])` then returns `[]`, so `clearImporterCallingsForScope('stake')` runs and the member **loses SBA app access outright** — `Stake Clerk` is in `STAKE_APP_ACCESS_CALLINGS`. The duplicate keeps its stale callings, so the row re-emits and invites a re-click.
+
+**The old severity basis no longer holds.** It rested on the trigger being rare — "parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member." B-23's merge makes `stake primary + foreign ward duplicate` the **designed steady state** for every stake-calling holder in a foreign-site unit, and the trigger for `callings-mismatch` is an ordinary calling change, not an unparseable Description. The population is now structural rather than accidental, so: **high**.
+
+**Fix shape (unchanged in kind, wider in scope):** thread the surfaced grant's `(scope, kindoo_site_id)` through the fix handlers and target that slot instead of the primary. [[B-24]] needs exactly the same threading for `applySbaOnlyRemove`, and the detector already has the discriminator — an `sba-only` / mismatch row's `sba` block IS the projection. The two should land together.
+
+**Reference:** surfaced in PR #184 review; extended and re-scored in the PR #275 review.
 
 ## [B-15] `applyScopeMismatch` doesn't clear `kindoo_site_id` when resolving a seat to stake scope
 Status: closed (fixed in commit `7f8189d`)

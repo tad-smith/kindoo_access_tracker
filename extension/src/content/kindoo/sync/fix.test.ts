@@ -18,6 +18,10 @@ function kb(over: Partial<KindooBlock> = {}): KindooBlock {
     isTempUser: false,
     memberName: 'Alice Person',
     primaryScope: 'CO',
+    // Site-filtered scope — what a `kindoo-only` payload uses. Same as
+    // `primaryScope` for a single-site Description; the two diverge only
+    // on a multi-site one (see the dedicated test below).
+    createScope: 'CO',
     intendedType: 'manual',
     intendedCallings: ['Sunday School Teacher'],
     intendedFreeText: '',
@@ -68,7 +72,45 @@ describe('fixActionsFor', () => {
   it('kindoo-only returns one Create SBA seat action', () => {
     const actions = fixActionsFor(discrepancy({ code: 'kindoo-only' }));
     expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({ side: 'sba', testId: 'create-sba' });
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'create-sba',
+      label: 'Create SBA seat',
+    });
+  });
+
+  it('withholds kindoo-only when a merge has no site-resolved scope', () => {
+    // `createScope: null` + an existing seat: the `?? 'stake'` fallback
+    // would append a fabricated stake-scope duplicate, which is not inert
+    // (`duplicate_scopes` is a rules predicate; overCaps folds it into the
+    // home pool). Creating a NEW seat from the same fallback is unchanged.
+    expect(
+      fixActionsFor(
+        discrepancy({
+          code: 'kindoo-only',
+          mergesOntoExistingSeat: true,
+          kindoo: kb({ createScope: null, grantTargetType: 'auto' }),
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      fixActionsFor(discrepancy({ code: 'kindoo-only', kindoo: kb({ createScope: null }) })),
+    ).toHaveLength(1);
+  });
+
+  it('kindoo-only onto an existing seat reads Add SBA grant (B-23)', () => {
+    // The member already holds a seat; the callable merges the grant onto
+    // it rather than creating a second one. Same action, same payload —
+    // only the label changes, so `testId` stays `create-sba`.
+    const actions = fixActionsFor(
+      discrepancy({ code: 'kindoo-only', mergesOntoExistingSeat: true }),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      side: 'sba',
+      testId: 'create-sba',
+      label: 'Add SBA grant',
+    });
   });
 
   it('callings-mismatch returns one Update SBA action (auto-only by construction)', () => {
@@ -142,6 +184,56 @@ describe('fixActionsFor', () => {
     ).toEqual([]);
   });
 
+  it('keeps sba-only on a duplicate-surfaced row now that it targets the grant (B-24)', () => {
+    // Withholding this was what left a merged auto grant with no removal
+    // path anywhere: every web Remove gates on `type !== 'auto'`.
+    const actions = fixActionsFor(
+      discrepancy({
+        code: 'sba-only',
+        surfacedFromDuplicate: true,
+        sba: { scope: 'FT', type: 'auto', callings: [], buildingNames: [] },
+        kindoo: null,
+      }),
+    );
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({ testId: 'remove-sba' });
+  });
+
+  it('withholds the destructive actions on a duplicate-surfaced row (B-16)', () => {
+    // Every syncApplyFix handler writes the PRIMARY's fields, so on a row
+    // projected from a duplicate these two destroy a grant the operator
+    // isn't looking at. The row still renders; only the buttons go.
+    for (const code of [
+      'callings-mismatch',
+      'scope-mismatch',
+      'buildings-mismatch',
+      'type-mismatch',
+      'kindoo-unparseable',
+    ] as const) {
+      expect(
+        fixActionsFor(
+          discrepancy({
+            code,
+            surfacedFromDuplicate: true,
+            sba: { scope: 'CO', type: 'auto', callings: ['Bishop'], buildingNames: [] },
+          }),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  it('withholds scope-mismatch on a duplicate-surfaced row too', () => {
+    // Exempted twice as "the one axis with no other route to
+    // convergence" — the property it lacks, since the write never touches
+    // the duplicate that produced the row. It rewrites the field that
+    // decides which grant the primary IS.
+    expect(
+      fixActionsFor(discrepancy({ code: 'scope-mismatch', surfacedFromDuplicate: true })),
+    ).toEqual([]);
+    // Primary-surfaced is unaffected.
+    expect(fixActionsFor(discrepancy({ code: 'scope-mismatch' }))).toHaveLength(1);
+  });
+
   it('any review-severity row returns no actions regardless of code (invariant)', () => {
     // Even a code that is normally actionable yields no buttons when the
     // detector marked the row review.
@@ -172,6 +264,40 @@ describe('buildCallableInput', () => {
     expect(payload.isTempUser).toBe(false);
     // No reason on auto.
     expect(payload.reason).toBeUndefined();
+  });
+
+  it('kindoo-only sources scope from the site-filtered segment, not the unfiltered primary', () => {
+    // Multi-site Description on a FOREIGN-site run. `primaryScope` is the
+    // unfiltered pick, whose tiebreaker prefers the app-access / stake
+    // segment; `createScope` is the site-filtered one the callings came
+    // from. Taking `primaryScope` here would write this site's callings
+    // onto the home stake grant — a silent wrong write that never
+    // converges (found in the PR #275 review).
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: 'kindoo-only',
+        kindoo: kb({
+          description:
+            'Colorado Springs North Stake (Stake Clerk) | Kettle Creek Ward (Elders Quorum Second Counselor)',
+          primaryScope: 'stake',
+          createScope: 'KC',
+          intendedCallings: ['Elders Quorum Second Counselor'],
+          grantTargetType: 'auto',
+        }),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.scope).toBe('KC');
+    expect(payload.callings).toEqual(['Elders Quorum Second Counselor']);
+  });
+
+  it('kindoo-only falls back to stake when no segment resolved (createScope null)', () => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({ code: 'kindoo-only', kindoo: kb({ createScope: null }) }),
+    );
+    expect((input.fix.payload as Record<string, unknown>).scope).toBe('stake');
   });
 
   it('kindoo-only church-backed creates an auto seat with derivedBuildings over buildingNames', () => {
@@ -592,7 +718,13 @@ describe('buildCallableInput', () => {
     expect(input.stakeId).toBe('csnorth');
     expect(input.fix.code).toBe('sba-only');
     const payload = input.fix.payload as Record<string, unknown>;
-    expect(payload).toEqual({ memberEmail: 'Orphan.Seat@Example.com' });
+    // B-24: the payload also names the grant the row was surfaced from,
+    // so the callable targets it instead of guessing duplicate_grants[0].
+    expect(payload).toEqual({
+      memberEmail: 'Orphan.Seat@Example.com',
+      scope: 'CO',
+      kindooSiteId: null,
+    });
   });
 
   it('kindoo-unparseable sends the raw Kindoo description as the church-wide calling', () => {
@@ -662,7 +794,11 @@ describe('applyFix', () => {
     expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
     const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(sent.fix.code).toBe('sba-only');
-    expect(sent.fix.payload).toEqual({ memberEmail: 'orphan@example.com' });
+    expect(sent.fix.payload).toEqual({
+      memberEmail: 'orphan@example.com',
+      scope: 'CO',
+      kindooSiteId: null,
+    });
   });
 
   it('wraps a thrown callable error as a flat error', async () => {

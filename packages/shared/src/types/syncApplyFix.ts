@@ -11,7 +11,11 @@
 // existing SBA seat to track Kindoo's state. Every code below flows
 // through this callable:
 //
-//   - `kindoo-only`            → create a new SBA seat.
+//   - `kindoo-only`            → create a new SBA seat, or — when the
+//                                member already holds one whose grants
+//                                all live on other Kindoo sites — merge
+//                                the grant onto it as a parallel-site
+//                                `duplicate_grants[]` entry (B-23).
 //   - `callings-mismatch`      → REPLACE an auto seat's `callings[]` with
 //                                Kindoo's parsed calling(s) (Kindoo is
 //                                authoritative; a renamed calling replaces
@@ -41,7 +45,9 @@
 
 import type { SeatType } from './seat.js';
 
-/** Payload for the `kindoo-only` discrepancy fix. Creates a new SBA seat. */
+/** Payload for the `kindoo-only` discrepancy fix. Creates a new SBA
+ * seat, or merges the grant onto the member's existing seat when one is
+ * already there (B-23). */
 export type KindooOnlyPayload = {
   /** Raw (typed) email — server canonicalizes. */
   memberEmail: string;
@@ -62,6 +68,27 @@ export type KindooOnlyPayload = {
   endDate?: string;
   /** Reserved — Kindoo's temp-user flag carried through for parity. */
   isTempUser: boolean;
+  /**
+   * The Kindoo site the drift row was surfaced from — `null` home, a
+   * site id for a foreign site. **Absence is load-bearing.**
+   *
+   * The merge-onto-existing-seat behaviour (B-23) is a SERVER change,
+   * but everything that makes it safe ships in the EXTENSION:
+   * `createScope`, the duplicate-surfaced withholding, and `sba-only`'s
+   * `(scope, kindooSiteId)`. Functions deploy in minutes; the extension
+   * goes through Chrome Web Store review and then updates on each
+   * manager's own schedule, so "deploy the extension first" is not
+   * enforceable (`firebase-schema.md` §3.4 already treats the
+   * independent cadence as a hard constraint).
+   *
+   * A build predating those guards omits this field, and the callable
+   * then refuses to merge — it keeps the pre-B-23 `seat already exists`
+   * soft failure, which is loud and harmless. So the server change
+   * cannot outrun the client guards no matter what order anything ships
+   * in. Present ⇒ the caller also has the guards, and the callable can
+   * additionally verify the payload's scope really lives on this site.
+   */
+  activeSiteId?: string | null;
 };
 
 /** Payload for the `callings-mismatch` fix. REPLACES an auto seat's
@@ -125,6 +152,28 @@ export type BuildingsMismatchPayload = {
 export type SbaOnlyRemovePayload = {
   /** Raw (typed) email — server canonicalizes to locate the seat. */
   memberEmail: string;
+  /**
+   * The scope of the grant the drift row was surfaced FROM (B-24).
+   *
+   * A Sync row is a per-site projection: a seat contributes through its
+   * primary or through any `duplicate_grants[]` entry on that site.
+   * Without this the callable could only guess, and its multi-grant
+   * branch guessed `duplicate_grants[0]` — promoting a revoked grant over
+   * a live primary. With it, a row surfaced from a duplicate drops that
+   * duplicate and leaves the primary alone.
+   *
+   * Optional for version skew only: an extension predating this field
+   * sends nothing and gets the old delete-or-promote behaviour, which is
+   * correct whenever the row came from the primary (the common case).
+   */
+  scope?: string;
+  /**
+   * Kindoo site of that same grant — `null` for home, a site id for a
+   * foreign site, omitted when the client can't resolve it. Used only to
+   * disambiguate when more than one grant on the seat carries `scope`;
+   * scope alone identifies the grant in every shape seen in practice.
+   */
+  kindooSiteId?: string | null;
 };
 
 /** Payload for the `kindoo-unparseable` fix. A Kindoo Description that
@@ -152,8 +201,8 @@ export type SyncApplyFixInput = {
 };
 
 /** Soft-failure envelope. The callable returns `{ success: false }` for
- * domain-level misses (no matching seat, seat already exists) and throws
- * an `HttpsError` for auth / shape errors. */
+ * domain-level misses (no matching seat) and throws an `HttpsError` for
+ * auth / shape errors. */
 export type SyncApplyFixResult =
   | { success: true; seatId: string }
   | { success: false; error: string };

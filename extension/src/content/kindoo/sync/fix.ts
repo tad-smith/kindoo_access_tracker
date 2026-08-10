@@ -11,6 +11,7 @@
 
 import type { SyncApplyFixInput, SyncApplyFixResult } from '@kindoo/shared';
 import type { Discrepancy } from './detector';
+import { WITHHELD_ON_DUPLICATE_SURFACED } from './duplicateGuard';
 import { syncApplyFix as callSyncApplyFix } from '../../../lib/extensionApi';
 
 /** Result envelope the panel renders. Success → splice the row; error
@@ -46,6 +47,27 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
   // cases, where no SBA-side action can be safely derived, and
   // future-proofs the model (review ⇒ no action).
   if (d.severity === 'review') return [];
+  // Second invariant, same shape as the review guard: a row surfaced
+  // through a `duplicate_grants[]` entry offers no fix that would write
+  // the PRIMARY's fields, which on such a row is not the grant the
+  // operator is looking at. The list — and the note the detector appends
+  // to the row's reason — live in `duplicateGuard.ts`, because keeping
+  // them in two places is how the note came to cover two codes while the
+  // withholding covered four.
+  if (d.surfacedFromDuplicate && WITHHELD_ON_DUPLICATE_SURFACED.has(d.code)) return [];
+  // A `kindoo-only` row whose Description resolved no segment on this
+  // site (`createScope === null`, only reachable on a home run) has no
+  // scope to merge onto. The payload's `?? 'stake'` fallback was safe
+  // while the callable refused an existing seat; now it would append a
+  // FABRICATED stake-scope duplicate with no callings and no reason —
+  // which is not inert (`duplicate_scopes` is a rules predicate, and
+  // `overCaps` folds a stake duplicate on a foreign-primary seat into the
+  // home pool) and is step one of the `kindoo-unparseable` path above.
+  // Withhold rather than guess; creating a NEW seat from the same
+  // fallback is unchanged, being the pre-existing behaviour.
+  if (d.code === 'kindoo-only' && d.mergesOntoExistingSeat && d.kindoo?.createScope == null) {
+    return [];
+  }
   switch (d.code) {
     case 'sba-only':
       // Kindoo-authoritative: an SBA seat with no Kindoo presence is an
@@ -53,7 +75,18 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
       // Kindoo-side "Provision in Kindoo" write before the shift.)
       return [{ side: 'sba', label: 'Remove From SBA', testId: 'remove-sba', variant: 'danger' }];
     case 'kindoo-only':
-      return [{ side: 'sba', label: 'Create SBA seat', testId: 'create-sba' }];
+      // B-23: the member may already hold a seat whose grants all sit on
+      // other Kindoo sites. The callable merges the grant onto it rather
+      // than creating a second seat (seats are keyed by canonical email),
+      // so the label has to name the write that actually happens. Same
+      // payload, same `testId` — one code, one action, two wordings.
+      return [
+        {
+          side: 'sba',
+          label: d.mergesOntoExistingSeat ? 'Add SBA grant' : 'Create SBA seat',
+          testId: 'create-sba',
+        },
+      ];
     case 'callings-mismatch':
       // Auto seats only by construction (the detector suppresses this
       // code for manual / temp). The `syncApplyFix` path REPLACES the
@@ -175,10 +208,15 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         d.kindoo.derivedBuildings !== null && d.kindoo.derivedBuildings !== undefined
           ? d.kindoo.derivedBuildings
           : d.kindoo.buildingNames;
-      // Scope falls back to the parsed primary scope; without either the
-      // seat can't be written. Use stake as a last-ditch fallback (server
-      // validates anyway).
-      const scope = d.kindoo.primaryScope ?? 'stake';
+      // Scope comes from the SITE-FILTERED segment (`createScope`) — the
+      // same segment `intendedCallings` / `intendedFreeText` above are
+      // built from. Deliberately NOT `primaryScope`, whose unfiltered
+      // tiebreaker prefers an app-access segment then `'stake'`: on a
+      // multi-site Description that pairs this site's callings with
+      // another site's scope, writing the grant onto the wrong slot and
+      // never converging. `null` (nothing resolved) falls back to stake
+      // as before; the server validates either way.
+      const scope = d.kindoo.createScope ?? 'stake';
       const payload: SyncApplyFixInput['fix']['payload'] = {
         memberEmail: d.displayEmail,
         memberName: d.kindoo.memberName,
@@ -187,6 +225,10 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         callings,
         buildingNames,
         isTempUser: d.kindoo.isTempUser,
+        // Version marker + site check. Omitted only by a build that
+        // predates the guards, which is exactly when the callable must
+        // refuse to merge.
+        ...(d.kindoo.activeSiteId !== undefined ? { activeSiteId: d.kindoo.activeSiteId } : {}),
       };
       // Manual / temp seats record their calling text in `reason` — the
       // FULL parsed calling list (not just `intendedFreeText`, which is
@@ -301,7 +343,18 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
       // backend canonicalizes it to locate the orphaned seat.
       return {
         stakeId,
-        fix: { code: 'sba-only', payload: { memberEmail: d.displayEmail } },
+        fix: {
+          code: 'sba-only',
+          payload: {
+            memberEmail: d.displayEmail,
+            // B-24: name the grant this row was surfaced from. Without it
+            // the callable falls back to delete-or-promote and, on a
+            // duplicate-surfaced row, promotes the revoked grant over a
+            // live primary. `d.sba` is the PROJECTION, so its scope/site
+            // are the surfaced grant's, not the primary's.
+            ...(d.sba ? { scope: d.sba.scope, kindooSiteId: d.sba.kindooSiteId ?? null } : {}),
+          },
+        },
       };
     }
     case 'kindoo-unparseable': {

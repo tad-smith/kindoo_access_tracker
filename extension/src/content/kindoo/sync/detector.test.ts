@@ -2129,6 +2129,209 @@ describe('detect', () => {
     expect(result.kindooCount).toBe(0);
   });
 
+  // ----- B-23 kindoo-only onto an existing seat -----
+
+  it('B-23: flags a foreign-site kindoo-only row whose member already holds a home-site seat', () => {
+    // The production shape: a stake-calling holder in a foreign-site ward.
+    // Stake-scope grants are home-only (§15), so the seat can never project
+    // onto the foreign site — the row is a missing GRANT, not a missing
+    // member, and the backend merges rather than creating a second seat.
+    const result = detect(
+      mixedInputs({
+        seats: [
+          seat({
+            member_canonical: 'roger@example.com',
+            member_email: 'roger@example.com',
+            scope: 'stake',
+            type: 'auto',
+            callings: ['Stake Clerk'],
+            building_names: ['Lexington Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'roger@example.com',
+            description: 'Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.mergesOntoExistingSeat).toBe(true);
+    expect(row.reason).toContain('existing seat');
+  });
+
+  it('B-23: leaves the flag off when the member genuinely has no seat', () => {
+    const result = detect(
+      mixedInputs({
+        seats: [],
+        kindooUsers: [
+          kuser({
+            username: 'newcomer@example.com',
+            description: 'Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]!.code).toBe('kindoo-only');
+    expect(result.discrepancies[0]!.mergesOntoExistingSeat).toBeUndefined();
+    expect(result.discrepancies[0]!.reason).toBe(
+      'Kindoo has a user for this email, but SBA has no seat for them.',
+    );
+  });
+
+  it('B-23: createScope is the site-filtered segment even when primaryScope is not', () => {
+    // Multi-site Description on the foreign site. The unfiltered
+    // tiebreaker prefers the app-access stake segment, so `primaryScope`
+    // says `stake` — home-only by policy, and NOT where this grant lives.
+    // `createScope` must name the segment that put the row on this site,
+    // the same one `intendedFreeText` came from. Sending `primaryScope`
+    // as the payload scope wrote the grant onto the home slot.
+    const result = detect(
+      mixedInputs({
+        seats: [],
+        kindooUsers: [
+          kuser({
+            username: 'multi@example.com',
+            description:
+              'Colorado Springs North Stake (Stake Clerk) | Pine Ward (Elders Quorum Second Counselor)',
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('kindoo-only');
+    expect(row.kindoo?.primaryScope).toBe('stake');
+    expect(row.kindoo?.createScope).toBe('FT');
+    expect(row.kindoo?.intendedFreeText).toBe('Elders Quorum Second Counselor');
+  });
+
+  it('B-24: an sba-only row surfaced through a duplicate names that grant and keeps its fix', () => {
+    // The normal end of life for a grant B-23 appends: the ward calling
+    // ends, Kindoo revokes the user, but the seat still projects onto the
+    // foreign site through the duplicate. Removing would promote the
+    // revoked grant and destroy the home stake primary.
+    const merged = seat({
+      member_canonical: 'roger@example.com',
+      member_email: 'roger@example.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Lexington Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Elders Quorum Second Counselor'],
+          building_names: ['Pine Building'],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [merged],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.surfacedFromDuplicate).toBe(true);
+    // The projection names the DUPLICATE's scope and site, which is what
+    // the payload carries so the callable drops that grant and not the
+    // stake primary.
+    expect(row.sba?.scope).toBe('FT');
+    expect(row.sba?.kindooSiteId).toBe('east-stake');
+    // Removal stays available — withholding it was what left a merged
+    // auto grant undeletable.
+    expect(fixActionsFor(row)).toHaveLength(1);
+  });
+
+  it('every duplicate-surfaced row carries the flag, whatever its code', () => {
+    // Regression for the review-5 gap: the flag was attached per-code, on
+    // two pushes out of ten, so the `buildings-mismatch` withholding was
+    // dead code while spec + sync-design + the commit message all claimed
+    // it worked. `fix.test.ts` set the flag by hand and could not see it.
+    // Drive the DETECTOR and hand the real row to `fixActionsFor`.
+    const merged = seat({
+      member_canonical: 'roger@example.com',
+      member_email: 'roger@example.com',
+      scope: 'stake',
+      type: 'auto',
+      callings: ['Stake Clerk'],
+      building_names: ['Lexington Building'],
+      kindoo_site_id: null,
+      duplicate_grants: [
+        {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          // Partial set — the AccessSchedules fallback misses church-direct
+          // grants, which is the NORMAL state of a freshly merged grant.
+          building_names: [],
+          kindoo_site_id: 'east-stake',
+          detected_at: ts(),
+        },
+      ],
+    });
+    const result = detect(
+      mixedInputs({
+        seats: [merged],
+        kindooUsers: [
+          kuser({
+            username: 'roger@example.com',
+            description: 'Pine Ward (Sunday School Teacher)',
+            accessSchedules: [{ ruleId: 6250 }],
+            derivedBuildings: ['Pine Building'],
+            directGrantBuildings: ['Pine Building'],
+          }),
+        ],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    // Whatever code this shape produces, it is duplicate-surfaced and the
+    // destructive fixes must be absent.
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.surfacedFromDuplicate).toBe(true);
+    // Every code that writes the primary is withheld; `sba-only` is the
+    // one exception, and it targets the surfaced grant (B-24).
+    if (row.code !== 'sba-only') {
+      expect(fixActionsFor(row)).toEqual([]);
+    }
+  });
+
+  it('a primary-surfaced sba-only row keeps its Remove action', () => {
+    const result = detect(
+      mixedInputs({
+        seats: [
+          seat({
+            member_canonical: 'plain@example.com',
+            member_email: 'plain@example.com',
+            scope: 'FT',
+          }),
+        ],
+        kindooUsers: [],
+        activeSite: { kind: 'foreign', siteId: 'east-stake' },
+      }),
+    );
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('sba-only');
+    expect(row.surfacedFromDuplicate).toBeUndefined();
+    expect(fixActionsFor(row)).toHaveLength(1);
+  });
+
   // ----- T-42 multi-site fan-out -----
   //
   // A Kindoo user whose Description spans home + foreign sites must

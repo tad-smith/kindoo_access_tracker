@@ -34,9 +34,16 @@
 //
 // Failure envelope:
 //   - shape / auth errors → `HttpsError` (matches other callables)
-//   - domain misses (seat not found, seat already exists) →
-//     `{ success: false, error }` so the extension can surface a clean
-//     inline message without trapping a thrown error.
+//   - domain misses (seat not found) → `{ success: false, error }` so
+//     the extension can surface a clean inline message without trapping
+//     a thrown error.
+//
+// `kindoo-only` CREATES a seat when the member has none and MERGES the
+// grant onto the existing seat when they do (B-23) — an existing seat
+// doc is not a collision. The code means "no grant on the ACTIVE Kindoo
+// site", and seats are keyed by canonical email, so a member whose only
+// grant lives on another site still has a doc. See
+// `planKindooOnlyMerge` for the slot resolution.
 //
 // Auto-seat bookkeeping: `applyKindooOnly` / `applyCallingsMismatch`
 // / `applyTypeMismatch` stamp `sort_order` from the canonical churchwide
@@ -97,6 +104,7 @@ import type {
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
+  DuplicateGrant,
   KindooManager,
   KindooOnlyPayload,
   KindooUnparseablePayload,
@@ -372,10 +380,14 @@ async function applyKindooOnly(
 
   const result = await db.runTransaction<SyncApplyFixResult>(async (tx) => {
     // All transaction reads must precede any write.
+    //
+    // An existing seat doc is NOT a collision (B-23). `kindoo-only` means
+    // "no grant on the ACTIVE Kindoo site", not "no seat doc", and seats
+    // are keyed by canonical email — one per member per stake — so a
+    // member whose only grant lives on another site still has a doc. The
+    // grant merges onto it; see `planKindooOnlyMerge`.
     const seatSnap = await tx.get(seatRef);
-    if (seatSnap.exists) {
-      return { success: false, error: 'seat already exists for that member' };
-    }
+    const existingSeat = seatSnap.exists ? (seatSnap.data() as Seat) : null;
 
     // Resolve the unit's site AND its kind from ONE read (reads-before-
     // writes). Site: `undefined` ⇒ unit not found, leave the field absent
@@ -422,6 +434,81 @@ async function applyKindooOnly(
     }
 
     const now = Timestamp.now();
+
+    // The incoming grant's site: a unit scope takes the site resolved
+    // from its building above; stake scope is home by policy (§15).
+    const grantSite: string | null | undefined = isUnitScope ? newSeatSite : null;
+
+    if (existingSeat) {
+      // Version gate. Everything that makes the merge safe ships in the
+      // extension — `createScope`, the duplicate-surfaced withholding,
+      // `sba-only`'s grant discriminator — while THIS is a server change
+      // that lands for every client at once. Chrome updates extensions on
+      // its own schedule after a Web Store review measured in days, so
+      // "deploy the extension first" cannot be relied on. A build that
+      // omits `activeSiteId` predates the guards and keeps the pre-B-23
+      // soft failure: loud, harmless, and exactly what it got yesterday.
+      if (payload.activeSiteId === undefined) {
+        return { success: false, error: 'seat already exists for that member' };
+      }
+      // With the marker present the caller also tells us which site the
+      // row came from, so the payload's own scope can be checked against
+      // it. This closes the APPEND path too — `slotAlreadyOnGrantSite`
+      // only ever covered a slot hit, so a wrong scope with no matching
+      // slot still appended a junk grant that widens `duplicate_scopes`
+      // (a rules read predicate) and can inflate the home licence pool.
+      // `undefined` means the unit doc was unreadable, which proves
+      // nothing either way — proceed, as every other path here does.
+      if (grantSite !== undefined && grantSite !== payload.activeSiteId) {
+        return {
+          success: false,
+          error: `that grant's scope does not live on this Kindoo site — re-run Sync`,
+        };
+      }
+      const merge = planKindooOnlyMerge({
+        existingSeat,
+        scope,
+        type,
+        callings: dedupedCallings,
+        buildingNames,
+        reason,
+        startDate,
+        endDate,
+        siteId: grantSite,
+        detectedAt: now,
+      });
+      if (merge.kind === 'refuse') return { success: false, error: merge.error };
+      tx.update(seatRef, {
+        ...merge.update,
+        last_modified_at: now,
+        last_modified_by: actor,
+        lastActor: actor,
+      });
+      // A merge writes NO access, on either branch.
+      //
+      // The hit branch's reason is that the seat's `callings[]` doesn't
+      // record this grant, so an access doc written from it would assert
+      // something the seat can't corroborate. The APPEND branch has a
+      // harder one: the scope it would write exists ONLY inside
+      // `duplicate_grants[]`, and nothing in the system reaps a
+      // duplicate-only scope. Every reaper targets the PRIMARY's scope —
+      // `applySbaOnlyRemove` (`freshSeat.scope` / `removedScope`),
+      // `applyCallingsMismatch` and `applyTypeMismatch` (`seat.scope`) —
+      // `removeSeatOnRequestComplete` writes no access fields at all, and
+      // clients can't write `importer_callings` (rules). So the grant
+      // would mint a custom claim that survives the calling ending, with
+      // no in-product path to remove it. The withholding in
+      // `fixActionsFor` closes the nearest thing to one.
+      //
+      // Granting a permission nothing can revoke is worse than granting
+      // none: `Stake.eq_president_app_access`'s convention is that
+      // anything conferring access fails closed. So a merged auto grant
+      // confers no app access until the `(scope, kindoo_site_id)`
+      // threading (B-16 / B-24) lets a reaper find it — recorded as a
+      // known limitation in spec §8.
+      return { success: true, seatId: canonical };
+    }
+
     const body: Record<string, unknown> = {
       member_canonical: canonical,
       member_email: memberEmail,
@@ -477,6 +564,180 @@ async function applyKindooOnly(
   });
 
   return result;
+}
+
+/** What `planKindooOnlyMerge` decided: the seat fields to write, or a
+ * refusal carrying the message the extension shows inline. */
+type KindooOnlyMergePlan =
+  | { kind: 'write'; update: Record<string, unknown> }
+  | { kind: 'refuse'; error: string };
+
+const SLOT_ALREADY_ON_SITE =
+  'that grant is already recorded on this Kindoo site — nothing to merge. ' +
+  'Re-run Sync to refresh the report.';
+
+/**
+ * True when the matched slot ALREADY resolves to the site the incoming
+ * grant lives on — a state the detector cannot produce, so the payload
+ * is not describing the row it claims to.
+ *
+ * The row exists only because NO grant on the seat projected onto the
+ * active site. A `(scope, type)` hit whose site already agrees would
+ * have projected, so the fix would never have been offered. Refusing is
+ * therefore free of false positives and buys two things:
+ *
+ *   - **Version skew.** Dropping the old `seatSnap.exists` guard changed
+ *     server behaviour for clients already in the field. An extension at
+ *     ≤1.1.11 sends the UNFILTERED primary scope (the defect `createScope`
+ *     fixes), and functions deploy the day the operator runs the script
+ *     while the extension waits on Chrome Web Store review. Through that
+ *     window a foreign-site click for a member with a multi-segment
+ *     Description would fold the foreign building into the HOME stake
+ *     primary and return success. This makes it fail loudly again, which
+ *     is what the pre-B-23 guard did.
+ *   - **Detector regressions**, which otherwise land as silent wrong
+ *     writes on the primary grant.
+ *
+ * Site resolution mirrors `projectSeatForSite`: the stamp when the field
+ * is PRESENT (`null` = home), else the scope's ward-derived site — which
+ * is `grantSite` itself, since a hit means the scopes match. So an
+ * unstamped slot always reads as agreeing, and only a slot whose stamp
+ * disagrees survives — exactly the stale-stamp repair the fix exists for.
+ *
+ * `grantSite === undefined` (unit doc missing) proves nothing, so it
+ * proceeds rather than refusing: a missing ward is not a hard failure
+ * anywhere else on this path either.
+ */
+function slotAlreadyOnGrantSite(
+  slotStamp: string | null | undefined,
+  grantSite: string | null | undefined,
+): boolean {
+  if (grantSite === undefined) return false;
+  const effective = slotStamp !== undefined ? slotStamp : grantSite;
+  return effective === grantSite;
+}
+
+/**
+ * Seat fields that fold a `kindoo-only` grant into a seat the member
+ * ALREADY has (B-23) — the case where the grant lives on a Kindoo site
+ * none of the seat's existing grants target.
+ *
+ * The data model already names this shape: a `duplicate_grants[]` entry
+ * whose `kindoo_site_id` differs from the primary's is a **parallel-site
+ * grant** (T-42, `Seat.duplicate_grants`) — an independent grant on
+ * another site, not a collision. A second seat doc isn't an option
+ * anyway: seats are keyed by canonical email, one per member per stake.
+ *
+ * Slot resolution mirrors `planAddMerge` in `markRequestComplete`: match
+ * `(scope, type)` against the primary first, then walk
+ * `duplicate_grants[]`. A hit unions `building_names` and re-stamps the
+ * slot's `kindoo_site_id`; a miss appends a new entry. The PRIMARY
+ * grant's identity — scope, type, callings, reason, dates — is never
+ * modified, so a merge can't quietly restake the member's home grant.
+ *
+ * Re-stamping the site on a hit is what makes the fix converge. The row
+ * was emitted because NO grant on the seat resolved to the active site,
+ * so a `(scope, type)` hit means that slot's stamp disagrees with the
+ * site the grant was actually observed on. Merging buildings while
+ * leaving the stale stamp would clear nothing — the next Sync run
+ * re-emits the identical row and the operator re-clicks forever.
+ *
+ * Callings are deliberately NOT rewritten on a hit: `callings-mismatch`
+ * owns that axis, and it fires on the following run once the grant is
+ * visible on the site.
+ *
+ * `siteId`: `null` home, a string foreign, `undefined` when the unit doc
+ * was missing — the last leaves the field off so the read-time ward
+ * fallback classifies the grant, matching the create path.
+ */
+function planKindooOnlyMerge(opts: {
+  existingSeat: Seat;
+  scope: string;
+  type: Seat['type'];
+  callings: string[];
+  buildingNames: string[];
+  reason: string | undefined;
+  startDate: string | undefined;
+  endDate: string | undefined;
+  siteId: string | null | undefined;
+  detectedAt: Timestamp;
+}): KindooOnlyMergePlan {
+  const {
+    existingSeat,
+    scope,
+    type,
+    callings,
+    buildingNames,
+    reason,
+    startDate,
+    endDate,
+    siteId,
+    detectedAt,
+  } = opts;
+  const dupes = existingSeat.duplicate_grants ?? [];
+
+  // Primary slot. Only reachable when the primary's stamped site
+  // disagrees with the site the row came from — otherwise the detector
+  // would have projected this seat onto the site and never emitted
+  // `kindoo-only`. Field-absent is the home representation on the
+  // primary (spec §15), so home deletes rather than writes null.
+  if (existingSeat.scope === scope && existingSeat.type === type) {
+    if (slotAlreadyOnGrantSite(existingSeat.kindoo_site_id, siteId)) {
+      return { kind: 'refuse', error: SLOT_ALREADY_ON_SITE };
+    }
+    const update: Record<string, unknown> = {
+      building_names: dedupePreserveOrder([
+        ...(existingSeat.building_names ?? []),
+        ...buildingNames,
+      ]),
+    };
+    if (siteId !== undefined) {
+      update.kindoo_site_id = siteId === null ? FieldValue.delete() : siteId;
+    }
+    return { kind: 'write', update };
+  }
+
+  const matchIdx = dupes.findIndex((d) => d.scope === scope && d.type === type);
+  if (matchIdx >= 0) {
+    const matched = dupes[matchIdx]!;
+    if (slotAlreadyOnGrantSite(matched.kindoo_site_id, siteId)) {
+      return { kind: 'refuse', error: SLOT_ALREADY_ON_SITE };
+    }
+    const replacement: DuplicateGrant = {
+      ...matched,
+      building_names: dedupePreserveOrder([...(matched.building_names ?? []), ...buildingNames]),
+    };
+    // On a duplicate entry `null` IS the home representation, so it's
+    // written rather than deleted (matching `planAddMerge`).
+    if (siteId !== undefined) replacement.kindoo_site_id = siteId;
+    const next = dupes.slice();
+    next[matchIdx] = replacement;
+    return {
+      kind: 'write',
+      update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
+    };
+  }
+
+  const entry: DuplicateGrant = {
+    scope,
+    type,
+    building_names: dedupePreserveOrder(buildingNames),
+    detected_at: detectedAt as DuplicateGrant['detected_at'],
+  };
+  if (siteId !== undefined) entry.kindoo_site_id = siteId;
+  // §6.1 shape, same split the create path applies: auto carries the
+  // calling(s) in `callings[]`, manual / temp in free-text `reason`.
+  if (callings.length > 0) entry.callings = callings;
+  if (reason !== undefined) entry.reason = reason;
+  if (type === 'temp') {
+    if (startDate !== undefined) entry.start_date = startDate;
+    if (endDate !== undefined) entry.end_date = endDate;
+  }
+  const next = [...dupes, entry];
+  return {
+    kind: 'write',
+    update: { duplicate_grants: next, duplicate_scopes: next.map((d) => d.scope) },
+  };
 }
 
 /**
@@ -1044,6 +1305,62 @@ async function applySbaOnlyRemove(
   }
   const seat = seatSnap.data() as Seat;
   const dupes = seat.duplicate_grants ?? [];
+
+  // B-24: which grant did the row come from? A Sync row is a per-site
+  // projection, so a seat can surface through its primary OR through a
+  // `duplicate_grants[]` entry on that site. Without the discriminator
+  // this function guessed `duplicate_grants[0]`, which for a merged seat
+  // meant promoting a just-revoked grant over a live primary.
+  //
+  // A client that predates the field sends nothing: fall through to the
+  // historical delete-or-promote, which is right whenever the row came
+  // from the primary (the common case) and is what shipped before.
+  const surfacedScope =
+    typeof payload.scope === 'string' && payload.scope.trim().length > 0
+      ? payload.scope.trim()
+      : undefined;
+  if (surfacedScope !== undefined && surfacedScope !== seat.scope) {
+    // The row came from a duplicate. Drop THAT entry and nothing else —
+    // the primary is a different grant on a different site and is not
+    // what the operator asked to remove.
+    //
+    // Site is only a tiebreaker: `scope` identifies the grant in every
+    // shape seen in practice, but a seat carrying the same scope twice
+    // would otherwise be ambiguous. An entry with no stamp matches any
+    // requested site, mirroring the read-time ward fallback.
+    const wantSite = payload.kindooSiteId;
+    const matches = (d: DuplicateGrant): boolean => {
+      if (d.scope !== surfacedScope) return false;
+      if (wantSite === undefined || d.kindoo_site_id === undefined) return true;
+      return d.kindoo_site_id === wantSite;
+    };
+    return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+      const freshSnap = await tx.get(seatRef);
+      if (!freshSnap.exists) return { success: false, error: 'seat not found' };
+      const fresh = freshSnap.data() as Seat;
+      const freshDupes = fresh.duplicate_grants ?? [];
+      const idx = freshDupes.findIndex(matches);
+      if (idx < 0) {
+        // Already gone, or the seat changed under us. Soft-fail so the
+        // next Sync run re-derives rather than deleting something else.
+        return { success: false, error: 'that grant is no longer on the seat' };
+      }
+      const remaining = freshDupes.filter((_, i) => i !== idx);
+      tx.update(seatRef, {
+        duplicate_grants: remaining,
+        duplicate_scopes: remaining.map((d) => d.scope),
+        last_modified_at: FieldValue.serverTimestamp(),
+        last_modified_by: { ...actor },
+        lastActor: { ...actor },
+      });
+      // No access reap: a duplicate-only scope never had an
+      // `importer_callings` entry to begin with. `writeAccessForAutoScope`
+      // is only ever called with a PRIMARY scope — the `kindoo-only` merge
+      // deliberately writes no access at all (spec §8) — so reaping here
+      // could only remove an entry some other writer owns.
+      return { success: true, seatId: canonical };
+    });
+  }
 
   if (dupes.length === 0) {
     // Orphan delete, retry-safe. ONE transaction re-reads + re-validates
