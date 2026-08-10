@@ -9,10 +9,19 @@
 //     into react-hook-form via `Controller`.
 //   - Typed input edits the underlying value directly; selecting a
 //     suggestion overwrites the value with the exact calling name.
-//   - The popover only opens when there is something to show (the
-//     input is focused OR a non-empty value is being filtered). On
-//     blur the popover closes after a brief delay so click-to-select
-//     still registers.
+//   - The popover opens only when the user asks for suggestions:
+//     typing a character, or pressing ArrowDown / ArrowUp. Focus alone
+//     does NOT open it — clicking into the field, and the Dialog
+//     autofocus that fires when `EditSeatDialog` mounts, both leave it
+//     closed (B-27). On blur the popover closes after a brief delay so
+//     click-to-select still registers. The arrow keys only OPEN the
+//     list; they do not move through it. The visible input is the
+//     PopoverAnchor's child, outside the `Command` subtree, and nothing
+//     forwards its keydowns to cmdk — so selection is mouse-only.
+//   - cmdk filters against `value` whenever the list is mounted, so how
+//     the popover was opened does not affect what it shows: arrows on a
+//     pre-filled field open a list already narrowed to that text. Only
+//     an empty field yields the whole scope list.
 //   - Scope changes swap the suggestion list immediately but do NOT
 //     clear the typed value (operator decision: free-text survives a
 //     scope flip).
@@ -48,9 +57,18 @@ export interface CallingComboboxProps {
   'data-testid'?: string;
   /** Optional override for the input's name (RHF wires this for us). */
   name?: string;
-  /** Optional placeholder; defaults to a hint about typeahead behaviour. */
+  /** Optional placeholder; defaults to `DEFAULT_PLACEHOLDER`. */
   placeholder?: string;
 }
+
+/**
+ * The field's only advertisement that suggestions exist. Nothing else
+ * says so — there is no chevron and no `aria-expanded`, and the popover
+ * deliberately does not open on focus or click (B-27), so a manager who
+ * never types would otherwise have no way to learn the list is there.
+ * Names the gesture that opens it rather than describing the feature.
+ */
+const DEFAULT_PLACEHOLDER = 'Start typing to see suggestions';
 
 export function CallingCombobox({
   value,
@@ -99,8 +117,10 @@ export function CallingCombobox({
       event.preventDefault();
       setOpen(false);
     } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !open) {
-      // Open on arrow navigation even from an empty value so users can
-      // browse the list without typing.
+      // Reveal the list without typing — including from an empty value,
+      // where there is nothing to filter on and the whole scope list
+      // shows. Opening is all this does; see the header note on why the
+      // arrows cannot then move through it.
       setOpen(true);
     }
   };
@@ -119,17 +139,20 @@ export function CallingCombobox({
             onChange(e.target.value);
             if (!open) setOpen(true);
           }}
-          onFocus={() => {
-            cancelBlurTimer();
-            setOpen(true);
-          }}
+          // Focus must not open the popover — a Dialog autofocuses its
+          // first field, which would cover the form on mount (B-27).
+          // The pending blur-close timer is still released: `handleSelect`
+          // refocuses here, and the timer armed by the blur that preceded
+          // the click would otherwise close a popover the user reopens
+          // within its 150ms window.
+          onFocus={cancelBlurTimer}
           onBlur={() => {
             blurTimer.current = window.setTimeout(() => {
               setOpen(false);
             }, 150);
           }}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
+          placeholder={placeholder ?? DEFAULT_PLACEHOLDER}
           data-testid={testId}
           className={cn(
             'block w-full rounded border border-kd-border bg-white px-3 py-1.5 text-sm text-kd-fg-1',

@@ -6,6 +6,27 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
+## [B-27] Edit Seat opens with the calling suggestions already covering the buildings checklist
+Status: closed (fixed in PR #280) `[FIXED 2026-08-10]`
+Owner: @web-engineer
+Severity: medium (the form's main control is occluded on every open; no data loss)
+Phase: cross-cutting
+Branch / PR: `fix/b27-calling-combobox-focus-open`
+
+**Symptom (operator-reported).** Opening Edit Seat on a manual seat drops the full calling list over the buildings checklist before anything is clicked or typed. Same component, same defect, in `NewRequestForm` — there it reads as "the list opens when I click the field", which is merely aggressive rather than obstructive, because nothing sits under it.
+
+**Cause.** `CallingCombobox`'s `onFocus` called `setOpen(true)` unconditionally. `EditSeatDialog` is a Radix Dialog and `reason` is its first focusable field, so the Dialog's mount autofocus *is* the interaction that opened the popover. Nothing about the user's intent was consulted.
+
+The component's own header comment claimed the opposite — "the popover only opens when there is something to show" — and had since it was written. The comment described the design; the handler never implemented it.
+
+**Why the tests were green.** `CallingCombobox.test.tsx` existed only to pin the B-18 blur-timer lifecycle. Both of its tests *began* with `fireEvent.focus`, so both asserted against an already-open popover: the buggy state was the fixture. There was no test of the initial, no-interaction render at all, and the E2E (`calling-typeahead-edit-seat.spec.ts`) opened the list through a `fill`, which would have opened it either way. Every layer exercised the field only after the thing that broke it had already happened.
+
+**Fix.** `onFocus={cancelBlurTimer}` — the timer release stays (a mouse pick blurs the input and `handleSelect` refocuses it, and the pending 150ms close would otherwise land on a popover the user is reopening), the `setOpen(true)` goes. Typing (`onChange`) and ArrowDown / ArrowUp still open it; neither can fire on mount. Coverage added for the no-interaction render, the pre-filled-value render, typing, both arrow keys, and a mouse pick — the first two fail against the old handler. The E2E gains a mount assertion that clicks a checkbox *through* where the popover used to paint (`toBeVisible` is not an occlusion test; a click hit-tests).
+
+**A second, latent defect in the same handler.** `handleSelect` sets `open=false` then refocuses the input, which under the old code was one `setOpen(true)` from reopening the list on top of the form after every mouse pick. It never surfaced: the input is OUTSIDE the popover content, so re-focusing it reads to Radix as a focus-outside and its dismissal won the race. Instrumented and confirmed in jsdom rather than assumed. Removing the focus-open makes it structurally unreachable; the outcome is pinned by test regardless, since it rested on a Radix ordering detail nothing states.
+
+---
+
 ## [B-25] Sync required EVERY door of a building's rule, so partial door grants read as nothing
 Status: closed (fixed) `[FIXED 2026-08-09]`
 Owner: @extension-engineer
