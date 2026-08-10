@@ -1090,7 +1090,17 @@ async function applyScopeMismatch(
     // alone would revoke access until the next `callings-mismatch`
     // re-granted it, so the two happen in ONE write: drop the old key,
     // then set the new one from THIS grant's own callings.
-    const accessSnap = movedGrant.scope !== newScope ? await tx.get(accessRef) : undefined;
+    // Only when the payload names Kindoo's callings. Without them this
+    // could only reap, and pre-B-16 `applyScopeMismatch` never touched the
+    // access doc at all — so reap-only would leave an older extension
+    // strictly WORSE than before (a permanent, silent access revocation in
+    // the window where functions have deployed and the Web Store hasn't
+    // published). Skipping the block entirely leaves it exactly where it
+    // was: a stale entry, no data loss.
+    const accessSnap =
+      movedGrant.scope !== newScope && payloadCallings.length > 0
+        ? await tx.get(accessRef)
+        : undefined;
 
     const update: Record<string, unknown> = {
       ...patchGrant(seat, slot, {
@@ -1330,7 +1340,20 @@ async function applyTypeMismatch(
 
       if (slot.kind === 'primary') update.sort_order = FieldValue.delete();
       const accessSnap = await tx.get(accessRef);
-      if (accessSnap.exists) {
+      // Only when no OTHER grant still carries this scope. A seat can hold
+      // one scope twice (`resolveGrantSlot` distinguishes them by site), so
+      // demoting a same-scope duplicate would otherwise reap the primary's
+      // entry. Same guard as `applyScopeMismatch` and the remove trigger.
+      const otherScopes =
+        slot.kind === 'primary'
+          ? (seat.duplicate_grants ?? []).map((d) => d.scope)
+          : [
+              seat.scope,
+              ...(seat.duplicate_grants ?? [])
+                .filter((_, i) => i !== slot.index)
+                .map((d) => d.scope),
+            ];
+      if (accessSnap.exists && !otherScopes.includes(grant.scope)) {
         clearImporterCallingsForScope(tx, accessRef, {
           access: accessSnap.data() as Access,
           scope: grant.scope,
@@ -1495,12 +1518,16 @@ async function applyKindooUnparseable(
         // (`unparseableAligned` checks scope and calling), and reaping there
         // would clear the entry this branch is trying to protect.
         const prior = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
-        if (prior && grant.type === 'auto') {
+        if (grant.type === 'auto') {
+          // No `prior` guard: the primary-surfaced path creates the doc from
+          // scratch in the same situation, and `writeAccessForAutoScope`
+          // already handles an absent prior. Requiring one meant a member
+          // with no access doc got no stake grant at all.
           const stakeGrants = filterAppAccessCallings('stake', [calling], appAccessOpts);
-          const priorStake = prior.importer_callings?.['stake'] ?? [];
+          const priorStake = prior?.importer_callings?.['stake'] ?? [];
           const mergedStake = dedupePreserveOrder([...priorStake, ...stakeGrants]);
-          const priorMinusOld: Access =
-            oldScope === 'stake'
+          const priorMinusOld: Access | undefined =
+            !prior || oldScope === 'stake'
               ? prior
               : {
                   ...prior,
@@ -1524,7 +1551,7 @@ async function applyKindooUnparseable(
               priorAccess: priorMinusOld,
               actor,
             });
-          } else if (oldScope !== 'stake') {
+          } else if (prior && oldScope !== 'stake') {
             clearImporterCallingsForScope(tx, accessRef, {
               access: prior,
               scope: oldScope,
@@ -1750,12 +1777,18 @@ async function applySbaOnlyRemove(
       // grant with no in-product way to remove them, which is exactly the
       // fail-closed rule §8 cites for the merge writing no access at all.
       //
-      // Safe by construction: this branch only runs when the named scope is
-      // NOT the primary's, so the entry being cleared belongs to the grant
-      // being dropped. `clearImporterCallingsForScope` preserves
-      // `manual_grants` and every other scope, and deletes the doc only when
-      // both maps end up empty.
-      if (accessSnap.exists) {
+      // NOT safe by construction — an earlier revision claimed it was.
+      // `resolveGrantSlot` returns a DUPLICATE when the payload's scope
+      // equals `seat.scope` but the sites disagree (its whole reason for
+      // consulting the site), so `target.scope === fresh.scope` is reachable
+      // and reaping it would clear the PRIMARY's entry. Guard on the scope
+      // being genuinely gone, the same check the remove trigger's splice
+      // and `applyScopeMismatch` use. `clearImporterCallingsForScope`
+      // preserves `manual_grants` and every other scope, and deletes the doc
+      // only when both maps end up empty.
+      const stillHeld =
+        fresh.scope === target.scope || remaining.some((d) => d.scope === target.scope);
+      if (!stillHeld && accessSnap.exists) {
         clearImporterCallingsForScope(tx, accessRef, {
           access: accessSnap.data() as Access,
           // The dropped grant's own scope, from the resolved slot.

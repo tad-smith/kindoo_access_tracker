@@ -2532,20 +2532,24 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
         importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
       });
 
-      await run('scope-mismatch', { memberEmail: MEMBER_EMAIL, newScope: 'CO', ...ref() });
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Ward Clerk'],
+        ...ref(),
+      });
 
       const seat = await readSeat();
       expect(seat.scope).toBe('stake');
       expect(seat.duplicate_grants[0]!.scope).toBe('CO');
       expect(seat.duplicate_scopes).toEqual(['CO']);
-      // `MR` no longer exists on the seat, and no payload could ever name
-      // it again — left behind it is a permanent `wards` claim for a
-      // calling that ended. Reaped, and nothing granted at `CO`; the
-      // PRIMARY's stake entry is untouched throughout.
+      // `MR` is reaped — no grant carries it now, and no payload could
+      // ever name it again — and `CO` is granted from Kindoo's callings.
+      // The PRIMARY's stake entry is untouched throughout.
       const access = (
         await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
       ).data() as Access;
-      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'], CO: ['Ward Clerk'] });
     });
 
     it('kindoo-unparseable restakes the duplicate, not the primary', async () => {
@@ -2631,7 +2635,11 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       const { db } = requireEmulators();
       // `Stake Clerk` is a STAKE app-access calling; at ward scope it earns
       // nothing, so the entry is dropped and the doc goes with it.
-      await run('scope-mismatch', { memberEmail: MEMBER_EMAIL, newScope: 'CO' });
+      await run('scope-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        newScope: 'CO',
+        callings: ['Stake Clerk'],
+      });
       const snap = await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get();
       expect(snap.exists).toBe(false);
     });

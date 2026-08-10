@@ -228,6 +228,11 @@ describe('buildCallableInput', () => {
     const payload = input.fix.payload as Record<string, unknown>;
     expect(payload.scope).toBe('FT');
     expect(payload.kindooSiteId).toBe('east-stake');
+    // B-26, pinned here because this is the only fixture where `siteScope`
+    // ('FT') diverges from `primaryScope` ('CO'): `scope-mismatch` must send
+    // the SITE-FILTERED scope — the segment the detector compared against —
+    // not the unfiltered pick, which can name a segment on another site.
+    if (code === 'scope-mismatch') expect(payload.newScope).toBe('FT');
   });
 
   it('kindoo-only on an auto seat carries scope/type/callings + building names', () => {
