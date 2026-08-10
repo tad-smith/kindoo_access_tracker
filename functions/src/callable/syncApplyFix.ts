@@ -296,7 +296,7 @@ export const syncApplyFix = onCall(
           appAccessOpts,
         );
       case 'scope-mismatch':
-        return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload);
+        return applyScopeMismatch(stakeId, fix.payload as ScopeMismatchPayload, appAccessOpts);
       case 'type-mismatch':
         return applyTypeMismatch(stakeId, fix.payload as TypeMismatchPayload, appAccessOpts);
       case 'kindoo-unparseable':
@@ -1031,6 +1031,7 @@ async function applyCallingsMismatch(
 async function applyScopeMismatch(
   stakeId: string,
   payload: ScopeMismatchPayload | undefined,
+  appAccessOpts: AppAccessOptions,
 ): Promise<SyncApplyFixResult> {
   if (!payload || typeof payload !== 'object') {
     throw new HttpsError('invalid-argument', 'payload required');
@@ -1078,23 +1079,15 @@ async function applyScopeMismatch(
     const slot = resolveGrantSlot(seat, payload);
     if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
     const movedGrant = grantAt(seat, slot);
-    // A DUPLICATE's scope moving must take its `importer_callings` with it.
-    // This PR is what starts writing access for duplicate scopes, so leaving
-    // the old key behind strands it permanently: every reaper takes its scope
-    // from a payload, and no payload can name a scope once no grant carries
-    // it — `seedClaims` turns that key straight into a `wards` claim, so it
-    // would be app access for a calling that ended. Reap only; the new
-    // scope's grant is written by the `callings-mismatch` that owns its
-    // callings, which keeps this fail-closed rather than minting access from
-    // a set this row never saw.
-    //
-    // Primary-surfaced moves are deliberately untouched: the same orphan
-    // exists there and predates this PR, and reaping on that path would
-    // revoke access for every ordinary scope-mismatch. Filed as B-27.
-    const accessSnap =
-      slot.kind === 'duplicate' && movedGrant.scope !== newScope
-        ? await tx.get(accessRef)
-        : undefined;
+    // Access follows the grant across the move, on BOTH paths.
+    // Leaving the old scope's `importer_callings` behind strands it
+    // permanently — every reaper takes its scope from a payload, and no
+    // payload can name a scope once no grant on the seat carries it, so
+    // `seedClaims` keeps minting a claim for a calling that ended. Reaping
+    // alone would revoke access until the next `callings-mismatch`
+    // re-granted it, so the two happen in ONE write: drop the old key,
+    // then set the new one from THIS grant's own callings.
+    const accessSnap = movedGrant.scope !== newScope ? await tx.get(accessRef) : undefined;
 
     const update: Record<string, unknown> = {
       ...patchGrant(seat, slot, {
@@ -1126,12 +1119,64 @@ async function applyScopeMismatch(
         context: 'syncApplyFix(scope-mismatch)',
       });
     }
-    if (accessSnap?.exists) {
-      clearImporterCallingsForScope(tx, accessRef, {
-        access: accessSnap.data() as Access,
-        scope: movedGrant.scope,
-        actor,
-      });
+    if (accessSnap !== undefined) {
+      const prior = accessSnap.exists ? (accessSnap.data() as Access) : undefined;
+      // Only an AUTO grant's callings earn access; manual / temp carry
+      // theirs in free-text `reason`, which grants nothing.
+      const grantCallings = movedGrant.type === 'auto' ? movedGrant.callings : [];
+      // The new scope's app-access set turns on the new unit's kind (D31),
+      // which the ward doc read above already answers — no second `tx.get`.
+      const opts: AppAccessOptions =
+        newScope === 'stake'
+          ? appAccessOpts
+          : {
+              ...appAccessOpts,
+              unitType: unitKindOrWard(
+                newScope,
+                wards[0]?.ward_name ? unitType(wards[0].ward_name) : undefined,
+                'scope-mismatch',
+              ),
+            };
+      const accessCallings =
+        grantCallings.length > 0 ? filterAppAccessCallings(newScope, grantCallings, opts) : [];
+      if (accessCallings.length > 0) {
+        // Drop the old key by handing `writeAccessForAutoScope` a prior
+        // without it: the helper preserves every OTHER scope from prior and
+        // replaces the one it is writing, so one call moves the entry.
+        const priorMinusOld: Access | undefined = prior
+          ? {
+              ...prior,
+              importer_callings: Object.fromEntries(
+                Object.entries(prior.importer_callings ?? {}).filter(
+                  ([k]) => k !== movedGrant.scope,
+                ),
+              ),
+              importer_limited_callings: Object.fromEntries(
+                Object.entries(prior.importer_limited_callings ?? {}).filter(
+                  ([k]) => k !== movedGrant.scope,
+                ),
+              ),
+            }
+          : undefined;
+        writeAccessForAutoScope(tx, accessRef, {
+          canonical,
+          memberEmail: seat.member_email ?? memberEmail,
+          memberName: seat.member_name ?? '',
+          scope: newScope,
+          callings: accessCallings,
+          sortOrder: seatCallingOrder(accessCallings),
+          priorAccess: priorMinusOld,
+          actor,
+        });
+      } else if (prior) {
+        // The grant earns nothing at its new scope — drop the old key and
+        // let the doc go if that empties it.
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: prior,
+          scope: movedGrant.scope,
+          actor,
+        });
+      }
     }
     tx.update(seatRef, update);
     return { success: true, seatId: canonical };
