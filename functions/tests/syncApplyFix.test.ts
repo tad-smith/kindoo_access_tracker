@@ -2418,6 +2418,28 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect((await readSeat()).building_names).toEqual(['Lexington Building']);
     });
 
+    it('dropping a duplicate reaps ITS access scope and nothing else', async () => {
+      await seedMergedSeat();
+      // B-16 lets a fix write access for a duplicate's scope, so dropping
+      // that grant has to take its access with it — otherwise the member
+      // keeps app access for a calling they no longer hold, with no
+      // in-product way to remove it.
+      const { db } = requireEmulators();
+      await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).update({
+        importer_callings: { stake: ['Stake Clerk'], MR: ['Ward Clerk'] },
+      });
+
+      await run('sba-only', { memberEmail: MEMBER_EMAIL, ...ref() });
+
+      const access = (
+        await db.doc(`stakes/${STAKE_ID}/access/${MEMBER_EMAIL}`).get()
+      ).data() as Access;
+      expect(access.importer_callings).toEqual({ stake: ['Stake Clerk'] });
+      const seat = await readSeat();
+      expect(seat.scope).toBe('stake');
+      expect(seat.duplicate_grants).toEqual([]);
+    });
+
     it('a payload naming no scope still writes the primary (version skew)', async () => {
       await seedMergedSeat();
       await run('buildings-mismatch', {

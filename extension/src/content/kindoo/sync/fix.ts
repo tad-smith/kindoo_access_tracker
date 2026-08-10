@@ -267,6 +267,7 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
         fix: {
           code: 'callings-mismatch',
           payload: {
+            ...surfacedGrantRef(d),
             memberEmail: d.displayEmail,
             callings,
           },

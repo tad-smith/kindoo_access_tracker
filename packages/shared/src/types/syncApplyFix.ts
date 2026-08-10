@@ -97,7 +97,7 @@ export type KindooOnlyPayload = {
    *
    * The merge-onto-existing-seat behaviour (B-23) is a SERVER change,
    * but everything that makes it safe ships in the EXTENSION:
-   * `createScope`, the duplicate-surfaced withholding, and `sba-only`'s
+   * `siteScope`, the per-grant payload discriminators, and `sba-only`'s
    * `(scope, kindooSiteId)`. Functions deploy in minutes; the extension
    * goes through Chrome Web Store review and then updates on each
    * manager's own schedule, so "deploy the extension first" is not

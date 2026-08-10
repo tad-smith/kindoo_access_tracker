@@ -200,6 +200,36 @@ describe('fixActionsFor', () => {
 });
 
 describe('buildCallableInput', () => {
+  // B-16: EVERY grant-writing payload must name the grant its row came
+  // from. A table over the codes, not one fixture — the single-row version
+  // of this test passed while `callings-mismatch` shipped without the ref,
+  // because its fixture could only ever emit a buildings/scope row.
+  it.each([
+    ['callings-mismatch', { kindooCallings: ['Bishop'] }],
+    ['scope-mismatch', { siteScope: 'FT' }],
+    ['type-mismatch', { grantTargetType: 'manual' as const }],
+    ['buildings-mismatch', { derivedBuildings: ['Pine Building'] }],
+    ['kindoo-unparseable', { description: 'Some Church Wide Calling' }],
+  ])('%s names the surfaced grant on its payload', (code, over) => {
+    const input = buildCallableInput(
+      'csnorth',
+      discrepancy({
+        code: code as Discrepancy['code'],
+        sba: {
+          scope: 'FT',
+          type: 'auto',
+          callings: ['Ward Clerk'],
+          buildingNames: ['Pine Building'],
+          kindooSiteId: 'east-stake',
+        },
+        kindoo: kb(over),
+      }),
+    );
+    const payload = input.fix.payload as Record<string, unknown>;
+    expect(payload.scope).toBe('FT');
+    expect(payload.kindooSiteId).toBe('east-stake');
+  });
+
   it('kindoo-only on an auto seat carries scope/type/callings + building names', () => {
     const input = buildCallableInput('csnorth', discrepancy({ code: 'kindoo-only' }));
     expect(input.stakeId).toBe('csnorth');

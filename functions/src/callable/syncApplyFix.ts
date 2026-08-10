@@ -497,8 +497,11 @@ async function applyKindooOnly(
       // `removeSeatOnRequestComplete` writes no access fields at all, and
       // clients can't write `importer_callings` (rules). So the grant
       // would mint a custom claim that survives the calling ending, with
-      // no in-product path to remove it. The withholding in
-      // `fixActionsFor` closes the nearest thing to one.
+      // no in-product path to remove it. (B-16 later gave the drop-duplicate
+      // branch of `applySbaOnlyRemove` a reap, so a duplicate scope CAN now
+      // hold access — but only where a handler writes it deliberately. A
+      // merge still writes none: the seat's `callings[]` doesn't record the
+      // grant, so there is nothing to derive access from.)
       //
       // Granting a permission nothing can revoke is worse than granting
       // none: `Stake.eq_president_app_access`'s convention is that
@@ -654,14 +657,25 @@ type SurfacedGrantRef = { scope?: string | undefined; kindooSiteId?: string | nu
 function resolveGrantSlot(seat: Seat, ref: SurfacedGrantRef): GrantSlot | null {
   const scope =
     typeof ref.scope === 'string' && ref.scope.trim().length > 0 ? ref.scope.trim() : undefined;
-  if (scope === undefined || scope === seat.scope) return { kind: 'primary' };
-  const dupes = seat.duplicate_grants ?? [];
+  if (scope === undefined) return { kind: 'primary' };
   const want = ref.kindooSiteId;
-  const index = dupes.findIndex(
-    (d) =>
-      d.scope === scope &&
-      (want === undefined || d.kindoo_site_id === undefined || d.kindoo_site_id === want),
+  // Site participates in the MATCH, not merely as a tiebreaker among
+  // duplicates. A seat can hold one scope twice on two sites —
+  // `planKindooOnlyMerge` matches `(scope, type)`, so an incoming
+  // `(MR, auto)` against an `(MR, manual)` primary appends a same-scope
+  // duplicate. Short-circuiting on `scope === seat.scope` before consulting
+  // the site silently wrote the primary there, which is the one shape this
+  // function must never guess in. An entry carrying no stamp matches any
+  // requested site, mirroring the read-time ward fallback.
+  const siteMatches = (stamped: string | null | undefined): boolean =>
+    want === undefined || stamped === undefined || stamped === want;
+  if (scope === seat.scope && siteMatches(seat.kindoo_site_id)) return { kind: 'primary' };
+  const index = (seat.duplicate_grants ?? []).findIndex(
+    (d) => d.scope === scope && siteMatches(d.kindoo_site_id),
   );
+  // Scope matches the primary but its site disagrees and no duplicate claims
+  // it either: the payload doesn't describe this seat. Soft-fail, never fall
+  // back to the primary.
   return index >= 0 ? { kind: 'duplicate', index } : null;
 }
 
@@ -1516,6 +1530,8 @@ async function applySbaOnlyRemove(
       const fresh = freshSnap.data() as Seat;
       const freshDupes = fresh.duplicate_grants ?? [];
       const idx = freshDupes.findIndex(matches);
+      // Read before any write; only consumed on the drop path below.
+      const accessSnap = await tx.get(accessRef);
       if (idx < 0) {
         // Already gone, or the seat changed under us. Soft-fail so the
         // next Sync run re-derives rather than deleting something else.
@@ -1529,11 +1545,27 @@ async function applySbaOnlyRemove(
         last_modified_by: { ...actor },
         lastActor: { ...actor },
       });
-      // No access reap: a duplicate-only scope never had an
-      // `importer_callings` entry to begin with. `writeAccessForAutoScope`
-      // is only ever called with a PRIMARY scope — the `kindoo-only` merge
-      // deliberately writes no access at all (spec §8) — so reaping here
-      // could only remove an entry some other writer owns.
+      // Reap the dropped scope's calling-derived access. This branch used to
+      // reap nothing, on the invariant that `writeAccessForAutoScope` is only
+      // ever called with a PRIMARY scope — true until B-16 threaded the
+      // surfaced grant through, which lets `callings-mismatch`,
+      // `type-mismatch` PROMOTE and `kindoo-unparseable` write access for a
+      // DUPLICATE's scope. Without the reap those entries would outlive the
+      // grant with no in-product way to remove them, which is exactly the
+      // fail-closed rule §8 cites for the merge writing no access at all.
+      //
+      // Safe by construction: this branch only runs when the named scope is
+      // NOT the primary's, so the entry being cleared belongs to the grant
+      // being dropped. `clearImporterCallingsForScope` preserves
+      // `manual_grants` and every other scope, and deletes the doc only when
+      // both maps end up empty.
+      if (accessSnap.exists) {
+        clearImporterCallingsForScope(tx, accessRef, {
+          access: accessSnap.data() as Access,
+          scope: surfacedScope,
+          actor,
+        });
+      }
       return { success: true, seatId: canonical };
     });
   }
