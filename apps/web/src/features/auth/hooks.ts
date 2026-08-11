@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { httpsCallable } from 'firebase/functions';
+import type { MintExtensionTokenOutput } from '@kindoo/shared';
 import { auth, functions } from '../../lib/firebase';
 
 /**
@@ -50,7 +51,7 @@ export function useAuthReady(): boolean {
 export function useMintExtensionToken() {
   return useMutation<string, Error, void>({
     mutationFn: async () => {
-      const fn = httpsCallable<void, { token: string }>(functions, 'mintExtensionToken');
+      const fn = httpsCallable<void, MintExtensionTokenOutput>(functions, 'mintExtensionToken');
       const res = await fn();
       return res.data.token;
     },

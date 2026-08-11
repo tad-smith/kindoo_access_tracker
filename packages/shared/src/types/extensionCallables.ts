@@ -1,8 +1,10 @@
-// Input / output shapes for the two HTTPS callables consumed by the
-// Chrome MV3 side-panel extension (`extension/`). The extension calls
+// Input / output shapes for the HTTPS callables in the Chrome MV3
+// extension's path (`extension/`). The extension calls
 // `getMyPendingRequests` to surface the FIFO queue while a Kindoo
 // Manager works the Kindoo UI, then calls `markRequestComplete` to
-// flip a pending request to `complete`.
+// flip a pending request to `complete`. `mintExtensionToken` is the
+// odd one out — the SPA's `/auth/extension` route calls it on the
+// extension's behalf during the sign-in handoff.
 //
 // The SPA-side completion path (`apps/web/src/features/manager/queue/hooks.ts`)
 // performs more work in a client transaction (it writes the new seat
@@ -52,6 +54,20 @@ export type MarkRequestCompleteInput = {
    * present, persisted on the request doc as `provisioning_note`.
    */
   provisioningNote?: string;
+};
+
+/**
+ * `mintExtensionToken` takes no payload — the caller's own session is
+ * the whole input, and the token is minted for `request.auth.uid`.
+ */
+export type MintExtensionTokenOutput = {
+  /**
+   * Firebase custom token for the calling user's uid. The extension
+   * exchanges it via `signInWithCustomToken` to get a session with its
+   * own refresh token. Single-use and short-lived (1h) — it is the
+   * handoff, not the session.
+   */
+  token: string;
 };
 
 export type MarkRequestCompleteOutput = {

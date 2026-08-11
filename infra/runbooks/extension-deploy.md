@@ -109,9 +109,10 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_GOOGLE_OAUTH_CLIENT_ID=...
 VITE_EXTENSION_KEY=...
 VITE_EXTENSION_NAME=SBA Helper (Staging)
+VITE_WEB_BASE_URL=https://staging.stakebuildingaccess.org
 ```
 
-For production, set `VITE_EXTENSION_NAME=Stake Building Access — Kindoo Helper`.
+For production, set `VITE_EXTENSION_NAME=Stake Building Access — Kindoo Helper` and `VITE_WEB_BASE_URL=https://stakebuildingaccess.org`. `VITE_WEB_BASE_URL` is the SPA origin the extension's email sign-in path hands off to (`<base>/auth/extension`); it must point at the same env as the `VITE_FIREBASE_*` values above.
 
 ### 6. Sanity-check the extension ID
 

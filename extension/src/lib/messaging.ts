@@ -64,6 +64,17 @@ export interface AuthSignInRequest {
   type: 'auth.signIn';
 }
 
+/**
+ * Sign in by handing off to the SPA's `/auth/extension` route via
+ * `chrome.identity.launchWebAuthFlow`. A separate type rather than a
+ * discriminator on `auth.signIn` because the two paths are separate
+ * operations with separate Chrome surfaces — and one message type per
+ * operation is the shape the rest of this protocol takes.
+ */
+export interface AuthSignInViaWebRequest {
+  type: 'auth.signInViaWeb';
+}
+
 export interface AuthSignOutRequest {
   type: 'auth.signOut';
 }
@@ -516,6 +527,7 @@ export interface DataRemoteApplyFinishJobRequest {
 export type ExtensionRequest =
   | AuthGetStateRequest
   | AuthSignInRequest
+  | AuthSignInViaWebRequest
   | AuthSignOutRequest
   | ApiGetMyPendingRequestsRequest
   | ApiMarkRequestCompleteRequest
@@ -542,6 +554,7 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: WireError };
 
 export type AuthGetStateResponse = Result<AuthSnapshot>;
 export type AuthSignInResponse = Result<AuthSnapshot>;
+export type AuthSignInViaWebResponse = Result<AuthSnapshot>;
 export type AuthSignOutResponse = Result<{ done: true }>;
 export type ApiGetMyPendingRequestsResponse = Result<GetMyPendingRequestsOutput>;
 export type ApiMarkRequestCompleteResponse = Result<MarkRequestCompleteOutput>;
@@ -566,43 +579,45 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
   ? AuthGetStateResponse
   : R extends AuthSignInRequest
     ? AuthSignInResponse
-    : R extends AuthSignOutRequest
-      ? AuthSignOutResponse
-      : R extends ApiGetMyPendingRequestsRequest
-        ? ApiGetMyPendingRequestsResponse
-        : R extends ApiMarkRequestCompleteRequest
-          ? ApiMarkRequestCompleteResponse
-          : R extends DataGetStakeConfigRequest
-            ? DataGetStakeConfigResponse
-            : R extends DataWriteKindooConfigRequest
-              ? DataWriteKindooConfigResponse
-              : R extends DataGetSeatByEmailRequest
-                ? DataGetSeatByEmailResponse
-                : R extends DataGetAccessByEmailRequest
-                  ? DataGetAccessByEmailResponse
-                  : R extends DataGetKindooManagerByEmailRequest
-                    ? DataGetKindooManagerByEmailResponse
-                    : R extends DataGetSyncDataRequest
-                      ? DataGetSyncDataResponse
-                      : R extends DataSyncApplyFixRequest
-                        ? DataSyncApplyFixResponse
-                        : R extends DataWriteKindooSiteEidRequest
-                          ? DataWriteKindooSiteEidResponse
-                          : R extends DataResolveEidStakesRequest
-                            ? DataResolveEidStakesResponse
-                            : R extends DataRejectRequestRequest
-                              ? DataRejectRequestResponse
-                              : R extends DataWriteRemotePresenceRequest
-                                ? DataWriteRemotePresenceResponse
-                                : R extends DataRemoteApplyQueuedJobsRequest
-                                  ? DataRemoteApplyQueuedJobsResponse
-                                  : R extends DataRemoteApplyRunningJobsRequest
-                                    ? DataRemoteApplyRunningJobsResponse
-                                    : R extends DataRemoteApplyClaimJobRequest
-                                      ? DataRemoteApplyClaimJobResponse
-                                      : R extends DataRemoteApplyFinishJobRequest
-                                        ? DataRemoteApplyFinishJobResponse
-                                        : never;
+    : R extends AuthSignInViaWebRequest
+      ? AuthSignInViaWebResponse
+      : R extends AuthSignOutRequest
+        ? AuthSignOutResponse
+        : R extends ApiGetMyPendingRequestsRequest
+          ? ApiGetMyPendingRequestsResponse
+          : R extends ApiMarkRequestCompleteRequest
+            ? ApiMarkRequestCompleteResponse
+            : R extends DataGetStakeConfigRequest
+              ? DataGetStakeConfigResponse
+              : R extends DataWriteKindooConfigRequest
+                ? DataWriteKindooConfigResponse
+                : R extends DataGetSeatByEmailRequest
+                  ? DataGetSeatByEmailResponse
+                  : R extends DataGetAccessByEmailRequest
+                    ? DataGetAccessByEmailResponse
+                    : R extends DataGetKindooManagerByEmailRequest
+                      ? DataGetKindooManagerByEmailResponse
+                      : R extends DataGetSyncDataRequest
+                        ? DataGetSyncDataResponse
+                        : R extends DataSyncApplyFixRequest
+                          ? DataSyncApplyFixResponse
+                          : R extends DataWriteKindooSiteEidRequest
+                            ? DataWriteKindooSiteEidResponse
+                            : R extends DataResolveEidStakesRequest
+                              ? DataResolveEidStakesResponse
+                              : R extends DataRejectRequestRequest
+                                ? DataRejectRequestResponse
+                                : R extends DataWriteRemotePresenceRequest
+                                  ? DataWriteRemotePresenceResponse
+                                  : R extends DataRemoteApplyQueuedJobsRequest
+                                    ? DataRemoteApplyQueuedJobsResponse
+                                    : R extends DataRemoteApplyRunningJobsRequest
+                                      ? DataRemoteApplyRunningJobsResponse
+                                      : R extends DataRemoteApplyClaimJobRequest
+                                        ? DataRemoteApplyClaimJobResponse
+                                        : R extends DataRemoteApplyFinishJobRequest
+                                          ? DataRemoteApplyFinishJobResponse
+                                          : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

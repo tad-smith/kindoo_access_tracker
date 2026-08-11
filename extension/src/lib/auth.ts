@@ -4,7 +4,10 @@
 // chrome.identity; they go through the message protocol in
 // `messaging.ts` and let the SW perform the exchange here.
 //
-// Flow:
+// Two sign-in paths land on the same Firebase session. They are
+// alternatives, not fallbacks — a manager picks one in the panel.
+//
+// Google (`signIn`):
 //   1. chrome.identity.getAuthToken({ interactive: true }) — Chrome
 //      shows the Google account picker / consent screen and returns a
 //      Google OAuth access token. The OAuth client id and scopes
@@ -13,6 +16,23 @@
 //      access token in a Firebase credential.
 //   3. signInWithCredential(auth(), credential) — exchange for a
 //      Firebase ID token; subsequent callable invocations carry it.
+//
+// Web handoff (`signInViaWeb`):
+//   1. chrome.identity.launchWebAuthFlow opens the SPA's
+//      `/auth/extension` route, which offers every provider the SPA
+//      supports (magic link included) — the only path open to a
+//      manager with no Google account at all.
+//   2. The SPA redirects back to `chrome.identity.getRedirectURL()`
+//      with `#token=<Firebase custom token>`.
+//   3. signInWithCustomToken exchanges it here.
+//
+//   The handoff carries a CUSTOM token rather than the SPA's own ID
+//   token because an ID token expires in an hour and only the context
+//   that owns the refresh token can renew it. The SPA's session lives
+//   in a browser tab we do not control and cannot re-open silently, so
+//   a relayed ID token would strand the extension one hour later.
+//   `signInWithCustomToken` mints the extension its OWN refresh token,
+//   which is what makes the session survive SW suspends and restarts.
 //
 // MV3 service workers suspend after idle; on revive they may need to
 // restore Firebase Auth state. The Firebase Auth SDK persists state
@@ -24,6 +44,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
+  signInWithCustomToken,
   signOut as firebaseSignOut,
   type User,
 } from 'firebase/auth/web-extension';
@@ -122,6 +143,16 @@ function getGoogleAccessToken(): Promise<string> {
   });
 }
 
+/** The slim principal snapshot both sign-in paths persist. One shape,
+ * one place, so the two paths cannot drift apart. */
+function principalSnapshot(user: User) {
+  return {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName,
+  };
+}
+
 /** Revoke the cached Google access token so the next sign-in re-prompts. */
 function removeCachedAuthToken(token: string): Promise<void> {
   return new Promise((resolve) => {
@@ -163,11 +194,7 @@ export async function signIn(): Promise<User> {
     // re-exchange offline.
     await chrome.storage.local.set({
       [STORAGE_KEYS.googleAccessToken]: accessToken,
-      [STORAGE_KEYS.principalSnapshot]: {
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName,
-      },
+      [STORAGE_KEYS.principalSnapshot]: principalSnapshot(result.user),
     });
     return result.user;
   } catch (err) {
@@ -181,11 +208,116 @@ export async function signIn(): Promise<User> {
 }
 
 /**
+ * Build the SPA handoff URL. `chrome.identity.getRedirectURL()`
+ * returns `https://<extension-id>.chromiumapp.org/`, which Chrome
+ * intercepts instead of navigating to — that interception is what
+ * hands the fragment back to us.
+ *
+ * The redirect URI is logged because a rejected one is otherwise
+ * invisible from here. The SPA validates it against an anchored
+ * `chromiumapp.org` pattern and renders a terminal error rather than
+ * redirecting when it fails — which reaches us as a flow that ended
+ * with no redirect URL, indistinguishable from the manager closing the
+ * window, and so surfaces as "Sign-in cancelled. Click again to retry."
+ * That is a retry-forever dead end for a config fault, and Chrome gives
+ * us nothing to tell the two apart. One line in the SW console is what
+ * makes the actual value checkable during a smoke test.
+ */
+function buildWebAuthUrl(): string {
+  // A trailing slash in .env would produce `//auth/extension`, which
+  // the SPA router does not match.
+  const base = (import.meta.env.VITE_WEB_BASE_URL ?? '').replace(/\/+$/, '');
+  const redirectUri = chrome.identity.getRedirectURL();
+  console.info(`[sba-ext] web sign-in: redirect_uri is ${redirectUri}`);
+  return `${base}/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
+}
+
+/**
+ * Open the SPA auth window and resolve with the URL Chrome intercepted.
+ * Rejects `consent_dismissed` when the manager closes the window: the
+ * SPA never redirects on a cancelled sign-in, so a closed window is
+ * reported here via `chrome.runtime.lastError` and never as a fragment
+ * error code.
+ */
+function launchWebAuthFlow(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow({ url, interactive: true }, (redirectUrl) => {
+      // Read lastError inside the callback — it is the signal channel
+      // and reading it clears Chrome's "unchecked lastError" warning.
+      const err = chrome.runtime.lastError;
+      if (err) {
+        reject(new AuthError('consent_dismissed', err.message ?? 'sign-in window closed'));
+        return;
+      }
+      if (!redirectUrl) {
+        reject(new AuthError('no_token', 'sign-in flow returned no redirect URL'));
+        return;
+      }
+      resolve(redirectUrl);
+    });
+  });
+}
+
+/**
+ * Read `#token` / `#error` off the intercepted redirect. The contract
+ * puts both on the FRAGMENT, never the query string, so the custom
+ * token stays out of server logs and `Referer` headers.
+ */
+function parseWebAuthFragment(redirectUrl: string): { token: string | null; error: string | null } {
+  const hashIndex = redirectUrl.indexOf('#');
+  const params = new URLSearchParams(hashIndex >= 0 ? redirectUrl.slice(hashIndex + 1) : '');
+  return { token: params.get('token'), error: params.get('error') };
+}
+
+/**
+ * Sign in by handing off to the SPA's `/auth/extension` route, which
+ * offers every provider the SPA supports — including the email magic
+ * link, the only path open to a manager with no Google account.
+ * Returns the Firebase `User`.
+ *
+ * Throws `AuthError('consent_dismissed', …)` when the manager closes
+ * the auth window, so the panel surfaces the same quiet "Try again"
+ * copy the Google path uses. Any `#error=<code>` the SPA redirects
+ * with is a hard failure — including codes this build predates, which
+ * must not fall through to "success with no token".
+ *
+ * Writes the principal snapshot but NOT `googleAccessToken`: there is
+ * no Google token on this path.
+ */
+export async function signInViaWeb(): Promise<User> {
+  const redirectUrl = await launchWebAuthFlow(buildWebAuthUrl());
+  const { token, error } = parseWebAuthFragment(redirectUrl);
+  if (error) {
+    throw new AuthError('sign_in_failed', `web sign-in failed (${error})`);
+  }
+  if (!token) {
+    throw new AuthError('no_token', 'web sign-in returned no token');
+  }
+
+  try {
+    const result = await signInWithCustomToken(auth(), token);
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.principalSnapshot]: principalSnapshot(result.user),
+    });
+    return result.user;
+  } catch (err) {
+    throw new AuthError('sign_in_failed', 'firebase signInWithCustomToken rejected', {
+      cause: err,
+    });
+  }
+}
+
+/**
  * Clear Firebase Auth state AND revoke the cached Google access token
  * so the next `signIn()` re-prompts the user.
  *
  * Best-effort on both legs — the operator-facing surface is "I am
  * signed out," and we should reach that state even if one leg fails.
+ * A `signInViaWeb` session has no Google token to revoke (and the
+ * manager may have no Google account at all), so the probe below must
+ * resolve `undefined` and fall through rather than block the Firebase
+ * sign-out. A manager who cannot sign out is worse off than one who
+ * cannot sign in.
  */
 export async function signOut(): Promise<void> {
   let cachedToken: string | undefined;

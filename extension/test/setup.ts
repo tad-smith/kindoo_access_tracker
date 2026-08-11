@@ -22,6 +22,8 @@ import { vi } from 'vitest';
   identity: {
     getAuthToken: vi.fn(),
     removeCachedAuthToken: vi.fn(),
+    launchWebAuthFlow: vi.fn(),
+    getRedirectURL: vi.fn(() => 'https://sba-ext-test.chromiumapp.org/'),
   },
   runtime: {
     lastError: undefined,

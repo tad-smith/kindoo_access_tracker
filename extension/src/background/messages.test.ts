@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const signInMock = vi.fn();
+const signInViaWebMock = vi.fn();
 const signOutMock = vi.fn();
 const currentUserMock = vi.fn();
 const waitForAuthHydratedMock = vi.fn(() => Promise.resolve(null));
@@ -16,6 +17,7 @@ vi.mock('../lib/auth', async () => {
   return {
     ...actual,
     signIn: () => signInMock(),
+    signInViaWeb: () => signInViaWebMock(),
     signOut: () => signOutMock(),
     currentUser: () => currentUserMock(),
     waitForAuthHydrated: () => waitForAuthHydratedMock(),
@@ -52,6 +54,7 @@ vi.mock('./data', () => ({
 describe('handleRequest', () => {
   beforeEach(() => {
     signInMock.mockReset();
+    signInViaWebMock.mockReset();
     signOutMock.mockReset();
     currentUserMock.mockReset();
     waitForAuthHydratedMock.mockReset();
@@ -126,6 +129,31 @@ describe('handleRequest', () => {
     expect(result).toEqual({
       ok: false,
       error: { code: 'consent_dismissed', message: 'user dismissed' },
+    });
+  });
+
+  it('auth.signInViaWeb returns the signed-in snapshot on success', async () => {
+    signInViaWebMock.mockResolvedValue({ uid: 'u7', email: 'mgr@example.org', displayName: 'Mgr' });
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'auth.signInViaWeb' });
+    expect(result).toEqual({
+      ok: true,
+      data: {
+        status: 'signed-in',
+        user: { uid: 'u7', email: 'mgr@example.org', displayName: 'Mgr' },
+      },
+    });
+    expect(signInMock).not.toHaveBeenCalled();
+  });
+
+  it('auth.signInViaWeb wraps a thrown AuthError as a WireError', async () => {
+    const { AuthError } = await import('../lib/auth');
+    signInViaWebMock.mockRejectedValue(new AuthError('consent_dismissed', 'window closed'));
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({ type: 'auth.signInViaWeb' });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'consent_dismissed', message: 'window closed' },
     });
   });
 

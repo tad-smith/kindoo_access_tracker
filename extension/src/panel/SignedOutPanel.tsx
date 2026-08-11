@@ -1,23 +1,28 @@
-// Signed-out view. Shows the sign-in button and renders a friendly
-// inline message when the user dismisses the Chrome consent dialog
-// (the `consent_dismissed` AuthError code).
+// Signed-out view. Offers both sign-in paths — Google via
+// chrome.identity, and a handoff to the SPA for everything else
+// (magic link included), which is the only path open to a manager
+// with no Google account. Renders a friendly inline message when the
+// manager backs out of either flow (the `consent_dismissed` code).
 
 import { useState } from 'react';
-import { ExtensionApiError, signIn } from '../lib/extensionApi';
+import { ExtensionApiError, signIn, signInViaWeb } from '../lib/extensionApi';
 
 interface SignedOutPanelProps {
   onSignedIn?: () => void;
 }
 
+/** Which button is mid-flight; both are disabled while either runs. */
+type PendingPath = 'google' | 'web' | null;
+
 export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<PendingPath>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSignIn() {
-    setPending(true);
+  async function run(path: Exclude<PendingPath, null>, start: () => Promise<unknown>) {
+    setPending(path);
     setError(null);
     try {
-      await signIn();
+      await start();
       onSignedIn?.();
     } catch (err) {
       if (err instanceof ExtensionApiError && err.code === 'consent_dismissed') {
@@ -29,7 +34,7 @@ export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
         setError(`Sign-in failed: ${message}`);
       }
     } finally {
-      setPending(false);
+      setPending(null);
     }
   }
 
@@ -39,15 +44,24 @@ export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
         <h1>Stake Building Access</h1>
       </header>
       <div className="sba-body sba-body-center">
-        <p>Sign in with your Kindoo Manager Google account to see pending requests.</p>
+        <p>Sign in as a Kindoo Manager to see pending requests. Either way works.</p>
         <button
           type="button"
           className="sba-btn sba-btn-primary"
-          onClick={handleSignIn}
-          disabled={pending}
+          onClick={() => void run('google', signIn)}
+          disabled={pending !== null}
           data-testid="sba-sign-in"
         >
-          {pending ? 'Signing in…' : 'Sign in with Google'}
+          {pending === 'google' ? 'Signing in…' : 'Sign in with Google'}
+        </button>
+        <button
+          type="button"
+          className="sba-btn"
+          onClick={() => void run('web', signInViaWeb)}
+          disabled={pending !== null}
+          data-testid="sba-sign-in-email"
+        >
+          {pending === 'web' ? 'Signing in…' : 'Sign in with email'}
         </button>
         {error ? (
           <p role="alert" className="sba-error" data-testid="sba-sign-in-error">
