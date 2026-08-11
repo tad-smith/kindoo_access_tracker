@@ -66,7 +66,25 @@ describe('SignedOutPanel', () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it('renders the soft-retry copy when the email flow is dismissed', async () => {
+  it('keeps the plain cancellation copy when the Google flow is dismissed', async () => {
+    // Chrome's consent dialog has no failure state to explain, so a
+    // dismissal there really is a dismissal.
+    signInMock.mockRejectedValue(
+      new ExtensionApiError({ code: 'consent_dismissed', message: 'user did not approve' }),
+    );
+    render(<SignedOutPanel />);
+
+    await userEvent.click(screen.getByTestId('sba-sign-in'));
+
+    const alert = await screen.findByTestId('sba-sign-in-error');
+    expect(alert).toHaveTextContent('Sign-in cancelled. Click again to retry.');
+  });
+
+  it('does not claim a cancellation when the email flow ends without completing', async () => {
+    // A closed window and a redirect_uri the SPA refused arrive as the
+    // same bare lastError, so this copy cannot assert either one. The
+    // SPA's refusal card says retrying is pointless and is gone by the
+    // time this renders — copy that ordered a retry would overwrite it.
     signInViaWebMock.mockRejectedValue(
       new ExtensionApiError({ code: 'consent_dismissed', message: 'window closed' }),
     );
@@ -75,7 +93,10 @@ describe('SignedOutPanel', () => {
     await userEvent.click(screen.getByTestId('sba-sign-in-email'));
 
     const alert = await screen.findByTestId('sba-sign-in-error');
-    expect(alert).toHaveTextContent('Sign-in cancelled. Click again to retry.');
+    expect(alert).not.toHaveTextContent('Sign-in cancelled');
+    expect(alert).toHaveTextContent('Sign-in didn’t finish');
+    // The escape hatch out of a retry loop is the load-bearing half.
+    expect(alert).toHaveTextContent('retrying won’t help');
   });
 
   it('surfaces a hard failure from the email flow with its message', async () => {

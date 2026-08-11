@@ -1,8 +1,8 @@
 // Signed-out view. Offers both sign-in paths — Google via
 // chrome.identity, and a handoff to the SPA for everything else
 // (magic link included), which is the only path open to a manager
-// with no Google account. Renders a friendly inline message when the
-// manager backs out of either flow (the `consent_dismissed` code).
+// with no Google account. The inline `consent_dismissed` message is
+// worded per path; see `dismissedCopy` for why the two differ.
 
 import { useState } from 'react';
 import { ExtensionApiError, signIn, signInViaWeb } from '../lib/extensionApi';
@@ -11,14 +11,40 @@ interface SignedOutPanelProps {
   onSignedIn?: () => void;
 }
 
+type SignInPath = 'google' | 'web';
+
 /** Which button is mid-flight; both are disabled while either runs. */
-type PendingPath = 'google' | 'web' | null;
+type PendingPath = SignInPath | null;
+
+/**
+ * `consent_dismissed` means different things on the two paths, so the
+ * copy does too.
+ *
+ * Google: Chrome's own consent dialog has no failure state to explain,
+ * so a dismissal really is a dismissal and retry is the right nudge.
+ *
+ * Web: Chrome reports a manager who closed the window and a handoff the
+ * SPA refused with the identical bare `lastError` — there is nothing
+ * here to branch on. So this must not assert that a cancellation
+ * happened, and must not promise a retry will work. The SPA renders the
+ * refusal reason inside the auth window, and by the time this copy
+ * shows, that window is gone — so wording that ordered a retry would
+ * overwrite the one explanation the manager was given, and send them
+ * looping on the single action that cannot succeed.
+ */
+function dismissedCopy(path: SignInPath): string {
+  if (path === 'google') return 'Sign-in cancelled. Click again to retry.';
+  return (
+    'Sign-in didn’t finish. Click again to retry — unless that window showed a ' +
+    'configuration error, in which case retrying won’t help.'
+  );
+}
 
 export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
   const [pending, setPending] = useState<PendingPath>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(path: Exclude<PendingPath, null>, start: () => Promise<unknown>) {
+  async function run(path: SignInPath, start: () => Promise<unknown>) {
     setPending(path);
     setError(null);
     try {
@@ -26,7 +52,7 @@ export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
       onSignedIn?.();
     } catch (err) {
       if (err instanceof ExtensionApiError && err.code === 'consent_dismissed') {
-        setError('Sign-in cancelled. Click again to retry.');
+        setError(dismissedCopy(path));
       } else if (err instanceof ExtensionApiError) {
         setError(`Sign-in failed: ${err.message}`);
       } else {
