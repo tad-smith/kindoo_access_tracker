@@ -2,34 +2,43 @@
 // inside `chrome.identity.launchWebAuthFlow` (spec §4.1). Per-page E2E
 // coverage required by `e2e/CLAUDE.md`.
 //
-// Three proofs, all of them about the boundary rather than the happy
-// mint (whose token value is the extension's problem, not the SPA's):
-//   1. Anonymous visit with a legitimate `redirect_uri` renders BOTH
-//      providers, unswallowed by any auth gate — the whole point of the
-//      route is that a Kindoo Manager with no Google account can sign
-//      in here.
-//   2. A signed-in visit with a hostile `redirect_uri` renders the
-//      terminal error and NEVER leaves the origin. This is the one that
-//      matters: the redirect is what would hand a session token to an
-//      arbitrary origin.
-//   3. A signed-in visit with a legitimate `redirect_uri` does leave,
-//      to the extension's callback, carrying its payload on the
-//      fragment and nothing in the query string.
-//
-// (3) deliberately accepts either `#token=` or `#error=mint_failed`:
-// whether the `mintExtensionToken` callable is deployed into the
-// emulator is a backend concern, and both outcomes prove the same
-// SPA-side contract — the handoff goes out on the fragment.
+// Proofs, in order of how much they matter:
+//   1. A signed-in visit whose `redirect_uri` is hostile — or merely
+//      belongs to a DIFFERENT extension — renders the terminal error and
+//      never leaves the origin. The redirect is what would hand a
+//      session token away, so refusing to emit it is the boundary.
+//   2. Nothing is minted without a click, so a background
+//      `launchWebAuthFlow({ interactive: false })` cannot harvest a
+//      token from a signed-in manager.
+//   3. Clicking through does hand back a real `#token=` — asserted
+//      strictly, because this is the ONLY test in the repo that crosses
+//      the SPA-to-callable wire over HTTPS. The functions suite calls
+//      the callable via `.run()` (no HTTPS layer) and the route's unit
+//      tests mock the hook, so a typo'd callable name or a dropped
+//      export from `functions/src/index.ts` is invisible everywhere
+//      else and ships green. Accepting `#error=mint_failed` here would
+//      re-open exactly that hole.
+//   4. Anonymous visit renders BOTH providers, unswallowed by any auth
+//      gate — the whole point is that a manager with no Google account
+//      can sign in here.
 
 import { expect, test, type Page } from '@playwright/test';
 import { clearAuth, clearFirestore, createAuthUser } from '../../fixtures/emulator';
 
 const TEST_PASSWORD = 'test-password-12345';
 
-// A syntactically valid Chrome extension callback origin: 32 chars from
-// the `a`–`p` alphabet. Not a real published extension ID.
-const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+// The published extension's ID — mirrored from `CHROME_EXTENSION_ID` in
+// `apps/web/src/lib/links.ts`, which is the source of truth and the
+// default entry in the route's allowlist. The e2e workspace can't import
+// app code (`rootDir` excludes it), so this is a copy; if the two ever
+// drift, the route refuses the redirect and every test below fails
+// loudly rather than silently passing against the wrong identity.
+const EXTENSION_ID = 'klkkpfdafbjebccodmgkogdklachelpb';
 const VALID_REDIRECT = `https://${EXTENSION_ID}.chromiumapp.org/`;
+
+// Well-formed callback origin belonging to some other extension in the
+// profile. Shape validation alone admits it; the allowlist must not.
+const UNTRUSTED_REDIRECT = 'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/';
 
 /** Matches the callback origin only as a URL, never as a substring of one. */
 const CALLBACK_ORIGIN_PATTERN = /^https:\/\/[a-p]{32}\.chromiumapp\.org\//;
@@ -142,13 +151,48 @@ test.describe('/auth/extension', () => {
     expect(stillHere.pathname).toBe('/auth/extension');
   });
 
-  test('a signed-in visit hands the extension its payload on the URL fragment', async ({
+  test('another extension in the profile cannot use this route, even signed in', async ({
+    page,
+  }) => {
+    await createAuthUser({ email: 'manager3@example.com' });
+    await page.goto('/');
+    const appOrigin = new URL(page.url()).origin;
+    await signInViaTestHatch(page, 'manager3@example.com');
+
+    await page.goto(routeUrl(UNTRUSTED_REDIRECT));
+
+    await expect(page.getByTestId('extension-auth-error')).toBeVisible();
+    // No confirm step is offered, so there is nothing to click through.
+    await expect(page.getByTestId('extension-connect')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(new URL(page.url()).origin).toBe(appOrigin);
+  });
+
+  // The `interactive: false` harvest. A background flow renders no UI,
+  // so it can never press the confirm — which is why the page must sit
+  // still here rather than minting on arrival.
+  test('a signed-in visit mints nothing until the confirm is pressed', async ({ page }) => {
+    await createAuthUser({ email: 'manager4@example.com' });
+    await page.goto(routeUrl(VALID_REDIRECT));
+    await signInViaTestHatch(page, 'manager4@example.com');
+
+    await expect(page.getByTestId('extension-connect')).toBeVisible();
+    // The account being handed over is named, so a profile signed in as
+    // someone else is visible before anything is minted.
+    await expect(page.getByTestId('extension-connect')).toContainText('manager4@example.com');
+
+    await page.waitForTimeout(1000);
+    expect(new URL(page.url()).pathname).toBe('/auth/extension');
+  });
+
+  test('pressing the confirm hands the extension a real token on the URL fragment', async ({
     page,
   }) => {
     await createAuthUser({ email: 'manager2@example.com' });
     await page.goto(routeUrl(VALID_REDIRECT));
     await signInViaTestHatch(page, 'manager2@example.com');
 
+    await page.getByRole('button', { name: /^Connect the extension$/ }).click();
     await page.waitForURL(CALLBACK_ORIGIN_PATTERN, { timeout: 15_000 });
 
     const handed = new URL(page.url());
@@ -156,6 +200,12 @@ test.describe('/auth/extension', () => {
     // Everything rides the fragment — a query string would put the
     // token in server logs and Referer headers.
     expect(handed.search).toBe('');
-    expect(handed.hash).toMatch(/^#(token=.+|error=mint_failed)$/);
+    // Strictly `#token=` — see the header. `#error=mint_failed` here
+    // means the callable is unreachable, which is a real failure and
+    // must not be tolerated by the one test that can see it.
+    expect(handed.hash).toMatch(/^#token=.+/);
+    // A Firebase custom token is a JWT: three base64url segments.
+    const token = decodeURIComponent(handed.hash.slice('#token='.length));
+    expect(token.split('.')).toHaveLength(3);
   });
 });
