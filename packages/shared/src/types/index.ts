@@ -24,6 +24,7 @@ export type {
   GetMyPendingRequestsOutput,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  MintExtensionTokenOutput,
 } from './extensionCallables.js';
 export type { KindooManager } from './kindooManager.js';
 export type { KindooSite } from './kindooSite.js';

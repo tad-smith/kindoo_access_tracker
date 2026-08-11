@@ -26,6 +26,7 @@ export {
 export { reconcileAuditGaps } from './scheduled/reconcileAuditGaps.js';
 
 export { getMyPendingRequests } from './callable/getMyPendingRequests.js';
+export { mintExtensionToken } from './callable/mintExtensionToken.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';
 export { syncApplyFix } from './callable/syncApplyFix.js';
 export { createStake } from './callable/createStake.js';
