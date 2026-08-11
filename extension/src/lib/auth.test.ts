@@ -241,6 +241,55 @@ describe('auth.signInViaWeb', () => {
     expect(chromeStub().identity.launchWebAuthFlow).not.toHaveBeenCalled();
   });
 
+  // Strings below are Chromium's own, verbatim from
+  // `identity_constants.cc`. Only the approval-shaped ones may reach
+  // `consent_dismissed`; everything else is a real failure.
+  it('treats a page that never loaded as a failure, not a dismissal', async () => {
+    // kPageLoadFailure. Reached by a typo'd VITE_WEB_BASE_URL, an SPA
+    // outage, or an offline manager. The dismissal copy would tell them
+    // to go open a sign-in link from a window that never rendered.
+    chromeStub().identity.launchWebAuthFlow.mockImplementation(
+      (_opts: unknown, cb: LaunchCallback) => {
+        chromeStub().runtime.lastError = { message: 'Authorization page could not be loaded.' };
+        cb(undefined);
+      },
+    );
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'sign_in_failed' });
+  });
+
+  it('treats an unrecognised message as a failure — the safe default', async () => {
+    // Chrome's strings vary across builds and the failure set cannot be
+    // enumerated, so anything not approval-shaped must be a real error.
+    chromeStub().identity.launchWebAuthFlow.mockImplementation(
+      (_opts: unknown, cb: LaunchCallback) => {
+        chromeStub().runtime.lastError = { message: 'Some future Chrome wording.' };
+        cb(undefined);
+      },
+    );
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'sign_in_failed' });
+  });
+
+  it('keeps the magic-link first pass on consent_dismissed', async () => {
+    // THE PRIMARY JOURNEY. Closing the launchWebAuthFlow window reports
+    // kUserRejected — the same string a declined consent dialog gives —
+    // so the friendly "open it from your email" copy still applies. If
+    // this ever stops matching, the primary journey starts rendering as
+    // a red failure.
+    chromeStub().identity.launchWebAuthFlow.mockImplementation(
+      (_opts: unknown, cb: LaunchCallback) => {
+        chromeStub().runtime.lastError = { message: 'The user did not approve access.' };
+        cb(undefined);
+      },
+    );
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'consent_dismissed' });
+  });
+
   it('throws AuthError(consent_dismissed) when the manager closes the auth window', async () => {
     chromeStub().identity.launchWebAuthFlow.mockImplementation(
       (_opts: unknown, cb: LaunchCallback) => {

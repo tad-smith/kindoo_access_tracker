@@ -97,6 +97,33 @@ export class AuthError extends Error {
 }
 
 /**
+ * Does this `chrome.runtime.lastError` message mean the person declined,
+ * rather than something breaking? THE ONLY MATCHER IN THIS FILE — both
+ * identity flows share it, so they cannot drift into disagreeing about
+ * what a dismissal looks like.
+ *
+ * It matches the APPROVAL shape, never the failure shapes, and an
+ * unrecognised message is therefore NOT a dismissal. That asymmetry is
+ * deliberate: Chrome's strings vary across builds and the failure set
+ * cannot be enumerated, so guessing wrong in that direction tells a
+ * manager to retry through a real outage, while guessing wrong the
+ * other way merely shows a real error for a cancel.
+ *
+ * Against Chromium's `identity_constants.cc`, only two of the twelve
+ * error constants match: `kUserRejected` ("The user did not approve
+ * access.", which is also what a CLOSED `launchWebAuthFlow` window
+ * reports) and `kCanceled` ("canceled"). Everything else — notably
+ * `kPageLoadFailure` ("Authorization page could not be loaded.", i.e. a
+ * wrong `VITE_WEB_BASE_URL`, an SPA outage, or an offline manager) and
+ * `kInvalidRedirect` ("Did not redirect to the right URL.") — falls
+ * through to the caller's failure code, which is the point.
+ */
+function isApprovalDismissal(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes('did not approve') || lower.includes('denied') || lower.includes('cancel');
+}
+
+/**
  * Request a Google OAuth access token via the Chrome identity API.
  * Resolves with the raw access token string. Rejects with an
  * `AuthError` when the user dismisses the consent dialog or Chrome
@@ -111,17 +138,7 @@ function getGoogleAccessToken(): Promise<string> {
       const err = chrome.runtime.lastError;
       if (err) {
         const message = err.message ?? 'chrome.identity.getAuthToken failed';
-        // The exact error string varies across Chrome builds, but the
-        // common dismissal path includes the word "denied" or "did not
-        // approve". Treat anything with "denied"/"cancel" as a
-        // dismissal so the UI can render a soft retry instead of a
-        // hard error.
-        const lower = message.toLowerCase();
-        if (
-          lower.includes('did not approve') ||
-          lower.includes('denied') ||
-          lower.includes('cancel')
-        ) {
+        if (isApprovalDismissal(message)) {
           reject(new AuthError('consent_dismissed', message));
           return;
         }
@@ -213,27 +230,27 @@ export async function signIn(): Promise<User> {
  * intercepts instead of navigating to — that interception is what
  * hands the fragment back to us.
  *
- * The redirect URI is logged because a rejected one is otherwise
+ * The redirect URI is logged because a refused one is otherwise
  * invisible from here. The SPA validates it against an anchored
  * `chromiumapp.org` pattern and renders a terminal error rather than
- * redirecting when it fails — which reaches us as a flow that ended
- * with no redirect URL, indistinguishable from the manager closing the
- * window, and so surfaces as "Sign-in cancelled. Click again to retry."
- * That is a retry-forever dead end for a config fault, and Chrome gives
- * us nothing to tell the two apart. One line in the SW console is what
- * makes the actual value checkable during a smoke test.
+ * redirecting when it fails; the manager reads that card and closes the
+ * window, which is a plain window-close and so genuinely cannot be told
+ * apart from any other. (A page that never LOADED is a different
+ * message and does get told apart — see `launchWebAuthFlow`.) One line
+ * in the SW console is what makes the actual value checkable during a
+ * smoke test.
  */
 function buildWebAuthUrl(): string {
   // A trailing slash in .env would produce `//auth/extension`, which
   // the SPA router does not match.
   const base = (import.meta.env.VITE_WEB_BASE_URL ?? '').replace(/\/+$/, '');
-  // Fail loudly on an unconfigured build. Left empty, the URL below is
-  // relative, Chrome refuses it via `lastError`, and `launchWebAuthFlow`
-  // maps every `lastError` to `consent_dismissed` — so a missing env var
-  // would present as "Sign-in cancelled. Click again to retry." forever,
-  // on a button that can never work. The var is gitignored and
-  // operator-set, so CI cannot catch this and the first deploy in a new
-  // env is exactly where it lands.
+  // Fail loudly on an unconfigured build rather than letting a relative
+  // URL reach Chrome. `launchWebAuthFlow` would now classify that as a
+  // load failure rather than a dismissal, so the panel copy would no
+  // longer be wrong — but "Sign-in failed: Authorization page could not
+  // be loaded." names the symptom and not the cause, and this cause is
+  // worth naming. The var is gitignored and operator-set, so CI cannot
+  // catch it and a first deploy in a new env is exactly where it lands.
   if (!base) {
     throw new AuthError('sign_in_failed', 'VITE_WEB_BASE_URL is not configured for this build');
   }
@@ -245,21 +262,31 @@ function buildWebAuthUrl(): string {
 /**
  * Open the SPA auth window and resolve with the URL Chrome intercepted.
  *
- * THIS IS A FUNNEL. Every way the flow can end without a redirect
- * arrives here as one bare `chrome.runtime.lastError` carrying nothing
- * to branch on, and leaves as the single code `consent_dismissed`. The
- * set has grown four times already: the manager closing the window, a
- * `redirect_uri` the SPA refused, an unconfigured `VITE_WEB_BASE_URL`
- * (now caught earlier, in `buildWebAuthUrl`), and the magic-link first
- * pass — which is the feature's PRIMARY journey and completely normal.
+ * THIS IS A FUNNEL, and it narrows on ONE question: did the manager
+ * decline, or did something break? `isApprovalDismissal` answers it from
+ * the message — which does carry usable information, contrary to what
+ * this comment claimed for four revisions running.
  *
- * So each new upstream failure silently inherits whatever
- * `SignedOutPanel`'s copy for this code happens to assert. Three of the
- * four were shipped bugs of exactly that shape. Before adding a fifth
- * cause, either catch it before it reaches this callback (preferred —
- * that is what `buildWebAuthUrl` now does) or re-read `dismissedCopy`
- * and confirm the wording is still true for every case in the set.
- * Wording that names a cause is the thing that breaks.
+ * `consent_dismissed` therefore means only "the window closed with no
+ * redirect", and that is still several situations at once, all of them
+ * genuinely indistinguishable because they are all literally a closed
+ * window:
+ *   - the magic-link first pass, the feature's PRIMARY journey and
+ *     completely normal;
+ *   - the manager changing their mind;
+ *   - a `redirect_uri` the SPA refused, whose card they read and closed.
+ * `SignedOutPanel.dismissedCopy` must stay true for all three.
+ *
+ * Everything that never reached the SPA at all — a wrong
+ * `VITE_WEB_BASE_URL`, an SPA outage, an offline manager — now leaves as
+ * `sign_in_failed`, because telling those managers to go check their
+ * inbox is nonsense. An unconfigured `VITE_WEB_BASE_URL` is caught
+ * earlier still, in `buildWebAuthUrl`.
+ *
+ * The recurring bug on this branch has been copy that names a cause the
+ * code never observed — four instances, all this shape. So before adding
+ * a cause here: catch it before this callback if you can, and otherwise
+ * re-read `dismissedCopy` and confirm the wording survives it.
  */
 function launchWebAuthFlow(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -268,7 +295,17 @@ function launchWebAuthFlow(url: string): Promise<string> {
       // and reading it clears Chrome's "unchecked lastError" warning.
       const err = chrome.runtime.lastError;
       if (err) {
-        reject(new AuthError('consent_dismissed', err.message ?? 'sign-in window closed'));
+        const message = err.message ?? 'sign-in window closed';
+        // Logged next to the redirect_uri line above so a smoke test can
+        // see what Chrome actually said — the branch below turns on it,
+        // and the strings vary across builds.
+        console.info(`[sba-ext] web sign-in ended: ${message}`);
+        reject(
+          new AuthError(
+            isApprovalDismissal(message) ? 'consent_dismissed' : 'sign_in_failed',
+            message,
+          ),
+        );
         return;
       }
       if (!redirectUrl) {
