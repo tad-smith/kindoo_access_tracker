@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const signInWithCredentialMock = vi.fn();
+const signInWithCustomTokenMock = vi.fn();
 const firebaseSignOutMock = vi.fn();
 const onAuthStateChangedMock = vi.fn();
 const credentialMock = vi.fn((_idToken: unknown, accessToken: string) => ({
@@ -17,6 +18,7 @@ vi.mock('firebase/auth/web-extension', () => ({
   GoogleAuthProvider: { credential: credentialMock },
   onAuthStateChanged: onAuthStateChangedMock,
   signInWithCredential: signInWithCredentialMock,
+  signInWithCustomToken: signInWithCustomTokenMock,
   signOut: firebaseSignOutMock,
 }));
 
@@ -30,9 +32,17 @@ interface ChromeStub {
   identity: {
     getAuthToken: ReturnType<typeof vi.fn>;
     removeCachedAuthToken: ReturnType<typeof vi.fn>;
+    launchWebAuthFlow: ReturnType<typeof vi.fn>;
+    getRedirectURL: ReturnType<typeof vi.fn>;
   };
   runtime: {
     lastError: { message: string } | undefined;
+  };
+  storage: {
+    local: {
+      set: ReturnType<typeof vi.fn>;
+      remove: ReturnType<typeof vi.fn>;
+    };
   };
 }
 
@@ -136,6 +146,137 @@ describe('auth.signIn', () => {
   });
 });
 
+describe('auth.signInViaWeb', () => {
+  type LaunchCallback = (redirectUrl: string | undefined) => void;
+
+  beforeEach(() => {
+    vi.stubEnv('VITE_WEB_BASE_URL', 'https://sba.example.org');
+    chromeStub().runtime.lastError = undefined;
+    chromeStub().identity.launchWebAuthFlow.mockReset();
+    chromeStub().identity.removeCachedAuthToken.mockReset();
+    chromeStub().storage.local.set.mockReset();
+    chromeStub().storage.local.set.mockResolvedValue(undefined);
+    signInWithCustomTokenMock.mockReset();
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    chromeStub().runtime.lastError = undefined;
+  });
+
+  function resolveWith(redirectUrl: string | undefined) {
+    chromeStub().identity.launchWebAuthFlow.mockImplementation(
+      (_opts: unknown, cb: LaunchCallback) => cb(redirectUrl),
+    );
+  }
+
+  it('exchanges the fragment custom token for a Firebase user (happy path)', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/#token=custom-token-abc');
+    const user = { uid: 'u9', email: 'mgr@example.org', displayName: 'Mgr' };
+    signInWithCustomTokenMock.mockResolvedValue({ user });
+
+    const { signInViaWeb } = await import('./auth');
+    const result = await signInViaWeb();
+
+    expect(chromeStub().identity.launchWebAuthFlow).toHaveBeenCalledWith(
+      {
+        url:
+          'https://sba.example.org/auth/extension?redirect_uri=' +
+          encodeURIComponent('https://sba-ext-test.chromiumapp.org/'),
+        interactive: true,
+      },
+      expect.any(Function),
+    );
+    expect(signInWithCustomTokenMock).toHaveBeenCalledWith(
+      { __tag: 'mock-auth', currentUser: null },
+      'custom-token-abc',
+    );
+    expect(result).toBe(user);
+  });
+
+  it('persists the principal snapshot but never a Google access token', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/#token=t');
+    signInWithCustomTokenMock.mockResolvedValue({
+      user: { uid: 'u9', email: 'mgr@example.org', displayName: 'Mgr' },
+    });
+
+    const { signInViaWeb } = await import('./auth');
+    await signInViaWeb();
+
+    const written = chromeStub().storage.local.set.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(written['sba.principalSnapshot']).toEqual({
+      uid: 'u9',
+      email: 'mgr@example.org',
+      displayName: 'Mgr',
+    });
+    expect(written).not.toHaveProperty('sba.googleAccessToken');
+  });
+
+  it('strips a trailing slash off VITE_WEB_BASE_URL so the SPA route matches', async () => {
+    vi.stubEnv('VITE_WEB_BASE_URL', 'https://sba.example.org/');
+    resolveWith('https://sba-ext-test.chromiumapp.org/#token=t');
+    signInWithCustomTokenMock.mockResolvedValue({
+      user: { uid: 'u9', email: null, displayName: null },
+    });
+
+    const { signInViaWeb } = await import('./auth');
+    await signInViaWeb();
+
+    const opts = chromeStub().identity.launchWebAuthFlow.mock.calls[0]?.[0] as { url: string };
+    expect(opts.url).toContain('https://sba.example.org/auth/extension?');
+  });
+
+  it('throws AuthError(consent_dismissed) when the manager closes the auth window', async () => {
+    chromeStub().identity.launchWebAuthFlow.mockImplementation(
+      (_opts: unknown, cb: LaunchCallback) => {
+        // The SPA never redirects on a cancelled sign-in; Chrome
+        // reports the closed window here instead.
+        chromeStub().runtime.lastError = { message: 'The user did not approve access.' };
+        cb(undefined);
+      },
+    );
+
+    const { signInViaWeb, AuthError } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toBeInstanceOf(AuthError);
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'consent_dismissed' });
+    expect(signInWithCustomTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('throws AuthError(sign_in_failed) on the SPA-reported #error=mint_failed', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/#error=mint_failed');
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'sign_in_failed' });
+    expect(signInWithCustomTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('treats an unrecognised #error code as a hard failure, not a silent success', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/#error=some_future_code');
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'sign_in_failed' });
+    expect(signInWithCustomTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('throws AuthError(no_token) when the fragment carries neither token nor error', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/');
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'no_token' });
+    expect(signInWithCustomTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('wraps a rejected custom-token exchange without touching the Google token cache', async () => {
+    resolveWith('https://sba-ext-test.chromiumapp.org/#token=expired');
+    signInWithCustomTokenMock.mockRejectedValue(new Error('auth/invalid-custom-token'));
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({ code: 'sign_in_failed' });
+    // There is no Google token on this path; revoking one would be a
+    // no-op at best and a cross-path side effect at worst.
+    expect(chromeStub().identity.removeCachedAuthToken).not.toHaveBeenCalled();
+  });
+});
+
 describe('auth.signOut', () => {
   beforeEach(() => {
     chromeStub().runtime.lastError = undefined;
@@ -178,6 +319,31 @@ describe('auth.signOut', () => {
     await signOut();
 
     expect(chromeStub().identity.removeCachedAuthToken).not.toHaveBeenCalled();
+    expect(firebaseSignOutMock).toHaveBeenCalled();
+  });
+
+  it('signs out a web-flow manager who has no Google account at all', async () => {
+    // `signInViaWeb` never mints a Google token, and the manager may
+    // hold no Google identity to mint one from — so the cached-token
+    // probe must resolve undefined and fall through to firebaseSignOut
+    // rather than stranding them signed in.
+    chromeStub().identity.getAuthToken.mockImplementation(
+      (_opts: unknown, cb: GetAuthTokenCallback) => {
+        chromeStub().runtime.lastError = { message: 'The user is not signed in.' };
+        cb(undefined);
+      },
+    );
+    chromeStub().storage.local.remove.mockReset();
+    chromeStub().storage.local.remove.mockResolvedValue(undefined);
+    firebaseSignOutMock.mockResolvedValue(undefined);
+
+    const { signOut } = await import('./auth');
+    await signOut();
+
+    expect(chromeStub().identity.removeCachedAuthToken).not.toHaveBeenCalled();
+    expect(chromeStub().storage.local.remove).toHaveBeenCalledWith(
+      expect.arrayContaining(['sba.principalSnapshot']),
+    );
     expect(firebaseSignOutMock).toHaveBeenCalled();
   });
 

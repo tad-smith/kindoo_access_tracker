@@ -10,6 +10,7 @@
 
 import {
   signIn,
+  signInViaWeb,
   signOut,
   currentUser,
   readManagerStakes,
@@ -91,6 +92,18 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
     case 'auth.signIn': {
       try {
         const user = await signIn();
+        const state: AuthSnapshot = {
+          status: 'signed-in',
+          user: toPrincipalSnapshot(user),
+        };
+        return { ok: true, data: state };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'auth.signInViaWeb': {
+      try {
+        const user = await signInViaWeb();
         const state: AuthSnapshot = {
           status: 'signed-in',
           user: toPrincipalSnapshot(user),
