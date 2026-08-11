@@ -311,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the eleven Cloud Functions that need a non-default runtime identity — all four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), the `reconcileAuditGaps` scheduled job, and six callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `createStake`, `backfillEqPresidentAccess`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the twelve Cloud Functions that need a non-default runtime identity — all four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), the `reconcileAuditGaps` scheduled job, and seven callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -340,6 +340,20 @@ done
 
 Expected: five `Updated IAM policy for project [kindoo-staging].` lines.
 
+One more role, and it does **not** belong in that loop: `roles/iam.serviceAccountTokenCreator`, held by `kindoo-app` **on `kindoo-app` itself**. The resource here is the service account, not the project, so it takes a different command — `gcloud iam service-accounts add-iam-policy-binding`, with the SA as the positional resource and the same SA as the member:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  kindoo-app@kindoo-staging.iam.gserviceaccount.com \
+  --member="serviceAccount:kindoo-app@kindoo-staging.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project=kindoo-staging
+```
+
+Expected: `Updated IAM policy for serviceAccount [kindoo-app@kindoo-staging.iam.gserviceaccount.com].` followed by the new policy, which lists `role: roles/iam.serviceAccountTokenCreator` with that same account as its only member. Do not reach for `gcloud projects add-iam-policy-binding` instead — at the project level the same role means token-creator over *every* service account in the project, which is a far wider grant than the one function needs.
+
+> **Both existing projects need this run against them.** The self-binding landed with the extension's email sign-in path, after `kindoo-staging` and `kindoo-prod` were provisioned, so neither has it. Run the command above once per project, substituting the project id in all three places, and verify with §5.2.1. It's idempotent — re-running against a project that already has the binding succeeds and changes nothing.
+
 What each role does:
 
 - `roles/datastore.user` — Firestore read + write via Admin SDK. (Datastore is the legacy name for the same API.)
@@ -347,6 +361,7 @@ What each role does:
 - `roles/run.invoker` — Cloud Functions 2nd-gen runs on Cloud Run; the invoker role is what lets Cloud Scheduler (or another Function) call it.
 - `roles/eventarc.eventReceiver` — required for any 2nd-gen Cloud Function that pins `kindoo-app` as its service account AND consumes Firestore Eventarc events. Without it, Firebase deploy returns `403 Permission 'eventarc.events.receiveEvent' denied`. Triggers that do not pin an SA fall back to the default compute SA (which gets this role automatically) and are not affected. Surfaced first during the Phase 9/10.5 staging deploy and re-confirmed during prod bring-up — the codebase pins `kindoo-app` for the email and FCM push triggers, both of which consume Firestore document events.
 - `roles/firebasecloudmessaging.admin` — required for the FCM Web push trigger (`pushOnRequestSubmit` and any future push trigger) to call `messaging.send()`. Without it, deploy succeeds but runtime push attempts fail with `mismatched-credential`. Same surfacing path as the Eventarc role above: hit during Phase 9/10.5 staging, re-confirmed during prod bring-up.
+- `roles/iam.serviceAccountTokenCreator` — on the SA itself, via the separate command above, not the loop. Lets `kindoo-app` sign Firebase **custom** tokens, which `mintExtensionToken` mints so the Chrome extension can sign in a manager who has no Google account (`docs/architecture.md` D33, `docs/spec.md` §4.1). Under Application Default Credentials there's no key file to sign with, so `createCustomToken` signs through the IAM `signBlob` API, and the caller has to hold token-creator on the signing account — the same account here, which is why the binding is self-referential. Missing, it costs nothing at deploy and fails every call at runtime: the manager sees `Sign-in failed: web sign-in failed (mint_failed)` in the extension panel, while the real error (`Permission 'iam.serviceAccounts.signBlob' denied on resource ...`) shows up only in the `mintExtensionToken` logs. The emulator substitutes an unsigned token, so neither a local run nor CI catches a missing grant.
 
 ### 1.9 Note: the default compute SA is what Functions actually run as
 
@@ -358,7 +373,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the eleven Cloud Functions enumerated in step 1.8 (notification triggers, the `reconcileAuditGaps` scheduled job, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
+`kindoo-app` is the SA pinned by the twelve Cloud Functions enumerated in step 1.8 (notification triggers, the `reconcileAuditGaps` scheduled job, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
@@ -447,7 +462,7 @@ When done, you should have:
 - The default Hosting site initialized via the console wizard.
 - A Firestore database in `us-central1` Native mode.
 - Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
-- A `kindoo-app` SA with the five F1 roles.
+- A `kindoo-app` SA with the five F1 project roles, plus `roles/iam.serviceAccountTokenCreator` on itself.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
 - A registered web app — write its config to `apps/web/.env.production` (gitignored). The prod build (`pnpm deploy:prod`) invokes `vite build` with default mode=production, which loads this file. Copy `apps/web/.env.example` to `apps/web/.env.production` and fill in the prod values (substitute `kindoo-prod` for `kindoo-staging` in `VITE_FIREBASE_PROJECT_ID` and the auth domain).
 
@@ -718,6 +733,21 @@ gcloud iam service-accounts list --project=kindoo-prod
 
 Expected on each: at least three rows: `kindoo-app@<project>.iam.gserviceaccount.com`, the default compute SA `<projectnum>-compute@developer.gserviceaccount.com`, and the Firebase admin SA `firebase-adminsdk-...@<project>.iam.gserviceaccount.com`. Possibly one or two more (the Firestore service agent, Cloud Build SA, etc.) which were auto-created when you enabled APIs.
 
+### 5.2.1 `kindoo-app` can sign custom tokens on both projects
+
+The self-binding from step 1.8 lives on the service-account resource, so a project-level `get-iam-policy` will not show it — ask the SA:
+
+```bash
+gcloud iam service-accounts get-iam-policy \
+  kindoo-app@kindoo-staging.iam.gserviceaccount.com \
+  --project=kindoo-staging --format="value(bindings.role)"
+gcloud iam service-accounts get-iam-policy \
+  kindoo-app@kindoo-prod.iam.gserviceaccount.com \
+  --project=kindoo-prod --format="value(bindings.role)"
+```
+
+Expected on each: `roles/iam.serviceAccountTokenCreator`. Empty output means the binding was never applied — re-run the self-grant command in step 1.8 against that project. Nothing local catches this one; extension email sign-in fails at runtime without it.
+
 ### 5.3 Required services enabled
 
 ```bash
@@ -828,6 +858,23 @@ gcloud projects get-iam-policy <PROJECT_ID> \
 ```
 
 Expected: at minimum `roles/datastore.user`. If missing, re-run step 1.9.
+
+### Extension email sign-in fails with "Sign-in failed: web sign-in failed (mint_failed)"
+
+The manager clicked **Sign in with email** in the extension, signed in on the SPA, and got bounced back with that message. The extension can't see why — the SPA hands back `#error=mint_failed` and nothing more.
+
+The usual cause is the missing `roles/iam.serviceAccountTokenCreator` self-binding from step 1.8 on the project the extension build points at. Confirm from the function's logs, which carry the real error:
+
+```bash
+gcloud run services logs read mintextensiontoken \
+  --region us-central1 --project <PROJECT_ID> --limit 50
+```
+
+(2nd-gen functions run as Cloud Run services under a lowercased name — hence `mintextensiontoken`, not `mintExtensionToken`.)
+
+A missing grant reads `Permission 'iam.serviceAccounts.signBlob' denied on resource ... kindoo-app@<project>`. Fix by running the self-grant command in step 1.8 against that project, then re-check with §5.2.1. No redeploy needed — the grant takes effect on the next call, though IAM propagation can take a minute.
+
+If the logs show a *successful* mint instead, the fault is on the extension side: its `VITE_WEB_BASE_URL` names one environment's SPA while its `VITE_FIREBASE_*` values name another, so the token is minted by the wrong project and won't verify. See `infra/runbooks/extension-deploy.md` § "First-time per-env setup" step 5.
 
 ### "Changing from an HTTPS function to a background triggered function is not allowed."
 
