@@ -25,6 +25,10 @@ The Google path is byte-for-byte unchanged. The two are alternatives a manager p
 
 The custom token is **not** single-use, which is the fact that sets the stakes for everything below. Within its hour it can be redeemed repeatedly, and every redemption yields a full session with its own renewable refresh token. A token that leaks inside that window is a session compromise, not a spent coupon.
 
+**The exchange preserves scope but not duration, and we accepted that rather than missed it.** `mintExtensionToken` mints for the caller's own uid, so it is easy — and we did it in the first draft of this entry and of D33 — to describe the result as conveying "exactly the authority they arrived with." That is true of scope and false of duration: the caller arrives holding an ID token with a one-hour ceiling and leaves with a session that renews itself indefinitely. It is the property every mint-for-itself endpoint has, and it is the point of a custom token rather than a defect in this one; gating the callable harder was considered and rejected, because a caller who can invoke it already holds a valid session and the real boundary is the two SPA-side gates.
+
+The consequence to carry forward is about revocation. **Signing out of the SPA does not end the extension's session** — the two hold independent refresh tokens, and the extension stays signed in until its own `signOut()` runs. Role revocation *does* reach it: the claim-sync triggers call `revokeRefreshTokens` on the uid, which invalidates the extension's refresh token on the same envelope as every other session for that user. Server-side revocation propagates; a user-initiated sign-out on one surface does not.
+
 ## The security boundary, and the version of it that shipped first and was wrong
 
 The route originally validated `redirect_uri` against the *shape* of a Chrome extension callback origin — 32 characters from `a`–`p` under `chromiumapp.org`, no path, no query — and D33 recorded that check as the whole security boundary. The reasoning for why it needn't identify *which* extension was that "completing the handoff requires the user to sign in inside the window that opened it."
@@ -63,6 +67,8 @@ Two rules came out of it. **The copy may assert no cause**, so the web path lead
 
 **And neither path styles it as a failure.** Both render `role="status"` with the muted `.sba-note` class rather than `role="alert"` with error styling. On Google it is a deliberate choice; on web the likeliest reader is a manager who just did exactly what the instructions said. Red there reads as an accusation, and `alert` interrupts a screen reader assertively for what is really a next step. Genuine failures keep the alert treatment.
 
+**The same question came up one layer in, on the SPA's own Google popup, and got the opposite answer per host.** A dismissed `signInWithPopup` is swallowed on the homepage — a cancellation is not a failure, and two tests pin that silence. `/auth/extension` opts in to announcing it (`useSignInForm`'s `announceCancelledPopup`, set by that route alone), because inside a `launchWebAuthFlow` window the popup may never have opened at all: `signInWithPopup` needs `window.open` plus opener `postMessage`, neither guaranteed there. Silence in that context is indistinguishable from nothing happening, on a page that has just told the manager to use whichever sign-in they have — with no hint that the form below it needs no Google account. So the divergence is per-host and deliberate rather than an inconsistency to reconcile: same event, different amount of context the user has for interpreting it. Every Google-failure message in both hosts now names the magic-link form as the way through, and carries the SDK error code beside it, small and muted, so a smoke-test failure stays searchable for the operator without showing a manager a raw `FirebaseError`.
+
 **"configuration error" is shared wording across the two surfaces** — the panel points back at the SPA's refusal card by that phrase, the card uses it, and a test on each side pins it. The card is the referent, so on any drift the card's wording wins. The card also echoes the rejected `redirect_uri` as inert text (never a link, truncated at 120 characters), and `buildWebAuthUrl` logs it before launching. That value is otherwise unobservable from either side, which is what turns "sign-in keeps cancelling" into a diagnosis during a smoke test.
 
 ## Prerequisites the operator owns
@@ -76,7 +82,7 @@ All three are configured outside the repo. The first two are caught by nothing �
 
 The IAM grant is flagged inside T-26 (the Phase 11 service-account hardening item) so an IAM tidy-up doesn't revoke it.
 
-One caveat on the third that is worth carrying past this PR: **production may legitimately need a temporary `VITE_EXTENSION_IDS` entry** during the deploy runbook's pre-upload smoke test, which loads a prod-mode unpacked build — carrying its keypair ID, not the Web Store one — against the production origin. It has to come back out once the Web Store version is live. A listed ID stays trusted indefinitely, and this is the only prerequisite in the set that is meant to be removed again.
+One caveat on the third that is worth carrying past this PR: **production may legitimately need a temporary `VITE_EXTENSION_IDS` entry** during the deploy runbook's pre-upload smoke test, which loads a prod-mode unpacked build against the production origin. That build is a distinct artifact from the store zip — it retains its manifest `key`, so it presents the keypair-derived ID rather than the Web Store one, which is why the implicit production default does not cover it. **The allowlist is compiled into the bundle, not read at runtime**, so admitting that ID costs a prod redeploy and removing it costs another. It still has to come back out once the Web Store version is live: a listed ID stays trusted indefinitely, and this is the only prerequisite in the set meant to be removed again. `infra/runbooks/deploy.md` step 6 carries the operator-facing sequence.
 
 ## Settled during the build
 
@@ -85,7 +91,7 @@ One caveat on the third that is worth carrying past this PR: **production may le
 ## What didn't change
 
 - **The Google path.** `signIn`, the `oauth2` manifest block, the OAuth scopes, and the `sba.googleAccessToken` storage key are untouched.
-- **Authorization.** A custom-token session resolves roles from exactly the same custom claims as any other session — §4 is unmodified. A roleless manager who signs in this way lands on NotAuthorized, as they always did. This is also why `mintExtensionToken` needs no role gate: it mints for the caller's own uid, so the token can do exactly what its holder could already do — which is precisely why *which extension receives it* is the question worth gating.
+- **Authorization.** A custom-token session resolves roles from exactly the same custom claims as any other session — §4 is unmodified. A roleless manager who signs in this way lands on NotAuthorized, as they always did. This is also why `mintExtensionToken` needs no role gate: it mints for the caller's own uid, so the token reaches no scope its holder could not already reach — which is precisely why *which extension receives it* is the question worth gating. What it does extend is lifetime, not reach; see the scope-versus-duration note above.
 - **Chrome permissions.** `launchWebAuthFlow` rides the `identity` permission the extension already declares; no new permission and no new host permission.
 - **Audit.** Minting a session token is not an entity write, so `auditTrigger` fans nothing and the callable is stateless under retry.
 - **Firestore rules and indexes.** Nothing touched.
@@ -93,7 +99,7 @@ One caveat on the third that is worth carrying past this PR: **production may le
 ## Spec / doc edits
 
 - `docs/architecture.md` — **D33**: the delegation, the custom-token choice, the two gates and why neither suffices alone, the per-path failure copy, the callable's auth surface, and the rejected alternatives. The entry was corrected in place rather than superseded by a D34 — same decision, wrong the first time, fixed before merge; the wrong version is recorded inside it so the reasoning isn't re-derived.
-- `docs/spec.md` §4.1 — the flow in order: surfaces → handoff steps → why a custom token → cancellation and the per-path copy → the SPA half (both gates, the terminal card) → the server half → prerequisites.
+- `docs/spec.md` §4.1 — the flow in order: surfaces → handoff steps → why a custom token → the `consent_dismissed` funnel and the per-path copy → the SPA half (both gates, the per-host popup announcement, the terminal card) → the server half (including scope-versus-duration) → prerequisites.
 - `docs/spec.md` §5.0 — names `/auth/email-link` and `/auth/extension` as the two ungated routes that are handoff endpoints rather than pages.
 - `docs/spec.md` §15 — the "all extension callables propagate `stakeId`" claim now says which callables it means and notes `mintExtensionToken` is stake-agnostic and SPA-invoked.
 - `docs/firebase-schema.md` §7 — `mintExtensionToken` row, carrying the IAM prerequisite.
