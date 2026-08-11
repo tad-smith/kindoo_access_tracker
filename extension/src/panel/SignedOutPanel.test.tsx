@@ -76,15 +76,16 @@ describe('SignedOutPanel', () => {
 
     await userEvent.click(screen.getByTestId('sba-sign-in'));
 
-    const alert = await screen.findByTestId('sba-sign-in-error');
-    expect(alert).toHaveTextContent('Sign-in cancelled. Click again to retry.');
+    const note = await screen.findByTestId('sba-sign-in-message');
+    expect(note).toHaveTextContent('Sign-in cancelled. Click again to retry.');
   });
 
-  it('does not claim a cancellation when the email flow ends without completing', async () => {
-    // A closed window and a redirect_uri the SPA refused arrive as the
-    // same bare lastError, so this copy cannot assert either one. The
-    // SPA's refusal card says retrying is pointless and is gone by the
-    // time this renders — copy that ordered a retry would overwrite it.
+  it('tells the magic-link manager to open their email, not just to retry', async () => {
+    // THE PRIMARY JOURNEY. Manager asks for a sign-in link, the SPA
+    // swaps to "check your email", they close the window — all correct,
+    // and it lands on consent_dismissed like every other non-redirect
+    // ending. A bare "click again" reopens the same form and gets them
+    // nowhere; the next step is in their inbox.
     signInViaWebMock.mockRejectedValue(
       new ExtensionApiError({ code: 'consent_dismissed', message: 'window closed' }),
     );
@@ -92,21 +93,41 @@ describe('SignedOutPanel', () => {
 
     await userEvent.click(screen.getByTestId('sba-sign-in-email'));
 
-    const alert = await screen.findByTestId('sba-sign-in-error');
-    expect(alert).not.toHaveTextContent('Sign-in cancelled');
-    expect(alert).toHaveTextContent('Sign-in didn’t finish');
-    // The escape hatch out of a retry loop is the load-bearing half.
-    expect(alert).toHaveTextContent('retrying won’t help');
+    const note = await screen.findByTestId('sba-sign-in-message');
+    expect(note).toHaveTextContent('open it from your email');
+    // Still asserts no cause — this code only ever means "ended without
+    // a redirect".
+    expect(note).not.toHaveTextContent('Sign-in cancelled');
+    // The escape hatch out of a retry loop is still load-bearing.
+    expect(note).toHaveTextContent('retrying won’t help');
     // "configuration error" is shared wording, not a phrasing choice:
     // this copy points the manager back at the SPA's refusal card, and
     // the card names the same phrase (pinned by a mirrored test on the
     // web side). Reword the surrounding sentence freely; drop this
     // phrase and the pointer sends them hunting for words that are not
     // on the card they just read.
-    expect(alert).toHaveTextContent('configuration error');
+    expect(note).toHaveTextContent('configuration error');
   });
 
-  it('surfaces a hard failure from the email flow with its message', async () => {
+  it('renders the primary journey as a note, not a red alert', async () => {
+    // The likeliest reason for reaching this state is a manager who did
+    // exactly the right thing. role="alert" interrupts a screen reader
+    // assertively and .sba-error paints it red — both tell them they
+    // broke something they did not break.
+    signInViaWebMock.mockRejectedValue(
+      new ExtensionApiError({ code: 'consent_dismissed', message: 'window closed' }),
+    );
+    render(<SignedOutPanel />);
+
+    await userEvent.click(screen.getByTestId('sba-sign-in-email'));
+
+    const note = await screen.findByTestId('sba-sign-in-message');
+    expect(note).toHaveAttribute('role', 'status');
+    expect(note).toHaveClass('sba-note');
+    expect(note).not.toHaveClass('sba-error');
+  });
+
+  it('still renders a genuine failure as a red alert', async () => {
     signInViaWebMock.mockRejectedValue(
       new ExtensionApiError({
         code: 'sign_in_failed',
@@ -117,8 +138,10 @@ describe('SignedOutPanel', () => {
 
     await userEvent.click(screen.getByTestId('sba-sign-in-email'));
 
-    const alert = await screen.findByTestId('sba-sign-in-error');
+    const alert = await screen.findByTestId('sba-sign-in-message');
     expect(alert).toHaveTextContent('web sign-in failed (mint_failed)');
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveClass('sba-error');
   });
 
   it('disables both buttons while either flow is in flight', async () => {
