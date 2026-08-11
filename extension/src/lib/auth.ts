@@ -227,6 +227,16 @@ function buildWebAuthUrl(): string {
   // A trailing slash in .env would produce `//auth/extension`, which
   // the SPA router does not match.
   const base = (import.meta.env.VITE_WEB_BASE_URL ?? '').replace(/\/+$/, '');
+  // Fail loudly on an unconfigured build. Left empty, the URL below is
+  // relative, Chrome refuses it via `lastError`, and `launchWebAuthFlow`
+  // maps every `lastError` to `consent_dismissed` — so a missing env var
+  // would present as "Sign-in cancelled. Click again to retry." forever,
+  // on a button that can never work. The var is gitignored and
+  // operator-set, so CI cannot catch this and the first deploy in a new
+  // env is exactly where it lands.
+  if (!base) {
+    throw new AuthError('sign_in_failed', 'VITE_WEB_BASE_URL is not configured for this build');
+  }
   const redirectUri = chrome.identity.getRedirectURL();
   console.info(`[sba-ext] web sign-in: redirect_uri is ${redirectUri}`);
   return `${base}/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
