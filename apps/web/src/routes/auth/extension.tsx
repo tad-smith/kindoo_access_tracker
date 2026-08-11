@@ -184,6 +184,12 @@ const MAX_ECHOED_REDIRECT_CHARS = 120;
 // Echoing the value is safe — it renders as text, never as an href —
 // and it is what turns "sign-in keeps cancelling" into a diagnosis
 // during the operator's smoke test.
+//
+// "configuration error" is load-bearing wording, not a phrasing
+// choice: the extension panel's own copy for this path reads "unless
+// that window showed a configuration error, in which case retrying
+// won't help." It points back here by that phrase, so the two surfaces
+// have to use the same one. Pinned by a test.
 function InvalidRedirectCard({ redirectUri }: { redirectUri: string }) {
   const shown =
     redirectUri.length > MAX_ECHOED_REDIRECT_CHARS
@@ -201,7 +207,7 @@ function InvalidRedirectCard({ redirectUri }: { redirectUri: string }) {
       <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
         It was opened without a valid return address for the extension, so we won&rsquo;t sign
         anything in from here. Trying again will land in the same place &mdash; this is a
-        configuration problem, not a hiccup.
+        configuration error, not a hiccup.
       </p>
       {/* No trailing punctuation after the value — a period would
           render detached from it once the code block wraps. */}

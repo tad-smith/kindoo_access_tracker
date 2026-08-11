@@ -177,7 +177,20 @@ describe('/auth/extension — redirect_uri validation', () => {
     renderRoute('https://evil.example.com/');
 
     expect(await screen.findByTestId('extension-auth-error')).toHaveTextContent(
-      /configuration problem, not a hiccup/i,
+      /configuration error, not a hiccup/i,
+    );
+  });
+
+  // Cross-surface linkage, not a phrasing preference. The extension
+  // panel's copy for this path reads "unless that window showed a
+  // configuration error, in which case retrying won't help" — it refers
+  // the user back to this card by that exact phrase. Reword this and
+  // the panel starts pointing at words the user never saw.
+  it('uses the phrase the extension panel refers back to', async () => {
+    renderRoute('https://evil.example.com/');
+
+    expect(await screen.findByTestId('extension-auth-error')).toHaveTextContent(
+      'configuration error',
     );
   });
 
