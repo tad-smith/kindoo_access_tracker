@@ -211,7 +211,7 @@ Firebase Auth identifies the user; it does not authorize them. Authorization is 
 - The Firebase Auth user-account-linking setting is **"one account per email address"** (Console → Authentication → Settings → User account linking).
 - The Email/Password provider is enabled at the Firebase Console level with the Email-link sub-toggle ON and the password sub-toggle OFF (Console → Authentication → Sign-in method).
 - The Google provider remains enabled at the Firebase Console level (the Chrome extension's Google button depends on it).
-- `extension/.env.<mode>` carries `VITE_WEB_BASE_URL` pointing at the SPA origin for the **same** env as its `VITE_FIREBASE_*` values. A custom token minted by the other project will not verify. See `infra/runbooks/extension-deploy.md`.
+- `extension/.env.<mode>` carries `VITE_WEB_BASE_URL` pointing at the SPA origin for the **same** env as its `VITE_FIREBASE_*` values. A custom token minted by the other project will not verify. See `infra/runbooks/extension-deploy.md`. A build with the var unset fails the email sign-in immediately with "VITE_WEB_BASE_URL is not configured for this build" rather than opening a window that cannot succeed.
 
 **Out of scope.** Email/password (password sub-toggle stays off). Other OAuth providers (Apple, Microsoft, LDS Church Account). Self-service authorization or onboarding flows.
 

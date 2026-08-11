@@ -225,6 +225,22 @@ describe('auth.signInViaWeb', () => {
     expect(opts.url).toContain('https://sba.example.org/auth/extension?');
   });
 
+  it('fails loudly when VITE_WEB_BASE_URL is unset, instead of looking cancelled', async () => {
+    // An unconfigured build would otherwise send a relative URL, which
+    // Chrome refuses via lastError — and every lastError maps to
+    // consent_dismissed, so the manager would see "Sign-in cancelled.
+    // Click again to retry." forever on a button that cannot work.
+    vi.stubEnv('VITE_WEB_BASE_URL', '');
+
+    const { signInViaWeb } = await import('./auth');
+    await expect(signInViaWeb()).rejects.toMatchObject({
+      code: 'sign_in_failed',
+      message: expect.stringContaining('VITE_WEB_BASE_URL'),
+    });
+    // Never opens a window it knows cannot succeed.
+    expect(chromeStub().identity.launchWebAuthFlow).not.toHaveBeenCalled();
+  });
+
   it('throws AuthError(consent_dismissed) when the manager closes the auth window', async () => {
     chromeStub().identity.launchWebAuthFlow.mockImplementation(
       (_opts: unknown, cb: LaunchCallback) => {

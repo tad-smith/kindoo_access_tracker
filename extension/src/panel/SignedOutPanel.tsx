@@ -31,6 +31,11 @@ type PendingPath = SignInPath | null;
  * shows, that window is gone — so wording that ordered a retry would
  * overwrite the one explanation the manager was given, and send them
  * looping on the single action that cannot succeed.
+ *
+ * "configuration error" is shared wording with the SPA's refusal card,
+ * which names the same phrase. The rest of this sentence is free to
+ * change; that phrase is not, because it is what the manager scans the
+ * card for. Both sides pin it with a test.
  */
 function dismissedCopy(path: SignInPath): string {
   if (path === 'google') return 'Sign-in cancelled. Click again to retry.';

@@ -97,6 +97,13 @@ describe('SignedOutPanel', () => {
     expect(alert).toHaveTextContent('Sign-in didn’t finish');
     // The escape hatch out of a retry loop is the load-bearing half.
     expect(alert).toHaveTextContent('retrying won’t help');
+    // "configuration error" is shared wording, not a phrasing choice:
+    // this copy points the manager back at the SPA's refusal card, and
+    // the card names the same phrase (pinned by a mirrored test on the
+    // web side). Reword the surrounding sentence freely; drop this
+    // phrase and the pointer sends them hunting for words that are not
+    // on the card they just read.
+    expect(alert).toHaveTextContent('configuration error');
   });
 
   it('surfaces a hard failure from the email flow with its message', async () => {
