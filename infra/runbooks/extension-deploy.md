@@ -209,9 +209,15 @@ After a fresh build + reload, run through:
 1. Open `https://web.kindoo.tech` and sign in to Kindoo.
 2. Click the SBA toolbar icon. The slide-over appears from the right edge of the page.
 3. Click **Sign in with Google** → pick a stake-manager Google account → consent on the OAuth screen. The slide-over flips to the pending queue. If the account is not a manager, the slide-over flips to a "Not Authorized" view instead.
-4. Click **Mark Complete** on a pending request → confirm in the dialog → the button shows a pending state and then the card disappears from the queue.
-5. Open the SPA at the target env's URL (e.g. `https://staging.stakebuildingaccess.org`) and verify the request flipped to complete.
-6. Click the toolbar icon again. The slide-over hides. Click again — it reappears in the same state. Reload the page — the open/closed state persists.
+4. Sign out, then click **Sign in with email**. An auth window opens on the SPA.
+   - **First, with the service worker console open** (`chrome://extensions` → the extension → "service worker"), confirm the logged `redirect_uri` is a bare `https://<32 chars, a–p>.chromiumapp.org/` with no path segment. A path would be refused by the SPA, and a refusal is indistinguishable from a closed window — you would see the retry copy, not an error.
+   - **Sign in with a magic link.** The link opens in an ordinary tab, not this window, so the first pass ends with the window closed and an informational note in the panel. That is correct, not a failure. Click **Sign in with email** again: it should land straight on the confirm card without asking for anything.
+   - **This second pass is the check worth repeating on every Chrome major bump.** It works only because the auth window shares the profile's Firebase Auth IndexedDB with ordinary tabs. If Chrome ever partitions that window's storage again, the symptom is a silent loop — form → email → form — with the same informational copy each time and no error on either side. Nothing automated covers this.
+   - **Also try Continue with Google in that window.** `signInWithPopup` needs `window.open` plus opener `postMessage`, and no test exercises it there. A blocked popup should name the magic-link form as the way through, not print an SDK error code.
+   - On the confirm card, check the account named is the one you expect, then connect.
+5. Click **Mark Complete** on a pending request → confirm in the dialog → the button shows a pending state and then the card disappears from the queue.
+6. Open the SPA at the target env's URL (e.g. `https://staging.stakebuildingaccess.org`) and verify the request flipped to complete.
+7. Click the toolbar icon again. The slide-over hides. Click again — it reappears in the same state. Reload the page — the open/closed state persists.
 
 ## Production: Chrome Web Store distribution
 
