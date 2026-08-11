@@ -73,7 +73,12 @@ function ExtensionAuthPage() {
   const principal = usePrincipal();
   const authReady = useAuthReady();
   const signedIn = principal.firebaseAuthSignedIn;
-  const signIn = useSignInForm();
+  // `announceCancelledPopup`: this page renders inside a
+  // `launchWebAuthFlow` window, where a Google popup that never opened
+  // is indistinguishable from nothing happening. Silence would leave
+  // the manager with no hint that the magic-link form below works
+  // without Google at all.
+  const signIn = useSignInForm({ announceCancelledPopup: true });
   const { mutateAsync: mintExtensionToken } = useMintExtensionToken();
   const [connecting, setConnecting] = useState(false);
 

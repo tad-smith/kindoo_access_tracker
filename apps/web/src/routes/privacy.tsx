@@ -22,7 +22,7 @@ export const Route = createFileRoute('/privacy')({
 
 // Last-substantive-edit date. Bump whenever the policy text changes in
 // a way a reviewer would care about; cosmetic refactors do not bump.
-const LAST_UPDATED = '2026-05-16';
+const LAST_UPDATED = '2026-08-11';
 
 function PrivacyPage() {
   return (
@@ -109,9 +109,11 @@ function PrivacyPage() {
             </p>
             <ul className="list-disc pl-6">
               <li>
-                <strong>The signed-in user&rsquo;s Google account profile</strong> — email address,
-                user id, and display name returned by Google OAuth. Used to authenticate the user to
-                our backend and to record which leader approved or applied each request.
+                <strong>The signed-in user&rsquo;s account profile</strong> — email address, user
+                id, and display name. These come from Google OAuth when you sign in with Google, or
+                from the address you verified when you sign in with an emailed link. Used to
+                authenticate the user to our backend and to record which leader approved or applied
+                each request.
               </li>
               <li>
                 <strong>Names and email addresses of church members</strong> for whom access is
@@ -159,26 +161,55 @@ function PrivacyPage() {
 
           <Section title="5. Authentication">
             <p>
-              The web app uses Google Sign-In. The Chrome extension uses Chrome&rsquo;s built-in
-              identity API (
+              Sign-in is handled by Firebase Authentication. There are two ways to sign in and you
+              may use either: <strong>Google Sign-In</strong>, or a <strong>sign-in link</strong>{' '}
+              emailed to your address. No password is ever set, transmitted, or stored. The web app
+              offers both; the Chrome extension offers both as separate buttons, reached through
+              Chrome&rsquo;s built-in identity API (
               <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
                 chrome.identity
               </code>
-              ) to request a Google OAuth access token, which it exchanges for a Firebase session.
-              The extension only ever acts on behalf of the signed-in Kindoo Manager and only with
-              the OAuth scopes{' '}
-              <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
-                openid
-              </code>
-              ,{' '}
-              <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
-                email
-              </code>
-              , and{' '}
-              <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
-                profile
-              </code>
-              .
+              ).
+            </p>
+            <ul className="list-disc pl-6">
+              <li>
+                <strong>Sign in with Google</strong> — the extension calls{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  chrome.identity.getAuthToken
+                </code>{' '}
+                to obtain a Google OAuth access token through Chrome&rsquo;s account picker, and
+                exchanges it for a Firebase session. The only OAuth scopes requested are{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  openid
+                </code>
+                ,{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  email
+                </code>
+                , and{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  profile
+                </code>
+                .
+              </li>
+              <li>
+                <strong>Sign in with email</strong> — for leaders who have no Google account. The
+                extension calls{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  chrome.identity.launchWebAuthFlow
+                </code>{' '}
+                to open this site&rsquo;s own sign-in page in a Chrome-controlled window. You sign
+                in there by whichever method you have, and the page then asks you to confirm, naming
+                the account it is about to connect. Only on that confirmation does our backend issue
+                a short-lived Firebase custom token, which the window hands back to the extension
+                for it to exchange for its own Firebase session. No Google account and no Google
+                OAuth token are involved on this path.
+              </li>
+            </ul>
+            <p>
+              On either path the extension acts only on behalf of the signed-in Kindoo Manager, with
+              that manager&rsquo;s own permissions and nothing more. Its session lasts until you
+              sign out of the extension or uninstall it.
             </p>
           </Section>
 
@@ -191,9 +222,19 @@ function PrivacyPage() {
                     identity
                   </code>
                 </strong>{' '}
-                — to obtain a Google OAuth access token through Chrome&rsquo;s account picker, so
-                the user can sign in without re-typing a password. The signed-in account&rsquo;s
-                email address is included in the OAuth response so we can match it to the
+                — to sign the user in. This single permission covers both sign-in paths described in
+                section 5:{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  chrome.identity.getAuthToken
+                </code>
+                , which obtains a Google OAuth access token through Chrome&rsquo;s account picker,
+                and{' '}
+                <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
+                  chrome.identity.launchWebAuthFlow
+                </code>
+                , which opens our own sign-in page in a Chrome-controlled window and receives the
+                resulting sign-in token back from it. Either way the user signs in without re-typing
+                a password, and the signed-in account&rsquo;s email address is what we match to the
                 leader&rsquo;s record in Stake Building Access.
               </li>
               <li>
@@ -214,7 +255,8 @@ function PrivacyPage() {
                     </code>{' '}
                     — the Google OAuth access token, so the extension can re-authenticate to the
                     Stake Building Access backend after the service worker restarts without forcing
-                    a fresh OAuth popup.
+                    a fresh OAuth popup. Written <strong>only</strong> when you sign in with Google;
+                    the email sign-in path stores no Google token, because it never obtains one.
                   </li>
                   <li>
                     <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
@@ -266,13 +308,15 @@ function PrivacyPage() {
               .
             </p>
             <p>
-              You can stop the Chrome extension from accessing your account at any time by
-              uninstalling it from{' '}
+              You can stop the Chrome extension from accessing your account at any time by signing
+              out from inside the extension, or by uninstalling it from{' '}
               <code className="rounded bg-[color:var(--kd-border-soft)] px-1.5 py-0.5 text-[0.9em]">
                 chrome://extensions
-              </code>{' '}
-              and/or signing out from the web app. Revoking the OAuth grant in your Google
-              account&rsquo;s security settings has the same effect.
+              </code>
+              . Either ends its session on both sign-in paths. If you signed in with Google,
+              revoking the OAuth grant in your Google account&rsquo;s security settings additionally
+              withdraws the Google token; it does not apply to the email sign-in path, which never
+              holds one.
             </p>
           </Section>
 

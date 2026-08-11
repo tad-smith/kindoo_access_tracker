@@ -67,7 +67,15 @@ export function SignInProviders({ state, note, confirmationBody }: SignInProvide
           </div>
           {googleError ? (
             <div role="alert" className="text-sm text-[color:var(--kd-danger-fg)]">
-              Sign-in failed: {googleError}
+              {googleError.message}
+              {/* The SDK code, small and muted. The sentence above is
+                  for the manager; this is the token that makes a
+                  smoke-test failure searchable for the operator. */}
+              {googleError.code ? (
+                <span className="ml-1 text-[0.8em] text-[color:var(--kd-fg-3)]">
+                  ({googleError.code})
+                </span>
+              ) : null}
             </div>
           ) : null}
           <div role="separator" aria-label="or" className="my-1 flex items-center gap-3">

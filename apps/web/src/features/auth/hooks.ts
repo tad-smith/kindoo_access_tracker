@@ -45,8 +45,8 @@ export function useAuthReady(): boolean {
  * extension to exchange via `signInWithCustomToken`. Takes no payload —
  * the callable derives everything from the caller's ID token.
  *
- * The response is one field, so it is typed inline here rather than in
- * `packages/shared/`.
+ * `MintExtensionTokenOutput` comes from `@kindoo/shared` so this call
+ * site and the callable that answers it cannot drift.
  */
 export function useMintExtensionToken() {
   return useMutation<string, Error, void>({
