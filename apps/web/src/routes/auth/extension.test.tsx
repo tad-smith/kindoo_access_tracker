@@ -163,7 +163,50 @@ describe('/auth/extension — redirect_uri validation', () => {
     renderRoute('');
 
     expect(await screen.findByTestId('extension-auth-error')).toBeInTheDocument();
+    expect(screen.getByTestId('extension-auth-error-redirect')).toHaveTextContent(
+      /no address at all/i,
+    );
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  // Refusing to redirect leaves `launchWebAuthFlow` with nothing, which
+  // the extension cannot tell apart from the user closing the window —
+  // so its panel reports a cancellation and suggests a retry that can
+  // never work. This card is the only surface that knows better.
+  it('says plainly that retrying will not help', async () => {
+    renderRoute('https://evil.example.com/');
+
+    expect(await screen.findByTestId('extension-auth-error')).toHaveTextContent(
+      /configuration problem, not a hiccup/i,
+    );
+  });
+
+  it('shows the offending redirect_uri so the fault is diagnosable on sight', async () => {
+    renderRoute('https://evil.example.com/steal');
+
+    expect(await screen.findByTestId('extension-auth-error-redirect')).toHaveTextContent(
+      'https://evil.example.com/steal',
+    );
+  });
+
+  it('truncates an over-long redirect_uri rather than letting it run off the card', async () => {
+    const huge = `https://evil.example.com/${'a'.repeat(500)}`;
+    renderRoute(huge);
+
+    const echoed = await screen.findByTestId('extension-auth-error-redirect');
+    expect(echoed.textContent ?? '').toHaveLength(121);
+    expect(echoed.textContent ?? '').toMatch(/…$/);
+  });
+
+  // The value is attacker-controllable, so it must reach the DOM as
+  // text only — never as an href, and never parsed as markup.
+  it('renders the offending value as inert text, not as a link', async () => {
+    renderRoute('javascript:alert(1)');
+
+    const echoed = await screen.findByTestId('extension-auth-error-redirect');
+    expect(echoed.textContent).toContain('javascript:alert(1)');
+    expect(echoed.querySelector('a')).toBeNull();
+    expect(echoed.tagName.toLowerCase()).toBe('code');
   });
 });
 

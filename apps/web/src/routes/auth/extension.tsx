@@ -97,7 +97,7 @@ function ExtensionAuthPage() {
       <main className="flex flex-1 items-start justify-center px-5 py-10">
         <div className="w-full max-w-md">
           {!redirectAllowed ? (
-            <InvalidRedirectCard />
+            <InvalidRedirectCard redirectUri={redirectUri} />
           ) : !authReady ? (
             <StatusCard title="Checking your sign-in…" body="One moment." />
           ) : signedIn ? (
@@ -166,10 +166,29 @@ function StatusCard({ title, body }: StatusCardProps) {
   );
 }
 
+/** Cap on the echoed `redirect_uri` — it is attacker-controllable length. */
+const MAX_ECHOED_REDIRECT_CHARS = 120;
+
 // Terminal state for a `redirect_uri` that isn't an extension callback
 // origin. No affordance leads anywhere — offering a "continue anyway"
 // would defeat the check.
-function InvalidRedirectCard() {
+//
+// The copy says retrying won't help, and shows the offending value.
+// Both exist because of how this failure looks from the extension side:
+// refusing to redirect gives `launchWebAuthFlow` nothing, which is
+// byte-identical to the user closing the window, so the panel can only
+// report it as a cancellation and suggest a retry that can never work.
+// This card is the one surface that knows better, and the person
+// reading it is looking straight at it.
+//
+// Echoing the value is safe — it renders as text, never as an href —
+// and it is what turns "sign-in keeps cancelling" into a diagnosis
+// during the operator's smoke test.
+function InvalidRedirectCard({ redirectUri }: { redirectUri: string }) {
+  const shown =
+    redirectUri.length > MAX_ECHOED_REDIRECT_CHARS
+      ? `${redirectUri.slice(0, MAX_ECHOED_REDIRECT_CHARS)}…`
+      : redirectUri;
   return (
     <div
       role="alert"
@@ -181,10 +200,31 @@ function InvalidRedirectCard() {
       </h1>
       <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
         It was opened without a valid return address for the extension, so we won&rsquo;t sign
-        anything in from here.
+        anything in from here. Trying again will land in the same place &mdash; this is a
+        configuration problem, not a hiccup.
       </p>
+      {/* No trailing punctuation after the value — a period would
+          render detached from it once the code block wraps. */}
+      {shown ? (
+        <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
+          The address it asked us to return to:{' '}
+          <code
+            data-testid="extension-auth-error-redirect"
+            className="break-all font-mono text-[0.8rem] text-[color:var(--kd-fg-1)]"
+          >
+            {shown}
+          </code>
+        </p>
+      ) : (
+        <p
+          data-testid="extension-auth-error-redirect"
+          className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]"
+        >
+          It asked us to return to no address at all.
+        </p>
+      )}
       <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
-        Close this window and start again from the extension. If it keeps happening, reinstall{' '}
+        Close this window. If you installed the extension by hand, reinstall{' '}
         <a
           href={CHROME_WEB_STORE_URL}
           target="_blank"
@@ -193,7 +233,7 @@ function InvalidRedirectCard() {
         >
           Stake Building Access &mdash; Kindoo Helper
         </a>{' '}
-        from the Chrome Web Store.
+        from the Chrome Web Store; otherwise send this address to your stake&rsquo;s administrator.
       </p>
     </div>
   );
