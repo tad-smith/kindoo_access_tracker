@@ -64,8 +64,13 @@ export type MintExtensionTokenOutput = {
   /**
    * Firebase custom token for the calling user's uid. The extension
    * exchanges it via `signInWithCustomToken` to get a session with its
-   * own refresh token. Single-use and short-lived (1h) — it is the
-   * handoff, not the session.
+   * own refresh token — it is the handoff, not the session.
+   *
+   * Short-lived (1h) but **not** single-use: it can be redeemed
+   * repeatedly until it expires, and each redemption yields a full
+   * session. Anything that leaks it inside that hour is a session
+   * compromise, which is why the handoff rides the URL fragment and
+   * why the redirect target is allowlisted rather than shape-checked.
    */
   token: string;
 };
