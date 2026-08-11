@@ -375,6 +375,24 @@ and nothing is fetched or checked out — `git branch --show-current` is unchang
 
 4. **Tell the admin to get a fresh ID token — a re-login, not a reload.** `applyBootstrapClaim`'s `writeClaims` (`functions/src/lib/applyClaims.ts`) revokes the user's refresh tokens whenever their claims change, same as every other claims-writing trigger in this repo. That means the admin's current session cannot pick the new claim up quietly on its next silent token refresh — the revoked refresh token makes that refresh fail. Have them sign out, close every tab open on the origin, and sign back in; that mints a new ID token and a new refresh token together, and they should land on the bootstrap wizard instead of "Not Authorized."
 
+## One-time fixup: grant `kindoo-app` token-creator on itself after PR #282
+
+**Run this once per project, before or right after the deploy that first ships `mintExtensionToken`, then cross it off.** Not a recurring deploy step — it's an IAM grant neither `kindoo-staging` nor `kindoo-prod` received at provisioning time, because the need arrived with the extension's email sign-in path. Under Application Default Credentials `createCustomToken` signs through the IAM `signBlob` API, so the runtime SA has to hold token-creator **on itself**. Nothing local or in CI catches the gap — the emulator substitutes an unsigned token — and in a deployed environment every email sign-in fails with `Sign-in failed: web sign-in failed (mint_failed)`.
+
+```bash
+for PROJECT in kindoo-staging kindoo-prod; do
+  gcloud iam service-accounts add-iam-policy-binding \
+    "kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --member="serviceAccount:kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountTokenCreator" \
+    --project="$PROJECT"
+done
+```
+
+Expected: two `Updated IAM policy for serviceAccount [kindoo-app@<project>.iam.gserviceaccount.com].` lines, each followed by a policy listing `roles/iam.serviceAccountTokenCreator`. Idempotent — safe to re-run.
+
+Verify, and read the rationale, in `infra/runbooks/provision-firebase-projects.md` §5.2.1 and §1.8. That's where the grant lives for any project provisioned from here on.
+
 ## Rollback
 
 Open TODO: walk and validate the rollback procedure end-to-end against staging, then promote the steps below from sketch to verified. Until that drill happens, treat these as a starting point, not a finished playbook.

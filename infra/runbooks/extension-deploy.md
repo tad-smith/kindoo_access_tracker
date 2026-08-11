@@ -37,6 +37,10 @@ Access:
 - A stake-manager Firebase Auth account in the target environment (the extension's "Not Authorized" path triggers if the signed-in Google account isn't a manager).
 - Owner / Editor permission on the target GCP project (`kindoo-staging` or `kindoo-prod`) so you can create OAuth credentials.
 
+In the target project:
+
+- `kindoo-app@<project>` holds `roles/iam.serviceAccountTokenCreator` **on itself** — the grant `mintExtensionToken` needs to sign the custom token behind the **Sign in with email** button. Neither project had it before PR #282; check with `infra/runbooks/provision-firebase-projects.md` §5.2.1 and grant it per §1.8 if it's absent. Without it that button fails at runtime with `Sign-in failed: web sign-in failed (mint_failed)`; the Google button is unaffected.
+
 ## First-time per-env setup
 
 Do this **once** per environment. Subsequent rebuilds reuse the keypair, the GCP OAuth client, and the `.env.<mode>` file.
