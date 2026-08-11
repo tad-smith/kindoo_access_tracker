@@ -77,6 +77,28 @@ Operator playbook for deploying the Firebase monorepo to `kindoo-staging` or `ki
    - **At deploy time:** `firebase deploy` may interactively prompt with `Enter a string value for WEB_BASE_URL:` and stash whatever you type into `functions/lib/.env.<projectId>`. If you take this path, mirror the value into `functions/.env.<projectId>` immediately — otherwise the next build overwrites lib/ with an empty value.
    - **At runtime:** `WEB_BASE_URL.value()` returns the empty string. `EmailService.buildLink()` throws `WEB_BASE_URL is not set on the function. Set it at deploy time.`; the trigger surface catches the throw via `safeBuildLink`, logs `email skipped — link build failed`, and writes one `email_send_failed` audit row tagged `type='config'` per affected request. Visible-but-not-silent surfacing of deploy-time misconfiguration, but emails do not ship and notifications stop until the value is restored.
 
+6. **Verify `apps/web/.env.staging` contains `VITE_EXTENSION_IDS`. Staging only** — a normal prod deploy needs nothing here.
+
+   `pnpm deploy:staging` runs `vite build --mode staging`, which **fails outright** when this is unset, before anything is built or uploaded. That is deliberate. The SPA's `/auth/extension` handoff mints a session token for the Chrome extension only if the caller's ID is on the build's allowlist, and only the published Web Store ID is compiled in (`CHROME_EXTENSION_ID`, a production-only default). The staging extension is loaded unpacked and carries its own keypair-derived ID, so a staging build with an empty allowlist refuses the very extension it was built for — and the extension cannot tell that refusal apart from the manager closing the window, which turns it into a retry-forever dead end with one service-worker log line as the only clue. Failing the build converts that into a message at the moment the mistake is made.
+
+   ```bash
+   grep VITE_EXTENSION_IDS apps/web/.env.staging
+   # Expected: VITE_EXTENSION_IDS=<32 characters, a–p>   (comma-separated for more than one)
+   ```
+
+   If the line is missing or empty, derive the ID from the staging extension's pinned key:
+
+   ```bash
+   pnpm --filter @kindoo/extension ext-id \
+     --key "$(grep '^VITE_EXTENSION_KEY=' extension/.env.staging | cut -d= -f2-)"
+   ```
+
+   Paste the 32-character output into `apps/web/.env.staging` as `VITE_EXTENSION_IDS=<id>`. Both env files are gitignored. The build's own error message names the same command, so this is friction rather than a trap — but it stops the deploy either way. Full context: `infra/runbooks/extension-deploy.md` §"First-time per-env setup" step 6, and the comments above the key in `apps/web/.env.example`.
+
+   **The list is a trust boundary.** Only ever add an ID you control: anything listed can ask a signed-in manager's browser for a custom token that exchanges into a full session as that manager. A malformed entry is dropped on its own rather than widening the list, so a typo costs that one ID its trust — and, if it was the only entry, fails the build.
+
+   **The one prod case.** Three extension IDs exist — the Web Store ID, the staging keypair ID, and the keypair ID of the prod-mode unpacked build used for the pre-upload smoke test. Only the first is trusted implicitly, so that smoke test needs a **temporary** entry in `apps/web/.env.production` plus a prod redeploy to compile it in, and both have to be undone once the Web Store version is live: a listed ID stays trusted indefinitely. See `infra/runbooks/extension-deploy.md` §"First-time install (staging)".
+
 ## Deploy dependency pinning
 
 **You only touch this when `functions/package.json` `dependencies` change.** Every other deploy is unaffected — the check below runs automatically inside the build and says nothing when all is well.

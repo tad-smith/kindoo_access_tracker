@@ -200,6 +200,8 @@ For an operator who has never loaded the unpacked extension before:
 
 Repeat with `extension/dist/production` after a production build to load both side-by-side.
 
+**Loading `extension/dist/production` against the production SPA needs a temporary allowlist entry.** That build keeps its manifest `key`, so it carries the keypair-derived ID — not the Web Store ID that production SPA builds trust implicitly. Until that ID is listed in `VITE_EXTENSION_IDS` in `apps/web/.env.production` **and the SPA is redeployed** (the value is compiled in, so editing the file alone changes nothing), `/auth/extension` refuses it and email sign-in appears to cancel every time. Take the entry back out and redeploy once the Web Store version is live — this is the only prerequisite in this runbook meant to be removed again, because a listed ID stays trusted indefinitely and can ask a signed-in manager's browser for a session token. The store zip from `bin/build_extension_for_chrome_store.sh` is a different artifact: `VITE_OMIT_KEY=true` drops the key and Chrome assigns that one its own ID at upload.
+
 ## Smoke test
 
 After a fresh build + reload, run through:
