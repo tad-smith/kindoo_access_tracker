@@ -96,6 +96,12 @@ const replaceMock = vi.fn();
 const ORIGINAL_LOCATION = window.location;
 
 beforeEach(() => {
+  // The allowlist trusts `CHROME_EXTENSION_ID` implicitly only in
+  // production builds, and vitest runs in mode `test`. These render
+  // tests are about the route's branches, so they exercise the
+  // production build; the per-mode allowlist rules have their own
+  // suite in `features/auth/extensionRedirect.test.ts`.
+  vi.stubEnv('MODE', 'production');
   mintMock.mockReset();
   authReadyMock.mockReset().mockReturnValue(true);
   sendMagicLinkMock.mockReset();
@@ -115,6 +121,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   Object.defineProperty(window, 'location', {
     configurable: true,
     enumerable: true,
@@ -186,6 +193,27 @@ describe('/auth/extension — redirect_uri validation', () => {
     expect(await screen.findByTestId('extension-auth-error')).toHaveTextContent(
       'configuration error',
     );
+  });
+
+  // Reachable only on the dev server — `vite build --mode staging`
+  // fails before shipping an empty allowlist. Without naming the cause,
+  // a developer whose unpacked id simply isn't listed reads a card that
+  // blames their extension and goes looking in the wrong place.
+  it('names the build misconfiguration when no extension IDs are configured at all', async () => {
+    vi.stubEnv('MODE', 'development');
+
+    renderRoute(VALID_REDIRECT);
+
+    const note = await screen.findByTestId('extension-auth-error-unconfigured');
+    expect(note).toHaveTextContent(/VITE_EXTENSION_IDS/);
+    expect(note).toHaveTextContent(/ext-id/);
+  });
+
+  it('blames nothing on the build when the allowlist simply excludes this extension', async () => {
+    renderRoute(UNTRUSTED_REDIRECT);
+
+    await screen.findByTestId('extension-auth-error');
+    expect(screen.queryByTestId('extension-auth-error-unconfigured')).toBeNull();
   });
 
   it('shows the offending redirect_uri so the fault is diagnosable on sight', async () => {

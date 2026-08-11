@@ -128,6 +128,8 @@ pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"
 
 The output must match the Item ID you pasted in step 4.
 
+**The same ID also goes in the SPA's `VITE_EXTENSION_IDS`** for the environment this extension talks to (`apps/web/.env.staging`, comma-separated for more than one). The SPA's `/auth/extension` handoff refuses any extension not on that list, and only the published Web Store ID is built in — so an unpacked build whose ID is missing from it gets a sign-in that appears to cancel every time. `pnpm --filter ./apps/web build:staging` fails with instructions when the value is unset. See `apps/web/.env.example`.
+
 ## Per-build steps
 
 Every rebuild after a code change.

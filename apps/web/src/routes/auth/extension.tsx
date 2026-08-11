@@ -42,7 +42,10 @@ import { Button } from '../../components/ui/Button';
 import { SignInProviders } from '../../features/auth/SignInProviders';
 import { useSignInForm } from '../../features/auth/useSignInForm';
 import { useAuthReady, useMintExtensionToken } from '../../features/auth/hooks';
-import { isAllowedRedirectUri } from '../../features/auth/extensionRedirect';
+import {
+  extensionAllowlistIsEmpty,
+  isAllowedRedirectUri,
+} from '../../features/auth/extensionRedirect';
 import { signOut } from '../../features/auth/signOut';
 import { usePrincipal } from '../../lib/principal';
 import { CHROME_WEB_STORE_URL } from '../../lib/links';
@@ -261,6 +264,13 @@ function InvalidRedirectCard({ redirectUri }: { redirectUri: string }) {
     redirectUri.length > MAX_ECHOED_REDIRECT_CHARS
       ? `${redirectUri.slice(0, MAX_ECHOED_REDIRECT_CHARS)}…`
       : redirectUri;
+  // Distinguish "this extension isn't trusted" from "this build trusts
+  // no extension at all". The second is a build-config fault, and it is
+  // reachable only on the dev server — `vite build --mode staging`
+  // fails on it outright. Without naming it, a developer whose unpacked
+  // id simply isn't listed reads a card that implies their extension is
+  // at fault and goes looking in the wrong place.
+  const noneConfigured = extensionAllowlistIsEmpty();
   return (
     <div
       role="alert"
@@ -295,18 +305,32 @@ function InvalidRedirectCard({ redirectUri }: { redirectUri: string }) {
           It asked us to return to no address at all.
         </p>
       )}
-      <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
-        Close this window. If you installed the extension by hand, reinstall{' '}
-        <a
-          href={CHROME_WEB_STORE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[color:var(--kd-primary)] hover:underline"
+      {noneConfigured ? (
+        <p
+          data-testid="extension-auth-error-unconfigured"
+          className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]"
         >
-          Stake Building Access &mdash; Kindoo Helper
-        </a>{' '}
-        from the Chrome Web Store; otherwise send this address to your stake&rsquo;s administrator.
-      </p>
+          This build of the site has no extension IDs configured, so it will refuse every extension.
+          Set <code className="font-mono text-[0.8rem]">VITE_EXTENSION_IDS</code> for this build
+          &mdash;{' '}
+          <code className="font-mono text-[0.8rem]">pnpm --filter @kindoo/extension ext-id</code>{' '}
+          prints the ID to use.
+        </p>
+      ) : (
+        <p className="m-0 text-sm leading-relaxed text-[color:var(--kd-fg-2)]">
+          Close this window. If you installed the extension by hand, reinstall{' '}
+          <a
+            href={CHROME_WEB_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[color:var(--kd-primary)] hover:underline"
+          >
+            Stake Building Access &mdash; Kindoo Helper
+          </a>{' '}
+          from the Chrome Web Store; otherwise send this address to your stake&rsquo;s
+          administrator.
+        </p>
+      )}
     </div>
   );
 }

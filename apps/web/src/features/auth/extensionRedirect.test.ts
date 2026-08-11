@@ -1,24 +1,38 @@
 // Tests for the `/auth/extension` redirect allowlist — the trust
 // boundary that decides which extension may be handed a session token.
 //
-// The headline case is `rejects a well-formed callback origin belonging
-// to an extension we don't trust`. Shape validation alone passes that
-// one, and passing it means every extension installed in the manager's
-// profile could harvest a token.
+// Two headline cases:
+//   - `rejects a well-formed callback origin belonging to an extension
+//     we don't trust`. Shape validation alone passes that one, and
+//     passing it means every extension in the manager's profile could
+//     harvest a token.
+//   - `does not trust the published extension in a staging build`. The
+//     Web Store ID is not the ID any unpacked build carries, so an
+//     implicit default there is an identity that cannot legitimately
+//     appear — and it would mask a missing `VITE_EXTENSION_IDS`, which
+//     is the misconfiguration that silently breaks staging entirely.
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CHROME_EXTENSION_ID } from '../../lib/links';
 import {
   REDIRECT_URI_PATTERN,
   allowedExtensionIds,
+  extensionAllowlistIsEmpty,
   isAllowedRedirectUri,
 } from './extensionRedirect';
 
 /** Shape-valid and NOT ours — some other extension in the profile. */
 const OTHER_ID = 'abcdefghijklmnopabcdefghijklmnop';
+/** Stands in for a keypair-derived unpacked id (staging / local dev). */
 const DEV_ID = 'ponmlkjihgfedcbaponmlkjihgfedcba';
 
 const uri = (id: string) => `https://${id}.chromiumapp.org/`;
+
+beforeEach(() => {
+  // Vitest runs in mode `test`; the production default is keyed on
+  // mode, so each test states the build it means to exercise.
+  vi.stubEnv('MODE', 'production');
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -55,18 +69,70 @@ describe('REDIRECT_URI_PATTERN', () => {
   });
 });
 
-describe('allowedExtensionIds', () => {
-  it('always trusts the published extension', () => {
-    expect(allowedExtensionIds().has(CHROME_EXTENSION_ID)).toBe(true);
+describe('allowedExtensionIds — production build', () => {
+  it('trusts the published extension with no env var set', () => {
+    expect([...allowedExtensionIds()]).toEqual([CHROME_EXTENSION_ID]);
   });
 
-  it('adds ids from VITE_EXTENSION_IDS for unpacked dev builds', () => {
+  // The runbook has the operator smoke-test a prod-mode unpacked build
+  // against the production origin before uploading. That build carries
+  // the keypair id, not the Web Store id, so production has to be able
+  // to admit an extra one.
+  it('admits an additional keypair id alongside the published one', () => {
     vi.stubEnv('VITE_EXTENSION_IDS', DEV_ID);
-    expect(allowedExtensionIds().has(DEV_ID)).toBe(true);
-    // Additive, never replacing — a dev build still trusts the real one.
-    expect(allowedExtensionIds().has(CHROME_EXTENSION_ID)).toBe(true);
+    const ids = allowedExtensionIds();
+    expect(ids.has(CHROME_EXTENSION_ID)).toBe(true);
+    expect(ids.has(DEV_ID)).toBe(true);
   });
 
+  // The property the fallback exists for: production sign-in must not
+  // be breakable by a missing or fat-fingered env var.
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['a wildcard', '*'],
+    ['a bare host', 'evil.example.com'],
+    ['an id that is too short', OTHER_ID.slice(1)],
+  ])('still trusts the published extension when the var is %s', (_label, value) => {
+    if (value !== undefined) vi.stubEnv('VITE_EXTENSION_IDS', value);
+    expect([...allowedExtensionIds()]).toEqual([CHROME_EXTENSION_ID]);
+  });
+});
+
+describe('allowedExtensionIds — staging build', () => {
+  beforeEach(() => {
+    vi.stubEnv('MODE', 'staging');
+  });
+
+  // The regression this whole change exists for. The staging extension
+  // is an unpacked build with its own keypair-derived id; the Web Store
+  // id belongs to an extension pinned to the production origin, which
+  // cannot be the caller here.
+  it('does not trust the published extension', () => {
+    expect(allowedExtensionIds().has(CHROME_EXTENSION_ID)).toBe(false);
+    expect(isAllowedRedirectUri(uri(CHROME_EXTENSION_ID))).toBe(false);
+  });
+
+  it('trusts exactly what VITE_EXTENSION_IDS lists', () => {
+    vi.stubEnv('VITE_EXTENSION_IDS', DEV_ID);
+    expect([...allowedExtensionIds()]).toEqual([DEV_ID]);
+    expect(isAllowedRedirectUri(uri(DEV_ID))).toBe(true);
+  });
+
+  // `vite build --mode staging` fails before reaching this state; the
+  // dev server does not, which is why the route names the cause.
+  it('reports an empty allowlist when the var is unset', () => {
+    expect(extensionAllowlistIsEmpty()).toBe(true);
+    expect(isAllowedRedirectUri(uri(DEV_ID))).toBe(false);
+  });
+
+  it('is not empty once an id is configured', () => {
+    vi.stubEnv('VITE_EXTENSION_IDS', DEV_ID);
+    expect(extensionAllowlistIsEmpty()).toBe(false);
+  });
+});
+
+describe('allowedExtensionIds — parsing', () => {
   it('accepts a comma-separated list with surrounding whitespace', () => {
     vi.stubEnv('VITE_EXTENSION_IDS', `  ${DEV_ID} , ${OTHER_ID}  `);
     const ids = allowedExtensionIds();
@@ -79,28 +145,17 @@ describe('allowedExtensionIds', () => {
     expect(allowedExtensionIds().has(DEV_ID)).toBe(true);
   });
 
-  // A typo must not widen the trust set, and must not take the build
-  // down either — the published id keeps working regardless.
-  it.each([
-    ['a wildcard', '*'],
-    ['a bare host', 'evil.example.com'],
-    ['an id that is too short', OTHER_ID.slice(1)],
-    ['an id outside the a-p alphabet', `${OTHER_ID.slice(1)}z`],
-    ['an empty entry', ''],
-  ])('drops %s from the env var without widening the set', (_label, value) => {
-    vi.stubEnv('VITE_EXTENSION_IDS', value);
-    const ids = allowedExtensionIds();
-    expect([...ids]).toEqual([CHROME_EXTENSION_ID]);
-  });
-
-  it('falls back to the published extension alone when the var is unset', () => {
-    vi.stubEnv('VITE_EXTENSION_IDS', '');
-    expect([...allowedExtensionIds()]).toEqual([CHROME_EXTENSION_ID]);
+  // A typo must not widen the trust set. It also must not take the
+  // build down: the valid neighbours in the list still apply.
+  it('drops malformed entries but keeps the valid ones beside them', () => {
+    vi.stubEnv('MODE', 'staging');
+    vi.stubEnv('VITE_EXTENSION_IDS', `*, ${DEV_ID}, evil.example.com, ${OTHER_ID.slice(1)}`);
+    expect([...allowedExtensionIds()]).toEqual([DEV_ID]);
   });
 });
 
 describe('isAllowedRedirectUri', () => {
-  it('accepts the published extension callback origin', () => {
+  it('accepts the published extension callback origin in production', () => {
     expect(isAllowedRedirectUri(uri(CHROME_EXTENSION_ID))).toBe(true);
     expect(isAllowedRedirectUri(`https://${CHROME_EXTENSION_ID}.chromiumapp.org`)).toBe(true);
   });
@@ -114,7 +169,7 @@ describe('isAllowedRedirectUri', () => {
     expect(isAllowedRedirectUri(uri(OTHER_ID))).toBe(false);
   });
 
-  it('accepts an unpacked dev id once it is listed in the env var', () => {
+  it('accepts an unpacked id once it is listed in the env var', () => {
     expect(isAllowedRedirectUri(uri(DEV_ID))).toBe(false);
     vi.stubEnv('VITE_EXTENSION_IDS', DEV_ID);
     expect(isAllowedRedirectUri(uri(DEV_ID))).toBe(true);
