@@ -37,7 +37,10 @@ src/
 ├── callable/
 │   ├── getMyPendingRequests.ts        # signed-in caller's pending requests across roles
 │   ├── markRequestComplete.ts         # manager-invoked; completes a request + writes seats
+│   ├── createStake.ts                 # superadmin-invoked; seeds a stake + its platformAuditLog row
 │   ├── syncApplyFix.ts                # extension Sync per-row fix applier (auto + manual + temp paths)
+│   ├── mintExtensionToken.ts          # custom token for the extension sign-in handoff (D33)
+│   ├── backfillEqPresidentAccess.ts   # reconciles access docs after the EQ-president flag flips
 │   └── backfillKindooSiteId.ts        # one-shot migration helper for Kindoo Sites
 ├── services/                          # business logic (EmailService)
 ├── lib/                               # admin SDK init, resend client, audit diff, helpers

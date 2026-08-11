@@ -214,9 +214,10 @@
   <ol class="steps">
     <li>In Chrome, open the <a href="https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb">Chrome Web Store listing</a> and click <span class="ui">Add to Chrome</span>.</li>
     <li>Open Kindoo's admin site and sign in to Kindoo as you normally would.</li>
-    <li>Click the extension's toolbar button to open the panel, then <strong>sign in with Google</strong> using the same email a manager is registered under in SBA.</li>
+    <li>Click the extension's toolbar button to open the panel, then sign in with the same email address you are registered under as a manager in SBA. The panel offers two buttons and either one works: <span class="ui">Sign&nbsp;in&nbsp;with&nbsp;Google</span> if that address is a Google account, or <span class="ui">Sign&nbsp;in&nbsp;with&nbsp;email</span> if it isn't.</li>
     <li>Navigate <strong>into a specific Kindoo site</strong> (not the "My Sites" listing). The panel needs to know which site you're on.</li>
   </ol>
+  <div class="callout"><span class="lbl">No Google account? Use Sign in with email</span><p>The button opens a Stake Building Access sign-in window and signs the extension in with whatever you get back — you don't need a Google account for it. If you use the emailed sign-in link, expect one extra step: <strong>the link opens in a normal browser tab, not in that window.</strong> That's normal. Click the link there, come back to Kindoo, and press <span class="ui">Sign in with email</span> once more; the second try finishes without asking you anything.</p></div>
   <div class="callout"><span class="lbl">How the panel behaves</span><p>The toolbar button toggles the panel open and closed. The panel runs on top of Kindoo without changing Kindoo's own pages. If you manage more than one stake on the same Kindoo environment, the panel will ask which stake you're working in.</p></div>
   <div class="callout warn"><span class="lbl">"This Kindoo site isn't configured"</span><p>The extension matches the Kindoo site you're viewing to a site configured in SBA. If you see a message that the site isn't recognized, make sure you've opened a specific site in Kindoo (not the site list) and that the site exists under <span class="ui">Configuration&nbsp;→&nbsp;Kindoo&nbsp;Config</span> (see <a href="#sites">Section 8</a>).</p></div>
 
@@ -523,6 +524,10 @@
 
   <h4>Someone with limited access can't submit — "This ward has no building configured."</h4>
   <p>A limited ward-scope request is tied to the ward's own building, and that ward has none set. Open <span class="ui">Configuration&nbsp;→&nbsp;Wards</span>, set the ward's building, and have them try again.</p>
+
+  <h4>The extension won't sign in with email.</h4>
+  <p>If the window closes and the panel says <strong>"Sign-in cancelled. Click again to retry,"</strong> just press the button again — that message covers both closing the window yourself and the window being unable to hand the sign-in back. If it repeats every time, reinstall the extension from the Chrome Web Store; a damaged install is the usual cause.</p>
+  <p>If the panel reports a failure mentioning <strong>mint_failed</strong>, the sign-in worked and the server couldn't issue the extension's session. Nothing on your end fixes that — contact support. <span class="ui">Sign in with Google</span> still works in the meantime if that address is a Google account.</p>
 
   <h4>The extension shows an error right after a new deployment.</h4>
   <p>If the panel reports a connection/CORS error, the environment's functions may still be deploying. Wait a moment and reopen the panel; if it persists, contact support.</p>
