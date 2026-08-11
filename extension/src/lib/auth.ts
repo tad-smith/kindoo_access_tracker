@@ -212,12 +212,23 @@ export async function signIn(): Promise<User> {
  * returns `https://<extension-id>.chromiumapp.org/`, which Chrome
  * intercepts instead of navigating to — that interception is what
  * hands the fragment back to us.
+ *
+ * The redirect URI is logged because a rejected one is otherwise
+ * invisible from here. The SPA validates it against an anchored
+ * `chromiumapp.org` pattern and renders a terminal error rather than
+ * redirecting when it fails — which reaches us as a flow that ended
+ * with no redirect URL, indistinguishable from the manager closing the
+ * window, and so surfaces as "Sign-in cancelled. Click again to retry."
+ * That is a retry-forever dead end for a config fault, and Chrome gives
+ * us nothing to tell the two apart. One line in the SW console is what
+ * makes the actual value checkable during a smoke test.
  */
 function buildWebAuthUrl(): string {
   // A trailing slash in .env would produce `//auth/extension`, which
   // the SPA router does not match.
   const base = (import.meta.env.VITE_WEB_BASE_URL ?? '').replace(/\/+$/, '');
   const redirectUri = chrome.identity.getRedirectURL();
+  console.info(`[sba-ext] web sign-in: redirect_uri is ${redirectUri}`);
   return `${base}/auth/extension?redirect_uri=${encodeURIComponent(redirectUri)}`;
 }
 
