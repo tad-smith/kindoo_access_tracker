@@ -11,6 +11,7 @@ A Kindoo Manager who holds no Google account can now sign the Chrome extension i
 - **`/auth/extension`** (`apps/web/src/routes/auth/extension.tsx`) — public route, sibling of `/auth/email-link`. Two gates gate the mint (below); renders the shared provider block when signed out, the confirm card when signed in.
 - **`isAllowedRedirectUri`** (`apps/web/src/features/auth/extensionRedirect.ts`) — the trust boundary, and the only sanctioned way to decide whether a handoff may proceed.
 - **`signInViaWeb`** (`extension/src/lib/auth.ts`) — the `launchWebAuthFlow` call, the fragment parse, and the custom-token exchange, alongside the untouched `signIn`.
+- **`/privacy`** (`apps/web/src/routes/privacy.tsx`) — §3, §5, §6, and §7 rewritten for two sign-in paths: the `identity` permission justified against both `getAuthToken` and `launchWebAuthFlow`, the custom-token handoff described, `sba.googleAccessToken` marked as Google-path-only, and the "revoke the OAuth grant" remedy scoped to the path that has one. This page is the privacy URL on the Chrome Web Store listing and reviewers read it against the declared permission list, so it ships with the code it describes.
 
 The Google path is byte-for-byte unchanged. The two are alternatives a manager picks between, not a fallback chain.
 
@@ -104,6 +105,3 @@ One caveat on the third that is worth carrying past this PR: **production may le
 - `infra/runbooks/provision-firebase-projects.md`, `infra/runbooks/deploy.md`, `infra/runbooks/extension-deploy.md`, `apps/web/.env.example`, `extension/.env.example` — the IAM grant, `VITE_WEB_BASE_URL`, and `VITE_EXTENSION_IDS`.
 - `docs/TASKS.md` — the placeholder task `web-engineer` filed against D33(d) is removed rather than numbered; correcting D33 here completed it on arrival.
 
-## Known issue
-
-`apps/web/src/routes/privacy.tsx` §5 and §6 still describe the extension's authentication as Google-only — "uses Chrome's built-in identity API to request a Google OAuth access token, which it exchanges for a Firebase session," and the `identity` permission justified solely as "to obtain a Google OAuth access token." Both are now incomplete: the web handoff uses `chrome.identity.launchWebAuthFlow`, obtains no Google token, and persists no `sba.googleAccessToken`. (§5's "The web app uses Google Sign-In" has also been stale since T-44.) That page is the privacy URL declared on the Chrome Web Store listing, so the copy is user-facing and review-visible. It is application source, owned by `web-engineer`.

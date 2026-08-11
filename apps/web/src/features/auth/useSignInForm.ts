@@ -16,12 +16,84 @@ import { signInEmailSchema, type SignInEmailForm } from './schemas';
 import { clearStashedEmail, sendMagicLink, signInWithGoogle } from './signIn';
 
 // Normal user cancellations from `signInWithPopup` — the popup was
-// dismissed or raced by a second invocation. These are not failures
-// and must not surface as red alerts.
-const SILENT_GOOGLE_ERROR_CODES: ReadonlySet<string> = new Set([
+// dismissed or raced by a second invocation. On the homepage these are
+// not failures and must not surface as red alerts.
+//
+// `/auth/extension` opts out via `announceCancelledPopup`, because the
+// same silence reads differently there: that page renders inside a
+// `chrome.identity.launchWebAuthFlow` window, where a Google popup that
+// never opened — or opened and vanished — is indistinguishable from
+// nothing having happened at all. Saying nothing leaves the manager
+// staring at the page that just told them to use whichever sign-in they
+// have, with no hint that the other one is right below.
+const CANCELLED_GOOGLE_ERROR_CODES: ReadonlySet<string> = new Set([
   'auth/popup-closed-by-user',
   'auth/cancelled-popup-request',
 ]);
+
+/**
+ * A Google sign-in failure, already translated for a human.
+ *
+ * `message` leads with what to do next — always the magic-link form,
+ * which is on screen in both hosts and needs no Google account. `code`
+ * carries the SDK's own identifier for the operator, rendered small
+ * beside it: a raw `FirebaseError` string is useless to a manager, but
+ * discarding the code entirely would cost the operator the one token
+ * that makes a smoke-test failure searchable.
+ */
+export interface GoogleSignInError {
+  message: string;
+  code: string | null;
+}
+
+const GOOGLE_FALLBACK_HINT =
+  'Use the email sign-in link below instead — it works without a Google account.';
+
+/**
+ * Translate a `signInWithPopup` rejection into copy. Returns `null` when
+ * the rejection is a cancellation the host chose not to announce.
+ *
+ * Every branch names the magic-link form. `signInWithPopup` needs
+ * `window.open` plus opener `postMessage`, neither of which is
+ * guaranteed inside an extension auth window, so "the popup route is
+ * unavailable here" is a real state this page has to survive rather
+ * than merely report.
+ */
+export function describeGoogleSignInError(
+  err: unknown,
+  announceCancelled: boolean,
+): GoogleSignInError | null {
+  const code = err instanceof FirebaseError ? err.code : null;
+  if (code !== null && CANCELLED_GOOGLE_ERROR_CODES.has(code)) {
+    if (!announceCancelled) return null;
+    return {
+      message: `Google sign-in didn’t finish. Try it again, or ${lowerFirst(GOOGLE_FALLBACK_HINT)}`,
+      code,
+    };
+  }
+  if (code === 'auth/popup-blocked') {
+    return {
+      message: `Your browser blocked the Google sign-in window. ${GOOGLE_FALLBACK_HINT}`,
+      code,
+    };
+  }
+  if (code === 'auth/network-request-failed') {
+    return { message: `Google sign-in couldn’t reach the network. ${GOOGLE_FALLBACK_HINT}`, code };
+  }
+  return { message: `Google sign-in didn’t work. ${GOOGLE_FALLBACK_HINT}`, code };
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+export interface SignInFormOptions {
+  /**
+   * Surface a dismissed / raced Google popup as copy instead of
+   * swallowing it. See `CANCELLED_GOOGLE_ERROR_CODES`.
+   */
+  announceCancelledPopup?: boolean;
+}
 
 export interface SignInFormState {
   form: UseFormReturn<SignInEmailForm>;
@@ -39,11 +111,12 @@ export interface SignInFormState {
   onUseDifferentEmail: () => void;
   onGoogleSignIn: () => void;
   googlePending: boolean;
-  googleError: string | null;
+  googleError: GoogleSignInError | null;
   focusEmailInput: () => void;
 }
 
-export function useSignInForm(): SignInFormState {
+export function useSignInForm(options: SignInFormOptions = {}): SignInFormState {
+  const announceCancelledPopup = options.announceCancelledPopup ?? false;
   // Form-level zod-resolver covers required + format. `submitError`
   // captures the post-submit SDK rejection (network /
   // unauthorized-continue-uri / etc.) so the field-level error spot
@@ -56,7 +129,7 @@ export function useSignInForm(): SignInFormState {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [googlePending, setGooglePending] = useState(false);
-  const [googleError, setGoogleError] = useState<string | null>(null);
+  const [googleError, setGoogleError] = useState<GoogleSignInError | null>(null);
   const emailInputEl = useRef<HTMLInputElement>(null);
   const { ref: rhfEmailRef, ...emailInputProps } = register('email');
 
@@ -86,17 +159,10 @@ export function useSignInForm(): SignInFormState {
     try {
       await signInWithGoogle();
     } catch (err) {
-      // User-initiated cancellations are not failures — silently
-      // swallow them so the alert region stays empty when the user
-      // closes the popup or a second popup raced.
-      if (err instanceof FirebaseError && SILENT_GOOGLE_ERROR_CODES.has(err.code)) {
-        return;
-      }
-      // `signInWithPopup` rejects with `FirebaseError` for popup-blocked,
-      // network failure, etc. Surface the message verbatim so the
-      // operator can debug without opening devtools.
-      const message = err instanceof Error ? err.message : String(err);
-      setGoogleError(message);
+      // `describeGoogleSignInError` returns `null` for a cancellation
+      // the host chose to swallow, and otherwise copy that names the
+      // magic-link form as the way through.
+      setGoogleError(describeGoogleSignInError(err, announceCancelledPopup));
     } finally {
       setGooglePending(false);
     }

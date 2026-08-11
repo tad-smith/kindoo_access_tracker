@@ -115,15 +115,36 @@ describe('SignInPage — both providers', () => {
     resolveGoogle!({ uid: 'u1' });
   });
 
-  it('surfaces a Google sign-in failure in an accessible alert region', async () => {
-    signInWithGoogleMock.mockRejectedValueOnce(new Error('popup blocked'));
+  // The alert names the way through rather than echoing the SDK. A raw
+  // `FirebaseError` string is meaningless to a ward clerk, and this is
+  // the one moment where the other provider — which needs no Google
+  // account at all — is the answer.
+  it('surfaces a Google sign-in failure as copy pointing at the magic-link form', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(
+      new FirebaseError('auth/popup-blocked', 'Firebase: Error (auth/popup-blocked).'),
+    );
     render(<SignInPage />);
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/popup blocked/i);
+    expect(alert).toHaveTextContent(/blocked the Google sign-in window/i);
+    expect(alert).toHaveTextContent(/email sign-in link below/i);
+    // No raw SDK prose.
+    expect(alert).not.toHaveTextContent(/Firebase: Error/);
+    // The code is still there for the operator, just not as the headline.
+    expect(alert).toHaveTextContent(/auth\/popup-blocked/);
     // The magic-link form remains on screen so the user can fall back.
     expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
+  });
+
+  it('translates an unrecognised Google failure rather than echoing it', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(new Error('kaboom'));
+    render(<SignInPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /Continue with Google/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/email sign-in link below/i);
+    expect(alert).not.toHaveTextContent(/kaboom/);
   });
 
   // User-initiated popup dismissal is a normal flow, not a failure.

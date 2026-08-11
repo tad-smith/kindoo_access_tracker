@@ -12,6 +12,7 @@ import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { FirebaseError } from 'firebase/app';
 import type { Principal } from '../../lib/principal';
 import { CHROME_EXTENSION_ID } from '../../lib/links';
 
@@ -281,6 +282,47 @@ describe('/auth/extension — signed out', () => {
       /come back to Kindoo and press Sign in in the extension again/i,
     );
     expect(screen.getByTestId('extension-magic-link-note')).toBeInTheDocument();
+  });
+
+  // `signInWithPopup` needs `window.open` plus opener `postMessage`,
+  // neither guaranteed inside a `launchWebAuthFlow` window. Whether it
+  // works there is an open question for the smoke test; that it fails
+  // survivably is not optional, because this page just told the manager
+  // to use whichever sign-in they have.
+  it('points a blocked Google popup at the magic-link form instead of showing an SDK string', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(
+      new FirebaseError('auth/popup-blocked', 'Firebase: Error (auth/popup-blocked).'),
+    );
+
+    renderRoute(VALID_REDIRECT);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Continue with Google/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/email sign-in link below/i);
+    expect(alert).not.toHaveTextContent(/Firebase: Error/);
+    // The form it points at is on screen.
+    expect(screen.getByRole('button', { name: /Send me a sign-in link/i })).toBeInTheDocument();
+  });
+
+  // The homepage swallows this code — closing a popup there is an
+  // ordinary cancel. In this window a popup that never opened looks
+  // identical to nothing happening, so silence would strand the manager.
+  it('explains a dismissed Google popup here, unlike the homepage', async () => {
+    signInWithGoogleMock.mockRejectedValueOnce(
+      new FirebaseError(
+        'auth/popup-closed-by-user',
+        'Firebase: Error (auth/popup-closed-by-user).',
+      ),
+    );
+
+    renderRoute(VALID_REDIRECT);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Continue with Google/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/didn’t finish/i);
+    expect(alert).toHaveTextContent(/email sign-in link below/i);
   });
 
   it('waits for Firebase Auth to rehydrate before showing the sign-in form', () => {
