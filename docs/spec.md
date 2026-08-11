@@ -165,9 +165,9 @@ Firebase Auth identifies the user; it does not authorize them. Authorization is 
 **Surfaces.**
 
 - **SPA (`apps/web/`):** Both providers visible. A "Continue with Google" button (calls `signInWithPopup` with `GoogleAuthProvider`) sits above the email magic-link form (email input + "Send me a sign-in link" submit). Both end at the same Firebase Auth UID for the same email when "Link accounts that use the same email" is enabled (Firebase Console → Authentication → Settings → User account linking — confirmed enabled 2026-05-18). No password field.
-- **Chrome extension:** Google only, via `chrome.identity.getAuthToken` → Firebase credential exchange. Unchanged.
+- **Chrome extension:** Two buttons on the signed-out panel, alternatives rather than a fallback chain. **"Sign in with Google"** is the original path — `chrome.identity.getAuthToken` → `GoogleAuthProvider.credential` → `signInWithCredential`. **"Sign in with email"** hands off to the SPA (below), the only path open to a manager who has no Google account at all. Both land on the same Firebase session, and authorization is identical either way.
 
-**Firebase Console provider config.** Both Google and Email/Password (with the Email-link sub-toggle on, password sub-toggle off) are enabled at the project level. Both are also surfaced in the SPA UI. Disabling either provider in Console would break the corresponding SPA affordance (and disabling Google would additionally break the extension).
+**Firebase Console provider config.** Both Google and Email/Password (with the Email-link sub-toggle on, password sub-toggle off) are enabled at the project level. Both are also surfaced in the SPA UI. Disabling either provider in Console would break the corresponding SPA affordance, and would break the extension button that fronts it — the extension's Google button reads Google directly, and its email button reaches whatever the SPA offers.
 
 **Google popup round-trip.** User visits `/` while signed out, clicks "Continue with Google" in the hero, and completes the Firebase Auth popup flow. On success the SPA force-refreshes the ID token (bounded-poll mitigation for B-4 — see `apps/web/src/features/auth/signIn.ts` module comment) and `gateDecision()` in `apps/web/src/routes/index.tsx` runs unchanged. The Google flow does NOT use `actionCodeSettings` / authorized continue URIs.
 
@@ -186,6 +186,17 @@ Firebase Auth identifies the user; it does not authorize them. Authorization is 
 
 **`actionCodeSettings`.** `url` is the full SPA action-handler URL (must include the host) and the host must be on Firebase Auth's Authorized Domains list (Console → Authentication → Settings → Authorized domains). **This is a separate Console-level list from the Firebase Hosting custom-domain config referenced in §12** — a host showing up under Hosting does NOT imply it's on the Auth Authorized Domains list. Adding a new authorized SPA host (or verifying an existing one is present) is a deployment prerequisite, not a runtime concern; a missing entry surfaces at runtime as `auth/unauthorized-continue-uri` on the `sendSignInLinkToEmail` call. `handleCodeInApp: true`. Verify before T-44 ships that the Auth Authorized Domains list contains `stakebuildingaccess.org`, `kindoo.csnorth.org`, and the project's default `kindoo-prod.firebaseapp.com` auth-domain entry.
 
+**Extension web handoff.** The extension's "Sign in with email" button reaches the SPA's providers without embedding any of them:
+
+1. The service worker calls `chrome.identity.launchWebAuthFlow({ interactive: true })` on `${VITE_WEB_BASE_URL}/auth/extension?redirect_uri=<chrome.identity.getRedirectURL()>`. Chrome opens the SPA in its own auth window.
+2. The manager signs in there by whichever provider they have — magic link included.
+3. The SPA redirects to `<redirect_uri>#token=<Firebase custom token>` on success, or `<redirect_uri>#error=<code>` on failure. Chrome intercepts the `chromiumapp.org` navigation and hands the URL back to the service worker, which reads the **fragment** (never a query string, so the token stays out of server logs and `Referer` headers).
+4. The service worker exchanges the token via `signInWithCustomToken`.
+
+**Why a custom token and not the SPA's ID token.** An ID token expires in an hour and only the context holding the refresh token can renew it. The SPA's session lives in an auth window the extension cannot re-open silently, so a relayed ID token would strand the extension one hour later. `signInWithCustomToken` mints the extension its own refresh token, which is what survives service-worker suspends and browser restarts.
+
+**Cancellation is not a redirect.** The SPA never redirects on a cancelled sign-in, so the manager closing the auth window surfaces as a `launchWebAuthFlow` failure with no redirect URL at all. The extension maps that to its existing `consent_dismissed` code, so the panel shows the same quiet "Sign-in cancelled. Click again to retry." copy the Google path uses. Every `#error=<code>` is a hard failure, including codes a given extension build predates — an unrecognised code must not fall through to "success with no token." The `signInViaWeb` path writes only the principal snapshot to `chrome.storage.local`; there is no Google access token on it. `signOut()` probes for a cached Google token to revoke and falls through when there is none, so a manager who signed in this way can still sign out.
+
 **Authorization gate (unchanged).** A successful magic-link sign-in produces a Firebase user but does not by itself grant any role. A signed-in user with no `access` / `kindooManagers` / `superadmins` doc keyed to their canonical email lands on the existing `NotAuthorized` page exactly as a Google sign-in would. The sign-in page surfaces a short explanatory sentence so new users understand that creating an account does not immediately grant access — e.g., "New sign-ins land in pending authorization until a stake manager adds your email. Contact your stake manager if you can't reach the next screen."
 
 **`userIndex` + claims sync (unchanged).** The `onAuthUserCreate` trigger writes a `userIndex/{canonical}` doc on first sign-in regardless of provider. Claim-sync triggers on `access` / `kindooManagers` / `superadmins` are keyed by canonical email, not by provider or uid. No backend changes ship with the SPA UI provider switch.
@@ -197,9 +208,10 @@ Firebase Auth identifies the user; it does not authorize them. Authorization is 
 - The Firebase Auth Authorized Domains list contains `stakebuildingaccess.org`, `kindoo.csnorth.org`, and `kindoo-prod.firebaseapp.com` (Console → Authentication → Settings → Authorized domains — separate from Hosting custom-domain config, see §12).
 - The Firebase Auth user-account-linking setting is **"one account per email address"** (Console → Authentication → Settings → User account linking).
 - The Email/Password provider is enabled at the Firebase Console level with the Email-link sub-toggle ON and the password sub-toggle OFF (Console → Authentication → Sign-in method).
-- The Google provider remains enabled at the Firebase Console level (the Chrome extension depends on it).
+- The Google provider remains enabled at the Firebase Console level (the Chrome extension's Google button depends on it).
+- `extension/.env.<mode>` carries `VITE_WEB_BASE_URL` pointing at the SPA origin for the **same** env as its `VITE_FIREBASE_*` values. A custom token minted by the other project will not verify. See `infra/runbooks/extension-deploy.md`.
 
-**Out of scope.** Email/password (password sub-toggle stays off). Other OAuth providers (Apple, Microsoft, LDS Church Account). Self-service authorization or onboarding flows. Changes to the extension's Google-only auth path.
+**Out of scope.** Email/password (password sub-toggle stays off). Other OAuth providers (Apple, Microsoft, LDS Church Account). Self-service authorization or onboarding flows.
 
 ## 5. Page map
 

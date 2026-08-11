@@ -72,6 +72,30 @@ describe('extensionApi', () => {
     await expect(signIn()).rejects.toMatchObject({ code: 'consent_dismissed' });
   });
 
+  it('signInViaWeb posts auth.signInViaWeb and unwraps the AuthSnapshot', async () => {
+    chromeStub().runtime.sendMessage.mockImplementation(
+      (_req: unknown, cb: SendMessageCallback) => {
+        cb({
+          ok: true,
+          data: {
+            status: 'signed-in',
+            user: { uid: 'u7', email: 'mgr@example.org', displayName: null },
+          },
+        });
+      },
+    );
+    const { signInViaWeb } = await import('./extensionApi');
+    const result = await signInViaWeb();
+    expect(chromeStub().runtime.sendMessage).toHaveBeenCalledWith(
+      { type: 'auth.signInViaWeb' },
+      expect.any(Function),
+    );
+    expect(result).toEqual({
+      status: 'signed-in',
+      user: { uid: 'u7', email: 'mgr@example.org', displayName: null },
+    });
+  });
+
   it('getMyPendingRequests posts the right payload + name', async () => {
     chromeStub().runtime.sendMessage.mockImplementation(
       (_req: unknown, cb: SendMessageCallback) => {

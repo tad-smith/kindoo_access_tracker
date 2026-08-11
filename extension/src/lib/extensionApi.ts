@@ -20,6 +20,8 @@ import type {
   AuthGetStateResponse,
   AuthSignInRequest,
   AuthSignInResponse,
+  AuthSignInViaWebRequest,
+  AuthSignInViaWebResponse,
   AuthSignOutRequest,
   AuthSignOutResponse,
   AuthSnapshot,
@@ -140,6 +142,17 @@ function unwrap<T>(response: { ok: true; data: T } | { ok: false; error: WireErr
 export async function signIn(): Promise<AuthSnapshot> {
   const req: AuthSignInRequest = { type: 'auth.signIn' };
   const res: AuthSignInResponse = await sendMessage(req);
+  return unwrap(res);
+}
+
+/**
+ * Sign in by handing off to the SPA's `/auth/extension` route. The
+ * alternative to `signIn()` for a manager with no Google account —
+ * the SPA offers the email magic link there.
+ */
+export async function signInViaWeb(): Promise<AuthSnapshot> {
+  const req: AuthSignInViaWebRequest = { type: 'auth.signInViaWeb' };
+  const res: AuthSignInViaWebResponse = await sendMessage(req);
   return unwrap(res);
 }
 
