@@ -197,6 +197,14 @@ Firebase Auth identifies the user; it does not authorize them. Authorization is 
 
 **Cancellation is not a redirect.** The SPA never redirects on a cancelled sign-in, so the manager closing the auth window surfaces as a `launchWebAuthFlow` failure with no redirect URL at all. The extension maps that to its existing `consent_dismissed` code, so the panel shows the same quiet "Sign-in cancelled. Click again to retry." copy the Google path uses. Every `#error=<code>` is a hard failure, including codes a given extension build predates — an unrecognised code must not fall through to "success with no token." The `signInViaWeb` path writes only the principal snapshot to `chrome.storage.local`; there is no Google access token on it. `signOut()` probes for a cached Google token to revoke and falls through when there is none, so a manager who signed in this way can still sign out.
 
+**The SPA half — `/auth/extension`.** The route is `apps/web/src/routes/auth/extension.tsx` — public, a sibling of `/auth/email-link` rather than a member of the `_authed` group, since a signed-out entry is the entire point.
+
+- **`redirect_uri` is validated against `/^https:\/\/[a-p]{32}\.chromiumapp\.org\/?$/`** before anything else — a Chrome extension ID is exactly 32 characters drawn from `a`–`p`, and the callback origin carries no path or query. A value that doesn't match renders a terminal error state and the route **never redirects**, with no "continue anyway" affordance. That check is the only thing standing between this route and handing a session token to an arbitrary origin.
+- **Success** replaces the location with `<redirect_uri>#token=<encodeURIComponent(customToken)>`. **A mint failure** replaces it with `<redirect_uri>#error=mint_failed`, the only code the SPA emits.
+- **Signed out, the page renders the same two providers as the homepage** — the "Continue with Google" CTA above the magic-link form, from one shared component (`features/auth/SignInProviders` + `useSignInForm`), so the two surfaces cannot drift on provider set or copy.
+- **The magic-link wrinkle is stated up front, as an instruction rather than an error:** the emailed link opens in a normal browser tab, not this window, so it can't complete the handoff from there. The user clicks it, returns to Kindoo, and presses Sign in in the extension again; that second pass finds Firebase Auth already hydrated from IndexedDB on this origin and completes with no further prompt.
+- **The signed-in branch waits for Firebase Auth to finish rehydrating** (`authStateReady`) before choosing between minting and showing the form, so a returning manager never sees a sign-in form flash for a session that was about to resolve on its own.
+
 **The server half — the `mintExtensionToken` callable.** A single HTTPS callable (`functions/src/callable/mintExtensionToken.ts`) mints the token the SPA hands back in step 3:
 
 - **No request payload.** The caller's session is the whole input.
