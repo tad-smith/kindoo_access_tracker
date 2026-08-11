@@ -6,12 +6,24 @@
 import { REQUESTER_GUIDE_PATH } from '@kindoo/shared';
 
 /**
+ * Chrome Web Store ID of the published Stake Building Access extension.
+ *
+ * Load-bearing beyond the store link: it is the default entry in the
+ * `/auth/extension` redirect allowlist (`features/auth/extensionRedirect.ts`),
+ * so this constant decides which extension may be handed a session
+ * token. Change it only when the published extension itself changes.
+ */
+export const CHROME_EXTENSION_ID = 'klkkpfdafbjebccodmgkogdklachelpb';
+
+/**
  * Chrome Web Store listing for the Stake Building Access extension. Used
  * by the sign-in page footer and the manager queue's read-only note
  * (the actionable complete / reject workflow lives in the extension).
+ *
+ * Composed from `CHROME_EXTENSION_ID` so the linked listing and the
+ * trusted extension can never name two different extensions.
  */
-export const CHROME_WEB_STORE_URL =
-  'https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/klkkpfdafbjebccodmgkogdklachelpb';
+export const CHROME_WEB_STORE_URL = `https://chromewebstore.google.com/detail/stake-building-access-%E2%80%94-k/${CHROME_EXTENSION_ID}`;
 
 /**
  * Static end-user help guides, served by Firebase Hosting from
