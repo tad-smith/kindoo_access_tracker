@@ -143,6 +143,14 @@ main.sba-panel {
   font-size: 12px;
 }
 
+/* Same slot as .sba-error, for states that are not failures — a
+ * mid-journey "here is your next step". Red on a manager who just did
+ * the right thing reads as an accusation. */
+.sba-note {
+  color: var(--sba-fg-muted);
+  font-size: 12px;
+}
+
 .sba-muted {
   color: var(--sba-fg-muted);
 }

@@ -244,10 +244,22 @@ function buildWebAuthUrl(): string {
 
 /**
  * Open the SPA auth window and resolve with the URL Chrome intercepted.
- * Rejects `consent_dismissed` when the manager closes the window: the
- * SPA never redirects on a cancelled sign-in, so a closed window is
- * reported here via `chrome.runtime.lastError` and never as a fragment
- * error code.
+ *
+ * THIS IS A FUNNEL. Every way the flow can end without a redirect
+ * arrives here as one bare `chrome.runtime.lastError` carrying nothing
+ * to branch on, and leaves as the single code `consent_dismissed`. The
+ * set has grown four times already: the manager closing the window, a
+ * `redirect_uri` the SPA refused, an unconfigured `VITE_WEB_BASE_URL`
+ * (now caught earlier, in `buildWebAuthUrl`), and the magic-link first
+ * pass — which is the feature's PRIMARY journey and completely normal.
+ *
+ * So each new upstream failure silently inherits whatever
+ * `SignedOutPanel`'s copy for this code happens to assert. Three of the
+ * four were shipped bugs of exactly that shape. Before adding a fifth
+ * cause, either catch it before it reaches this callback (preferred —
+ * that is what `buildWebAuthUrl` now does) or re-read `dismissedCopy`
+ * and confirm the wording is still true for every case in the set.
+ * Wording that names a cause is the thing that breaks.
  */
 function launchWebAuthFlow(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
