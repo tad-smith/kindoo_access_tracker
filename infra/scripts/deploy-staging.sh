@@ -170,6 +170,14 @@ while [[ $# -gt 0 ]]; do
       WEB_ONLY=1
       shift
       ;;
+    --)
+      # pnpm 10 forwards the `--` separator to the script instead of
+      # consuming it, so the documented
+      # `pnpm deploy:staging -- --from-pr 282` arrives with a literal
+      # `--` first. Skip it; the real flags follow. Older pnpm strips
+      # it, so both invocations are tolerated.
+      shift
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       echo "$USAGE" >&2

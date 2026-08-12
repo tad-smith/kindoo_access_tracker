@@ -499,6 +499,13 @@ EOF
     echo "[dry-run] would run: firebase functions:list --project $alias --json"
     echo "[dry-run] would compare that list against these source exports:"
     printf '%s\n' "$expected_all" | sed 's/^/[dry-run]   /'
+    # A dry run never performs the --from-pr checkout, so this list was
+    # read from whatever is checked out right now — usually main. A
+    # function the PR ADDS is legitimately absent here, which reads as
+    # "the deploy is missing it" if you don't know that.
+    echo "[dry-run] NOTE: read from the CURRENT working tree, not from any --from-pr"
+    echo "[dry-run]       branch — the checkout is skipped in a dry run. A function the"
+    echo "[dry-run]       PR adds will be missing from this list and present in the real run."
     echo "[dry-run] nothing probed."
     return 0
   fi

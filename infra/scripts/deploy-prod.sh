@@ -95,6 +95,12 @@ for arg in "$@"; do
     --skip-verify)
       SKIP_VERIFY=1
       ;;
+    --)
+      # pnpm 10 forwards the `--` separator to the script instead of
+      # consuming it, so the documented `pnpm deploy:prod -- --dry-run`
+      # arrives as a literal first argument. Skip it; the real flags
+      # follow. Older pnpm strips it, so both are tolerated.
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
       echo "Usage: $0 [--dry-run] [--skip-verify]" >&2
