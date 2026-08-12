@@ -724,6 +724,101 @@ describe('App', () => {
     expect(screen.queryByTestId('sba-partial-failure-banner')).toBeNull();
   });
 
+  it('shows the resolved stake name in the shell', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    // Label comes from the candidate the resolver already returned — no
+    // extra read.
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+  });
+
+  it('falls back to the stakeId slug when the stake name is blank', async () => {
+    // A stake doc with a missing / whitespace `stake_name` would
+    // otherwise render an empty line where a name belongs, which reads
+    // as a broken panel rather than as a nameless stake.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: '   ', match: 'home' }],
+      managedStakeCount: 1,
+      failedStakes: [],
+      partialFailure: false,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('csnorth');
+  });
+
+  it('names the surviving stake, not the one whose read failed, on a partial failure', async () => {
+    // The stored choice points at a stake this run could not read, so it
+    // is not a candidate and carries no label. Resolution falls through
+    // to the one survivor, and the line must name THAT stake — a blank
+    // line, or the failed stake's slug, would tell the manager they are
+    // working a queue they are not.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      managedStakeCount: 2,
+      failedStakes: ['east-co'],
+      partialFailure: true,
+    });
+    readEidStakeChoiceMock.mockResolvedValue('east-co');
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+    expect(screen.getByTestId('sba-partial-failure-banner')).toBeInTheDocument();
+    expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'csnorth' });
+  });
+
+  it('carries the picked stake name into the shell', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
+      ],
+      managedStakeCount: 2,
+      failedStakes: [],
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    const user = userEvent.setup();
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    await user.click(screen.getByTestId('sba-stake-picker-east-co'));
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('East CO');
+  });
+
   it('retry button on the partial-failure banner re-runs the resolver (T-48)', async () => {
     useAuthStateMock.mockReturnValue({
       status: 'signed-in',

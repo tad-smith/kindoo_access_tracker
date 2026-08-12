@@ -91,6 +91,7 @@ async function renderShell(onPendingCountChange?: (count: number | null) => void
   return render(
     <TabbedShell
       stakeId="csnorth"
+      stakeLabel="Colorado Springs North Stake"
       email="mgr@example.com"
       bundle={BUNDLE}
       onPermissionDenied={vi.fn()}
@@ -112,6 +113,25 @@ describe('TabbedShell', () => {
   afterEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+  });
+
+  it('renders the active stake name between the toolbar and the tab strip', async () => {
+    // A manager of more than one stake otherwise has nothing in the
+    // panel telling them which queue they are working.
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    await renderShell();
+
+    const label = screen.getByTestId('sba-stake-label');
+    expect(label).toHaveTextContent('Colorado Springs North Stake');
+    // Untruncated name stays reachable — the CSS ellipsis hides it on a
+    // narrow slide-over.
+    expect(label).toHaveAttribute('title', 'Colorado Springs North Stake');
+
+    const children = Array.from(screen.getByTestId('sba-tabbed-shell').children);
+    expect(children.indexOf(label)).toBeGreaterThan(
+      children.indexOf(screen.getByTestId('sba-toolbar')),
+    );
+    expect(children.indexOf(label)).toBeLessThan(children.indexOf(screen.getByRole('tablist')));
   });
 
   it('refetches the queue when a phone-initiated job finishes on another tab', async () => {

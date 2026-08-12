@@ -97,9 +97,11 @@ extension/
 │   │   ├── NotAuthorizedPanel.tsx
 │   │   ├── StakePicker.tsx        # full-takeover gate when an EID has >1 candidate stake (12.5)
 │   │   ├── ConfigurePanel.tsx     # v2.1 first-run + reconfigure wizard
-│   │   ├── TabbedShell.tsx        # Toolbar + TabBar + active tab; HOSTS both the
-│   │   │                          # queue fetch and the remote-apply loop, so
-│   │   │                          # neither dies on a tab switch (D27)
+│   │   ├── TabbedShell.tsx        # Toolbar + active-stake line + TabBar + active
+│   │   │                          # tab; HOSTS both the queue fetch and the
+│   │   │                          # remote-apply loop, so neither dies on a tab
+│   │   │                          # switch (D27). The stake name rides in on
+│   │   │                          # App's resolved state — never a fresh read
 │   │   ├── Toolbar.tsx            # gray header — signed-in email + Sign out
 │   │   ├── TabBar.tsx             # Request Queue / Sync / gear tab strip
 │   │   ├── QueuePanel.tsx         # queue sections + the remote-apply opt-in row

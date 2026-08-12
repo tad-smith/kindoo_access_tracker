@@ -59,6 +59,12 @@ type StakeResolution =
       kind: 'resolved';
       eid: number;
       stakeId: string;
+      /** Display name of the resolved stake, shown above the tab strip
+       * so a multi-stake manager can see which queue they are working.
+       * Carried out of the candidate already in hand — resolving it
+       * separately would cost a Firestore read for a label the resolver
+       * already fetched. */
+      stakeLabel: string;
       /** Same intent as the `pick` branch — surfaces the banner above
        * the auto-picked / resolved view when a sibling stake's read
        * failed during the last resolver run (T-48). */
@@ -71,6 +77,15 @@ type ConfigStatus =
   | { kind: 'configured'; bundle: StakeConfigBundle }
   | { kind: 'denied' }
   | { kind: 'error'; message: string };
+
+/** Name for the shell's active-stake line, falling back to the stakeId
+ * slug. A stake doc with a missing or blank `stake_name` would otherwise
+ * render an empty line where a name belongs, which reads as a broken
+ * panel; a slug at least identifies the stake. */
+function stakeLabelOf(candidate: EidStakeCandidate | undefined, stakeId: string): string {
+  const label = candidate?.label?.trim() ?? '';
+  return label === '' ? stakeId : label;
+}
 
 function decideConfigStatus(bundle: StakeConfigBundle): ConfigStatus {
   // First-run gate: until home identity is captured we force the
@@ -156,8 +171,20 @@ export function App({ onPendingCountChange }: AppProps) {
     // by retrying.
     const failedStakesCount = payload.failedStakes.length;
     const stored = await readEidStakeChoice(eid).catch(() => null);
-    if (stored !== null && payload.candidates.some((c) => c.stakeId === stored)) {
-      setStake({ kind: 'resolved', eid, stakeId: stored, failedStakesCount });
+    // `find`, not `some`: the membership check and the display name come
+    // from the same candidate, so the label costs nothing extra. A stake
+    // whose read failed is not in `candidates`, so a resolved view can
+    // never name one.
+    const storedCandidate =
+      stored === null ? undefined : payload.candidates.find((c) => c.stakeId === stored);
+    if (storedCandidate) {
+      setStake({
+        kind: 'resolved',
+        eid,
+        stakeId: storedCandidate.stakeId,
+        stakeLabel: stakeLabelOf(storedCandidate, storedCandidate.stakeId),
+        failedStakesCount,
+      });
       return;
     }
     if (stored !== null) {
@@ -170,7 +197,13 @@ export function App({ onPendingCountChange }: AppProps) {
       // Single candidate — auto-resolve. Don't persist; the resolution
       // is structural, not a remembered choice.
       const only = payload.candidates[0]!;
-      setStake({ kind: 'resolved', eid, stakeId: only.stakeId, failedStakesCount });
+      setStake({
+        kind: 'resolved',
+        eid,
+        stakeId: only.stakeId,
+        stakeLabel: stakeLabelOf(only, only.stakeId),
+        failedStakesCount,
+      });
       return;
     }
     setStake({ kind: 'pick', eid, candidates: payload.candidates, failedStakesCount });
@@ -210,10 +243,12 @@ export function App({ onPendingCountChange }: AppProps) {
     async (stakeId: string) => {
       if (stake.kind !== 'pick') return;
       await writeEidStakeChoice(stake.eid, stakeId);
+      const picked = stake.candidates.find((c) => c.stakeId === stakeId);
       setStake({
         kind: 'resolved',
         eid: stake.eid,
         stakeId,
+        stakeLabel: stakeLabelOf(picked, stakeId),
         // Preserve the partial-failure flag across the picker → resolved
         // transition; the banner stays visible until the next resolver
         // run clears it.
@@ -437,6 +472,7 @@ export function App({ onPendingCountChange }: AppProps) {
       {partialFailureBanner}
       <TabbedShell
         stakeId={stake.stakeId}
+        stakeLabel={stake.stakeLabel}
         email={authState.email}
         bundle={configStatus.bundle}
         onPermissionDenied={handlePermissionDenied}
