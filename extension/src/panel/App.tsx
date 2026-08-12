@@ -18,11 +18,18 @@
 // storage write) → picker. Stored choices that no longer match the
 // candidate set get cleared and the picker re-runs.
 //
+// Resolution is NOT once-per-sign-in. Kindoo is an SPA, so moving to
+// another of its sites never remounts the content script; the active
+// EID is polled and a change re-runs the resolver (see the watcher
+// effect). The operator can also reopen the picker themselves from the
+// shell's stake line, which needs no re-resolve — the candidate set for
+// the active EID is held in the resolved state.
+//
 // The "is this user a manager?" determination still comes from the
 // callable: if `getMyPendingRequests` returns `permission-denied`, the
 // queue panel calls back into us to flip to NotAuthorized.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ExtensionApiError,
   clearEidStakeChoice,
@@ -59,6 +66,18 @@ type StakeResolution =
       kind: 'resolved';
       eid: number;
       stakeId: string;
+      /** Display name of the resolved stake, shown above the tab strip
+       * so a multi-stake manager can see which queue they are working.
+       * Carried out of the candidate already in hand — resolving it
+       * separately would cost a Firestore read for a label the resolver
+       * already fetched. */
+      stakeLabel: string;
+      /** Candidate set for this EID, carried forward so the stake line's
+       * chevron can hand the operator back to the picker without a
+       * re-resolve — and so the chevron itself can be keyed on the
+       * picker's own trigger (`length > 1`) rather than on how many
+       * stakes the manager holds, which is a different number. */
+      candidates: EidStakeCandidate[];
       /** Same intent as the `pick` branch — surfaces the banner above
        * the auto-picked / resolved view when a sibling stake's read
        * failed during the last resolver run (T-48). */
@@ -71,6 +90,21 @@ type ConfigStatus =
   | { kind: 'configured'; bundle: StakeConfigBundle }
   | { kind: 'denied' }
   | { kind: 'error'; message: string };
+
+/** How often the panel re-reads the active Kindoo EID. The read is a
+ * DOM query plus one `localStorage` parse — no network — so a short
+ * period costs nothing at our scale, and the window in which the panel
+ * can be pointed at the wrong stake is what it buys. */
+const ACTIVE_EID_POLL_MS = 3000;
+
+/** Name for the shell's active-stake line, falling back to the stakeId
+ * slug. A stake doc with a missing or blank `stake_name` would otherwise
+ * render an empty line where a name belongs, which reads as a broken
+ * panel; a slug at least identifies the stake. */
+function stakeLabelOf(candidate: EidStakeCandidate | undefined, stakeId: string): string {
+  const label = candidate?.label?.trim() ?? '';
+  return label === '' ? stakeId : label;
+}
 
 function decideConfigStatus(bundle: StakeConfigBundle): ConfigStatus {
   // First-run gate: until home identity is captured we force the
@@ -106,14 +140,35 @@ export function App({ onPendingCountChange }: AppProps) {
   // `loading` on every unrelated App re-render.
   const handlePermissionDenied = useCallback(() => setNotAuthorized(true), []);
 
+  /** EID the last resolution attempt was made against. `null` means that
+   * attempt found no usable Kindoo session, which makes the next valid
+   * EID — any valid EID — new information. That is also what heals a
+   * panel that mounted before Kindoo finished rendering its header. */
+  const attemptedEidRef = useRef<number | null>(null);
+  /** Monotonic token per resolution run. Runs can overlap — a site
+   * switch mid-resolve, a Retry racing the watcher — and each one is a
+   * round-trip through the service worker, so without this the slower
+   * run can land last and stamp the panel with the stake belonging to
+   * the site the operator already left. */
+  const resolveRunRef = useRef(0);
+
   const resolveStake = useCallback(async () => {
+    const run = ++resolveRunRef.current;
+    const isCurrent = () => resolveRunRef.current === run;
     setStake({ kind: 'loading' });
     const sessionResult = readKindooSession();
     if (!sessionResult.ok) {
+      attemptedEidRef.current = null;
       setStake({ kind: 'no-session', error: sessionResult.error });
       return;
     }
     const eid = sessionResult.session.eid;
+    // Stamped before the first await so a watcher tick that fires
+    // mid-resolve sees the EID already claimed and doesn't start a
+    // duplicate run for it. Stamped on every outcome, not just success:
+    // a wire error or an unconfigured EID must not have the watcher
+    // retrying it every few seconds.
+    attemptedEidRef.current = eid;
     let payload: Awaited<ReturnType<typeof resolveEidStakes>>;
     try {
       payload = await resolveEidStakes(eid);
@@ -122,10 +177,12 @@ export function App({ onPendingCountChange }: AppProps) {
       // retry copy reads "Couldn't reach SBA" instead of telling the
       // operator to reconfigure SBA. A token-refresh blip is the
       // common trigger.
+      if (!isCurrent()) return;
       const message = err instanceof Error ? err.message : String(err);
       setStake({ kind: 'wire-error', message });
       return;
     }
+    if (!isCurrent()) return;
     if (payload.managedStakeCount === 0) {
       // Signed-in user holds no manager role anywhere. Route to the
       // same NotAuthorized state the old queue-callable
@@ -156,8 +213,22 @@ export function App({ onPendingCountChange }: AppProps) {
     // by retrying.
     const failedStakesCount = payload.failedStakes.length;
     const stored = await readEidStakeChoice(eid).catch(() => null);
-    if (stored !== null && payload.candidates.some((c) => c.stakeId === stored)) {
-      setStake({ kind: 'resolved', eid, stakeId: stored, failedStakesCount });
+    if (!isCurrent()) return;
+    // `find`, not `some`: the membership check and the display name come
+    // from the same candidate, so the label costs nothing extra. A stake
+    // whose read failed is not in `candidates`, so a resolved view can
+    // never name one.
+    const storedCandidate =
+      stored === null ? undefined : payload.candidates.find((c) => c.stakeId === stored);
+    if (storedCandidate) {
+      setStake({
+        kind: 'resolved',
+        eid,
+        stakeId: storedCandidate.stakeId,
+        stakeLabel: stakeLabelOf(storedCandidate, storedCandidate.stakeId),
+        candidates: payload.candidates,
+        failedStakesCount,
+      });
       return;
     }
     if (stored !== null) {
@@ -165,12 +236,20 @@ export function App({ onPendingCountChange }: AppProps) {
       // picker reasserts. The operator may have lost their role on
       // that stake, or the EID was un-configured from that stake.
       await clearEidStakeChoice(eid).catch(() => undefined);
+      if (!isCurrent()) return;
     }
     if (payload.candidates.length === 1) {
       // Single candidate — auto-resolve. Don't persist; the resolution
       // is structural, not a remembered choice.
       const only = payload.candidates[0]!;
-      setStake({ kind: 'resolved', eid, stakeId: only.stakeId, failedStakesCount });
+      setStake({
+        kind: 'resolved',
+        eid,
+        stakeId: only.stakeId,
+        stakeLabel: stakeLabelOf(only, only.stakeId),
+        candidates: payload.candidates,
+        failedStakesCount,
+      });
       return;
     }
     setStake({ kind: 'pick', eid, candidates: payload.candidates, failedStakesCount });
@@ -199,6 +278,36 @@ export function App({ onPendingCountChange }: AppProps) {
     void resolveStake();
   }, [authState.status, notAuthorized, resolveStake]);
 
+  // Re-resolve when the operator moves to a different Kindoo site.
+  // Kindoo is an SPA: switching sites never remounts the content script,
+  // so without this the stake resolved at sign-in outlives the site it
+  // was resolved for — and everything downstream is keyed on that
+  // stakeId, so a provision would write into the site now on screen
+  // while completing a request owned by the stake left behind.
+  //
+  // Only a DIFFERENT, VALID EID is acted on. `readKindooSession` reports
+  // `no-eid` whenever the header scrape sees zero OR several site names,
+  // which is the ordinary reading mid-navigation and on the My Sites
+  // listing page. A sustained null is deliberately NOT escalated to the
+  // no-session state: null says nothing about which site is active, and
+  // tearing down a good resolution costs the queue, any open dialog and
+  // the remote-apply loop — while every path that actually writes
+  // (`applyRequest`, Sync, the wizard) re-reads the session itself and
+  // fails loudly with the `no-eid` copy at the moment it matters. So a
+  // manager parked on My Sites keeps the panel they had, and the panel
+  // never flickers through a recovery screen on an in-app navigation.
+  useEffect(() => {
+    if (authState.status !== 'signed-in') return;
+    if (notAuthorized) return;
+    const id = window.setInterval(() => {
+      const result = readKindooSession();
+      if (!result.ok) return;
+      if (result.session.eid === attemptedEidRef.current) return;
+      void resolveStake();
+    }, ACTIVE_EID_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [authState.status, notAuthorized, resolveStake]);
+
   // Once a stake is resolved, fetch its config. Re-runs when the
   // operator picks a different stake.
   useEffect(() => {
@@ -210,10 +319,13 @@ export function App({ onPendingCountChange }: AppProps) {
     async (stakeId: string) => {
       if (stake.kind !== 'pick') return;
       await writeEidStakeChoice(stake.eid, stakeId);
+      const picked = stake.candidates.find((c) => c.stakeId === stakeId);
       setStake({
         kind: 'resolved',
         eid: stake.eid,
         stakeId,
+        stakeLabel: stakeLabelOf(picked, stakeId),
+        candidates: stake.candidates,
         // Preserve the partial-failure flag across the picker → resolved
         // transition; the banner stays visible until the next resolver
         // run clears it.
@@ -222,6 +334,26 @@ export function App({ onPendingCountChange }: AppProps) {
     },
     [stake],
   );
+
+  // The stake line's chevron: hand the operator back to the picker for
+  // the EID they are already on. No re-resolve — the candidate set is in
+  // hand, so nothing here can race the EID watcher (which fires only on
+  // a *changed* EID) and the operator sees the picker immediately.
+  //
+  // The stored choice is cleared FIRST, and awaited: it and the picker's
+  // own write are read-modify-write against the same storage map, so a
+  // clear that landed after the pick would wipe the new choice. A failed
+  // clear is inert — the picker's write overwrites the entry anyway.
+  const handleChangeStake = useCallback(async () => {
+    if (stake.kind !== 'resolved') return;
+    await clearEidStakeChoice(stake.eid).catch(() => undefined);
+    setStake({
+      kind: 'pick',
+      eid: stake.eid,
+      candidates: stake.candidates,
+      failedStakesCount: stake.failedStakesCount,
+    });
+  }, [stake]);
 
   if (authState.status === 'loading') {
     return (
@@ -437,6 +569,13 @@ export function App({ onPendingCountChange }: AppProps) {
       {partialFailureBanner}
       <TabbedShell
         stakeId={stake.stakeId}
+        stakeLabel={stake.stakeLabel}
+        // Offered exactly when the picker would have asked — ≥ 2
+        // candidates for THIS EID. Keying it on how many stakes the
+        // manager holds is a different number: a three-stake manager on
+        // a site belonging to one of them would get a chevron opening a
+        // picker with a single option and no decision to make.
+        onChangeStake={stake.candidates.length > 1 ? handleChangeStake : undefined}
         email={authState.email}
         bundle={configStatus.bundle}
         onPermissionDenied={handlePermissionDenied}

@@ -1,6 +1,7 @@
 // Post-auth, post-config shell for the slide-over panel. Renders the
-// gray toolbar (email + Sign out) above an underline tab bar (Request
-// Queue / Sync / gear), and below that the active tab's body content.
+// gray toolbar (email + Sign out), then the active stake's name, then
+// an underline tab bar (Request Queue / Sync / gear), and below that
+// the active tab's body content.
 //
 // Active-tab state is local and ephemeral: every fresh mount of this
 // component lands on the Queue tab. We do not persist last-tab across
@@ -33,6 +34,17 @@ interface TabbedShellProps {
    * from App's stake resolution step (single-candidate auto-pick or the
    * picker's persisted choice). */
   stakeId: string;
+  /** Active stake's display name, rendered above the tab strip. Always
+   * shown, even for a manager with a single candidate stake: a line that
+   * appeared only when the stake was ambiguous would make its own
+   * absence carry meaning, which reads as "no stake". App resolves the
+   * fallback, so this is never blank. */
+  stakeLabel: string;
+  /** Reopens the stake picker. Present only when the active Kindoo site
+   * maps to more than one of the manager's stakes — the same condition
+   * that raises the picker in the first place — so the chevron is never
+   * offered where there is no choice to make. Absent means no chevron. */
+  onChangeStake?: (() => void) | undefined;
   email: string | null | undefined;
   bundle: StakeConfigBundle;
   /** Called when the queue fetch returns permission-denied — App flips
@@ -55,6 +67,8 @@ const PANEL_IDS: Record<TabKey, string> = {
 
 export function TabbedShell({
   stakeId,
+  stakeLabel,
+  onChangeStake,
   email,
   bundle,
   onPermissionDenied,
@@ -96,6 +110,27 @@ export function TabbedShell({
   return (
     <main className="sba-panel" data-testid="sba-tabbed-shell">
       <Toolbar email={email} />
+      <div className="sba-stake-row" data-testid="sba-stake-row">
+        {/* Reads as "go backwards", which is literal: the picker is the
+            screen this one replaced. */}
+        {onChangeStake ? (
+          <button
+            type="button"
+            className="sba-stake-change"
+            onClick={onChangeStake}
+            aria-label="Change stake"
+            title="Change stake"
+            data-testid="sba-change-stake"
+          >
+            ‹
+          </button>
+        ) : null}
+        {/* `title` carries the untruncated name, which the CSS ellipsis
+            can hide on a narrow slide-over. */}
+        <span className="sba-stake-label" data-testid="sba-stake-label" title={stakeLabel}>
+          {stakeLabel}
+        </span>
+      </div>
       <TabBar active={active} onChange={setActive} />
       <div
         className="sba-tabpanel"

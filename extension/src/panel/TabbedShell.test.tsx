@@ -86,18 +86,25 @@ function loopArgs(callIndex = 0): RemoteApplyLoopArgs {
   return startRemoteApplyLoopMock.mock.calls[callIndex]?.[0] as RemoteApplyLoopArgs;
 }
 
-async function renderShell(onPendingCountChange?: (count: number | null) => void) {
+async function renderShell(
+  onPendingCountChange?: (count: number | null) => void,
+  onChangeStake?: () => void,
+) {
   const { TabbedShell } = await import('./TabbedShell');
-  return render(
+  const ui = (stakeId: string) => (
     <TabbedShell
-      stakeId="csnorth"
+      stakeId={stakeId}
+      stakeLabel="Colorado Springs North Stake"
+      onChangeStake={onChangeStake}
       email="mgr@example.com"
       bundle={BUNDLE}
       onPermissionDenied={vi.fn()}
       onConfigComplete={vi.fn()}
       onPendingCountChange={onPendingCountChange}
-    />,
+    />
   );
+  const result = render(ui('csnorth'));
+  return { ...result, rerenderWithStake: (stakeId: string) => result.rerender(ui(stakeId)) };
 }
 
 describe('TabbedShell', () => {
@@ -112,6 +119,79 @@ describe('TabbedShell', () => {
   afterEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
+  });
+
+  it('renders the active stake name between the toolbar and the tab strip', async () => {
+    // A manager of more than one stake otherwise has nothing in the
+    // panel telling them which queue they are working.
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    await renderShell();
+
+    const label = screen.getByTestId('sba-stake-label');
+    expect(label).toHaveTextContent('Colorado Springs North Stake');
+    // Untruncated name stays reachable — the CSS ellipsis hides it on a
+    // narrow slide-over.
+    expect(label).toHaveAttribute('title', 'Colorado Springs North Stake');
+
+    const row = screen.getByTestId('sba-stake-row');
+    expect(row).toContainElement(label);
+    const children = Array.from(screen.getByTestId('sba-tabbed-shell').children);
+    expect(children.indexOf(row)).toBeGreaterThan(
+      children.indexOf(screen.getByTestId('sba-toolbar')),
+    );
+    expect(children.indexOf(row)).toBeLessThan(children.indexOf(screen.getByRole('tablist')));
+  });
+
+  it('offers no change-stake chevron when the host passes no handler', async () => {
+    // Absent handler = the active Kindoo site maps to one stake, so
+    // there is nothing to switch between.
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    await renderShell();
+
+    expect(screen.queryByTestId('sba-change-stake')).toBeNull();
+  });
+
+  it('renders the change-stake chevron as a labelled button that calls back', async () => {
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const onChangeStake = vi.fn();
+    const user = userEvent.setup();
+    await renderShell(undefined, onChangeStake);
+
+    // A real button, not a decorative glyph: keyboard-reachable and
+    // named for a screen reader.
+    const chevron = screen.getByRole('button', { name: 'Change stake' });
+    expect(chevron).toBe(screen.getByTestId('sba-change-stake'));
+    // Left of the name.
+    const row = screen.getByTestId('sba-stake-row');
+    const children = Array.from(row.children);
+    expect(children.indexOf(chevron)).toBeLessThan(
+      children.indexOf(screen.getByTestId('sba-stake-label')),
+    );
+
+    await user.click(chevron);
+    expect(onChangeStake).toHaveBeenCalledTimes(1);
+  });
+
+  it('restarts the remote-apply loop against the new stake when the stake changes', async () => {
+    // A loop left pointed at the old stake keeps polling the wrong
+    // mailbox with no error anywhere — the failure mode of a stake
+    // switch that only swaps a prop.
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+    const { rerenderWithStake } = await renderShell();
+    await waitFor(() => expect(startRemoteApplyLoopMock).toHaveBeenCalledTimes(1));
+    const first = startRemoteApplyLoopMock.mock.results[0]?.value as RemoteApplyLoopHandle;
+    expect(loopArgs(0).stakeId).toBe('csnorth');
+
+    rerenderWithStake('east-co');
+
+    await waitFor(() => expect(startRemoteApplyLoopMock).toHaveBeenCalledTimes(2));
+    expect(first.stop).toHaveBeenCalled();
+    expect(loopArgs(1).stakeId).toBe('east-co');
+    // And the queue refetches against the new stake rather than sitting
+    // on the old one's requests.
+    await waitFor(() =>
+      expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'east-co' }),
+    );
   });
 
   it('refetches the queue when a phone-initiated job finishes on another tab', async () => {

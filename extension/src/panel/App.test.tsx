@@ -11,7 +11,7 @@
 // tab-switch wiring.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const useAuthStateMock = vi.fn();
@@ -106,6 +106,44 @@ async function renderApp(onPendingCountChange?: (count: number | null) => void) 
   return render(
     onPendingCountChange ? <App onPendingCountChange={onPendingCountChange} /> : <App />,
   );
+}
+
+/** Two Kindoo sites the operator moves between mid-session. */
+const HOME_EID = 27994;
+const OTHER_EID = 31007;
+
+function oneCandidatePayload() {
+  return {
+    candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+    managedStakeCount: 2,
+    failedStakes: [],
+    partialFailure: false,
+  };
+}
+
+function twoCandidatePayload() {
+  return {
+    candidates: [
+      { stakeId: 'csnorth', label: 'CSN', match: 'foreign', siteLabel: 'Pine' },
+      { stakeId: 'east-co', label: 'East CO', match: 'home' },
+    ],
+    managedStakeCount: 2,
+    failedStakes: [],
+    partialFailure: false,
+  };
+}
+
+/**
+ * Fire one tick of App's active-EID watcher. Only `setInterval` /
+ * `clearInterval` are faked, so promises, RTL's `waitFor` and the module
+ * loader keep running on real timers — faking everything makes the
+ * dynamic `import('./App')` and `waitFor` both unreachable.
+ */
+async function tickEidWatcher() {
+  await act(async () => {
+    vi.advanceTimersByTime(3000);
+    await Promise.resolve();
+  });
 }
 
 function fakeRequest(overrides: Record<string, unknown> = {}) {
@@ -722,6 +760,283 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
     expect(screen.queryByTestId('sba-partial-failure-banner')).toBeNull();
+  });
+
+  it('shows the resolved stake name in the shell', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    // Label comes from the candidate the resolver already returned — no
+    // extra read.
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+  });
+
+  it('falls back to the stakeId slug when the stake name is blank', async () => {
+    // A stake doc with a missing / whitespace `stake_name` would
+    // otherwise render an empty line where a name belongs, which reads
+    // as a broken panel rather than as a nameless stake.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: '   ', match: 'home' }],
+      managedStakeCount: 1,
+      failedStakes: [],
+      partialFailure: false,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('csnorth');
+  });
+
+  it('names the surviving stake, not the one whose read failed, on a partial failure', async () => {
+    // The stored choice points at a stake this run could not read, so it
+    // is not a candidate and carries no label. Resolution falls through
+    // to the one survivor, and the line must name THAT stake — a blank
+    // line, or the failed stake's slug, would tell the manager they are
+    // working a queue they are not.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [{ stakeId: 'csnorth', label: 'CSN', match: 'home' }],
+      managedStakeCount: 2,
+      failedStakes: ['east-co'],
+      partialFailure: true,
+    });
+    readEidStakeChoiceMock.mockResolvedValue('east-co');
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+    expect(screen.getByTestId('sba-partial-failure-banner')).toBeInTheDocument();
+    expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'csnorth' });
+  });
+
+  it('carries the picked stake name into the shell', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
+      ],
+      managedStakeCount: 2,
+      failedStakes: [],
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    const user = userEvent.setup();
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    await user.click(screen.getByTestId('sba-stake-picker-east-co'));
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('East CO');
+  });
+
+  it('offers no change-stake chevron when the active EID maps to one stake', async () => {
+    // The chevron tracks the picker's own trigger. One candidate means
+    // the picker would never have asked, so a chevron would open a
+    // screen with a single option and no decision to make.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.queryByTestId('sba-change-stake')).toBeNull();
+  });
+
+  it('chevron clears the stored choice, reopens the picker, and switches stakes', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockResolvedValue({
+      candidates: [
+        { stakeId: 'csnorth', label: 'CSN', match: 'home' },
+        { stakeId: 'east-co', label: 'East CO', match: 'foreign', siteLabel: 'Pine' },
+      ],
+      managedStakeCount: 2,
+      failedStakes: [],
+      partialFailure: false,
+    });
+    readEidStakeChoiceMock.mockResolvedValue('east-co');
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    const user = userEvent.setup();
+    await renderApp();
+
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('East CO');
+
+    await user.click(screen.getByTestId('sba-change-stake'));
+
+    // Cleared through the owner module, and awaited before the picker
+    // renders — the clear and the pick are read-modify-write on the same
+    // storage map.
+    await waitFor(() => expect(clearEidStakeChoiceMock).toHaveBeenCalledWith(27994));
+    await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+    // The candidate set was already in hand — reopening the picker costs
+    // no resolver round-trip, which is also why nothing here can race the
+    // EID watcher.
+    expect(resolveEidStakesMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByTestId('sba-stake-picker-csnorth'));
+
+    await waitFor(() => expect(writeEidStakeChoiceMock).toHaveBeenCalledWith(27994, 'csnorth'));
+    await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+    expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'csnorth' });
+  });
+
+  it('re-resolves to the stored choice when the operator moves to another Kindoo site', async () => {
+    // Kindoo is an SPA: a site switch never remounts the content script,
+    // so without the EID watcher the panel keeps the stake it resolved
+    // at sign-in — and every write downstream is keyed on that stakeId.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockImplementation(async (eid: number) =>
+      eid === HOME_EID ? oneCandidatePayload() : twoCandidatePayload(),
+    );
+    readEidStakeChoiceMock.mockImplementation(async (eid: number) =>
+      eid === OTHER_EID ? 'east-co' : null,
+    );
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await renderApp();
+      await waitFor(() => expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN'));
+
+      readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 't', eid: OTHER_EID } });
+      await tickEidWatcher();
+
+      await waitFor(() =>
+        expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('East CO'),
+      );
+      await waitFor(() =>
+        expect(getMyPendingRequestsMock).toHaveBeenCalledWith({ stakeId: 'east-co' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('raises the picker when the new Kindoo site has two candidates and no stored choice', async () => {
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    resolveEidStakesMock.mockImplementation(async (eid: number) =>
+      eid === HOME_EID ? oneCandidatePayload() : twoCandidatePayload(),
+    );
+    readEidStakeChoiceMock.mockResolvedValue(null);
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await renderApp();
+      await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+
+      readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 't', eid: OTHER_EID } });
+      await tickEidWatcher();
+
+      await waitFor(() => expect(screen.getByTestId('sba-stake-picker')).toBeInTheDocument());
+      expect(screen.queryByTestId('sba-tabbed-shell')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a transient no-eid read instead of tearing down a good resolution', async () => {
+    // `readActiveEidFromDom` returns null on zero OR several header
+    // matches, which is the ordinary reading during an in-app navigation
+    // and on the My Sites listing page. Re-resolving on it would flash
+    // the panel to the recovery screen every time the manager clicks
+    // around Kindoo.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await renderApp();
+      await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+
+      readKindooSessionMock.mockReturnValue({ ok: false, error: 'no-eid' });
+      await tickEidWatcher();
+      await tickEidWatcher();
+      await tickEidWatcher();
+
+      expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument();
+      expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+      expect(screen.queryByTestId('sba-no-kindoo')).toBeNull();
+      expect(resolveEidStakesMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('heals a panel that mounted before Kindoo had rendered a site', async () => {
+    // The first attempt found no session, so no EID is claimed and the
+    // next valid one — any valid one — is new information.
+    useAuthStateMock.mockReturnValue({
+      status: 'signed-in',
+      email: 'mgr@example.com',
+      displayName: null,
+    });
+    readKindooSessionMock.mockReturnValue({ ok: false, error: 'no-eid' });
+    getMyPendingRequestsMock.mockResolvedValue({ requests: [] });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await renderApp();
+      await waitFor(() => expect(screen.getByTestId('sba-no-kindoo')).toBeInTheDocument());
+
+      readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 't', eid: HOME_EID } });
+      await tickEidWatcher();
+
+      await waitFor(() => expect(screen.getByTestId('sba-tabbed-shell')).toBeInTheDocument());
+      expect(screen.getByTestId('sba-stake-label')).toHaveTextContent('CSN');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('retry button on the partial-failure banner re-runs the resolver (T-48)', async () => {
