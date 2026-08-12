@@ -744,12 +744,20 @@ main.sba-panel {
   min-width: 0;
 }
 
-/* Active stake, between the toolbar and the tab strip. Truncates rather
- * than wraps: stake names are arbitrary length in a ~400px slide-over,
- * and a second line would shift the tab strip down for some stakes and
- * not others. */
-.sba-stake-label {
+/* Active stake, between the toolbar and the tab strip: an optional
+ * back-chevron to the picker, then the stake name. The name truncates
+ * rather than wraps — stake names are arbitrary length in a ~400px
+ * slide-over, and a second line would shift the tab strip down for some
+ * stakes and not others. */
+.sba-stake-row {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
   padding: 0.375rem 1rem 0.25rem;
+}
+
+.sba-stake-label {
+  min-width: 0;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -758,6 +766,29 @@ main.sba-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sba-stake-change {
+  flex: none;
+  margin: 0;
+  padding: 0 0.25rem;
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--sba-fg-muted);
+  cursor: pointer;
+}
+
+.sba-stake-change:hover {
+  color: var(--sba-fg);
+}
+
+.sba-stake-change:focus-visible {
+  outline: 2px solid var(--sba-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
 }
 
 .sba-tabbar {

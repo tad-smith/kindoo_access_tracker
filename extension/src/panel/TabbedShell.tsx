@@ -40,6 +40,11 @@ interface TabbedShellProps {
    * absence carry meaning, which reads as "no stake". App resolves the
    * fallback, so this is never blank. */
   stakeLabel: string;
+  /** Reopens the stake picker. Present only when the active Kindoo site
+   * maps to more than one of the manager's stakes — the same condition
+   * that raises the picker in the first place — so the chevron is never
+   * offered where there is no choice to make. Absent means no chevron. */
+  onChangeStake?: (() => void) | undefined;
   email: string | null | undefined;
   bundle: StakeConfigBundle;
   /** Called when the queue fetch returns permission-denied — App flips
@@ -63,6 +68,7 @@ const PANEL_IDS: Record<TabKey, string> = {
 export function TabbedShell({
   stakeId,
   stakeLabel,
+  onChangeStake,
   email,
   bundle,
   onPermissionDenied,
@@ -104,10 +110,26 @@ export function TabbedShell({
   return (
     <main className="sba-panel" data-testid="sba-tabbed-shell">
       <Toolbar email={email} />
-      {/* Display only — no switcher. `title` carries the untruncated
-          name, which the CSS ellipsis can hide on a narrow slide-over. */}
-      <div className="sba-stake-label" data-testid="sba-stake-label" title={stakeLabel}>
-        {stakeLabel}
+      <div className="sba-stake-row" data-testid="sba-stake-row">
+        {/* Reads as "go backwards", which is literal: the picker is the
+            screen this one replaced. */}
+        {onChangeStake ? (
+          <button
+            type="button"
+            className="sba-stake-change"
+            onClick={onChangeStake}
+            aria-label="Change stake"
+            title="Change stake"
+            data-testid="sba-change-stake"
+          >
+            ‹
+          </button>
+        ) : null}
+        {/* `title` carries the untruncated name, which the CSS ellipsis
+            can hide on a narrow slide-over. */}
+        <span className="sba-stake-label" data-testid="sba-stake-label" title={stakeLabel}>
+          {stakeLabel}
+        </span>
       </div>
       <TabBar active={active} onChange={setActive} />
       <div
