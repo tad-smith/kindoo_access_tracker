@@ -121,6 +121,7 @@ export type {
   ManualGrant,
   MarkRequestCompleteInput,
   MarkRequestCompleteOutput,
+  MintExtensionTokenOutput,
   Organization,
   OverCapEntry,
   PlatformAuditAction,

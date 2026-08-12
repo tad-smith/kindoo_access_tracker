@@ -1,10 +1,10 @@
 // Firebase SDK singleton for the extension.
 //
 // The extension is its own Firebase Auth client, distinct from the SPA at
-// stakebuildingaccess.org. It signs in via the Chrome identity API
-// (chrome.identity.getAuthToken), exchanges the Google access token for a
-// Firebase credential, and then invokes the SBA-side callables with the
-// resulting ID token.
+// stakebuildingaccess.org. It signs in through one of the two paths in
+// `auth.ts` — a Google credential exchange via chrome.identity, or a
+// custom token handed back by the SPA — and then invokes the SBA-side
+// callables with the resulting ID token.
 //
 // Config values come from build-time env vars (VITE_FIREBASE_*) so the
 // same code targets the staging or production SBA project depending on

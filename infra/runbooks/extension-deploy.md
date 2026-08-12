@@ -37,6 +37,10 @@ Access:
 - A stake-manager Firebase Auth account in the target environment (the extension's "Not Authorized" path triggers if the signed-in Google account isn't a manager).
 - Owner / Editor permission on the target GCP project (`kindoo-staging` or `kindoo-prod`) so you can create OAuth credentials.
 
+In the target project:
+
+- `kindoo-app@<project>` holds `roles/iam.serviceAccountTokenCreator` **on itself** — the grant `mintExtensionToken` needs to sign the custom token behind the **Sign in with email** button. Neither project had it before PR #282; check with `infra/runbooks/provision-firebase-projects.md` §5.2.1 and grant it per §1.8 if it's absent. Without it that button fails at runtime with `Sign-in failed: web sign-in failed (mint_failed)`; the Google button is unaffected.
+
 ## First-time per-env setup
 
 Do this **once** per environment. Subsequent rebuilds reuse the keypair, the GCP OAuth client, and the `.env.<mode>` file.
@@ -109,9 +113,10 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=...
 VITE_GOOGLE_OAUTH_CLIENT_ID=...
 VITE_EXTENSION_KEY=...
 VITE_EXTENSION_NAME=SBA Helper (Staging)
+VITE_WEB_BASE_URL=https://staging.stakebuildingaccess.org
 ```
 
-For production, set `VITE_EXTENSION_NAME=Stake Building Access — Kindoo Helper`.
+For production, set `VITE_EXTENSION_NAME=Stake Building Access — Kindoo Helper` and `VITE_WEB_BASE_URL=https://stakebuildingaccess.org`. `VITE_WEB_BASE_URL` is the SPA origin the extension's email sign-in path hands off to (`<base>/auth/extension`); it must point at the same env as the `VITE_FIREBASE_*` values above.
 
 ### 6. Sanity-check the extension ID
 
@@ -122,6 +127,8 @@ pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"
 ```
 
 The output must match the Item ID you pasted in step 4.
+
+**The same ID also goes in the SPA's `VITE_EXTENSION_IDS`** for the environment this extension talks to (`apps/web/.env.staging`, comma-separated for more than one). The SPA's `/auth/extension` handoff refuses any extension not on that list, and only the published Web Store ID is built in — so an unpacked build whose ID is missing from it gets a sign-in that appears to cancel every time. `pnpm --filter ./apps/web build:staging` fails with instructions when the value is unset. See `apps/web/.env.example`.
 
 ## Per-build steps
 
@@ -193,6 +200,8 @@ For an operator who has never loaded the unpacked extension before:
 
 Repeat with `extension/dist/production` after a production build to load both side-by-side.
 
+**Loading `extension/dist/production` against the production SPA needs a temporary allowlist entry.** That build keeps its manifest `key`, so it carries the keypair-derived ID — not the Web Store ID that production SPA builds trust implicitly. Until that ID is listed in `VITE_EXTENSION_IDS` in `apps/web/.env.production` **and the SPA is redeployed** (the value is compiled in, so editing the file alone changes nothing), `/auth/extension` refuses it and email sign-in appears to cancel every time. Take the entry back out and redeploy once the Web Store version is live — this is the only prerequisite in this runbook meant to be removed again, because a listed ID stays trusted indefinitely and can ask a signed-in manager's browser for a session token. The store zip from `bin/build_extension_for_chrome_store.sh` is a different artifact: `VITE_OMIT_KEY=true` drops the key and Chrome assigns that one its own ID at upload.
+
 ## Smoke test
 
 After a fresh build + reload, run through:
@@ -200,9 +209,15 @@ After a fresh build + reload, run through:
 1. Open `https://web.kindoo.tech` and sign in to Kindoo.
 2. Click the SBA toolbar icon. The slide-over appears from the right edge of the page.
 3. Click **Sign in with Google** → pick a stake-manager Google account → consent on the OAuth screen. The slide-over flips to the pending queue. If the account is not a manager, the slide-over flips to a "Not Authorized" view instead.
-4. Click **Mark Complete** on a pending request → confirm in the dialog → the button shows a pending state and then the card disappears from the queue.
-5. Open the SPA at the target env's URL (e.g. `https://staging.stakebuildingaccess.org`) and verify the request flipped to complete.
-6. Click the toolbar icon again. The slide-over hides. Click again — it reappears in the same state. Reload the page — the open/closed state persists.
+4. Sign out, then click **Sign in with email**. An auth window opens on the SPA.
+   - **First, with the service worker console open** (`chrome://extensions` → the extension → "service worker"), confirm the logged `redirect_uri` is a bare `https://<32 chars, a–p>.chromiumapp.org/` with no path segment. A path would be refused by the SPA, and a refusal is indistinguishable from a closed window — you would see the retry copy, not an error.
+   - **Sign in with a magic link.** The link opens in an ordinary tab, not this window, so the first pass ends with the window closed and an informational note in the panel. That is correct, not a failure. Click **Sign in with email** again: it should land straight on the confirm card without asking for anything.
+   - **This second pass is the check worth repeating on every Chrome major bump.** It works only because the auth window shares the profile's Firebase Auth IndexedDB with ordinary tabs. If Chrome ever partitions that window's storage again, the symptom is a silent loop — form → email → form — with the same informational copy each time and no error on either side. Nothing automated covers this.
+   - **Also try Continue with Google in that window.** `signInWithPopup` needs `window.open` plus opener `postMessage`, and no test exercises it there. A blocked popup should name the magic-link form as the way through, not print an SDK error code.
+   - On the confirm card, check the account named is the one you expect, then connect.
+5. Click **Mark Complete** on a pending request → confirm in the dialog → the button shows a pending state and then the card disappears from the queue.
+6. Open the SPA at the target env's URL (e.g. `https://staging.stakebuildingaccess.org`) and verify the request flipped to complete.
+7. Click the toolbar icon again. The slide-over hides. Click again — it reappears in the same state. Reload the page — the open/closed state persists.
 
 ## Production: Chrome Web Store distribution
 

@@ -33,6 +33,9 @@ import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { syncHelp } from './scripts/sync-help.mjs';
+// Pure parser, shared with the runtime allowlist so the build can never
+// accept a value `isAllowedRedirectUri` would drop.
+import { parseExtensionIds } from './src/lib/extensionIds';
 
 /**
  * Sync the static end-user help guides from `docs/user-guide/` into
@@ -118,12 +121,58 @@ function firebaseMessagingSwPlugin(env: Record<string, string>): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => {
+/**
+ * Fail a non-production build that configured no extension IDs.
+ *
+ * `/auth/extension` hands the Chrome extension a session token only if
+ * the caller's ID is on the build's allowlist. Only the Web Store ID is
+ * knowable at compile time, and it is implicit in production builds
+ * ONLY — every other environment's extension carries a deterministic ID
+ * derived from its own keypair, which has to arrive via
+ * `VITE_EXTENSION_IDS` (`pnpm --filter @kindoo/extension ext-id`).
+ *
+ * Left unset, a staging build ships a page that refuses every real
+ * caller. That refusal is indistinguishable from a cancellation on the
+ * extension side, so it surfaces as sign-in that silently never works,
+ * with one service-worker log line as the only clue. Failing the build
+ * turns that into a message at the moment the mistake is made.
+ *
+ * Production is deliberately exempt: its default is the published
+ * extension, which is the case that must never be breakable by a
+ * missing env var. `build:staging` runs only from
+ * `infra/scripts/deploy-staging.sh`, so this gate never fires in CI.
+ */
+function assertExtensionIdsConfigured(
+  command: string,
+  mode: string,
+  env: Record<string, string>,
+): void {
+  if (command !== 'build' || mode === 'production') return;
+  const configured = parseExtensionIds(env.VITE_EXTENSION_IDS ?? process.env.VITE_EXTENSION_IDS);
+  if (configured.length > 0) return;
+  throw new Error(
+    [
+      `VITE_EXTENSION_IDS is required for a "${mode}" build and is unset (or holds no valid id).`,
+      '',
+      'Only production builds fall back to the published Web Store extension. Every other',
+      "environment's extension is loaded unpacked and carries a different, keypair-derived id,",
+      'so without this the /auth/extension handoff refuses the extension it is built for — and',
+      'the extension cannot tell that refusal apart from the user closing the window.',
+      '',
+      'Get the id and set it in apps/web/.env.' + mode + ':',
+      '  pnpm --filter @kindoo/extension ext-id --key "$VITE_EXTENSION_KEY"',
+      '  VITE_EXTENSION_IDS=<32-char id>   # comma-separated for more than one',
+    ].join('\n'),
+  );
+}
+
+export default defineConfig(({ command, mode }) => {
   // `loadEnv(mode, '', '')` reads `.env`, `.env.<mode>`, `.env.local`,
   // `.env.<mode>.local` from the workspace root with no prefix filter.
   // We only consume `VITE_FIREBASE_*` here so a leak into the SW is
   // limited to fields we already ship in the client bundle.
   const env = loadEnv(mode, process.cwd(), '');
+  assertExtensionIdsConfigured(command, mode, env);
   return {
     plugins: [
       // Populate `public/help/` before any static-copy or precache pass.
@@ -218,11 +267,26 @@ export default defineConfig(({ mode }) => {
           //     navigation fallback; this entry is intent-documenting
           //     defense for any non-precached /help/* path and guards a
           //     future build that stops precaching the HTML.
+          //   - /auth/extension — the Chrome extension's sign-in handoff.
+          //     `skipWaiting` + `clientsClaim` do not help the navigation
+          //     already in flight, so the FIRST navigation after a deploy
+          //     is still answered by the outgoing SW from its precached
+          //     shell, which references the previous bundle. For a route
+          //     that existed in that bundle this is invisible; for a
+          //     newly-added one the router has no match and renders "Not
+          //     Found". This route is entered from inside a
+          //     `launchWebAuthFlow` window, where the user cannot reload
+          //     and where a blank "Not Found" reads as a broken product.
+          //     Hosting rewrites `**` to /index.html, so going to the
+          //     network always yields a shell naming the current chunks.
+          //     The whole flow calls a Cloud Function anyway, so nothing
+          //     is lost by requiring the network here.
           navigateFallbackDenylist: [
             /^\/__\//,
             /^\/firebase-messaging-sw\.js$/,
             /^\/THIRD_PARTY_LICENSES\.txt$/,
             /^\/help\//,
+            /^\/auth\/extension/,
           ],
           // Network-first for the SPA shell; cache-first for fingerprinted
           // bundle chunks (handled by precache); explicitly never cache

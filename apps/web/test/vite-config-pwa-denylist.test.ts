@@ -47,4 +47,16 @@ describe('vite.config.ts — Workbox navigateFallbackDenylist', () => {
     const denylist = extractDenylist(readConfigSource());
     expect(denylist).toContain('/^\\/__\\//');
   });
+
+  // Different reason from every entry above, so do not "tidy" this one
+  // away on the grounds that it is not a static asset. /auth/extension
+  // IS an SPA route; it is denylisted because the outgoing SW answers
+  // the first navigation after a deploy from its precached shell, which
+  // predates any newly-added route and renders "Not Found". That lands
+  // inside the extension's launchWebAuthFlow window, where the user
+  // cannot reload out of it.
+  it('contains the /auth/extension regex literal (stale-shell guard)', () => {
+    const denylist = extractDenylist(readConfigSource());
+    expect(denylist).toContain('/^\\/auth\\/extension/');
+  });
 });
