@@ -768,21 +768,26 @@ main.sba-panel {
   white-space: nowrap;
 }
 
+/* Deliberately louder than the label beside it. The chevron is the only
+   way to change stakes without signing out, and muted grey next to muted
+   grey read as decoration rather than a control. */
 .sba-stake-change {
   flex: none;
   margin: 0;
-  padding: 0 0.25rem;
+  padding: 0.05rem 0.3rem;
   background: transparent;
   border: none;
+  border-radius: 3px;
   font: inherit;
-  font-size: 15px;
+  font-size: 18px;
+  font-weight: 700;
   line-height: 1;
-  color: var(--sba-fg-muted);
+  color: var(--sba-primary);
   cursor: pointer;
 }
 
 .sba-stake-change:hover {
-  color: var(--sba-fg);
+  background: color-mix(in srgb, var(--sba-primary) 12%, transparent);
 }
 
 .sba-stake-change:focus-visible {
