@@ -93,7 +93,7 @@ export function SignedOutPanel({ onSignedIn }: SignedOutPanelProps) {
       <header className="sba-header">
         <h1>Stake Building Access</h1>
       </header>
-      <div className="sba-body sba-body-center">
+      <div className="sba-body sba-body-top">
         <p>Sign in as a Kindoo Manager to see pending requests. Either way works.</p>
         <button
           type="button"

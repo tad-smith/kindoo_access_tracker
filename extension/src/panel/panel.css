@@ -75,6 +75,18 @@ main.sba-panel {
   text-align: center;
 }
 
+/* Horizontally centred but anchored to the top. For a body with real
+   content — the signed-out panel's two buttons and their status note,
+   which grows and shrinks as the copy changes. Vertical centring makes
+   that content shift up and down the panel as it resizes.
+   `sba-body-center` stays for the transient one-line states
+   ("Loading…", "Resolving stake…"), where centring is right. */
+.sba-body.sba-body-top {
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+}
+
 .sba-btn {
   display: inline-flex;
   align-items: center;
