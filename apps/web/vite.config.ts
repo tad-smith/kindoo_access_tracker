@@ -267,11 +267,26 @@ export default defineConfig(({ command, mode }) => {
           //     navigation fallback; this entry is intent-documenting
           //     defense for any non-precached /help/* path and guards a
           //     future build that stops precaching the HTML.
+          //   - /auth/extension — the Chrome extension's sign-in handoff.
+          //     `skipWaiting` + `clientsClaim` do not help the navigation
+          //     already in flight, so the FIRST navigation after a deploy
+          //     is still answered by the outgoing SW from its precached
+          //     shell, which references the previous bundle. For a route
+          //     that existed in that bundle this is invisible; for a
+          //     newly-added one the router has no match and renders "Not
+          //     Found". This route is entered from inside a
+          //     `launchWebAuthFlow` window, where the user cannot reload
+          //     and where a blank "Not Found" reads as a broken product.
+          //     Hosting rewrites `**` to /index.html, so going to the
+          //     network always yields a shell naming the current chunks.
+          //     The whole flow calls a Cloud Function anyway, so nothing
+          //     is lost by requiring the network here.
           navigateFallbackDenylist: [
             /^\/__\//,
             /^\/firebase-messaging-sw\.js$/,
             /^\/THIRD_PARTY_LICENSES\.txt$/,
             /^\/help\//,
+            /^\/auth\/extension/,
           ],
           // Network-first for the SPA shell; cache-first for fingerprinted
           // bundle chunks (handled by precache); explicitly never cache
