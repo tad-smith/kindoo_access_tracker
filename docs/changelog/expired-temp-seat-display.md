@@ -33,10 +33,15 @@ Kindoo ends a temp user's access on the end date; the SBA seat only goes away wh
 - Bishopric Roster, Stake Roster, Ward Rosters compute `isExpired` per row and gate BOTH `canRemove` and `canEdit` on `isManager || !isExpired`. All Seats renders the badge.
 - Test clocks in the four affected page suites are pinned (`vi.useFakeTimers({ toFake: ['Date'] })` at 2026-05-20) — without that, every existing temp fixture's `end_date` would silently change meaning as the real calendar crossed it.
 
+## Resolved by shipping
+
+- **`open-questions.md` T-2 `[P1]` "Same-day expiry semantics"** — the question was "confirm with stakeholders so the UX text is right," and this PR *is* that UX text. Marked resolved: the seat is alive on its end date and expires the following morning, in the stake's timezone. The stakeholder half answered itself — leaders filing removes against these rows is what prompted the work.
+
 ## Spec / doc edits
 
 - `docs/spec.md` — §7 rewritten to cover the display rule; §5.1 and §5.3 note the badge and the withheld control; §5.2's Ward Rosters bullet notes the manager exemption.
 - `docs/architecture.md` — D34.
+- `docs/open-questions.md` — T-2 resolved.
 - `docs/user-guide/creating-requests.html`, `docs/user-guide/kindoo-managers.html` — what a leader sees and what the manager does about it.
 
 ## Not in scope
