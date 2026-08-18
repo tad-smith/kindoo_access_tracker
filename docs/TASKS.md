@@ -6,6 +6,31 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-101] Extend `auditLog` retention to 5 years; make `platformAuditLog` explicitly non-expiring
+Status: pending
+Owner: @backend-engineer (constants + backfill) + @infra-engineer (runbook)
+Phase: cross-cutting
+
+**`auditLog` → 5 years.** The 365-day value has no recorded rationale anywhere — no `F`/`D` decision covers retention, and the number simply appears in the schema and the code. (Q20 records the *`platformAuditLog`* figure as "defaulted"; `auditLog`'s was never even that deliberate.) It is short for what the log exists to answer — "who granted this person building access, and when" is routinely a multi-year question, since a calling outlasts a year and the access record should outlast the calling.
+
+Cost is not the constraint. Rows carry full `before`/`after` snapshots (`lib/auditDiff.ts` uses the diff only to decide *whether* to write), so ~2KB/row; even the stale ~300–500 rows/week estimate in `architecture.md` is ~40 MB/year, and five years of it sits inside Firestore's 1 GiB free storage allowance. That estimate predates D14 anyway — with the importer gone, real volume is a fraction of it.
+
+**No gcloud change needed.** The duration lives entirely in the stamped `ttl` value; the Firestore policy carries none (`gcloud firestore fields ttls update ttl --collection-group=auditLog --enable-ttl`, enabled on both projects per [T-15]). Only the constant moves.
+
+`TTL_MS = 365 * 24 * 60 * 60 * 1000` is duplicated in three places. Collapse to one shared export rather than editing three literals:
+
+- `functions/src/triggers/auditTrigger.ts:290` — per-stake `auditLog`
+- `functions/src/services/EmailService.ts:51` — the `email_send_failed` rows written directly
+- `functions/src/callable/createStake.ts:48` — `platformAuditLog` (goes away; see below)
+
+**Backfill existing rows.** `ttl` is computed at write time (`auditTrigger.ts:268`), so a constant change reaches new rows only. One-shot script rewrites `ttl` to `timestamp + 5y` on every existing `auditLog` doc. Safe to run: `auditTrigger` is registered on the entity collections, not on `auditLog` itself, so the backfill fans no new audit rows. Nothing has expired yet — prod went live 2026-05-03, so the earliest deletions are ~2027-05 — meaning a run before then loses nothing. One-shot, operator-run: no friendly errors, no troubleshooting doc.
+
+**`platformAuditLog` → no expiry, by construction.** It already has no TTL policy ([T-15] closed with it "at the operator's discretion"; never run), so the `ttl` field `createStake` stamps is inert and stake-creation history is already immortal — accidentally. Make it deliberate: stop stamping `ttl` at `createStake.ts:164` so a later `--enable-ttl` on that collection-group cannot silently delete the platform trail. Resolves Q20. Existing rows keep a stamped-but-unenforced `ttl`; clearing it is optional and can ride the same backfill script.
+
+**Runbook gap.** [T-15] asked for the TTL gcloud command to be added to `infra/runbooks/provision-firebase-projects.md`; it never was. A project rebuilt from that runbook stamps `ttl` fields and deletes nothing. Add it, noting that `platformAuditLog` is deliberately excluded.
+
+**Side effect worth having.** The 365-day TTL is what will eventually make `reconcileAuditGaps` false-positive: it compares a cumulative audit-row count against a current entity count, so a stake whose entities go quiet for over a year sheds rows and trips the >1% gate every night. Five years pushes that out well past the point where the job's own shape should be revisited.
+
 ## [T-100] Playwright coverage for the calling typeahead inside `EditSeatDialog`
 Status: done (2026-08-09 — PR pending)
 Owner: @web-engineer
