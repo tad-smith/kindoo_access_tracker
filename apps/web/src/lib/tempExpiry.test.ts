@@ -1,7 +1,7 @@
 // Expired-temp-grant predicate (spec §7).
 
 import { describe, expect, it } from 'vitest';
-import { isExpiredTempGrant, todayInStakeTz } from './tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from './tempExpiry';
 
 const temp = (end_date?: string) => ({ type: 'temp' as const, ...(end_date ? { end_date } : {}) });
 
@@ -47,5 +47,21 @@ describe('todayInStakeTz', () => {
   it('falls back to America/Denver when the stake doc has not landed', () => {
     const at = new Date('2026-08-18T05:30:00Z');
     expect(todayInStakeTz(undefined, at)).toBe('2026-08-17');
+  });
+});
+
+describe('syncWillClearSeat', () => {
+  it('is true for a seat whose only grant is the primary — Sync raises sba-only', () => {
+    expect(syncWillClearSeat({ duplicate_grants: [] })).toBe(true);
+  });
+
+  it('is false once the seat carries another grant', () => {
+    // `sba-only` needs the member absent from Kindoo entirely; another
+    // grant keeps them present, so the expired one is never reaped.
+    expect(syncWillClearSeat({ duplicate_grants: [{ scope: 'GE' } as never] })).toBe(false);
+  });
+
+  it('treats an absent duplicate_grants array as no duplicates', () => {
+    expect(syncWillClearSeat({} as never)).toBe(true);
   });
 });

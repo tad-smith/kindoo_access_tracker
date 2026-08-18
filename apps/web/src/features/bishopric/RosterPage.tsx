@@ -41,7 +41,7 @@ import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterP
 import { canEditSeat, canRemoveSeat } from '../requests/scopeOptions';
 import { scopeLabel } from '../../lib/scopeLabel';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
-import { isExpiredTempGrant, todayInStakeTz } from '../../lib/tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../lib/tempExpiry';
 import { useStakeTimezone } from '../../lib/useStakeTimezone';
 
 export interface BishopricRosterPageProps {
@@ -197,6 +197,10 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
                 const isExpired = isExpiredTempGrant(grant, today);
+                // Only withhold Remove where Sync will actually clear
+                // the seat; otherwise the note's promise is false and
+                // Remove is the only remedy. See `syncWillClearSeat`.
+                const isStrandedByExpiry = isExpired && syncWillClearSeat(seat);
                 const canEdit =
                   activeStakeId !== null &&
                   grant.isPrimary &&
@@ -205,7 +209,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
-                  (isManager || !isExpired) &&
+                  (isManager || !isStrandedByExpiry) &&
                   canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),

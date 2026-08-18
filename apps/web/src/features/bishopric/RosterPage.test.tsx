@@ -1185,6 +1185,42 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
   });
 
+  it('keeps Remove when the seat has another grant — Sync will never reap this one', () => {
+    // `sba-only` fires only when the member has no Kindoo user at all
+    // (detector.ts). A second grant keeps them present, so the expired
+    // grant would sit in SBA forever with no remedy if Remove were
+    // withheld — and the note would promise a Sync that never comes.
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 'multi@x.com',
+        member_email: 'multi@x.com',
+        member_name: 'Multi Grant',
+        type: 'temp',
+        callings: [],
+        scope: 'CO',
+        start_date: '2026-05-01',
+        end_date: '2026-05-14',
+        duplicate_grants: [
+          {
+            scope: 'GE',
+            type: 'manual',
+            building_names: ['Cedar Building'],
+            detected_at: { seconds: 0, nanoseconds: 0 },
+          } as never,
+        ],
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    // Still badged — it IS expired, and that is worth saying.
+    expect(screen.getByTestId('expired-badge-multi@x.com')).toBeInTheDocument();
+    // ...but Remove survives, and the note does not fire beside it.
+    expect(screen.getByTestId('remove-btn-multi@x.com')).toBeInTheDocument();
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
+  });
+
   it('withholds Edit as well — there is no editing a Kindoo record that is gone', () => {
     usePrincipalMock.mockReturnValue(principal(['CO']));
     mockSeats([expiredTemp()]);

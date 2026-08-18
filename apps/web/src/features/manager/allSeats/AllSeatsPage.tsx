@@ -46,7 +46,7 @@ import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { GrantStakeAccessDialog } from '../../requests/components/GrantStakeAccessDialog';
 import { isScopeAllowed } from '../../requests/scopeOptions';
-import { isExpiredTempGrant, todayInStakeTz } from '../../../lib/tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../../lib/tempExpiry';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 
@@ -480,7 +480,11 @@ function GrantRowCard({
             <Badge
               variant="expired"
               data-testid={`expired-badge-${testIdSuffix}`}
-              title="The end date has passed. Kindoo has already ended this access; Sync will clear the seat."
+              title={
+                syncWillClearSeat(seat)
+                  ? 'The end date has passed. Kindoo has already ended this access; Sync will clear the seat.'
+                  : 'The end date has passed. Kindoo has already ended this access, but Sync will not clear this seat — the member still holds other grants, so no sba-only row is raised. Remove it here.'
+              }
             >
               Expired
             </Badge>

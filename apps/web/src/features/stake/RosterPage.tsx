@@ -31,7 +31,7 @@ import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, canRemoveSeat, isScopeAllowed } from '../requests/scopeOptions';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
-import { isExpiredTempGrant, todayInStakeTz } from '../../lib/tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../lib/tempExpiry';
 
 export function StakeRosterPage() {
   const principal = usePrincipal();
@@ -168,6 +168,10 @@ export function StakeRosterPage() {
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
                 const isExpired = isExpiredTempGrant(grant, today);
+                // Only withhold Remove where Sync will actually clear
+                // the seat; otherwise the note's promise is false and
+                // Remove is the only remedy. See `syncWillClearSeat`.
+                const isStrandedByExpiry = isExpired && syncWillClearSeat(seat);
                 const canEdit =
                   activeStakeId !== null &&
                   grant.isPrimary &&
@@ -176,7 +180,7 @@ export function StakeRosterPage() {
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
-                  (isManager || !isExpired) &&
+                  (isManager || !isStrandedByExpiry) &&
                   canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
