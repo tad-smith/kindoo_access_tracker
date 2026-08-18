@@ -66,8 +66,13 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
 
   const seats = useBishopricRoster(activeWard);
 
-  // Expired temp grants stay on the roster but stop offering Remove to
-  // anyone who can't act on them (spec §7). Managers keep the button.
+  // Expired temp grants stay on the roster but stop offering actions
+  // (spec §7). Remove is withheld from everyone but a Kindoo Manager —
+  // they are the one principal who can clear the stale SBA row. Edit is
+  // withheld from EVERYONE including them: an `edit_temp` against a
+  // Kindoo user Kindoo has already dropped has nothing to apply, and
+  // `provisionEdit` throws `ProvisionEditUserMissingError` on the
+  // lookup. Re-granting access is a new `add_temp`, not an edit.
   const stakeTimezone = useStakeTimezone();
   const today = todayInStakeTz(stakeTimezone);
   const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);
@@ -195,7 +200,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                 const canEdit =
                   activeStakeId !== null &&
                   grant.isPrimary &&
-                  (isManager || !isExpired) &&
+                  !isExpired &&
                   canEditSeat(principal, activeStakeId, seat);
                 const canRemove =
                   activeStakeId !== null &&

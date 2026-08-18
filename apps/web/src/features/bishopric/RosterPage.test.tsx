@@ -1267,9 +1267,13 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     render(<BishopricRosterPage />);
 
     expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
-    expect(screen.getByTestId('edit-btn-expired@x.com')).toBeInTheDocument();
+    // Edit is withheld from THEM too: `provisionEdit` looks the member
+    // up in Kindoo and throws when the lookup misses, which is exactly
+    // this state. The button could only ever produce a request they
+    // then have to reject. Re-granting is a new `add_temp`.
+    expect(screen.queryByTestId('edit-btn-expired@x.com')).toBeNull();
     // Marked for them too, but without the note that contradicts the
-    // buttons sitting next to it.
+    // button sitting next to it.
     expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
     expect(screen.queryByText(/no request needed/i)).toBeNull();
   });
