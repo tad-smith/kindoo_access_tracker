@@ -48,11 +48,23 @@ export interface PerGrantRosterCardProps {
   isPendingRemoval: boolean;
   /**
    * True iff this is a temp grant whose end date has passed (spec §7).
-   * Marks the row and mutes it. When the caller has also withheld the
-   * row's controls on that basis the card explains why, so their absence
-   * reads as an answer rather than a missing affordance.
+   * Marks the row and mutes it.
    */
   isExpired?: boolean;
+  /**
+   * True iff the expiry is the reason this row has no controls — i.e.
+   * the grant is expired AND Sync will actually reap the seat
+   * (`syncWillClearSeat`). Gates the explanatory note.
+   *
+   * Distinct from `!canRemove`, which the note used to infer from and
+   * which is false for a second, unrelated reason: the viewer never had
+   * authority over this scope. On Ward Rosters that is EVERY row for a
+   * Stake Presidency principal (`isScopeAllowed` denies a non-manager
+   * any ward scope), so inferring from the button's absence put the
+   * "clears at the next Sync" promise on multi-grant rows — the exact
+   * rows `syncWillClearSeat` exists to keep it off.
+   */
+  isStrandedByExpiry?: boolean;
   wards: readonly Ward[];
   buildings: readonly Building[];
   sites: readonly KindooSite[];
@@ -67,6 +79,7 @@ export function PerGrantRosterCard({
   canRemove,
   isPendingRemoval,
   isExpired = false,
+  isStrandedByExpiry = false,
   wards,
   buildings,
   sites,
@@ -111,9 +124,10 @@ export function PerGrantRosterCard({
     <div className="roster-card-line2">{buildingsChip}</div>
   ) : null;
 
-  // Only for the viewer who lost the row's controls to the expiry. A
-  // manager keeps them, and telling them nothing needs doing beside
-  // actions they can still take would contradict itself.
+  // Only for the viewer who lost the row's controls to the expiry, and
+  // only where Sync will in fact clear the seat. A manager keeps Remove,
+  // and telling them nothing needs doing beside an action they can still
+  // take would contradict itself.
   //
   // Withheld again when a remove is already in flight: "no request
   // needed" beside a `Pending Removal` badge tells the requester their
@@ -123,7 +137,7 @@ export function PerGrantRosterCard({
   // rollout). The badge carries the state on its own; the request
   // resolves through the R-1 no-op path either way (spec §6).
   const expiredNote =
-    isExpired && !canRemove && !isPendingRemoval ? (
+    isStrandedByExpiry && !canRemove && !isPendingRemoval ? (
       <div className="roster-card-line2 roster-card-expired-note">
         Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no
         request needed.

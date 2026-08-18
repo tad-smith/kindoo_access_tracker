@@ -194,6 +194,7 @@ export function StakeRosterPage() {
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
                     isExpired={isExpired}
+                    isStrandedByExpiry={isStrandedByExpiry}
                     wards={wards.data ?? []}
                     buildings={buildings.data ?? []}
                     sites={kindooSites.data ?? []}

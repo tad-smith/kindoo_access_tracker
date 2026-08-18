@@ -216,6 +216,7 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
                         canRemove={canRemove}
                         isPendingRemoval={isPendingRemoval}
                         isExpired={isExpired}
+                        isStrandedByExpiry={isStrandedByExpiry}
                         wards={wardsList}
                         buildings={buildings.data ?? []}
                         sites={kindooSites.data ?? []}

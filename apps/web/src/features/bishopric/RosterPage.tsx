@@ -223,6 +223,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
                     isExpired={isExpired}
+                    isStrandedByExpiry={isStrandedByExpiry}
                     wards={wardsCatalogue.data ?? []}
                     buildings={buildingsCatalogue.data ?? []}
                     sites={kindooSites.data ?? []}

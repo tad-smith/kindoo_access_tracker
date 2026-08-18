@@ -864,6 +864,47 @@ describe('<WardRostersPage /> — expired temp seats (spec §7)', () => {
     expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
   });
 
+  it('does not promise a Sync to a Stake Presidency viewer on a multi-grant row', () => {
+    // A stake-only principal has no ward authority, so `canRemove` is
+    // false on EVERY ward row — the note used to infer "expiry took the
+    // button" from that and fired here, on the one shape where Sync
+    // will never reap the seat. The badge is still right; the promise
+    // is not.
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats([
+      makeSeat({
+        scope: 'CO',
+        member_canonical: 'multi@x.com',
+        member_email: 'multi@x.com',
+        member_name: 'Multi Grant',
+        type: 'temp',
+        callings: [],
+        start_date: '2026-05-01',
+        end_date: '2026-05-14',
+        duplicate_grants: [
+          {
+            scope: 'stake',
+            type: 'manual',
+            building_names: ['Cedar Building'],
+            detected_at: { seconds: 0, nanoseconds: 0 },
+          } as never,
+        ],
+      }),
+    ]);
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByTestId('expired-badge-multi@x.com')).toBeInTheDocument();
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
+  });
+
+  it('still explains itself to a stake viewer when Sync WILL clear the seat', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats([expiredTemp()]);
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
+  });
+
   it('keeps Remove for a Kindoo Manager, whose reach into every ward is this page', () => {
     usePrincipalMock.mockReturnValue(principal({ manager: true }));
     mockSeats([expiredTemp()]);
