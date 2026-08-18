@@ -278,9 +278,11 @@ Can `start_date > today`? If so, does the seat count against the cap before its 
 
 **Best guess:** Allow future start dates; count them against the cap from the moment they exist, since Kindoo needs the provisioning now.
 
-### T-2 `[P1]` Same-day expiry semantics
+### T-2 `[RESOLVED 2026-08-18]` Same-day expiry semantics
 
-Spec says delete when `end_date < today`. So a seat with `end_date = today` is still alive on its end date and disappears the following morning. Confirm with stakeholders so the UX text is right.
+A seat with `end_date = today` is **still alive on its end date**; expiry begins the following morning, and "today" is the stake's calendar day (`stake.timezone`), not the viewer's. Settled by shipping the UX text this question was waiting on: `isExpiredTempGrant` (`apps/web/src/lib/tempExpiry.ts`) is the single expression of the rule, and spec §7 states it — an expired temp row is marked `Expired`, muted, and offers neither Remove nor Edit to anyone but a Kindoo Manager (`architecture.md` D34, PR #285).
+
+The stakeholder half is answered too, and more strongly than "confirm the wording": leaders were filing `remove` requests against these rows, which is what prompted the copy in the first place.
 
 ---
 

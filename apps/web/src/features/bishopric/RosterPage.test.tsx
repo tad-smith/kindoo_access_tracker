@@ -9,7 +9,7 @@
 // `initialWard` prop that the route file forwards from the URL. That
 // keeps the unit test boundary aligned with the component's contract.
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
@@ -29,6 +29,13 @@ const navigateMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
+}));
+
+// The page reads the stake's timezone to name today's calendar day for
+// the expired-temp check (spec §7). Stub it — the real hook opens a
+// Firestore doc subscription these tests deliberately don't have.
+vi.mock('../../lib/useStakeTimezone', () => ({
+  useStakeTimezone: () => 'America/Denver',
 }));
 
 // RemovalAffordance subscribes via the requests hooks; mock so we
@@ -146,14 +153,14 @@ function mockPendingRemoveFor(canonical: string) {
 
 import { BishopricRosterPage } from './RosterPage';
 
-function principal(wards: string[], opts: { limited?: boolean } = {}) {
+function principal(wards: string[], opts: { limited?: boolean; manager?: boolean } = {}) {
   return {
     isAuthenticated: true,
     firebaseAuthSignedIn: true,
     email: 'bishop@example.com',
     canonical: 'bishop@example.com',
     isPlatformSuperadmin: false,
-    managerStakes: [],
+    managerStakes: opts.manager ? ['csnorth'] : [],
     stakeMemberStakes: [],
     bishopricWards: { csnorth: wards },
     limitedStakes: opts.limited ? ['csnorth'] : [],
@@ -204,6 +211,20 @@ function mockPendingRequests(requests: AccessRequest[]) {
     fetchStatus: 'idle',
   });
 }
+
+// The expired-temp-grant marker (spec §7) compares each temp grant's
+// `end_date` against the stake's calendar day, so an unpinned clock
+// would silently change what every temp fixture below means the moment
+// the real date crossed it. Pin it: the existing fixtures all end after
+// this day and stay live; the expiry tests pass explicitly-past dates.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-20T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1116,5 +1137,180 @@ describe('<BishopricRosterPage /> — limited app access (D25)', () => {
     expect(screen.queryByTestId('remove-btn-auto@x.com')).toBeNull();
     expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
     expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+});
+
+// ---- Expired temp grants (spec §7) ----------------------------------
+//
+// Kindoo ends a temp user's access on the end date; the SBA seat only
+// goes away when a manager's next Sync clears it. Wards were reading
+// that gap as a seat needing cleanup and filing remove requests for it.
+// The row stays, marked and explained; the Remove button doesn't.
+//
+// Clock is pinned to 2026-05-20 by the file-level `beforeEach`.
+
+describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
+  const expiredTemp = () =>
+    makeSeat({
+      member_canonical: 'expired@x.com',
+      member_email: 'expired@x.com',
+      member_name: 'Expired Person',
+      type: 'temp',
+      callings: [],
+      scope: 'CO',
+      start_date: '2026-05-01',
+      end_date: '2026-05-14',
+    });
+
+  const liveTemp = () =>
+    makeSeat({
+      member_canonical: 'live@x.com',
+      member_email: 'live@x.com',
+      member_name: 'Live Person',
+      type: 'temp',
+      callings: [],
+      scope: 'CO',
+      start_date: '2026-05-01',
+      end_date: '2026-06-30',
+    });
+
+  it('withholds Remove on a temp seat whose end date has passed, and says why', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.queryByTestId('remove-btn-expired@x.com')).toBeNull();
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
+  });
+
+  it('keeps Remove when the seat has another grant — Sync will never reap this one', () => {
+    // `sba-only` fires only when the member has no Kindoo user at all
+    // (detector.ts). A second grant keeps them present, so the expired
+    // grant would sit in SBA forever with no remedy if Remove were
+    // withheld — and the note would promise a Sync that never comes.
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 'multi@x.com',
+        member_email: 'multi@x.com',
+        member_name: 'Multi Grant',
+        type: 'temp',
+        callings: [],
+        scope: 'CO',
+        start_date: '2026-05-01',
+        end_date: '2026-05-14',
+        duplicate_grants: [
+          {
+            scope: 'GE',
+            type: 'manual',
+            building_names: ['Cedar Building'],
+            detected_at: { seconds: 0, nanoseconds: 0 },
+          } as never,
+        ],
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    // Still badged — it IS expired, and that is worth saying.
+    expect(screen.getByTestId('expired-badge-multi@x.com')).toBeInTheDocument();
+    // ...but Remove survives, and the note does not fire beside it.
+    expect(screen.getByTestId('remove-btn-multi@x.com')).toBeInTheDocument();
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
+  });
+
+  it('withholds Edit as well — there is no editing a Kindoo record that is gone', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.queryByTestId('edit-btn-expired@x.com')).toBeNull();
+  });
+
+  it('still renders the row — a seat that vanished would be its own confusion', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.getByText('Expired Person')).toBeInTheDocument();
+    // ...and it still counts against the ward's cap until Sync clears it.
+    expect(screen.getByText(/1 \/ 20 seats used/)).toBeInTheDocument();
+  });
+
+  it('leaves a temp seat still inside its window alone', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([liveTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.getByTestId('remove-btn-live@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-live@x.com')).toBeInTheDocument();
+    expect(screen.queryByTestId('expired-badge-live@x.com')).toBeNull();
+  });
+
+  it('holds the seat THROUGH its end date — expiry starts the day after', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([
+      makeSeat({
+        member_canonical: 'endstoday@x.com',
+        member_email: 'endstoday@x.com',
+        member_name: 'Ends Today',
+        type: 'temp',
+        callings: [],
+        scope: 'CO',
+        start_date: '2026-05-01',
+        end_date: '2026-05-20',
+      }),
+    ]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.getByTestId('remove-btn-endstoday@x.com')).toBeInTheDocument();
+    expect(screen.queryByTestId('expired-badge-endstoday@x.com')).toBeNull();
+  });
+
+  it('withholds the note when a remove is already in flight — the badge would contradict it', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    mockPendingRequests([
+      makeRequest({
+        request_id: 'r-remove-expired',
+        type: 'remove',
+        scope: 'CO',
+        member_canonical: 'expired@x.com',
+        member_email: 'expired@x.com',
+      }),
+    ]);
+    render(<BishopricRosterPage />);
+
+    // Both states are true and both are marked...
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('pending-removal-badge-expired@x.com')).toBeInTheDocument();
+    // ...but "no request needed" beside a pending request the ward just
+    // filed reads as a rebuke. The badge carries it instead.
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
+  });
+
+  it('keeps Remove for a Kindoo Manager — they are the one who can act on it', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO'], { manager: true }));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
+    // Edit is withheld from THEM too, and unlike Remove it is not
+    // narrowed to the single-grant shape: Kindoo drops the temp
+    // AccessSchedule at expiry, so an `edit_temp` would re-add it rather
+    // than change anything. Re-granting is a new `add_temp`.
+    expect(screen.queryByTestId('edit-btn-expired@x.com')).toBeNull();
+    // Marked for them too, but without the note that contradicts the
+    // button sitting next to it.
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
   });
 });

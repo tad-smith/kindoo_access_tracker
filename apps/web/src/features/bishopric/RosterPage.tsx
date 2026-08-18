@@ -41,6 +41,8 @@ import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterP
 import { canEditSeat, canRemoveSeat } from '../requests/scopeOptions';
 import { scopeLabel } from '../../lib/scopeLabel';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../lib/tempExpiry';
+import { useStakeTimezone } from '../../lib/useStakeTimezone';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -63,6 +65,18 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   }, [wards, activeWard]);
 
   const seats = useBishopricRoster(activeWard);
+
+  // Expired temp grants stay on the roster but stop offering actions
+  // (spec §7). Remove is withheld from everyone but a Kindoo Manager,
+  // and only where Sync will in fact reap the seat (`syncWillClearSeat`
+  // — `sba-only` needs the member absent from Kindoo entirely, so a
+  // multi-grant seat would otherwise be stranded). Edit is withheld from
+  // EVERYONE and is deliberately NOT narrowed the same way: Kindoo drops
+  // the temp AccessSchedule at expiry, so an `edit_temp` would re-add it
+  // — an add wearing an edit's clothes. Re-granting is an `add_temp`.
+  const stakeTimezone = useStakeTimezone();
+  const today = todayInStakeTz(stakeTimezone);
+  const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);
   const wardDocResult = useFirestoreOnce(
     activeWard && activeStakeId ? wardRef(db, activeStakeId, activeWard) : null,
   );
@@ -183,13 +197,20 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
           ) : (
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
+                const isExpired = isExpiredTempGrant(grant, today);
+                // Only withhold Remove where Sync will actually clear
+                // the seat; otherwise the note's promise is false and
+                // Remove is the only remedy. See `syncWillClearSeat`.
+                const isStrandedByExpiry = isExpired && syncWillClearSeat(seat);
                 const canEdit =
                   activeStakeId !== null &&
                   grant.isPrimary &&
+                  !isExpired &&
                   canEditSeat(principal, activeStakeId, seat);
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
+                  (isManager || !isStrandedByExpiry) &&
                   canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
@@ -202,6 +223,8 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                     canEdit={canEdit}
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
+                    isExpired={isExpired}
+                    isStrandedByExpiry={isStrandedByExpiry}
                     wards={wardsCatalogue.data ?? []}
                     buildings={buildingsCatalogue.data ?? []}
                     sites={kindooSites.data ?? []}

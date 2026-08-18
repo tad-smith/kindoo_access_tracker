@@ -46,6 +46,25 @@ export interface PerGrantRosterCardProps {
   canRemove: boolean;
   /** True iff the matching grant has a pending remove request. */
   isPendingRemoval: boolean;
+  /**
+   * True iff this is a temp grant whose end date has passed (spec §7).
+   * Marks the row and mutes it.
+   */
+  isExpired?: boolean;
+  /**
+   * True iff the expiry is the reason this row has no controls — i.e.
+   * the grant is expired AND Sync will actually reap the seat
+   * (`syncWillClearSeat`). Gates the explanatory note.
+   *
+   * Distinct from `!canRemove`, which the note used to infer from and
+   * which is false for a second, unrelated reason: the viewer never had
+   * authority over this scope. On Ward Rosters that is EVERY row for a
+   * Stake Presidency principal (`isScopeAllowed` denies a non-manager
+   * any ward scope), so inferring from the button's absence put the
+   * "clears at the next Sync" promise on multi-grant rows — the exact
+   * rows `syncWillClearSeat` exists to keep it off.
+   */
+  isStrandedByExpiry?: boolean;
   wards: readonly Ward[];
   buildings: readonly Building[];
   sites: readonly KindooSite[];
@@ -59,6 +78,8 @@ export function PerGrantRosterCard({
   canEdit,
   canRemove,
   isPendingRemoval,
+  isExpired = false,
+  isStrandedByExpiry = false,
   wards,
   buildings,
   sites,
@@ -103,15 +124,41 @@ export function PerGrantRosterCard({
     <div className="roster-card-line2">{buildingsChip}</div>
   ) : null;
 
+  // Only for the viewer who lost the row's controls to the expiry, and
+  // only where Sync will in fact clear the seat. A manager keeps Remove,
+  // and telling them nothing needs doing beside an action they can still
+  // take would contradict itself.
+  //
+  // Withheld again when a remove is already in flight: "no request
+  // needed" beside a `Pending Removal` badge tells the requester their
+  // own request was pointless, and it was not — the seat is still there, so
+  // that request will complete and delete it (R-1 is the seat-already-
+  // ABSENT race, which this isn't). The pairing is not an edge case
+  // either: it is exactly the population this feature exists for
+  // (removes filed on temp seats near their end date, plus everything
+  // already queued at rollout). The badge carries the state on its own.
+  const expiredNote =
+    isStrandedByExpiry && !canRemove && !isPendingRemoval ? (
+      <div className="roster-card-line2 roster-card-expired-note">
+        Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no
+        request needed.
+      </div>
+    ) : null;
+
   return (
     <div
-      className={`roster-card roster-card--two-line type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}`}
+      className={`roster-card roster-card--two-line type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}${isExpired ? ' is-expired' : ''}`}
       data-seat-id={seat.member_canonical}
       data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
     >
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
+          {isExpired ? (
+            <Badge variant="expired" data-testid={`expired-badge-${seat.member_canonical}`}>
+              Expired
+            </Badge>
+          ) : null}
           {isPendingRemoval ? (
             <Badge variant="danger" data-testid={`pending-removal-badge-${seat.member_canonical}`}>
               Pending Removal
@@ -165,6 +212,7 @@ export function PerGrantRosterCard({
       {callingLine}
       {buildingsLine}
       {datesLine}
+      {expiredNote}
     </div>
   );
 }

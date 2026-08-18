@@ -46,6 +46,7 @@ import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { GrantStakeAccessDialog } from '../../requests/components/GrantStakeAccessDialog';
 import { isScopeAllowed } from '../../requests/scopeOptions';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../../lib/tempExpiry';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 
@@ -207,6 +208,10 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
   // continue to diverge. Spec §15 Phase B.
   const allSeats = seats.data ?? [];
   const stakeSeatCap = stake.data?.stake_seat_cap;
+  // Expired temp grants are marked here too — the roster surfaces hide
+  // the Remove button on them, so this page is where the manager who
+  // CAN clear them sees how many are waiting on a Sync (spec §7).
+  const today = todayInStakeTz(stake.data?.timezone);
   const stakePoolCap = stakeAvailablePoolSize(stakeSeatCap, wardsList, buildingsList);
   const foreignWardCodes = useMemo(() => {
     // Id-first ward→building site resolution (slug FK, name fallback).
@@ -310,6 +315,7 @@ export function AllSeatsPage({ initialWard, initialBuilding, initialType }: AllS
               sites={sitesList}
               principal={principal}
               activeStakeId={activeStakeId}
+              today={today}
             />
           ))}
         </div>
@@ -327,6 +333,8 @@ interface GrantRowCardProps {
   sites: readonly KindooSite[];
   principal: ReturnType<typeof usePrincipal>;
   activeStakeId: string | null;
+  /** Stake-local `YYYY-MM-DD`; drives the expired-temp badge. */
+  today: string;
 }
 
 function GrantRowCard({
@@ -336,8 +344,10 @@ function GrantRowCard({
   sites,
   principal,
   activeStakeId,
+  today,
 }: GrantRowCardProps) {
   const { seat, grant } = row;
+  const isExpired = isExpiredTempGrant(grant, today);
   const siteLabel = siteLabelForGrant(grant, wards, buildings, sites);
   const canRemoveScope =
     activeStakeId !== null && isScopeAllowed(principal, activeStakeId, grant.scope);
@@ -458,7 +468,7 @@ function GrantRowCard({
 
   return (
     <div
-      className={`roster-card roster-card--two-line type-${grant.type}`}
+      className={`roster-card roster-card--two-line type-${grant.type}${isExpired ? ' is-expired' : ''}`}
       data-seat-id={seat.member_canonical}
       data-row-key={row.rowKey}
       data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
@@ -466,6 +476,19 @@ function GrantRowCard({
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
+          {isExpired ? (
+            <Badge
+              variant="expired"
+              data-testid={`expired-badge-${testIdSuffix}`}
+              title={
+                syncWillClearSeat(seat)
+                  ? 'The end date has passed. Kindoo has already ended this access; Sync will clear the seat.'
+                  : 'The end date has passed. Kindoo has already ended this access, but Sync will not clear this seat — the member still holds other grants, so no sba-only row is raised. Remove it here.'
+              }
+            >
+              Expired
+            </Badge>
+          ) : null}
           {/* The badge marks a row that FOLDS more than one grant, and
               nothing else. `collapseSameScopeGrants` merges same-scope
               duplicates into their primary, so every row that renders

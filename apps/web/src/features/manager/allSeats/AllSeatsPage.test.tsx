@@ -4,7 +4,7 @@
 // edit affordance); Remove on a row submits a `remove` request scoped
 // to the grant's `(scope, kindoo_site_id)`.
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Building, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
@@ -149,6 +149,20 @@ const NOW: DuplicateGrant['detected_at'] = {
   toDate: () => new Date(),
   toMillis: () => 0,
 };
+
+// The expired-temp-grant marker (spec §7) compares each temp grant's
+// `end_date` against the stake's calendar day, so an unpinned clock
+// would silently change what every temp fixture below means the moment
+// the real date crossed it. Pin it: the existing fixtures all end after
+// this day and stay live; the expiry tests pass explicitly-past dates.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-20T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -1511,5 +1525,69 @@ describe('<AllSeatsPage /> — Give Access To Stake Buildings button', () => {
     expect(payload.scope).toBe('stake');
     expect(payload.member_email).toBe('foreign@x.com');
     expect(payload.building_names).toEqual(['Home Building']);
+  });
+});
+
+// ---- Expired temp grants (spec §7) ----------------------------------
+//
+// The roster surfaces withhold Remove on these, so All Seats is where
+// the manager who CAN clear them sees how many are waiting on a Sync.
+// Clock pinned to 2026-05-20 by the file-level `beforeEach`.
+
+describe('<AllSeatsPage /> — expired temp grants (spec §7)', () => {
+  it('badges a temp grant past its end date and leaves a live one bare', () => {
+    usePrincipalMock.mockReturnValue(principal({ manager: true }));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'expired@x.com',
+          member_email: 'expired@x.com',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-05-14',
+        }),
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'live@x.com',
+          member_email: 'live@x.com',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-06-30',
+        }),
+      ],
+      wards: [],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.queryByTestId('expired-badge-live@x.com')).toBeNull();
+  });
+
+  it("keeps the manager's Remove button on the expired row", () => {
+    usePrincipalMock.mockReturnValue(principal({ manager: true }));
+    mockAll({
+      seats: [
+        makeSeat({
+          scope: 'stake',
+          member_canonical: 'expired@x.com',
+          member_email: 'expired@x.com',
+          type: 'temp',
+          callings: [],
+          start_date: '2026-05-01',
+          end_date: '2026-05-14',
+        }),
+      ],
+      wards: [],
+      buildings: [],
+      stake: { stake_seat_cap: 200 },
+    });
+    render(<AllSeatsPage />);
+
+    expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
   });
 });

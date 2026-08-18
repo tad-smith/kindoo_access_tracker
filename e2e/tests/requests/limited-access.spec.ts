@@ -45,6 +45,22 @@ const TEMP_END_91_DAYS = '2026-12-01';
 
 const TEMP_WINDOW_ERROR = 'Temporary access is limited to 90 days.';
 
+/**
+ * End date for the SEEDED roster temp seat — a year out, recomputed per
+ * run. The window-boundary constants above are deliberately fixed
+ * because they assert a fixed 90-day arithmetic; this one can't be,
+ * because the row's affordances now depend on the seat still being
+ * live. A hardcoded date turns this spec into a time bomb: the day the
+ * calendar passes it the seat reads as expired (spec §7), the Remove
+ * button correctly disappears, and the assertion below fails for a
+ * reason that has nothing to do with limited access.
+ */
+function aYearOut(): string {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 const actor = (email: string) => ({ email, canonical: email });
 
 async function signInViaTestHatch(page: Page, email: string): Promise<void> {
@@ -176,7 +192,7 @@ async function seedWardRosterWithEachSeatType(): Promise<void> {
     type: 'temp',
     reason: 'Youth conference setup',
     start_date: TEMP_START,
-    end_date: '2026-09-15',
+    end_date: aYearOut(),
     granted_by_request: 'seed-req-temp',
   });
 }

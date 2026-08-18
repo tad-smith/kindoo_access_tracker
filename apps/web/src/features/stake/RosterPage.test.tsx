@@ -1,7 +1,7 @@
 // Component tests for the Stake Roster page. Same mock-the-hook
 // pattern as the bishopric Roster page test.
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AccessRequest, Seat, Stake, Ward } from '@kindoo/shared';
@@ -225,6 +225,20 @@ function mockOrganizations(orgs: any[]) {
     fetchStatus: 'idle',
   });
 }
+
+// The expired-temp-grant marker (spec §7) compares each temp grant's
+// `end_date` against the stake's calendar day, so an unpinned clock
+// would silently change what every temp fixture below means the moment
+// the real date crossed it. Pin it: the existing fixtures all end after
+// this day and stay live; the expiry tests pass explicitly-past dates.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-20T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -977,5 +991,84 @@ describe('<StakeRosterPage /> — limited app access (D25)', () => {
     expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
     expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
     expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+});
+
+// ---- Expired temp grants (spec §7) ----------------------------------
+//
+// The Stake Presidency reads its own roster the same way a bishopric
+// reads a ward's, and filed the same remove requests off it. Clock
+// pinned to 2026-05-20; the page takes its timezone from the stake doc.
+
+describe('<StakeRosterPage /> — expired temp seats (spec §7)', () => {
+  const expiredTemp = () =>
+    makeSeat({
+      scope: 'stake',
+      member_canonical: 'expired@x.com',
+      member_email: 'expired@x.com',
+      member_name: 'Expired Person',
+      type: 'temp',
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-05-14',
+    });
+
+  it('withholds Remove from a stake user and explains the absence', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats([expiredTemp()]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.getByText('Expired Person')).toBeInTheDocument();
+    expect(screen.queryByTestId('remove-btn-expired@x.com')).toBeNull();
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
+  });
+
+  // The comparison is against the STAKE's calendar day. At 22:00Z on
+  // 2026-05-20 the two zones disagree about what day it is — Denver is
+  // still on the 20th, Tokyo already on the 21st — so a grant ending
+  // 2026-05-20 is live for one stake and expired for the other at the
+  // same instant. Reading the viewer's clock instead would flip a
+  // Denver stake's roster for whoever opened it from Tokyo.
+  const endsOn20th = () =>
+    makeSeat({
+      scope: 'stake',
+      member_canonical: 'edge@x.com',
+      member_email: 'edge@x.com',
+      member_name: 'Edge Person',
+      type: 'temp',
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-05-20',
+    });
+
+  it('is still live at 22:00Z for a Denver stake — the 20th has not ended there', () => {
+    vi.setSystemTime(new Date('2026-05-20T22:00:00Z'));
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats([endsOn20th()]);
+    mockStakeDoc({ stake_seat_cap: 200, timezone: 'America/Denver' });
+    render(<StakeRosterPage />);
+
+    expect(screen.queryByTestId('expired-badge-edge@x.com')).toBeNull();
+  });
+
+  it('is expired at the same instant for a Tokyo stake, where it is already the 21st', () => {
+    vi.setSystemTime(new Date('2026-05-20T22:00:00Z'));
+    usePrincipalMock.mockReturnValue(principal({ stake: true }));
+    mockSeats([endsOn20th()]);
+    mockStakeDoc({ stake_seat_cap: 200, timezone: 'Asia/Tokyo' });
+    render(<StakeRosterPage />);
+
+    expect(screen.getByTestId('expired-badge-edge@x.com')).toBeInTheDocument();
+  });
+
+  it('keeps Remove for a Kindoo Manager', () => {
+    usePrincipalMock.mockReturnValue(principal({ stake: true, manager: true }));
+    mockSeats([expiredTemp()]);
+    mockStakeDoc({ stake_seat_cap: 200 });
+    render(<StakeRosterPage />);
+
+    expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
   });
 });
