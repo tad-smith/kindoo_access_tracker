@@ -162,11 +162,12 @@ export function StakeRosterPage() {
           ) : (
             <div className="roster-cards">
               {sortedRows.map(({ seat, grant }) => {
+                const isExpired = isExpiredTempGrant(grant, today);
                 const canEdit =
                   activeStakeId !== null &&
                   grant.isPrimary &&
+                  (isManager || !isExpired) &&
                   canEditSeat(principal, activeStakeId, seat);
-                const isExpired = isExpiredTempGrant(grant, today);
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&

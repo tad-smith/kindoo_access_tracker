@@ -1185,6 +1185,15 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
   });
 
+  it('withholds Edit as well — there is no editing a Kindoo record that is gone', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    render(<BishopricRosterPage />);
+
+    expect(screen.queryByTestId('edit-btn-expired@x.com')).toBeNull();
+  });
+
   it('still renders the row — a seat that vanished would be its own confusion', () => {
     usePrincipalMock.mockReturnValue(principal(['CO']));
     mockSeats([expiredTemp()]);
@@ -1203,6 +1212,7 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     render(<BishopricRosterPage />);
 
     expect(screen.getByTestId('remove-btn-live@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-live@x.com')).toBeInTheDocument();
     expect(screen.queryByTestId('expired-badge-live@x.com')).toBeNull();
   });
 
@@ -1257,8 +1267,9 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     render(<BishopricRosterPage />);
 
     expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-btn-expired@x.com')).toBeInTheDocument();
     // Marked for them too, but without the note that contradicts the
-    // button sitting next to it.
+    // buttons sitting next to it.
     expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
     expect(screen.queryByText(/no request needed/i)).toBeNull();
   });

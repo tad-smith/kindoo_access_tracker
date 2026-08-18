@@ -48,9 +48,9 @@ export interface PerGrantRosterCardProps {
   isPendingRemoval: boolean;
   /**
    * True iff this is a temp grant whose end date has passed (spec §7).
-   * Marks the row and mutes it. When the caller has also withheld
-   * `canRemove` on that basis the card explains why, so the absence of
-   * the button reads as an answer rather than a missing affordance.
+   * Marks the row and mutes it. When the caller has also withheld the
+   * row's controls on that basis the card explains why, so their absence
+   * reads as an answer rather than a missing affordance.
    */
   isExpired?: boolean;
   wards: readonly Ward[];
@@ -111,9 +111,9 @@ export function PerGrantRosterCard({
     <div className="roster-card-line2">{buildingsChip}</div>
   ) : null;
 
-  // Only for the viewer who lost the Remove button to the expiry. A
-  // manager keeps the button, and telling them nothing needs doing
-  // beside an action they can still take would contradict itself.
+  // Only for the viewer who lost the row's controls to the expiry. A
+  // manager keeps them, and telling them nothing needs doing beside
+  // actions they can still take would contradict itself.
   //
   // Withheld again when a remove is already in flight: "no request
   // needed" beside a `Pending Removal` badge tells the requester their
