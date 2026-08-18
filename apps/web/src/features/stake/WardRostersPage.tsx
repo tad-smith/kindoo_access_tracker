@@ -132,12 +132,13 @@ export function WardRostersPage({ initialWard }: WardRostersPageProps) {
     isScopeAllowed(principal, activeStakeId, selected);
 
   // Expired temp grants stay on the roster but stop offering actions
-  // (spec §7). Remove is withheld from everyone but a Kindoo Manager —
-  // they are the one principal who can clear the stale SBA row. Edit is
-  // withheld from EVERYONE including them: an `edit_temp` against a
-  // Kindoo user Kindoo has already dropped has nothing to apply, and
-  // `provisionEdit` throws `ProvisionEditUserMissingError` on the
-  // lookup. Re-granting access is a new `add_temp`, not an edit.
+  // (spec §7). Remove is withheld from everyone but a Kindoo Manager,
+  // and only where Sync will in fact reap the seat (`syncWillClearSeat`
+  // — `sba-only` needs the member absent from Kindoo entirely, so a
+  // multi-grant seat would otherwise be stranded). Edit is withheld from
+  // EVERYONE and is deliberately NOT narrowed the same way: Kindoo drops
+  // the temp AccessSchedule at expiry, so an `edit_temp` would re-add it
+  // — an add wearing an edit's clothes. Re-granting is an `add_temp`.
   const stakeTimezone = useStakeTimezone();
   const today = todayInStakeTz(stakeTimezone);
   const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);

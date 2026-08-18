@@ -1303,10 +1303,10 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     render(<BishopricRosterPage />);
 
     expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
-    // Edit is withheld from THEM too: `provisionEdit` looks the member
-    // up in Kindoo and throws when the lookup misses, which is exactly
-    // this state. The button could only ever produce a request they
-    // then have to reject. Re-granting is a new `add_temp`.
+    // Edit is withheld from THEM too, and unlike Remove it is not
+    // narrowed to the single-grant shape: Kindoo drops the temp
+    // AccessSchedule at expiry, so an `edit_temp` would re-add it rather
+    // than change anything. Re-granting is a new `add_temp`.
     expect(screen.queryByTestId('edit-btn-expired@x.com')).toBeNull();
     // Marked for them too, but without the note that contradicts the
     // button sitting next to it.

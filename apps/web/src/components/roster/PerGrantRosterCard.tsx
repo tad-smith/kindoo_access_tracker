@@ -131,11 +131,12 @@ export function PerGrantRosterCard({
   //
   // Withheld again when a remove is already in flight: "no request
   // needed" beside a `Pending Removal` badge tells the requester their
-  // own request was pointless, and that pairing is not an edge case —
-  // it is exactly the population this feature exists for (removes filed
-  // on temp seats near their end date, plus everything already queued at
-  // rollout). The badge carries the state on its own; the request
-  // resolves through the R-1 no-op path either way (spec §6).
+  // own request was pointless, and it was not — the seat is still there, so
+  // that request will complete and delete it (R-1 is the seat-already-
+  // ABSENT race, which this isn't). The pairing is not an edge case
+  // either: it is exactly the population this feature exists for
+  // (removes filed on temp seats near their end date, plus everything
+  // already queued at rollout). The badge carries the state on its own.
   const expiredNote =
     isStrandedByExpiry && !canRemove && !isPendingRemoval ? (
       <div className="roster-card-line2 roster-card-expired-note">

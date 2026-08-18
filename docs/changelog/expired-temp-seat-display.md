@@ -9,7 +9,9 @@ A temp seat whose end date has passed now renders on the roster pages with an `E
 
 ## Why
 
-Kindoo ends a temp user's access on the end date; the SBA seat only goes away when a manager's next Sync detects it as `sba-only` and clears it (§7, D19). Days can pass between the two. Wards read the lingering row as a seat needing cleanup and filed `remove` requests for access that had already ended — each one a no-op the manager then had to close (§6 R-1).
+Kindoo ends a temp user's access on the end date; the SBA seat only goes away when a manager's next Sync detects it as `sba-only` and clears it (§7, D19). Days can pass between the two. Wards read the lingering row as a seat needing cleanup and filed `remove` requests for access that had already ended — a stream of individually-pointless-looking items clearing rows the manager will clear in bulk at the next Sync anyway.
+
+Note the correction a later review round forced: those requests are **not** R-1 no-ops. R-1 is the seat-already-*absent* race, and here the seat is present by definition, so the trigger deletes it and `provisionRemove` returns `noop-remove` instead of throwing. They were real cleanup. This PR removes the only ward-initiated path that did it, leaving two manager-gated paths of which only the queue prompts — an accepted trade, recorded in §7 and D34.
 
 ## Decisions made
 
