@@ -217,8 +217,13 @@ async function seedMapleWardRoster(): Promise<void> {
     member_name: 'Emily Carter',
     type: 'temp',
     reason: 'Youth conference setup crew',
-    start_date: '2026-06-08',
-    end_date: '2026-06-22',
+    // Relative, unlike the narrative dates elsewhere in this seed: a
+    // temp seat past its end date renders muted with an `Expired` badge
+    // and no Remove button (spec §7), which is not the ordinary roster
+    // the guides are illustrating. Fixed dates here would silently
+    // start capturing that state instead.
+    start_date: twoWeeksAgo(),
+    end_date: twoWeeksOut(),
     building_names: ['Maple Building'],
     granted_by_request: 'seed-req-carter',
   });
@@ -227,6 +232,20 @@ async function seedMapleWardRoster(): Promise<void> {
 // Mixed-status requests submitted by the signed-in bishop for the
 // My Requests page: one pending (cancellable), one complete (with a
 // note), one rejected (with a reason).
+function isoDaysFromNow(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function twoWeeksAgo(): string {
+  return isoDaysFromNow(-14);
+}
+
+function twoWeeksOut(): string {
+  return isoDaysFromNow(14);
+}
+
 async function seedBishopRequests(requesterEmail: string): Promise<void> {
   const reqBase = {
     scope: 'maple',

@@ -1,6 +1,6 @@
 // Component tests for the Stake Ward Rosters page.
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AccessRequest, Seat, Ward } from '@kindoo/shared';
@@ -50,6 +50,13 @@ vi.mock('../requests/hooks', () => ({
 
 vi.mock('../../lib/principal', () => ({
   usePrincipal: () => usePrincipalMock(),
+}));
+
+// The page reads the stake's timezone to name today's calendar day for
+// the expired-temp check (spec §7). Stub it — the real hook opens a
+// Firestore doc subscription these tests deliberately don't have.
+vi.mock('../../lib/useStakeTimezone', () => ({
+  useStakeTimezone: () => 'America/Denver',
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -183,6 +190,20 @@ function mockPendingRequests(requests: AccessRequest[]) {
     fetchStatus: 'idle',
   });
 }
+
+// The expired-temp-grant marker (spec §7) compares each temp grant's
+// `end_date` against the stake's calendar day, so an unpinned clock
+// would silently change what every temp fixture below means the moment
+// the real date crossed it. Pin it: the existing fixtures all end after
+// this day and stay live; the expiry tests pass explicitly-past dates.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-20T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -806,5 +827,49 @@ describe('<WardRostersPage /> — limited app access (D25)', () => {
     expect(screen.getByTestId('edit-btn-temp@x.com')).toBeInTheDocument();
     expect(screen.getByTestId('remove-btn-manual@x.com')).toBeInTheDocument();
     expect(screen.getByTestId('remove-btn-temp@x.com')).toBeInTheDocument();
+  });
+});
+
+// ---- Expired temp grants (spec §7) ----------------------------------
+//
+// Same rule as the bishopric roster: past the end date Kindoo has
+// already ended the access, so the row is marked and Remove is withheld
+// from everyone but a Kindoo Manager. Clock pinned to 2026-05-20.
+
+describe('<WardRostersPage /> — expired temp seats (spec §7)', () => {
+  const expiredTemp = () =>
+    makeSeat({
+      scope: 'CO',
+      member_canonical: 'expired@x.com',
+      member_email: 'expired@x.com',
+      member_name: 'Expired Person',
+      type: 'temp',
+      callings: [],
+      start_date: '2026-05-01',
+      end_date: '2026-05-14',
+    });
+
+  beforeEach(() => {
+    mockWards([makeWard({ ward_code: 'CO', ward_name: 'Maple', seat_cap: 20 })]);
+  });
+
+  it('withholds Remove from a bishopric member and explains the absence', () => {
+    usePrincipalMock.mockReturnValue(principal({ wards: ['CO'] }));
+    mockSeats([expiredTemp()]);
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByText('Expired Person')).toBeInTheDocument();
+    expect(screen.queryByTestId('remove-btn-expired@x.com')).toBeNull();
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByText(/no request needed/i)).toBeInTheDocument();
+  });
+
+  it('keeps Remove for a Kindoo Manager, whose reach into every ward is this page', () => {
+    usePrincipalMock.mockReturnValue(principal({ manager: true }));
+    mockSeats([expiredTemp()]);
+    render(<WardRostersPage initialWard="CO" />);
+
+    expect(screen.getByTestId('remove-btn-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
   });
 });

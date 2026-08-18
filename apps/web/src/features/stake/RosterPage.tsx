@@ -31,6 +31,7 @@ import { usePendingRequestsForScope } from '../requests/hooks';
 import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterPending';
 import { canEditSeat, canRemoveSeat, isScopeAllowed } from '../requests/scopeOptions';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
+import { isExpiredTempGrant, todayInStakeTz } from '../../lib/tempExpiry';
 
 export function StakeRosterPage() {
   const principal = usePrincipal();
@@ -127,6 +128,11 @@ export function StakeRosterPage() {
   // Kindoo Managers.
   const canRequest = activeStakeId !== null && isScopeAllowed(principal, activeStakeId, 'stake');
 
+  // Expired temp grants stay on the roster but stop offering Remove to
+  // anyone who can't act on them (spec §7). Managers keep the button.
+  const today = todayInStakeTz(stakeDoc?.timezone);
+  const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);
+
   return (
     <section>
       <div className="kd-page-title-row">
@@ -160,9 +166,11 @@ export function StakeRosterPage() {
                   activeStakeId !== null &&
                   grant.isPrimary &&
                   canEditSeat(principal, activeStakeId, seat);
+                const isExpired = isExpiredTempGrant(grant, today);
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
+                  (isManager || !isExpired) &&
                   canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
@@ -175,6 +183,7 @@ export function StakeRosterPage() {
                     canEdit={canEdit}
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
+                    isExpired={isExpired}
                     wards={wards.data ?? []}
                     buildings={buildings.data ?? []}
                     sites={kindooSites.data ?? []}

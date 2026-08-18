@@ -182,3 +182,15 @@
     max-width: none;
   }
 }
+
+/* Expired temp grant (spec §7): Kindoo has already ended the access and
+   the seat is waiting on a manager's Sync. Muted so it reads as a
+   record rather than a live seat; the note carries the explanation. */
+.roster-card.is-expired {
+  opacity: 0.72;
+}
+
+.roster-card-expired-note {
+  color: var(--kd-fg-3);
+  font-size: 0.88em;
+}

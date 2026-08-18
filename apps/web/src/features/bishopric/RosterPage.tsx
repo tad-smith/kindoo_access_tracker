@@ -41,6 +41,8 @@ import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterP
 import { canEditSeat, canRemoveSeat } from '../requests/scopeOptions';
 import { scopeLabel } from '../../lib/scopeLabel';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
+import { isExpiredTempGrant, todayInStakeTz } from '../../lib/tempExpiry';
+import { useStakeTimezone } from '../../lib/useStakeTimezone';
 
 export interface BishopricRosterPageProps {
   /** Pre-selected ward code from `?ward=...`. */
@@ -63,6 +65,12 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
   }, [wards, activeWard]);
 
   const seats = useBishopricRoster(activeWard);
+
+  // Expired temp grants stay on the roster but stop offering Remove to
+  // anyone who can't act on them (spec §7). Managers keep the button.
+  const stakeTimezone = useStakeTimezone();
+  const today = todayInStakeTz(stakeTimezone);
+  const isManager = activeStakeId !== null && principal.managerStakes.includes(activeStakeId);
   const wardDocResult = useFirestoreOnce(
     activeWard && activeStakeId ? wardRef(db, activeStakeId, activeWard) : null,
   );
@@ -187,9 +195,11 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                   activeStakeId !== null &&
                   grant.isPrimary &&
                   canEditSeat(principal, activeStakeId, seat);
+                const isExpired = isExpiredTempGrant(grant, today);
                 const canRemove =
                   activeStakeId !== null &&
                   grant.type !== 'auto' &&
+                  (isManager || !isExpired) &&
                   canRemoveSeat(principal, activeStakeId, seat, grant);
                 const isPendingRemoval = pendingRemovesByKey.has(
                   pendingRemoveKey(seat.member_canonical, grant.scope, grant.kindoo_site_id),
@@ -202,6 +212,7 @@ export function BishopricRosterPage({ initialWard }: BishopricRosterPageProps) {
                     canEdit={canEdit}
                     canRemove={canRemove}
                     isPendingRemoval={isPendingRemoval}
+                    isExpired={isExpired}
                     wards={wardsCatalogue.data ?? []}
                     buildings={buildingsCatalogue.data ?? []}
                     sites={kindooSites.data ?? []}

@@ -46,6 +46,13 @@ export interface PerGrantRosterCardProps {
   canRemove: boolean;
   /** True iff the matching grant has a pending remove request. */
   isPendingRemoval: boolean;
+  /**
+   * True iff this is a temp grant whose end date has passed (spec §7).
+   * Marks the row and mutes it. When the caller has also withheld
+   * `canRemove` on that basis the card explains why, so the absence of
+   * the button reads as an answer rather than a missing affordance.
+   */
+  isExpired?: boolean;
   wards: readonly Ward[];
   buildings: readonly Building[];
   sites: readonly KindooSite[];
@@ -59,6 +66,7 @@ export function PerGrantRosterCard({
   canEdit,
   canRemove,
   isPendingRemoval,
+  isExpired = false,
   wards,
   buildings,
   sites,
@@ -103,15 +111,31 @@ export function PerGrantRosterCard({
     <div className="roster-card-line2">{buildingsChip}</div>
   ) : null;
 
+  // Only for the viewer who lost the Remove button to the expiry. A
+  // manager keeps the button, and telling them nothing needs doing
+  // beside an action they can still take would contradict itself.
+  const expiredNote =
+    isExpired && !canRemove ? (
+      <div className="roster-card-line2 roster-card-expired-note">
+        Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no
+        request needed.
+      </div>
+    ) : null;
+
   return (
     <div
-      className={`roster-card roster-card--two-line type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}`}
+      className={`roster-card roster-card--two-line type-${grant.type}${isPendingRemoval ? ' has-removal-pending' : ''}${isExpired ? ' is-expired' : ''}`}
       data-seat-id={seat.member_canonical}
       data-grant-kind={grant.isPrimary ? 'primary' : 'duplicate'}
     >
       <div className="roster-card-line1">
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
+          {isExpired ? (
+            <Badge variant="default" data-testid={`expired-badge-${seat.member_canonical}`}>
+              Expired
+            </Badge>
+          ) : null}
           {isPendingRemoval ? (
             <Badge variant="danger" data-testid={`pending-removal-badge-${seat.member_canonical}`}>
               Pending Removal
@@ -165,6 +189,7 @@ export function PerGrantRosterCard({
       {callingLine}
       {buildingsLine}
       {datesLine}
+      {expiredNote}
     </div>
   );
 }
