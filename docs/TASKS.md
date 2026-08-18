@@ -6,6 +6,35 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-102] Delete `reconcileAuditGaps`; protect audit fan-in with trigger retries instead
+Status: pending
+Owner: @backend-engineer (code) + @docs-keeper (F8 supersession + cascade)
+Phase: cross-cutting
+
+**Delete the job.** It compares two aggregate counts per stake — `totalEntities` (docs existing right now across the eight collections in `AUDITED_COLLECTIONS`) against `auditCount` (audit rows existing right now, all time) — and warns when the difference exceeds 1%. No time window, no per-document lookup, no notion of a write anywhere in it. The two quantities are incompatible: one is a snapshot of *current docs*, the other a cumulative count of *events*. They line up only on a brand-new stake; after any history, rows accumulate past entity count, `gapPct` clamps to zero, and the check is permanently green whether or not `auditTrigger` is still firing. In the other direction the TTL eventually sheds rows from a quiet stake and trips the gate nightly for nothing ([T-101] pushes that out, it does not remove it). When it does fire it names a stake and a percentage — nothing to act on, which is most of why Q14 was never answerable.
+
+**Add `retry: true` to the nine `auditTrigger` registrations instead.** 2nd gen event-driven functions do **not** retry by default — a failed invocation drops the event ([Firebase docs](https://firebase.google.com/docs/functions/retries)). All nine use the bare `onDocumentWritten(path, handler)` form with no options object, and there is no `setGlobalOptions` in `functions/src`, so the exact failure F8 accepted the non-transactional trade for is currently unmitigated at the source. Opting in buys a 24-hour retry window with exponential backoff (10–600s).
+
+The code is already retry-safe by construction: `auditDocId` is deterministic from `(collection, docId, commit time)` and the write is a `set()`, so every retry lands on the same doc — which is what the existing "retries collapse onto one row" comment describes. `auditLog` carries no trigger of its own, so there is no recursion risk.
+
+**One caveat, and it is the reason to be deliberate about which errors throw.** The docs warn that a permanent error retries for the full 24 hours. The realistic permanent failure here is document size — audit rows carry full `before`/`after` snapshots, so a fat seat doc (many `duplicate_grants`) could approach Firestore's 1 MB limit. That path must log and return, not throw.
+
+**The residue, and its cheap answer.** Retry acts on a *failed* invocation. It cannot see one that **succeeds without writing** — an early return (`if (!event.data) return`), a wrong `isNoOpUpdate` verdict, or a collection with no trigger registered at all. Those return 200 and the platform considers them delivered. The answer is a CI test, not a scheduled job: assert that the registered trigger paths, the per-stake collections in `firebase-schema.md` §4, and the rules all agree. That fails on the PR introducing the gap rather than a day later in a log nobody reads — and it is the only thing in this task that addresses "we added a collection and forgot to instrument it," which the deleted job never could (omitting a collection *lowers* `totalEntities`, biasing the check toward green).
+
+**Frees two Cloud Scheduler slots, not one.** The function deploys to both projects (`deploy-staging.sh:499` includes `functions`), so it exists as a job in staging and in prod, both against the same billing account's 3-job free allowance. Removal leaves `firestore-weekly-export` (prod only) as the sole job — 1 of 3. A future per-stake reminder job then fits free in both environments.
+
+**Doc cascade — spec and code in the same commit.**
+
+- **F8** (`firebase-migration.md`) is the decision that chose trigger-based audit over embedded history, and its rationale rests on the clause "Nightly reconciliation job catches any gaps." That clause becomes false. It needs a superseding note (and a new `D` entry), not a quiet edit — the compensating control changes from a nightly sweep to platform retries.
+- `spec.md` §2 — "the only scheduled job is `reconcileAuditGaps`" (Scheduling bullet).
+- `spec.md` §11 — "the nightly `reconcileAuditGaps` job … is the safety net."
+- `firebase-schema.md` §7 — function-inventory row.
+- **Q14** (`firebase-schema.md` §8.4) closes as **obsolete**: with no job, there is no alert channel to define and no manual-recovery path to document.
+- D19 and D20 both assert SBA runs exactly one scheduled job. They stay as historical trail with their original bodies; the new `D` entry carries the correction.
+- `functions/CLAUDE.md` describes scheduled jobs in its header and file layout (see [T-69], whose own fix text says "the only scheduled job is `reconcileAuditGaps`") — the last scheduled job going away touches it again.
+
+**Adjacent, not in scope.** The nine audit triggers are still on the default compute SA rather than `kindoo-app@` ([T-26]). Adding an options object to all nine is the moment pinning them costs nothing extra — but that is T-26's call, not a rider here.
+
 ## [T-101] Extend `auditLog` retention to 5 years; make `platformAuditLog` explicitly non-expiring
 Status: pending
 Owner: @backend-engineer (constants + backfill) + @infra-engineer (runbook)
