@@ -452,10 +452,12 @@ A grant is **expired** once the stake's calendar day is past its `end_date` — 
 On every roster surface (§5.1, §5.2) an expired grant:
 
 - **still renders.** SBA's `end_date` mirrors what was provisioned, not what Kindoo currently holds, so a hidden row could conceal a seat that is in fact still live — and a seat that silently vanished is its own confusion. The row also keeps counting against the scope's utilization bar until Sync clears it.
-- carries an **`Expired` badge** and renders muted.
-- **offers no Remove control**, and says why in its place: *"Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no request needed."*
+- carries an **`Expired` badge** — the only dark-filled badge in the set, uppercase, deliberately outside the vocabulary of the seat-type badges (blue / amber) and `danger` (red, Pending Removal), any of which can sit beside it — over a neutral-grey card with a charcoal inset rule. The muting is carried by the **background**, never by `opacity`: dimming the card composites its text against the page and pushes the note below the WCAG AA floor, and the note is the whole mechanism by which this stops the bogus requests.
+- **offers no Remove control**, and says why in its place: *"Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no request needed."* The note is withheld when the row also has a **pending remove** — "no request needed" beside a `Pending Removal` badge tells the requester their own request was pointless, and that pairing is the common case, not an edge one. The badge carries the state alone; the request resolves through the R-1 no-op path (§6) either way.
 
 **A Kindoo Manager keeps the Remove control** on those rows — on the roster pages and on All Seats (§5.3), where the badge also renders. They are the one principal who can actually clear the seat, so withholding the action from them would remove the fix along with the confusion; the explanatory note is withheld instead, since "no request needed" contradicts a button sitting beside it.
+
+**The Edit control is NOT withheld**, and it is the ward's answer when SBA and Kindoo disagree. `end_date` mirrors what was provisioned, so a manual Kindoo edit, a missing provisioned expiry, or an `edit_temp` that shortened SBA without a re-provision can leave a seat live in Kindoo while SBA reads it as expired — and Sync never raises it, because the user is present in both systems and nothing looks orphaned. A ward that believes an expired row still opens doors edits its end date forward; the row un-expires and the Remove control returns.
 
 This is display-only. Nothing about the seat, the rules, or the `remove` request path changes — a remove request for an expired seat still resolves through the R-1 no-op path (§6).
 

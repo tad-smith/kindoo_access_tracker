@@ -114,8 +114,16 @@ export function PerGrantRosterCard({
   // Only for the viewer who lost the Remove button to the expiry. A
   // manager keeps the button, and telling them nothing needs doing
   // beside an action they can still take would contradict itself.
+  //
+  // Withheld again when a remove is already in flight: "no request
+  // needed" beside a `Pending Removal` badge tells the requester their
+  // own request was pointless, and that pairing is not an edge case —
+  // it is exactly the population this feature exists for (removes filed
+  // on temp seats near their end date, plus everything already queued at
+  // rollout). The badge carries the state on its own; the request
+  // resolves through the R-1 no-op path either way (spec §6).
   const expiredNote =
-    isExpired && !canRemove ? (
+    isExpired && !canRemove && !isPendingRemoval ? (
       <div className="roster-card-line2 roster-card-expired-note">
         Access has already ended. The seat clears the next time a Kindoo Manager runs Sync — no
         request needed.
@@ -132,7 +140,7 @@ export function PerGrantRosterCard({
         <span className="roster-card-badges">
           <Badge variant={grant.type}>{grant.type}</Badge>
           {isExpired ? (
-            <Badge variant="default" data-testid={`expired-badge-${seat.member_canonical}`}>
+            <Badge variant="expired" data-testid={`expired-badge-${seat.member_canonical}`}>
               Expired
             </Badge>
           ) : null}

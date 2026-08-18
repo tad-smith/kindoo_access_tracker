@@ -183,14 +183,28 @@
   }
 }
 
-/* Expired temp grant (spec §7): Kindoo has already ended the access and
-   the seat is waiting on a manager's Sync. Muted so it reads as a
-   record rather than a live seat; the note carries the explanation. */
+/* Expired temp grant (spec §7, D34): Kindoo has already ended the access
+   and the seat is waiting on a manager's Sync.
+
+   The muting is carried by the BACKGROUND, never by `opacity`. An
+   earlier pass dimmed the whole card to 0.72, which composites the text
+   against the page and dropped the note to roughly 2.9:1 — under the
+   4.5:1 AA floor. The note is the entire mechanism by which this feature
+   stops the bogus remove requests, and its readers are lay leaders on
+   phones, so every value here stays at full strength: the note is
+   `--kd-fg-2` on `#eef0f4`, about 6.8:1.
+
+   Placed after `.has-removal-pending` on purpose — same specificity, so
+   a row that is both expired AND pending takes the expired background.
+   Expiry is the terminal state; the pending badge still renders. */
 .roster-card.is-expired {
-  opacity: 0.72;
+  background: #eef0f4;
+  /* Inset rather than `border-left` so the 3px rule doesn't shift the
+     card's content out of alignment with its neighbours. */
+  box-shadow: inset 3px 0 0 #2d3340;
 }
 
 .roster-card-expired-note {
-  color: var(--kd-fg-3);
+  color: var(--kd-fg-2);
   font-size: 0.88em;
 }

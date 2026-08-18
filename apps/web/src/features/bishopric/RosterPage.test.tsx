@@ -1227,6 +1227,29 @@ describe('<BishopricRosterPage /> — expired temp seats (spec §7)', () => {
     expect(screen.queryByTestId('expired-badge-endstoday@x.com')).toBeNull();
   });
 
+  it('withholds the note when a remove is already in flight — the badge would contradict it', () => {
+    usePrincipalMock.mockReturnValue(principal(['CO']));
+    mockSeats([expiredTemp()]);
+    mockWardDoc(makeWard({ ward_code: 'CO', seat_cap: 20 }));
+    mockPendingRequests([
+      makeRequest({
+        request_id: 'r-remove-expired',
+        type: 'remove',
+        scope: 'CO',
+        member_canonical: 'expired@x.com',
+        member_email: 'expired@x.com',
+      }),
+    ]);
+    render(<BishopricRosterPage />);
+
+    // Both states are true and both are marked...
+    expect(screen.getByTestId('expired-badge-expired@x.com')).toBeInTheDocument();
+    expect(screen.getByTestId('pending-removal-badge-expired@x.com')).toBeInTheDocument();
+    // ...but "no request needed" beside a pending request the ward just
+    // filed reads as a rebuke. The badge carries it instead.
+    expect(screen.queryByText(/no request needed/i)).toBeNull();
+  });
+
   it('keeps Remove for a Kindoo Manager — they are the one who can act on it', () => {
     usePrincipalMock.mockReturnValue(principal(['CO'], { manager: true }));
     mockSeats([expiredTemp()]);

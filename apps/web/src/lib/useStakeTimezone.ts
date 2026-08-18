@@ -8,6 +8,7 @@
 // falls back to `America/Denver` on `undefined`.
 
 import { useMemo } from 'react';
+import type { Stake } from '@kindoo/shared';
 import { useFirestoreDoc } from './data';
 import { stakeRef } from './docs';
 import { db } from './firebase';
@@ -16,5 +17,5 @@ import { useActiveStake } from './useActiveStake';
 export function useStakeTimezone(): string | undefined {
   const activeStakeId = useActiveStake();
   const ref = useMemo(() => (activeStakeId ? stakeRef(db, activeStakeId) : null), [activeStakeId]);
-  return useFirestoreDoc(ref).data?.timezone;
+  return useFirestoreDoc<Stake>(ref).data?.timezone;
 }

@@ -478,7 +478,7 @@ function GrantRowCard({
           <Badge variant={grant.type}>{grant.type}</Badge>
           {isExpired ? (
             <Badge
-              variant="default"
+              variant="expired"
               data-testid={`expired-badge-${testIdSuffix}`}
               title="The end date has passed. Kindoo has already ended this access; Sync will clear the seat."
             >

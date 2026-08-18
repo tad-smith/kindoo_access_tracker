@@ -23,6 +23,12 @@ export type BadgeVariant =
   // states the tier on every row, and Limited must not read as Full at a
   // glance.
   | 'limited'
+  // Expired temp grant (spec §7, D34). The only DARK-FILLED badge in the
+  // set, deliberately: every other variant is a tint, and the seat types
+  // already own blue and amber while `danger` owns red for Pending
+  // Removal — a badge that can appear beside any of those needs to sit
+  // outside their vocabulary entirely.
+  | 'expired'
   // Audit-action category badges. Palette: blue for CRUD, green for
   // request lifecycle, red for system events, amber for importer.
   | 'audit-crud'
@@ -48,6 +54,7 @@ const VARIANT_CLASSES: Record<BadgeVariant, string> = {
   info: 'bg-kd-primary-tint text-kd-primary-hover',
   // Danger tuple plus the audit chips' uppercase + weight emphasis.
   limited: 'bg-kd-danger-bg text-kd-danger-fg border border-kd-danger uppercase font-semibold',
+  expired: 'bg-kd-fg-1 text-white uppercase font-semibold tracking-wide',
   // Audit-action chips: uppercase + font-weight 600 layered per-
   // variant so they stack with the base Badge classes (which set
   // rounded + padding + text-xs).
