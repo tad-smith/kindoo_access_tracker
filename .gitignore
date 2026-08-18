@@ -28,6 +28,8 @@ Thumbs.db
 .env.*.staging
 functions/.env*
 
+resume*.sh
+
 # Claude Code local state (subagent definitions under .claude/agents/ ARE committed)
 .claude/worktrees/
 .claude/scheduled_tasks.lock
