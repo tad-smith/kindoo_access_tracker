@@ -346,6 +346,10 @@ export async function emitAuditRow(ctx: EmitContext, db: Firestore = getDb()): P
       docId: ctx.docId,
       auditDocId,
       action,
+      // The one fact the row existed to record. `auditDocId` recovers
+      // the entity and the timestamp, `action` the verb — without this
+      // the actor is simply gone.
+      actorCanonical: actor.canonical,
       code,
       message,
       // Order-of-magnitude only — JSON length, not Firestore's own

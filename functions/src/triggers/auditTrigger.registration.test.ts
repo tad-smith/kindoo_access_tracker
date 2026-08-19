@@ -187,6 +187,7 @@ describe('permanent audit-write failures', () => {
         collection: 'seats',
         docId: 'member@example.com',
         action: 'create_seat',
+        actorCanonical: 'a@example.com',
         code: 3,
         message: 'too big',
       });
