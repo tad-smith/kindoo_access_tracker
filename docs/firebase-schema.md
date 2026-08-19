@@ -8,7 +8,7 @@
 - **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
 - **Data path (reads):** Client uses Firestore JS SDK directly. Firestore Security Rules enforce per-document access using claims from the auth token.
 - **Data path (writes):** Same — client writes via Firestore SDK; rules enforce field-level invariants and cross-doc invariants via `getAfter()`.
-- **Server-side compute:** Cloud Functions only, for: email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, callable wrappers (request-completion, `syncApplyFix`), and a nightly audit-gap reconciliation. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
+- **Server-side compute:** Cloud Functions only, for: email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, and callable wrappers (request-completion, `syncApplyFix`). Nothing scheduled. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
 - **Hosting:** Firebase Hosting serves the static SPA build.
 
 No Cloud Run. No Express. No persistent server-side process for the request path.
@@ -781,7 +781,7 @@ Multi-Kindoo-site management for a single SBA stake. A doc here represents a **f
 - Authority gating uses the existing per-stake `kindooManagers` allow-list. The SBA stake remains a single SBA stake; foreign-site management does NOT create a new role or multi-stake principal.
 - Field-level referential integrity (a building's `kindoo_site_id` actually existing here) is the UI's concern; rules gate WHO can write, not field-level FK checks.
 - **Delete guard.** The Configuration page blocks deleting a Kindoo Site while any **building** still references it (`kindooSiteDeleteBlocker` in `apps/web/src/features/manager/configuration/hooks.ts`). Wards are covered **transitively**: a ward's site comes from its building, so the building guard also protects every ward on that site — there is no separate ward FK check. Rules gate WHO can delete, not this field-level FK; the guard is client-side.
-- Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job.
+- Writes to this collection are audited by `auditKindooSiteWrites` (entity_type=`stake`, entity_id=`kindooSite:<slug>`; §7).
 
 ### 4.12 `stakes/{stakeId}/organizations/{orgId}`
 
@@ -812,7 +812,7 @@ Stake-scope seat pools. An organization is a named pool with its own seat cap th
 - **Unique display name.** The Configuration tab blocks a save (create or edit) when another org already uses the chosen name, case-insensitive + trimmed (`duplicateOrganizationNameBlocker`). The name is the human key seats / requests render by, so two orgs must not share one. Client-side only — rules can't iterate the sibling collection.
 - **Delete guard.** The Configuration tab blocks deleting an org while any **seat** references it via its primary `organization_id` OR any `duplicate_grants[].organization_id` (`organizationDeleteBlocker`, run against the live seats snapshot — seat-only by design; a pending request referencing a deleted org is an accepted gap, the seat resolves to "No Organization" and the operator reassigns). Client-side only, same reasoning as the Kindoo-site / building guards.
 - **`seat_cap` is display-only.** It drives the per-org utilization bar's ok / warn (≥90%) / over coloring on the Stake Roster but never blocks a write — there is no over-cap enforcement for organizations.
-- Writes to this collection are audited by `auditOrganizationWrites` (entity_type=`stake`, entity_id=`organization:<slug>`) and reconciled by the nightly `reconcileAuditGaps` job (§7).
+- Writes to this collection are audited by `auditOrganizationWrites` (entity_type=`stake`, entity_id=`organization:<slug>`; §7).
 
 ## 5. Indexes
 
@@ -1515,7 +1515,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `syncManagersClaims` | Firestore write on `stakes/{sid}/kindooManagers/{memberCanonical}` | Recomputes `stakes[sid].manager` claim; revokes |
 | `syncSuperadminClaims` | Firestore write on `platformSuperadmins/{canonicalEmail}` | Toggles `isPlatformSuperadmin` claim |
 | `syncBootstrapClaims` | Firestore write on `stakes/{stakeId}` | Mints/clears the `stakes[sid].bootstrap` marker (§2, D28) on the designated bootstrap admin's claim block, keyed on `(bootstrap_admin_email, setup_complete)`. No-ops silently when no Auth user exists yet for that email. |
-| `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog` |
+| `auditTrigger` | Firestore write on `stakes/{sid}/{collection}/{docId}` for audited collections | Writes deterministic audit row to `stakes/{sid}/auditLog`. Deploys as nine functions, one per audited path, and **all nine set `retry: true`** — Eventarc redelivers a failed audit write for up to 24h, which the deterministic doc id makes idempotent. A row Firestore rejects permanently (gRPC `INVALID_ARGUMENT`) is logged at ERROR with its coordinates and dropped; `isPermanentAuditWriteError` is the only classifier. See `architecture.md` D35, `spec.md` §11. |
 | `markRequestComplete` | Callable (manager-invoked) | Resolves seat slot, writes the add/edit, flips the request to `complete` in one transaction |
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
 | `backfillEqPresidentAccess` | Callable (manager-invoked from the Configuration → Config backfill dialog) | Reconciles `access` docs after a stake flips `eq_president_app_access` (§4.1). `{stakeId, direction:'grant'\|'revoke'}` → `{ok, seats_matched, docs_written, docs_deleted}`. Sweeps auto ward-scope seats holding the Elders Quorum President calling and merges that one entry into / out of `importer_callings[scope]`; `manual_grants` untouched. Auth reads `kindooManagers/{canonical}` directly (not the ~1h-stale claim); `direction` must match the stake's current flag or `failed-precondition`. Single-field `type == 'auto'` query — no composite index. Idempotent. See `spec.md` §8, D23. |
@@ -1526,13 +1526,12 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends the over-cap email when the array goes from empty to non-empty. Reads `stakes/{sid}/wards` once and labels every flagged pool from that one read (§4.2). Subject counts the pools (`spec.md` §9). |
 | `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |
-| `reconcileAuditGaps` | Cloud Scheduler nightly | Diffs entity collections vs auditLog; pages on gaps |
 
-Total: ~10–12 Cloud Functions. None hot-path; all run on free tier at this scale.
+Twenty-six deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **None is scheduled** (`reconcileAuditGaps`, the last one, was deleted in T-102; see `architecture.md` D35). None is hot-path; all run on the free tier at this scale.
 
 **Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 
-**Organizations deltas (PR #224).** The parameterized `auditTrigger` gains `auditOrganizationWrites` on `stakes/{sid}/organizations/{orgId}`, fanning rows as `entity_type='stake'`, `entity_id='organization:<slug>'` (same pattern as wards / buildings / kindooSites — organizations are not a first-class audit entity type). `reconcileAuditGaps` adds `organizations` to its `AUDITED_COLLECTIONS` list. Inline seat org edits audit automatically as `update_seat` (the existing `auditSeatWrites` path). `markRequestComplete` carries the request's `organization_id` onto the seat on stake-scope add/edit completion (new-seat primary, the stake-grant slot in the auto-merge path, and the resolved edit slot). Add vs edit are asymmetric: an **add** auto-merge onto an existing stake grant re-stamps `organization_id` **only when the request carries a non-null id** (the add form never pre-fills org, so a `null` add must not silently clear an existing org); the brand-new-seat add still writes `null` when none is picked. An **edit** is authoritative — the form pre-fills, so `null` clears. `syncApplyFix` preserves a client-set `organization_id` through auto-seat rewrites and clears it in `applyScopeMismatch` when a seat moves off stake scope to a ward. No new composite index.
+**Organizations deltas (PR #224).** The parameterized `auditTrigger` gains `auditOrganizationWrites` on `stakes/{sid}/organizations/{orgId}`, fanning rows as `entity_type='stake'`, `entity_id='organization:<slug>'` (same pattern as wards / buildings / kindooSites — organizations are not a first-class audit entity type). `reconcileAuditGaps` adds `organizations` to its `AUDITED_COLLECTIONS` list (both are gone — the job was deleted in T-102; the registration set is now pinned by `auditTrigger.registration.test.ts` against `firestore.rules`, per `architecture.md` D35). Inline seat org edits audit automatically as `update_seat` (the existing `auditSeatWrites` path). `markRequestComplete` carries the request's `organization_id` onto the seat on stake-scope add/edit completion (new-seat primary, the stake-grant slot in the auto-merge path, and the resolved edit slot). Add vs edit are asymmetric: an **add** auto-merge onto an existing stake grant re-stamps `organization_id` **only when the request carries a non-null id** (the add form never pre-fills org, so a `null` add must not silently clear an existing org); the brand-new-seat add still writes `null` when none is picked. An **edit** is authoritative — the form pre-fills, so `null` clears. `syncApplyFix` preserves a client-set `organization_id` through auto-seat rewrites and clears it in `applyScopeMismatch` when a seat moves off stake scope to a ward. No new composite index.
 
 ## 8. Open questions / deferred decisions
 
@@ -1568,7 +1567,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q13. Phase plan.** Original plan had 12 phases with acceptance criteria. Under this design a few phases collapse and one or two new ones appear (claim-sync triggers, `userIndex` maintenance, audit triggers). No phase plan written.
 
-**Q14. `reconcileAuditGaps` failure mode.** Nightly job catches gaps in audit log. What happens when it finds one? Best guess: alert Tad. Need to define alerting channel and what manual recovery looks like.
+**Q14. `reconcileAuditGaps` failure mode.** Nightly job catches gaps in audit log. What happens when it finds one? Best guess: alert Tad. Need to define alerting channel and what manual recovery looks like. **Obsolete as posed (2026-08-18)** — the job is deleted and `retry: true` on the nine audit triggers now prevents the failure it was meant to detect (`architecture.md` D35). The need behind the question did not go away with it. It transfers to the `audit-row-dropped` log-based metric (`infra/monitoring/metrics/audit-row-dropped.yaml`), which counts rows `emitAuditRow` classified as permanently rejected and threw away — now the **only** signal that an audit row was lost. That metric has no alert routed to it yet (`infra/runbooks/observability.md`, "Not yet wired"), so the alerting channel this question asked for is still undefined. Manual recovery remains impossible by construction: a dropped row cannot be reconstructed, and the ERROR log entry's coordinates (stake, collection, doc, action, actor) are the whole of what survives.
 
 **Q15. `userIndex` collision.** Two Google accounts canonicalising to the same email is rare but real (Gmail enforces uniqueness at signup, but rejected variants can still occur). The trigger as sketched lets the second one overwrite the first's entry silently. Should detect and refuse, or surface to ops.
 
@@ -1584,7 +1583,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q20. TTL on `platformAuditLog`** — defaulted to 365 days; superadmin records may warrant longer.
 
-**Q21. `reconcileAuditGaps` cadence** — defaulted nightly. First signal of false positives may push to hourly.
+**Q21. `reconcileAuditGaps` cadence** — defaulted nightly. First signal of false positives may push to hourly. **Obsolete 2026-08-18** — the job is deleted (`architecture.md` D35); there is no cadence left to tune.
 
 **Q22. Sync ward-vs-ward priority** — defaulted to alphabetical `ward_code`. Document or override.
 
