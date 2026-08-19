@@ -266,9 +266,14 @@ export type AuditCollection =
 
 /**
  * True for write failures no retry can fix. gRPC code 3 is
- * INVALID_ARGUMENT — at this schema the reachable case is a row over
- * Firestore's 1 MiB document limit, which every redelivery would
- * reject identically for the full 24h retry window.
+ * INVALID_ARGUMENT, which every redelivery would reject identically
+ * for the full 24h retry window. Two reachable causes: a row over
+ * Firestore's 1 MiB document limit, and an over-long value inside the
+ * nested `before`/`after` maps tripping the 1500-byte index-entry
+ * limit (they mirror whole entity docs, and `firestore.indexes.json`
+ * exempts only `seats.duplicate_scopes` from indexing). The second can
+ * fire on ordinary data, so treat the drop log as a real signal, not a
+ * once-ever pathology.
  *
  * The numeric literal is deliberate: google-gax's `Status` enum is a
  * transitive dependency, and esbuild inlines anything outside
