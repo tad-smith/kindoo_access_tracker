@@ -9,9 +9,17 @@
 // place a client-writable collection MUST appear — and set-compare it
 // against the registered triggers.
 //
-// Blind spot, stated deliberately: a collection written only via the
-// Admin SDK needs no rules block, so it is invisible to this test. If
-// one ever needs auditing, that's a hand-decision at the time.
+// Two blind spots, both deliberate. A rules block alone is NOT enough
+// to be covered here:
+//
+//   - The scan is sliced to `match /stakes/{stakeId}`, so top-level
+//     collections are outside it — `userIndex`, `platformSuperadmins`,
+//     `platformAuditLog` and `remoteApply` all have rules blocks and no
+//     audit trigger, by design (per-stake `auditLog` is what this fans).
+//   - A collection written only via the Admin SDK needs no rules block
+//     at all, so it is invisible either way.
+//
+// If either ever needs auditing, that's a hand-decision at the time.
 
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -40,7 +48,14 @@ import {
  */
 const UNAUDITED = new Set(['auditLog']);
 
-/** Every audit trigger export, as the deploy manifest sees them. */
+/**
+ * Every audit trigger export, as the deploy manifest sees them.
+ *
+ * Hand-maintained, and checked against `src/index.ts` below — a trigger
+ * that exists here but isn't re-exported for deploy is never deployed
+ * and writes no audit rows, which is the same silent outcome this file
+ * exists to prevent.
+ */
 const TRIGGERS = {
   auditStakeWrites,
   auditWardWrites,
@@ -98,6 +113,26 @@ function ruleSubCollections(): string[] {
   return matched;
 }
 
+/** Names re-exported from `src/index.ts` — the deploy surface. */
+function deployedExports(): string[] {
+  const indexPath = fileURLToPath(new URL('../index.ts', import.meta.url));
+  const src = readFileSync(indexPath, 'utf8');
+  const names: string[] = [];
+  for (const block of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const raw of (block[1] ?? '').split(',')) {
+      // `export { a as b }` deploys under `b`.
+      const name = raw
+        .trim()
+        .split(/\s+as\s+/)
+        .pop()
+        ?.trim();
+      if (name) names.push(name);
+    }
+  }
+  expect(names.length, 'parsed no exports out of src/index.ts').toBeGreaterThan(0);
+  return names;
+}
+
 describe('audit trigger registrations', () => {
   it('covers every client-writable sub-collection declared in the rules', () => {
     const fromRules = ruleSubCollections();
@@ -126,6 +161,17 @@ describe('audit trigger registrations', () => {
       .map(([name, fn]) => endpointOf(name, fn).document)
       .filter((doc) => doc === 'stakes/{stakeId}');
     expect(parentDocs).toEqual(['stakes/{stakeId}']);
+  });
+
+  it('re-exports every audit trigger from index.ts so it actually deploys', () => {
+    // Without this, a tenth trigger added here and to `auditTrigger.ts`
+    // but not to the export block passes every other assertion in this
+    // file while never being deployed. `verify-deploy.sh` can't catch it
+    // either — it treats `index.ts` as the source of truth for what
+    // should exist.
+    const exported = deployedExports();
+    const missing = Object.keys(TRIGGERS).filter((name) => !exported.includes(name));
+    expect(missing, 'audit triggers missing from src/index.ts').toEqual([]);
   });
 
   it('sets retry on every registration', () => {
