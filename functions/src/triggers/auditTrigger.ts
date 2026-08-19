@@ -351,7 +351,10 @@ export async function emitAuditRow(ctx: EmitContext, db: Firestore = getDb()): P
       // the actor is simply gone.
       actorCanonical: actor.canonical,
       code,
-      message,
+      // NOT `message` — firebase-functions' logger overwrites that key
+      // with its own formatted message, so the rejection reason (which
+      // field, which limit) would vanish silently.
+      errorMessage: message,
       // Order-of-magnitude only — JSON length, not Firestore's own
       // sizing. The row itself is never logged: Cloud Logging caps an
       // entry at 256 KB, and an oversize row is what got us here.

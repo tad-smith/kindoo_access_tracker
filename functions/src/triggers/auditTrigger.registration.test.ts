@@ -189,8 +189,11 @@ describe('permanent audit-write failures', () => {
         action: 'create_seat',
         actorCanonical: 'a@example.com',
         code: 3,
-        message: 'too big',
+        // `message` is reserved by the logger; the rejection reason has
+        // to travel under a non-colliding key or it's dropped.
+        errorMessage: 'too big',
       });
+      expect(payload).not.toHaveProperty('message');
       expect(typeof payload['auditDocId']).toBe('string');
       expect(typeof payload['approxRowBytes']).toBe('number');
     } finally {

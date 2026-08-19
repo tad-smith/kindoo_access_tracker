@@ -24,7 +24,9 @@
 #
 # No labels are extracted. The count tells you it happened; the log entry it
 # came from carries stakeId, collection, docId, auditDocId, action, code,
-# actorCanonical and approxRowBytes, which is what you actually need to act.
+# errorMessage, actorCanonical and approxRowBytes, which is what you actually
+# need to act. The rejection reason is `errorMessage`, not `message` — the
+# logger overwrites `message` with its own formatted string.
 #
 # This metric wants an alert on count > 0 — any value above zero is a real
 # incident. No alert YAML exists for it yet; see infra/runbooks/observability.md
