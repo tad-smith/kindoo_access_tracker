@@ -1,33 +1,54 @@
 # audit-trigger-failures
 #
-# Counts errors logged by the audit fan-in Cloud Function trigger. Defined
-# in Phase 1; activated by alert(s) once Phase 8 lands the trigger itself.
+# Counts errors logged by the nine audit fan-in triggers. Defined in Phase 1.
+#
+# The filter was rewritten in T-102 because it had never matched anything: it
+# named `auditTrigger`, which is the source FILE, not a deployable, and it used
+# the 1st-gen resource type. Two transforms are load-bearing, and neither is
+# guessable from the source:
+#
+#   - These are 2nd-gen functions, so they run on Cloud Run and log under
+#     resource.type="cloud_run_revision". The identifier label there is
+#     `service_name`; `function_name` exists only on 1st-gen `cloud_function`
+#     entries and silently matches nothing here.
+#   - Cloud Run service names are RFC1123, so the deployed name is the export
+#     name LOWERCASED (auditAccessWrites -> auditaccesswrites). Same transform
+#     the `FAIL — iam-missing` remediation in infra/runbooks/deploy.md uses.
+#
+# The nine names track the export block in functions/src/index.ts. A tenth
+# audit trigger must be added here by hand; nothing fails if you forget, the
+# metric just stops seeing that collection.
+#
+# Scope note: with retry: true on the triggers (T-102), most of what this
+# counts is transient and self-heals on redelivery — a Firestore blip logs an
+# error, then the retry succeeds. Treat this as a rate/health signal, not a
+# data-loss signal. Permanent loss has its own metric: audit-row-dropped.yaml.
 #
 # REQUIRES: Operator task B1 (real Firebase projects + Cloud Functions
-# deployed) before this metric has any signal to count. Until then this
-# file documents the intended filter and command.
+# deployed) before this metric has any signal to count.
 #
-# To apply (in both projects):
+# To apply (both projects):
 #
-#   gcloud logging metrics create audit-trigger-failures \
-#     --project=kindoo-prod \
-#     --description="Audit fan-in trigger failures (auditTrigger function exceptions)" \
-#     --log-filter='resource.type="cloud_function" AND
-#       resource.labels.function_name="auditTrigger" AND
-#       severity>=ERROR'
-#
-#   gcloud logging metrics create audit-trigger-failures \
-#     --project=kindoo-staging \
-#     --description="Audit fan-in trigger failures (auditTrigger function exceptions)" \
-#     --log-filter='resource.type="cloud_function" AND
-#       resource.labels.function_name="auditTrigger" AND
-#       severity>=ERROR'
+#   for PROJECT in kindoo-staging kindoo-prod; do
+#     gcloud logging metrics create audit-trigger-failures \
+#       --project="$PROJECT" \
+#       --description="Audit fan-in trigger failures (nine audit* triggers)" \
+#       --log-filter='resource.type="cloud_run_revision" AND
+#         resource.labels.service_name=("auditstakewrites" OR "auditwardwrites" OR
+#           "auditbuildingwrites" OR "auditmanagerwrites" OR "auditaccesswrites" OR
+#           "auditseatwrites" OR "auditrequestwrites" OR "auditkindoositewrites" OR
+#           "auditorganizationwrites") AND
+#         severity>=ERROR'
+#   done
 
 name: audit-trigger-failures
-description: Audit fan-in trigger failures (auditTrigger function exceptions)
+description: Audit fan-in trigger failures (nine audit* triggers)
 filter: |
-  resource.type="cloud_function" AND
-  resource.labels.function_name="auditTrigger" AND
+  resource.type="cloud_run_revision" AND
+  resource.labels.service_name=("auditstakewrites" OR "auditwardwrites" OR
+    "auditbuildingwrites" OR "auditmanagerwrites" OR "auditaccesswrites" OR
+    "auditseatwrites" OR "auditrequestwrites" OR "auditkindoositewrites" OR
+    "auditorganizationwrites") AND
   severity>=ERROR
 metricKind: DELTA
 valueType: INT64
