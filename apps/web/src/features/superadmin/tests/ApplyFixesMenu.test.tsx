@@ -118,6 +118,9 @@ describe('<ApplyFixesMenu />', () => {
     const select = screen.getByTestId(`apply-fixes-select-${stake.id}`);
     expect(select).toHaveAccessibleName(`Apply fix to ${stake.stake_name}`);
     expect(screen.getByRole('option', { name: 'Backfill Kindoo site IDs' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: 'Backfill audit log retention' }),
+    ).toBeInTheDocument();
   });
 
   it('opens the Explain dialog naming the target stake when a fix is selected', async () => {

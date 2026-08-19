@@ -34,6 +34,13 @@ export const STAKE_FIXES = [
       'Re-derives each seat’s Kindoo site from its ward’s assigned building and stamps the resulting kindoo_site_id onto the seat and each of its duplicate grants. It is idempotent and safe to re-run: only seats whose derived value differs from what is already stored are written, so a second run over an already-corrected stake makes no changes.',
     callable: 'backfillKindooSiteId',
   },
+  {
+    id: 'backfill-audit-ttl',
+    label: 'Backfill audit log retention',
+    description:
+      'Rewrites the ttl on every existing audit log row in the stake so rows written before the retention change expire five years after they were recorded, rather than the 365 days they were stamped with at write time. It is idempotent and safe to re-run: only rows whose stored ttl differs from the recomputed value are written, so a second run over an already-corrected stake reports zero writes.',
+    callable: 'backfillAuditTtl',
+  },
 ] as const satisfies readonly StakeFix[];
 
 export type StakeFixId = (typeof STAKE_FIXES)[number]['id'];

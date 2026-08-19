@@ -22,7 +22,7 @@ export const Route = createFileRoute('/privacy')({
 
 // Last-substantive-edit date. Bump whenever the policy text changes in
 // a way a reviewer would care about; cosmetic refactors do not bump.
-const LAST_UPDATED = '2026-08-11';
+const LAST_UPDATED = '2026-08-18';
 
 function PrivacyPage() {
   return (
@@ -154,7 +154,7 @@ function PrivacyPage() {
             <p>
               Within a stake, request data is visible to the leaders whose approval is required for
               that request and to the stake&rsquo;s designated Kindoo Manager. Audit records of who
-              did what are retained for accountability purposes for 365 days, after which they are
+              did what are retained for accountability purposes for five years, after which they are
               deleted.
             </p>
           </Section>
