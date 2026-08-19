@@ -39,7 +39,7 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 - **Inspect:** Function logs filtered to `severity>=ERROR` for the time range.
 - **Common causes:**
   - Recently-deployed function has a bug. Check `git log --oneline functions/`.
-  - Downstream dependency returning errors. Functions call out to Firestore (data layer), Resend (email vendor, per F16), FCM (push), and Secret Manager (`RESEND_API_KEY`). Cloud Run is the v2 functions runtime (not a downstream); Cloud Scheduler is the upstream invoker for `reconcileAuditGaps`. Check the function's specific error message.
+  - Downstream dependency returning errors. Functions call out to Firestore (data layer), Resend (email vendor, per F16), FCM (push), and Secret Manager (`RESEND_API_KEY`). Cloud Run is the v2 functions runtime (not a downstream). Check the function's specific error message.
   - Quota or rate-limit hit. Check the function's metrics.
 - **If urgent:** Roll back the function deploy via `infra/runbooks/deploy.md` rollback section.
 - **Auto-close:** 24h.
