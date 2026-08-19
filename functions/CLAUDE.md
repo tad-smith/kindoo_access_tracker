@@ -1,6 +1,6 @@
 # functions — Claude Code guidance
 
-Cloud Functions: Firestore triggers, scheduled jobs (audit reconciliation), HTTPS callables, email send, push send, audit fan-in, custom-claims sync. All server-side compute lives here.
+Cloud Functions: Firestore triggers, HTTPS callables, email send, push send, audit fan-in, custom-claims sync. All server-side compute lives here. No scheduled functions.
 
 **Owner agent:** `backend-engineer`. Also responsible for `firestore/` (rules + indexes).
 
@@ -32,8 +32,6 @@ src/
 │   ├── notifyOnAccessGranted.ts       # welcome email on the no-scopes → some-scopes access transition
 │   ├── pushOnRequestSubmit.ts         # FCM push on new request submission
 │   └── removeSeatOnRequestComplete.ts # Admin-SDK delete for remove-request completions
-├── scheduled/
-│   └── reconcileAuditGaps.ts          # nightly; alerts on audit-log gaps
 ├── callable/
 │   ├── getMyPendingRequests.ts        # signed-in caller's pending requests across roles
 │   ├── markRequestComplete.ts         # manager-invoked; completes a request + writes seats
@@ -54,11 +52,12 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 
 - **One file per function** (or per closely-related group of triggers).
 - **Idempotency by deterministic write paths.** Audit trigger uses `{writeTime}_{collection}_{docId}` so retries write the same row.
+- **The nine audit registrations set `retry: true`.** Firestore triggers don't retry by default, so a failed audit write would silently lose the row after the entity write already committed. The deterministic doc id above is what makes that safe — a redelivery carries the original CloudEvent time, so every retry `set()`s the same row. Don't enable retries on a trigger whose write isn't idempotent.
 - **All shared types from `packages/shared/`.** No duplicated `Seat`/`Request`/`Access` types.
 - **Canonical email helper from `packages/shared/canonicalEmail.ts`.** Don't re-implement.
 - **Wrap all multi-doc writes in `db.runTransaction(...)`** — same atomicity guarantees as client transactions.
 - **All secrets via env injection** (`process.env.RESEND_API_KEY`); never in code.
-- **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running scheduled job or callable. Default memory 256MB.
+- **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running callable. Default memory 256MB.
 - **Read per-stake config once per invocation, outside the transactions.** `syncApplyFix` reads the stake doc after the auth gate and threads the derived options into each handler; the handlers keep their strict reads-before-writes ordering untouched. A config flip landing mid-run is a benign race the next run heals — don't add a mid-transaction read to close it.
 - **Manager auth on callables reads `kindooManagers/{canonical}` directly, not the claim.** The custom claim can be ~1h stale on an idle session. `syncApplyFix` and `backfillEqPresidentAccess` both check the doc plus `active === true`.
 - **Reconcile callables are merge-only over the field they own.** `backfillEqPresidentAccess` adds / removes exactly one calling inside `importer_callings[scope]` rather than reusing `writeAccessForAutoScope`'s wholesale replace — a rebuild would silently "fix" unrelated entries the operator didn't consent to touching. A destructive direction takes an explicit parameter guarded against current config (`failed-precondition` on mismatch), so a stale client confirmation can't write the wrong side.
@@ -92,7 +91,7 @@ Details: `functions/deploy-lock/README.md`, `functions/scripts/deploy-deps.mjs`,
 - **Don't reach into Firestore from outside `src/services/` helpers.** Keeps test boundaries clean and audit traceable.
 - **Don't store secrets in code.** Use Secret Manager + env vars.
 - **Don't bypass `packages/shared/` types.** Define new types there.
-- **Don't catch and silently swallow errors.** Log + rethrow OR write a typed error to the response. Silent failures are the worst kind.
+- **Don't catch and silently swallow errors.** Log + rethrow OR write a typed error to the response. Silent failures are the worst kind. One documented carve-out: `emitAuditRow` drops a permanently rejected audit row (gRPC `INVALID_ARGUMENT`, i.e. oversize) after logging its coordinates, because retrying it would burn the full 24h redelivery window to land nowhere. Every other code rethrows so the retry redelivers. It's unit-tested; don't widen it.
 
 ## Boundaries
 
@@ -105,7 +104,7 @@ Details: `functions/deploy-lock/README.md`, `functions/scripts/deploy-deps.mjs`,
 
 - **Vitest + Firebase emulator.** No mocks for Firestore or Auth — emulator is the test database.
 - **Mock external services** (Resend, FCM) at the wrapper level only.
-- **Each trigger / scheduled / callable function has at least:** happy path, error path, idempotency case (where applicable).
+- **Each trigger / callable function has at least:** happy path, error path, idempotency case (where applicable).
 - **`markRequestComplete` and `syncApplyFix` are the highest-stakes test surfaces** — together they carry the bulk of the integration suite (the two largest files in `tests/`). Both touch multiple collections in a single transaction: `markRequestComplete` writes seat / request / stake docs and triggers the audit fan-in; `syncApplyFix` is the auto-seat applier the extension calls (every kindoo-to-sba drift-row shape — `kindoo-only`, `callings-mismatch`, `type-mismatch`, `scope-mismatch`, `buildings-mismatch`, `kindoo-unparseable`, `sba-only` — has its own path with its own seat / access bookkeeping; sba-to-kindoo variants are extension-side and never reach the backend). When changing either, expect to update the matching test file in lockstep.
 
 ## Deploy

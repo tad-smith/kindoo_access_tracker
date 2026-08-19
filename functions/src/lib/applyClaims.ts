@@ -20,7 +20,9 @@ import { getAdminAuth } from './admin.js';
  * prod, and constant in the integration suite where sibling tests
  * create-then-delete users). There's nothing to stamp claims onto, so
  * the applier treats this as a benign no-op. An unhandled throw here
- * makes Eventarc retry the trigger forever — an infinite retry storm.
+ * would just drop the event (these triggers don't set `retry`) — or,
+ * where retries are enabled, churn the 24h redelivery window against a
+ * user who is never coming back.
  */
 const USER_GONE = Symbol('auth-user-not-found');
 

@@ -64,8 +64,9 @@
 // signed in (see `seedClaimsFromRoleData` for the first-sign-in catch
 // -up path). Follows the same benign-no-op handling as
 // `applyClaims.ts`'s `loadExistingClaims`/`writeClaims` (commit
-// 11556ee) rather than throwing, which would make Eventarc retry
-// forever.
+// 11556ee) rather than throwing, which would drop the event outright
+// (this trigger doesn't set `retry`) and, where retries are enabled,
+// burn the redelivery window on a user who doesn't exist yet.
 //
 // Reads `stakeId` off the event, never a cached stake-list — a warm
 // instance holding a stale list is exactly the failure mode a
