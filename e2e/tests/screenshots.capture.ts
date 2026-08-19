@@ -303,7 +303,8 @@ async function seedBishopRequests(requesterEmail: string): Promise<void> {
 // `update_seat` whose before/after differ on a couple of fields so the
 // `<details>` expansion renders a Field / Before / After diff table.
 async function seedAuditLog(): Promise<void> {
-  const ttl = new Date('2027-06-01T00:00:00Z');
+  // 5 years past the seeded rows' timestamps, matching `AUDIT_TTL_MS`.
+  const ttl = new Date('2031-06-01T00:00:00Z');
 
   // Featured row — a manual seat whose buildings + reason changed.
   // Expanding this row shows the before/after diff in the guide.

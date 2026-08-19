@@ -28,5 +28,6 @@ export { mintExtensionToken } from './callable/mintExtensionToken.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';
 export { syncApplyFix } from './callable/syncApplyFix.js';
 export { createStake } from './callable/createStake.js';
+export { backfillAuditTtl } from './callable/backfillAuditTtl.js';
 export { backfillKindooSiteId } from './callable/backfillKindooSiteId.js';
 export { backfillEqPresidentAccess } from './callable/backfillEqPresidentAccess.js';

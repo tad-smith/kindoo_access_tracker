@@ -87,7 +87,8 @@ describe('firestore.rules — top-level collections', () => {
       entity_id: 'csnorth',
       before: null,
       after: { stake_name: 'CS North Stake' },
-      ttl: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      // No `ttl` — `platformAuditLog` is deliberately non-expiring
+      // (T-101). The rules carry no `ttl` validation either way.
     };
 
     it('superadmin can read', async () => {

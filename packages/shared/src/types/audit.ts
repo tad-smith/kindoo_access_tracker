@@ -6,6 +6,20 @@
 
 import type { TimestampLike } from './userIndex.js';
 
+/**
+ * Retention window stamped onto every `auditLog` row's `ttl`: 5 years.
+ * The only definition — the audit trigger, the `email_send_failed`
+ * writer, and the `backfillAuditTtl` callable all read it from here.
+ * Firestore's TTL policy on the `ttl` field does the deleting.
+ *
+ * Leap days are ignored: day-level precision is irrelevant to a
+ * retention window.
+ *
+ * `platformAuditLog` deliberately stamps no `ttl` at all — see
+ * {@link PlatformAuditLog}.
+ */
+export const AUDIT_TTL_MS = 5 * 365 * 24 * 60 * 60 * 1000;
+
 /** All audit-log actions, per-stake. */
 export type AuditAction =
   // Seats
@@ -67,7 +81,7 @@ export type AuditLog = {
   before: object | null;
   after: object | null;
 
-  /** 365 days from write time. Firestore TTL deletes ~24h after this passes. */
+  /** `AUDIT_TTL_MS` (5 years) from write time. Firestore TTL deletes ~24h after this passes. */
   ttl: TimestampLike;
 };
 
@@ -86,5 +100,12 @@ export type PlatformAuditLog = {
   entity_id: string;
   before: object | null;
   after: object | null;
-  ttl: TimestampLike;
+  /**
+   * Absent on every row written since T-101 — this collection is
+   * deliberately non-expiring, so a later `--enable-ttl` on the
+   * `platformAuditLog` collection group cannot silently delete the
+   * platform trail. Rows written before T-101 keep a stamped
+   * 365-day value; no TTL policy has ever enforced it.
+   */
+  ttl?: TimestampLike;
 };

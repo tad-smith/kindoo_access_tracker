@@ -3,6 +3,7 @@
 // its own block.
 import { afterEach, describe, expect, it } from 'vitest';
 import { _setSuffixSource, auditId } from './auditId.js';
+import { AUDIT_TTL_MS } from './types/audit.js';
 
 describe('auditId', () => {
   let restore: (() => void) | undefined;
@@ -92,5 +93,14 @@ describe('auditId', () => {
       expect(auditId(t)).toBe('2026-04-28T14:23:45.123Z_n0');
       expect(auditId(t)).toBe('2026-04-28T14:23:45.123Z_n1');
     });
+  });
+});
+
+// The retention window lives beside the `ttl` field it stamps, in
+// `types/audit.ts`. Pinned here so changing it is a deliberate act.
+describe('AUDIT_TTL_MS', () => {
+  it('is five 365-day years in ms', () => {
+    expect(AUDIT_TTL_MS).toBe(5 * 365 * 24 * 60 * 60 * 1000);
+    expect(AUDIT_TTL_MS).toBe(157_680_000_000);
   });
 });

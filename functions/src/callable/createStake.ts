@@ -44,9 +44,6 @@ import { buildingSlug, canonicalEmail, auditId } from '@kindoo/shared';
 import type { CreateStakeInput, CreateStakeResult } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
 
-/** 365 days in ms — matches the audit TTL the `auditTrigger` stamps. */
-const TTL_MS = 365 * 24 * 60 * 60 * 1000;
-
 /** Default IANA tz when the operator doesn't override (F19). */
 const DEFAULT_TIMEZONE = 'America/Denver';
 
@@ -161,7 +158,6 @@ export const createStake = onCall(
     const now = Timestamp.fromDate(writeTime);
     const auditDocId = auditId(writeTime);
     const auditRef = db.doc(`platformAuditLog/${auditDocId}`);
-    const auditTtl = Timestamp.fromMillis(writeTime.getTime() + TTL_MS);
 
     return db.runTransaction<CreateStakeResult>(async (tx) => {
       const existing = await tx.get(stakeRef);
@@ -208,7 +204,10 @@ export const createStake = onCall(
         // `auditTrigger`'s convention of stamping the post-write
         // snapshot on `after`.
         after: stakeBody,
-        ttl: auditTtl,
+        // No `ttl`. `platformAuditLog` has never had a TTL policy, so the
+        // field was inert; omitting it means a later `--enable-ttl` on the
+        // collection group can't silently delete the platform trail (T-101,
+        // closing Q20). Per-stake `auditLog` rows still expire.
       });
 
       return { success: true, stakeId: slug };

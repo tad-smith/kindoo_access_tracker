@@ -24,6 +24,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import {
+  AUDIT_TTL_MS,
   REQUESTER_GUIDE_PATH,
   auditId,
   deriveRequesterDisplay,
@@ -46,9 +47,6 @@ import type {
 } from '@kindoo/shared';
 import { WEB_BASE_URL } from '../lib/params.js';
 import { getResendSender, type EmailPayload } from '../lib/resend.js';
-
-// 365 days in ms — same TTL the audit trigger writes.
-const TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** Verified envelope per T-04. Display-name is interpolated per stake. */
 const ENVELOPE = 'noreply@mail.stakebuildingaccess.org';
@@ -926,7 +924,7 @@ async function writeEmailFailedAudit(
   },
 ): Promise<void> {
   const writeTime = new Date();
-  const ttl = Timestamp.fromMillis(writeTime.getTime() + TTL_MS);
+  const ttl = Timestamp.fromMillis(writeTime.getTime() + AUDIT_TTL_MS);
   // Deterministic suffix so retries collapse to the same row.
   const requestKey = details.requestId ?? details.source ?? 'unknown';
   const suffix = `system_email_send_failed_${details.type}_${requestKey}`;

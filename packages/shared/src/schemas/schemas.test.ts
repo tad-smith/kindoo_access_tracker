@@ -136,7 +136,23 @@ describe('platformAuditLogSchema', () => {
       entity_id: 'csnorth',
       before: null,
       after: { stake_name: 'CS North Stake' },
+      // Pre-T-101 rows carry a stamped-but-unenforced `ttl`; the schema
+      // still accepts them.
       ttl: T,
+    };
+    expect(platformAuditLogSchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses a row with no ttl (T-101 — the collection is non-expiring)', () => {
+    const seed = {
+      timestamp: T,
+      actor_email: 'Admin@kindoo.example',
+      actor_canonical: 'admin@kindoo.example',
+      action: 'create_stake' as const,
+      entity_type: 'stake' as const,
+      entity_id: 'csnorth',
+      before: null,
+      after: { stake_name: 'CS North Stake' },
     };
     expect(platformAuditLogSchema.parse(seed)).toEqual(seed);
   });
