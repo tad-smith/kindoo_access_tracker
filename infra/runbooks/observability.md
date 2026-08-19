@@ -8,7 +8,8 @@ What is monitored, where the data lives, what fires when, and how to add to it. 
 
 - **Cloud Functions 5xx rate** — alert on > 1/min sustained for 5min; routes to Tad's email. Defined in `infra/monitoring/alerts/5xx-rate.yaml`.
 - **Firestore rules-denied count** — log-based metric; baseline visibility, no alert. Defined in `infra/monitoring/metrics/firestore-rules-denied-count.yaml`.
-- **Audit trigger failures** — log-based metric on `auditTrigger` Cloud Function exceptions. Defined in `infra/monitoring/metrics/audit-trigger-failures.yaml`.
+- **Audit trigger failures** — log-based metric on errors from the nine `audit*Writes` fan-in triggers. Mostly transient now that those triggers retry, so read it as a health signal. Defined in `infra/monitoring/metrics/audit-trigger-failures.yaml`.
+- **Audit rows dropped** — log-based metric on audit rows the trigger permanently rejected. Unlike the metric above, every hit is real data loss. Defined in `infra/monitoring/metrics/audit-row-dropped.yaml`.
 - **Claim sync failures** — log-based metric on `syncAccessClaims`, `syncManagersClaims`, `syncSuperadminClaims` exceptions. Defined in `infra/monitoring/metrics/claim-sync-failures.yaml`.
 
 ### Not yet wired
@@ -16,6 +17,7 @@ What is monitored, where the data lives, what fires when, and how to add to it. 
 These were sketched in the migration plan but the alert/metric YAML files do not exist yet. Add them when the operational need is concrete.
 
 - Auth verification failures > 5/hour. Catches misconfigured client builds or attempted forgery.
+- **Alert on `audit-row-dropped` > 0.** The metric exists; no alert routes off it yet. Any non-zero value means an audit row was thrown away and cannot be reconstructed, and since T-102 removed the reconciliation sweep nothing else will ever surface it. Highest-value alert on this list.
 
 ## Where to find data
 
@@ -39,7 +41,7 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 - **Inspect:** Function logs filtered to `severity>=ERROR` for the time range.
 - **Common causes:**
   - Recently-deployed function has a bug. Check `git log --oneline functions/`.
-  - Downstream dependency returning errors. Functions call out to Firestore (data layer), Resend (email vendor, per F16), FCM (push), and Secret Manager (`RESEND_API_KEY`). Cloud Run is the v2 functions runtime (not a downstream); Cloud Scheduler is the upstream invoker for `reconcileAuditGaps`. Check the function's specific error message.
+  - Downstream dependency returning errors. Functions call out to Firestore (data layer), Resend (email vendor, per F16), FCM (push), and Secret Manager (`RESEND_API_KEY`). Cloud Run is the v2 functions runtime (not a downstream). Check the function's specific error message.
   - Quota or rate-limit hit. Check the function's metrics.
 - **If urgent:** Roll back the function deploy via `infra/runbooks/deploy.md` rollback section.
 - **Auto-close:** 24h.

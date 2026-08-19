@@ -415,6 +415,24 @@ Expected: two `Updated IAM policy for serviceAccount [kindoo-app@<project>.iam.g
 
 Verify, and read the rationale, in `infra/runbooks/provision-firebase-projects.md` §5.2.1 and §1.8. That's where the grant lives for any project provisioned from here on.
 
+## One-time: confirm the `reconcileAuditGaps` deletion prompt (T-102)
+
+**Answer this once per project — staging and prod each prompt on their own first deploy after the merge, then cross it off.** The scheduled audit-reconcile job is gone from source (T-102; audit fan-in is covered by trigger retries instead), so the first `pnpm deploy:staging` and the first `pnpm deploy:prod` after that merge each find a deployed function with no source export and ask:
+
+```
+The following functions are found in your project but do not exist in your local source code:
+	reconcileAuditGaps(us-central1)
+? Would you like to proceed with deletion? Selecting no will continue the rest of the deployments. (y/N)
+```
+
+Answer **y** on each project. Deleting the function also deletes the Cloud Scheduler job that invoked it — that deletion, not the source removal, is what frees the two scheduler slots (one per project).
+
+If you answer no, the deploy still succeeds and the function stays live with nothing to invoke it. The backstop is the post-deploy check: `lib/verify-deploy.sh`'s source-vs-deployed diff reports `warning: deployed but not exported from source` for `reconcileAuditGaps` on every subsequent deploy until you take the prompt. Clear it by re-deploying and answering y, or delete the function directly:
+
+```bash
+firebase functions:delete reconcileAuditGaps --region us-central1 --project staging   # or: --project prod
+```
+
 ## Rollback
 
 Open TODO: walk and validate the rollback procedure end-to-end against staging, then promote the steps below from sketch to verified. Until that drill happens, treat these as a starting point, not a finished playbook.

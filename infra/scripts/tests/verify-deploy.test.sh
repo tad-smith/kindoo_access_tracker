@@ -372,12 +372,8 @@ else
   ok "does not misclassify a Firestore trigger as a callable"
 fi
 
-if printf '%s\n' "$REAL_CALLABLES" | grep -qx 'reconcileAuditGaps'; then
-  bad "does not misclassify a scheduled function as a callable" \
-    "reconcileAuditGaps absent from callables" "$REAL_CALLABLES"
-else
-  ok "does not misclassify a scheduled function as a callable"
-fi
+# The scheduled-function misclassification check lived here; it went away with
+# the last scheduled function, leaving nothing of that class to probe.
 
 echo ""
 echo "--- vd_verify_deploy --dry-run (must not touch the network) ---"

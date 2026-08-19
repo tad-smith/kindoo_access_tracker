@@ -243,7 +243,7 @@ What each API does for us:
 | `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, email + push notifications. |
 | `cloudbuild.googleapis.com` | Cloud Functions 2nd-gen builds via Cloud Build under the hood. |
 | `run.googleapis.com` | Cloud Functions 2nd-gen *runs* on Cloud Run (per F1). |
-| `cloudscheduler.googleapis.com` | Nightly audit-reconcile + weekly Firestore export (per F8). |
+| `cloudscheduler.googleapis.com` | Weekly Firestore export (§3.4). |
 | `fcm.googleapis.com` | Firebase Cloud Messaging — push notifications (Phase 10). |
 | `fcmregistrations.googleapis.com` | FCM device-registration API (Phase 10). |
 | `secretmanager.googleapis.com` | Resend API key + any other secrets (Phase 9 onward). |
@@ -311,7 +311,7 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the twelve Cloud Functions that need a non-default runtime identity — all four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), the `reconcileAuditGaps` scheduled job, and seven callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the eleven Cloud Functions that need a non-default runtime identity — all four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`) and seven callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -373,7 +373,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the twelve Cloud Functions enumerated in step 1.8 (notification triggers, the `reconcileAuditGaps` scheduled job, and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
+`kindoo-app` is the SA pinned by the eleven Cloud Functions enumerated in step 1.8 (notification triggers and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
