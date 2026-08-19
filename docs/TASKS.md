@@ -7,9 +7,11 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-102] Delete `reconcileAuditGaps`; protect audit fan-in with trigger retries instead
-Status: pending
+Status: done (2026-08-18 — PR #286)
 Owner: @backend-engineer (code) + @docs-keeper (F8 supersession + cascade)
 Phase: cross-cutting
+
+**Done.** `reconcileAuditGaps` and the whole `functions/src/scheduled/` directory are deleted, so SBA now runs zero scheduled Cloud Functions; the prod-only weekly Firestore export is the sole remaining Cloud Scheduler entry, and it is an operator-created job against the Firestore admin API rather than a Function. All nine audit registrations carry `{ document, retry: true }`. `isPermanentAuditWriteError` drops a gRPC `INVALID_ARGUMENT` row after logging its coordinates — two reachable causes, the 1 MiB document limit and the 1500-byte index-entry limit — and every other code rethrows so Eventarc redelivers. `auditTrigger.registration.test.ts` derives the audited-collection set from `firestore.rules` and pins both the set and the retry flag, which is the unregistered-collection gap this task called out. Infra rewrote `audit-trigger-failures.yaml` (it had never matched anything: it named the source file, not a deployable, and used the 1st-gen resource type) and added `audit-row-dropped.yaml`; neither has an alert routed to it, recorded under "Not yet wired" in `infra/runbooks/observability.md`. Doc cascade: `architecture.md` D35, F8 annotated in place, Q14 amended and Q21 closed, `spec.md` §2 / §10 / §11, `firebase-schema.md` §1 / §4.11 / §4.12 / §7. Q14 did **not** close flat — the question as posed is obsolete, but the need behind it transferred to `audit-row-dropped`, which is now the only signal that a row was lost and is still unwired. See `docs/changelog/remove-audit-gap-reconciliation.md`.
 
 **Delete the job.** It compares two aggregate counts per stake — `totalEntities` (docs existing right now across the eight collections in `AUDITED_COLLECTIONS`) against `auditCount` (audit rows existing right now, all time) — and warns when the difference exceeds 1%. No time window, no per-document lookup, no notion of a write anywhere in it. The two quantities are incompatible: one is a snapshot of *current docs*, the other a cumulative count of *events*. They line up only on a brand-new stake; after any history, rows accumulate past entity count, `gapPct` clamps to zero, and the check is permanently green whether or not `auditTrigger` is still firing. In the other direction the TTL eventually sheds rows from a quiet stake and trips the gate nightly for nothing ([T-101] pushes that out, it does not remove it). When it does fire it names a stake and a percentage — nothing to act on, which is most of why Q14 was never answerable.
 
@@ -58,7 +60,7 @@ Cost is not the constraint. Rows carry full `before`/`after` snapshots (`lib/aud
 
 **Runbook gap.** [T-15] asked for the TTL gcloud command to be added to `infra/runbooks/provision-firebase-projects.md`; it never was. A project rebuilt from that runbook stamps `ttl` fields and deletes nothing. Add it, noting that `platformAuditLog` is deliberately excluded.
 
-**Side effect worth having.** The 365-day TTL is what will eventually make `reconcileAuditGaps` false-positive: it compares a cumulative audit-row count against a current entity count, so a stake whose entities go quiet for over a year sheds rows and trips the >1% gate every night. Five years pushes that out well past the point where the job's own shape should be revisited.
+**Side effect worth having.** The 365-day TTL is what will eventually make `reconcileAuditGaps` false-positive: it compares a cumulative audit-row count against a current entity count, so a stake whose entities go quiet for over a year sheds rows and trips the >1% gate every night. Five years pushes that out well past the point where the job's own shape should be revisited. **[Moot 2026-08-18]** — [T-102] deleted the job outright; see `architecture.md` D35.
 
 ## [T-100] Playwright coverage for the calling typeahead inside `EditSeatDialog`
 Status: done (2026-08-09 — PR pending)

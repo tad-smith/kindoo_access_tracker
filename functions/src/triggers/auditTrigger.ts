@@ -23,7 +23,9 @@
 //     accumulate without auto-expiry.
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { logger } from 'firebase-functions';
 import { Timestamp } from 'firebase-admin/firestore';
+import type { Firestore } from 'firebase-admin/firestore';
 import { auditId } from '@kindoo/shared';
 import type { AuditAction, AuditEntityType, AuditLog } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
@@ -34,23 +36,40 @@ import { OUT_OF_BAND_ACTOR } from '../lib/systemActors.js';
 //
 // One export per audited path. The Cloud Functions runtime fans each
 // onDocumentWritten registration into its own deployable function.
+//
+// Every registration opts into retries. Firestore triggers do NOT
+// retry by default, so without it a failed audit write — the entity
+// write already committed — silently loses the row. With it, Eventarc
+// redelivers the event with exponential backoff for up to 24h. That's
+// safe because the write is idempotent: `auditDocId` derives from
+// `(collection, docId, eventTime)`, a redelivery carries the ORIGINAL
+// CloudEvent time, and the write is a `set()` — every retry overwrites
+// the same row. `auditLog` itself has no trigger, so there's no
+// recursion. The one failure retries can't fix is a permanently
+// rejected row (oversize); see `isPermanentAuditWriteError` below,
+// which drops it rather than grinding the whole 24h window. The
+// emulator does not exercise redelivery — retry is an Eventarc
+// platform contract, not observable locally.
 
-export const auditStakeWrites = onDocumentWritten('stakes/{stakeId}', async (event) => {
-  const { stakeId } = event.params as { stakeId: string };
-  if (!event.data) return;
-  await emitAuditRow({
-    stakeId,
-    collection: 'stake',
-    docId: stakeId,
-    entityType: 'stake',
-    before: snapshotData(event.data.before),
-    after: snapshotData(event.data.after),
-    eventTime: event.time,
-  });
-});
+export const auditStakeWrites = onDocumentWritten(
+  { document: 'stakes/{stakeId}', retry: true },
+  async (event) => {
+    const { stakeId } = event.params as { stakeId: string };
+    if (!event.data) return;
+    await emitAuditRow({
+      stakeId,
+      collection: 'stake',
+      docId: stakeId,
+      entityType: 'stake',
+      before: snapshotData(event.data.before),
+      after: snapshotData(event.data.after),
+      eventTime: event.time,
+    });
+  },
+);
 
 export const auditWardWrites = onDocumentWritten(
-  'stakes/{stakeId}/wards/{wardId}',
+  { document: 'stakes/{stakeId}/wards/{wardId}', retry: true },
   async (event) => {
     const { stakeId, wardId } = event.params as { stakeId: string; wardId: string };
     if (!event.data) return;
@@ -73,7 +92,7 @@ export const auditWardWrites = onDocumentWritten(
 );
 
 export const auditBuildingWrites = onDocumentWritten(
-  'stakes/{stakeId}/buildings/{buildingId}',
+  { document: 'stakes/{stakeId}/buildings/{buildingId}', retry: true },
   async (event) => {
     const { stakeId, buildingId } = event.params as { stakeId: string; buildingId: string };
     if (!event.data) return;
@@ -91,7 +110,7 @@ export const auditBuildingWrites = onDocumentWritten(
 );
 
 export const auditManagerWrites = onDocumentWritten(
-  'stakes/{stakeId}/kindooManagers/{memberCanonical}',
+  { document: 'stakes/{stakeId}/kindooManagers/{memberCanonical}', retry: true },
   async (event) => {
     const { stakeId, memberCanonical } = event.params as {
       stakeId: string;
@@ -111,7 +130,7 @@ export const auditManagerWrites = onDocumentWritten(
 );
 
 export const auditAccessWrites = onDocumentWritten(
-  'stakes/{stakeId}/access/{memberCanonical}',
+  { document: 'stakes/{stakeId}/access/{memberCanonical}', retry: true },
   async (event) => {
     const { stakeId, memberCanonical } = event.params as {
       stakeId: string;
@@ -131,7 +150,7 @@ export const auditAccessWrites = onDocumentWritten(
 );
 
 export const auditSeatWrites = onDocumentWritten(
-  'stakes/{stakeId}/seats/{memberCanonical}',
+  { document: 'stakes/{stakeId}/seats/{memberCanonical}', retry: true },
   async (event) => {
     const { stakeId, memberCanonical } = event.params as {
       stakeId: string;
@@ -151,7 +170,7 @@ export const auditSeatWrites = onDocumentWritten(
 );
 
 export const auditRequestWrites = onDocumentWritten(
-  'stakes/{stakeId}/requests/{requestId}',
+  { document: 'stakes/{stakeId}/requests/{requestId}', retry: true },
   async (event) => {
     const { stakeId, requestId } = event.params as { stakeId: string; requestId: string };
     if (!event.data) return;
@@ -168,7 +187,7 @@ export const auditRequestWrites = onDocumentWritten(
 );
 
 export const auditKindooSiteWrites = onDocumentWritten(
-  'stakes/{stakeId}/kindooSites/{kindooSiteId}',
+  { document: 'stakes/{stakeId}/kindooSites/{kindooSiteId}', retry: true },
   async (event) => {
     const { stakeId, kindooSiteId } = event.params as { stakeId: string; kindooSiteId: string };
     if (!event.data) return;
@@ -186,7 +205,7 @@ export const auditKindooSiteWrites = onDocumentWritten(
 );
 
 export const auditOrganizationWrites = onDocumentWritten(
-  'stakes/{stakeId}/organizations/{organizationId}',
+  { document: 'stakes/{stakeId}/organizations/{organizationId}', retry: true },
   async (event) => {
     const { stakeId, organizationId } = event.params as {
       stakeId: string;
@@ -246,10 +265,36 @@ export type AuditCollection =
   | 'requests';
 
 /**
+ * True for write failures no retry can fix. gRPC code 3 is
+ * INVALID_ARGUMENT, which every redelivery would reject identically
+ * for the full 24h retry window. Two reachable causes: a row over
+ * Firestore's 1 MiB document limit, and an over-long value inside the
+ * nested `before`/`after` maps tripping the 1500-byte index-entry
+ * limit (they mirror whole entity docs, and `firestore.indexes.json`
+ * exempts only `seats.duplicate_scopes` from indexing). The second can
+ * fire on ordinary data, so treat the drop log as a real signal, not a
+ * once-ever pathology.
+ *
+ * The numeric literal is deliberate: google-gax's `Status` enum is a
+ * transitive dependency, and esbuild inlines anything outside
+ * `dependencies` into `lib/index.js` (see `functions/CLAUDE.md`,
+ * "Changing dependencies"). Accepted residual: a client-side
+ * serializer error carrying no `code` (e.g. nesting depth) reads as
+ * transient and retries for 24h before dropping. Unreachable at this
+ * schema — the audit row's `before`/`after` mirror entity docs
+ * Firestore already accepted.
+ */
+export function isPermanentAuditWriteError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 3;
+}
+
+/**
  * Compute the audit row from a write event and persist it. Idempotent:
  * the doc id is deterministic from `(eventTime, collection, docId)`.
+ *
+ * `db` is injectable for unit tests; production callers use the default.
  */
-export async function emitAuditRow(ctx: EmitContext): Promise<void> {
+export async function emitAuditRow(ctx: EmitContext, db: Firestore = getDb()): Promise<void> {
   const { before, after } = ctx;
 
   // Defensive: writes that are neither create, update, nor delete shouldn't
@@ -283,7 +328,39 @@ export async function emitAuditRow(ctx: EmitContext): Promise<void> {
     ...(memberCanonical ? { member_canonical: memberCanonical } : {}),
   };
 
-  await getDb().doc(`stakes/${ctx.stakeId}/auditLog/${auditDocId}`).set(row);
+  try {
+    await db.doc(`stakes/${ctx.stakeId}/auditLog/${auditDocId}`).set(row);
+  } catch (err) {
+    // Everything above is pure in-memory work, so only the write can
+    // fail here. A permanently rejected row is dropped with its
+    // coordinates logged — retrying it would burn the whole 24h window
+    // to land nowhere. Everything else (including PERMISSION_DENIED,
+    // which under the Admin SDK can only mean an SA IAM misconfig)
+    // rethrows so Eventarc redelivers; the runtime already records the
+    // failed invocation, so no extra log on that path.
+    if (!isPermanentAuditWriteError(err)) throw err;
+    const { code, message } = err as { code?: unknown; message?: unknown };
+    logger.error('auditTrigger: audit row permanently rejected; dropping row', {
+      stakeId: ctx.stakeId,
+      collection: ctx.collection,
+      docId: ctx.docId,
+      auditDocId,
+      action,
+      // The one fact the row existed to record. `auditDocId` recovers
+      // the entity and the timestamp, `action` the verb — without this
+      // the actor is simply gone.
+      actorCanonical: actor.canonical,
+      code,
+      // NOT `message` — firebase-functions' logger overwrites that key
+      // with its own formatted message, so the rejection reason (which
+      // field, which limit) would vanish silently.
+      errorMessage: message,
+      // Order-of-magnitude only — JSON length, not Firestore's own
+      // sizing. The row itself is never logged: Cloud Logging caps an
+      // entry at 256 KB, and an oversize row is what got us here.
+      approxRowBytes: JSON.stringify(row).length,
+    });
+  }
 }
 
 /** 365 days in ms. The TTL policy is configured per-project via gcloud. */

@@ -1,0 +1,62 @@
+# audit-row-dropped
+#
+# Counts audit rows the fan-in trigger gave up on and threw away. Added in
+# T-102.
+#
+# Why this is separate from audit-trigger-failures: it is the difference
+# between noise and data loss. T-102 put retry: true on the nine audit
+# triggers, so an error entry now usually means "this delivery failed and will
+# be retried for up to 24h" — a transient Firestore blip logs an ERROR and then
+# heals itself. Counting those is a health signal you would never page on. The
+# permanent-rejection path is the opposite: emitAuditRow classifies the error
+# as unretryable (gRPC code 3, INVALID_ARGUMENT — an oversize row is the
+# reachable case), logs it, and returns. That row is gone and nothing will ever
+# produce it again.
+#
+# This is the ONLY detection path for that. T-102 deleted reconcileAuditGaps
+# and closed Q14/Q21 as obsolete, so there is no longer a sweep that would
+# notice the hole. If this filter matches nothing, a lost audit row is silent.
+#
+# Coupling to be aware of: the match is on the log MESSAGE emitted by
+# emitAuditRow in functions/src/triggers/auditTrigger.ts. Reword that string
+# and this metric quietly goes to zero. The substring below is the stable part
+# of "auditTrigger: audit row permanently rejected; dropping row".
+#
+# No labels are extracted. The count tells you it happened; the log entry it
+# came from carries stakeId, collection, docId, auditDocId, action, code,
+# errorMessage, actorCanonical and approxRowBytes, which is what you actually
+# need to act. The rejection reason is `errorMessage`, not `message` — the
+# logger overwrites `message` with its own formatted string.
+#
+# This metric wants an alert on count > 0 — any value above zero is a real
+# incident. No alert YAML exists for it yet; see infra/runbooks/observability.md
+# "Not yet wired."
+#
+# To apply (both projects):
+#
+#   for PROJECT in kindoo-staging kindoo-prod; do
+#     gcloud logging metrics create audit-row-dropped \
+#       --project="$PROJECT" \
+#       --description="Audit rows permanently rejected and dropped" \
+#       --log-filter='resource.type="cloud_run_revision" AND
+#         resource.labels.service_name=("auditstakewrites" OR "auditwardwrites" OR
+#           "auditbuildingwrites" OR "auditmanagerwrites" OR "auditaccesswrites" OR
+#           "auditseatwrites" OR "auditrequestwrites" OR "auditkindoositewrites" OR
+#           "auditorganizationwrites") AND
+#         severity>=ERROR AND
+#         jsonPayload.message:"audit row permanently rejected"'
+#   done
+
+name: audit-row-dropped
+description: Audit rows permanently rejected and dropped
+filter: |
+  resource.type="cloud_run_revision" AND
+  resource.labels.service_name=("auditstakewrites" OR "auditwardwrites" OR
+    "auditbuildingwrites" OR "auditmanagerwrites" OR "auditaccesswrites" OR
+    "auditseatwrites" OR "auditrequestwrites" OR "auditkindoositewrites" OR
+    "auditorganizationwrites") AND
+  severity>=ERROR AND
+  jsonPayload.message:"audit row permanently rejected"
+metricKind: DELTA
+valueType: INT64
+unit: '1'

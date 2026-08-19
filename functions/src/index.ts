@@ -23,8 +23,6 @@ export {
   auditWardWrites,
 } from './triggers/auditTrigger.js';
 
-export { reconcileAuditGaps } from './scheduled/reconcileAuditGaps.js';
-
 export { getMyPendingRequests } from './callable/getMyPendingRequests.js';
 export { mintExtensionToken } from './callable/mintExtensionToken.js';
 export { markRequestComplete } from './callable/markRequestComplete.js';
