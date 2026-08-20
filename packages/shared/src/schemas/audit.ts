@@ -70,5 +70,6 @@ export const platformAuditLogSchema = z.object({
   entity_id: z.string(),
   before: beforeAfterSchema,
   after: beforeAfterSchema,
-  ttl: timestampLikeSchema,
+  /** Optional: rows written since T-101 carry none. See `types/audit.ts`. */
+  ttl: timestampLikeSchema.optional(),
 });

@@ -1043,7 +1043,10 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     expect(rows[0]!.actor_canonical).toBe('alice@gmail.com');
   });
 
-  it('emitAuditRow stamps a ttl ~365 days after the event time', async () => {
+  // The literal is spelled out rather than imported from
+  // `AUDIT_TTL_MS`: pinning the retention window against the constant
+  // would assert only that the trigger reads it, not what it is.
+  it('emitAuditRow stamps a ttl ~5 years after the event time', async () => {
     const eventTime = '2026-04-28T15:00:00.000Z';
     await emitAuditRow({
       stakeId: STAKE_ID,
@@ -1057,7 +1060,7 @@ describe.skipIf(!hasEmulators())('audit trigger', () => {
     });
     const rows = await readAuditRows();
     const ttl = rows[0]!.ttl as { toMillis: () => number };
-    const expected = new Date(eventTime).getTime() + 365 * 24 * 60 * 60 * 1000;
+    const expected = new Date(eventTime).getTime() + 5 * 365 * 24 * 60 * 60 * 1000;
     expect(ttl.toMillis()).toBe(expected);
   });
 });

@@ -17,16 +17,16 @@
 //   - Writes the row at a deterministic doc ID — `auditId(writeTime,
 //     '<collection>_<docId>')` — so retries land idempotently on the
 //     same row.
-//   - Stamps a 365-day `ttl` field. The Firestore TTL policy itself is
-//     a project-level gcloud configuration (see `infra/runbooks` and
-//     TASKS.md T-15) — until that policy is enabled, audit rows
-//     accumulate without auto-expiry.
+//   - Stamps a `ttl` field `AUDIT_TTL_MS` (5 years) past the write time.
+//     The Firestore TTL policy itself is a project-level gcloud
+//     configuration (see `infra/runbooks` and TASKS.md T-15) — until
+//     that policy is enabled, audit rows accumulate without auto-expiry.
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
-import { auditId } from '@kindoo/shared';
+import { AUDIT_TTL_MS, auditId } from '@kindoo/shared';
 import type { AuditAction, AuditEntityType, AuditLog } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
 import { deepEqual, isNoOpUpdate } from '../lib/auditDiff.js';
@@ -310,7 +310,7 @@ export async function emitAuditRow(ctx: EmitContext, db: Firestore = getDb()): P
   const memberCanonical = resolveMemberCanonical(ctx, before, after);
 
   const writeTime = new Date(ctx.eventTime);
-  const ttl = Timestamp.fromMillis(writeTime.getTime() + TTL_MS);
+  const ttl = Timestamp.fromMillis(writeTime.getTime() + AUDIT_TTL_MS);
   const docIdSuffix = `${ctx.collection}_${ctx.docId}`;
   const auditDocId = auditId(writeTime, docIdSuffix);
 
@@ -362,9 +362,6 @@ export async function emitAuditRow(ctx: EmitContext, db: Firestore = getDb()): P
     });
   }
 }
-
-/** 365 days in ms. The TTL policy is configured per-project via gcloud. */
-const TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** Extract a snapshot's data, or `null` when the snapshot is empty/missing. */
 function snapshotData(

@@ -293,6 +293,25 @@ gcloud firestore databases create \
   --project=<PROJECT_ID>
 ```
 
+### 1.6.1 Enable the `auditLog` TTL policy
+
+TTL policies are project configuration, not source — nothing in `firestore/` declares them. A project provisioned without this step stamps a `ttl` field on every audit row and deletes nothing, forever.
+
+```bash
+gcloud firestore fields ttls update ttl \
+  --collection-group=auditLog \
+  --enable-ttl \
+  --project=<PROJECT_ID>
+```
+
+Expected: gcloud waits on a long-running operation and exits 0. Policy creation is asynchronous — confirm it actually landed with step 5.4.1 rather than trusting the return.
+
+Three things worth knowing:
+
+- **Runs against both projects.** Substitute `kindoo-staging` here; Phase 2 repeats it with `kindoo-prod`. The policy is per-database, so enabling it on one says nothing about the other.
+- **Do not enable TTL on `platformAuditLog`.** The platform audit trail records stake creation and is deliberately non-expiring; a policy on that collection group would silently start deleting it. Its rows carry no `ttl` field, so the only way this happens is someone re-running the command above with a different `--collection-group`.
+- **The retention duration is not in the policy.** The policy only says "delete the document once its `ttl` timestamp has passed" — the duration lives in the value the audit writer stamps at write time (currently 5 years). Don't go looking for a duration flag here, and don't pass `--expiration-offset`: it defaults to 0, and a non-zero value would push deletion out by that much *on top of* the stamped value.
+
 ### 1.7 Enable Firebase Authentication + Google sign-in
 
 1. Firebase console → "Authentication" in the left nav → "Get started."
@@ -460,7 +479,7 @@ When done, you should have:
 - A `kindoo-prod` Firebase project on Blaze with $1 budget alert.
 - All 14 services enabled.
 - The default Hosting site initialized via the console wizard.
-- A Firestore database in `us-central1` Native mode.
+- A Firestore database in `us-central1` Native mode, with the `auditLog` TTL policy enabled and no policy on `platformAuditLog`.
 - Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
 - A `kindoo-app` SA with the five F1 project roles, plus `roles/iam.serviceAccountTokenCreator` on itself.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
@@ -773,6 +792,29 @@ gcloud firestore databases describe \
 ```
 
 Expected on each: `FIRESTORE_NATIVE us-central1`.
+
+### 5.4.1 `auditLog` TTL policy enabled on both projects
+
+```bash
+gcloud firestore fields ttls list \
+  --collection-group=auditLog \
+  --project=kindoo-staging \
+  --format="value(name,ttlConfig.state)"
+gcloud firestore fields ttls list \
+  --collection-group=auditLog \
+  --project=kindoo-prod \
+  --format="value(name,ttlConfig.state)"
+```
+
+Expected on each: one row, a field path ending in `collectionGroups/auditLog/fields/ttl`, followed by `ACTIVE`. `CREATING` means the policy is still building — re-run in a minute. **Empty output means there is no policy**, which is silent: rows still get their `ttl` field, nothing ever expires, and nothing in the app misbehaves. Re-run step 1.6.1 against that project.
+
+Then confirm nothing else picked up a policy — `platformAuditLog` in particular must never have one:
+
+```bash
+gcloud firestore fields ttls list --project=kindoo-prod
+```
+
+Expected: `auditLog` is the only collection group listed.
 
 ### 5.5 PITR enabled on prod (only)
 

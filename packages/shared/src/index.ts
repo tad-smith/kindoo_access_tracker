@@ -16,6 +16,9 @@ export {
   type AppAccessOptions,
 } from './appAccessCallings.js';
 export { auditId } from './auditId.js';
+// Lives beside the `ttl` field it stamps, in `types/audit.ts`, so the
+// value and its documentation can't drift apart again.
+export { AUDIT_TTL_MS } from './types/audit.js';
 export { BOOKKEEPING_FIELDS } from './auditBookkeepingFields.js';
 export { buildingSlug } from './buildingSlug.js';
 export {

@@ -517,7 +517,10 @@ describe.skipIf(!hasEmulators())('createStake callable', () => {
     expect(row.actor_canonical).toBe(SUPERADMIN_EMAIL);
     expect(row.before).toBe(null);
     expect(row.timestamp).toBeInstanceOf(Timestamp);
-    expect(row.ttl).toBeInstanceOf(Timestamp);
+    // T-101: `platformAuditLog` is deliberately non-expiring, so the row
+    // carries no `ttl` at all — a later `--enable-ttl` on the collection
+    // group has no field to act on.
+    expect(auditSnap.docs[0]!.data()).not.toHaveProperty('ttl');
 
     // Pull the stake doc back and assert the audit `after` snapshot
     // equals it field-for-field. Excludes the doc-snapshot's

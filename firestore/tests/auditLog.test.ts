@@ -31,7 +31,7 @@ const seedDoc = {
   member_canonical: 'alice@gmail.com',
   before: null,
   after: { scope: 'stake', type: 'manual' },
-  ttl: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+  ttl: new Date(Date.now() + 5 * 365 * 24 * 60 * 60 * 1000),
 };
 
 describe('firestore.rules — stakes/{sid}/auditLog/{auditId}', () => {
