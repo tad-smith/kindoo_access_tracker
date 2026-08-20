@@ -25,7 +25,7 @@ You do NOT:
 - **Custom claims for role resolution.** Triggers on `access`/`kindooManagers`/`platformSuperadmins` writes update claims; `revokeRefreshTokens` forces refresh.
 - **Audit log via parameterized trigger** (Option A). Flat `auditLog` collection per stake. Idempotent via deterministic doc IDs.
 - **`syncApplyFix` wholesale-replaces `importer_callings[scope]`** when applying drift fixes to auto seats; never touches `manual_grants`. The `importer_callings` field name is historical (the LCR Sheet importer was removed in T-45, see D14); the extension's Sync feature is now the sole writer.
-- **Audit row TTL = 365 days** via Firestore TTL on the `ttl` field.
+- **Audit row TTL** via Firestore TTL on the `ttl` field; the duration is `AUDIT_TTL_MS` in `packages/shared`. `platformAuditLog` rows are not stamped with `ttl` at all — that collection is deliberately non-expiring.
 
 See `functions/CLAUDE.md` and `firestore/CLAUDE.md` for full conventions.
 

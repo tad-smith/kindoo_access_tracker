@@ -27,7 +27,7 @@ You do NOT:
 - **HTTPS auto-provisioned** by Firebase Hosting (Let's Encrypt). PWA requirement.
 - **PWA from day one** via vite-plugin-pwa configured in `apps/web/vite.config.ts`.
 - **PITR is enabled on prod Firestore.** Weekly GCS export; 90-day bucket lifecycle.
-- **Firestore TTL on `auditLog` = 365 days.**
+- **Firestore TTL on `auditLog`.** The policy is enabled on the `ttl` field in both projects; the retention duration is not in the policy — it lives in the value each row stamps (`AUDIT_TTL_MS` in `packages/shared`). **`platformAuditLog` has no TTL policy and must not get one** — that trail is deliberately non-expiring.
 - **Cloud Scheduler:** one HTTP-triggered job — `firestore-weekly-export` weekly (calls the Firestore admin export API directly; no stake loop). No scheduled Cloud Functions. One job total, within free tier.
 
 ## Invariants
