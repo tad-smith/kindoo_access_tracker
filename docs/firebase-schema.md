@@ -115,9 +115,11 @@ Audit trail for cross-stake operations (stake creation, superadmin changes) that
   entity_id: string;
   before: object | null;
   after: object | null;
-  ttl: Timestamp;          // 365 days from write time
+  ttl?: Timestamp;         // absent on every row written since 2026-08-18; see below
 }
 ```
+
+**This collection is deliberately non-expiring, and a TTL policy must never be enabled on it** (`architecture.md` D36). `createStake` stopped stamping `ttl` on 2026-08-18 and `PlatformAuditLog.ttl` is optional in `packages/shared/src/types/audit.ts` and its zod schema. No TTL policy has ever existed on the `platformAuditLog` collection group, so the field was inert; removing it means a later `gcloud firestore fields ttls update ttl --collection-group=platformAuditLog --enable-ttl` cannot retroactively delete stake-creation history. Rows written before that date keep a stamped-but-unenforced 365-day value — deliberately not cleared, because nothing reads the field and clearing it would fan no useful signal. See §5.2 and `infra/runbooks/provision-firebase-projects.md` §1.6.1.
 
 **Written by:** the `createStake` Cloud Function callable (Phase 12 / F19) emits `action='create_stake'` rows on every successful stake-doc write. Future superadmin-management triggers (if added) write `add_superadmin` / `remove_superadmin` rows here; for now those actions are reserved enum values with no writer.
 
@@ -733,7 +735,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
   before: object | null;
   after: object | null;
 
-  ttl: Timestamp;              // 365 days from write time; Firestore TTL deletes automatically
+  ttl: Timestamp;              // AUDIT_TTL_MS (5 years) from write time; Firestore TTL deletes automatically
 }
 ```
 
@@ -743,7 +745,7 @@ Flat audit collection. One row per write to seats, requests, access, kindooManag
 **Invariants:**
 - `auditId` is deterministic from `(collection, docId, writeTime)` so trigger retries are idempotent.
 - `member_canonical` is set whenever the underlying doc has a `member_canonical` field; absent for system actions (`import_start`, `import_end`, `over_cap_warning`, `setup_complete`, `email_send_failed`).
-- Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes.
+- Firestore TTL policy on the `ttl` field deletes rows ~24h after their `ttl` timestamp passes. The retention window is **5 years**, and it lives in exactly one place: `AUDIT_TTL_MS` in `packages/shared/src/types/audit.ts`, read by `auditTrigger`, by `EmailService`'s `email_send_failed` writer, and by the `backfillAuditTtl` callable. The policy itself carries no duration (§5.2). Because `ttl` is computed at write time, changing the constant reaches new rows only — `backfillAuditTtl` restamps the existing ones (§7, `architecture.md` D36).
 - `create_stake` fires only on the parent-doc create path (`before==null`, `entity_type='stake'`, `collection='stake'`). Sub-entity creates under `stakes/{sid}/` (wards, buildings, kindooSites, organizations) audit as `entity_type='stake'` with action `update_stake` per the existing `CREATE_ACTION` table in `auditTrigger.ts` — the parent-doc-only branch keeps the `'create_stake'` action unambiguous for audit consumers (Phase 12.3 / F19). Organizations carry a structured `entity_id='organization:<slug>'` (§4.12).
 
 ### 4.11 `stakes/{stakeId}/kindooSites/{kindooSiteId}`
@@ -858,7 +860,11 @@ gcloud firestore fields ttls update ttl \
   --enable-ttl
 ```
 
-Optionally also on `platformAuditLog` if retention there matters.
+**`auditLog` is the only collection group that may carry a TTL policy.** Never enable one on `platformAuditLog` — that trail is deliberately non-expiring (§3.3, `architecture.md` D36).
+
+**The duration is not in the policy.** The policy says only "delete the document once its `ttl` timestamp has passed"; the window lives in the value the writer stamps, `AUDIT_TTL_MS` (§4.10). So a retention change is a code change, not a `gcloud` change, and `--expiration-offset` must stay unset — a non-zero value would push deletion out on top of the stamped value.
+
+Per-project operator detail — which projects, expected output, and the verification that proves no other collection group picked up a policy — lives in `infra/runbooks/provision-firebase-projects.md` §1.6.1 and §5.4.1.
 
 ## 6. Firestore Security Rules
 
@@ -1520,6 +1526,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `syncApplyFix` | Callable (operator-invoked from the extension's Sync panel) | Applies one classifier-derived fix to `access` + `seats` via Admin SDK; sole auto-seat writer |
 | `backfillEqPresidentAccess` | Callable (manager-invoked from the Configuration → Config backfill dialog) | Reconciles `access` docs after a stake flips `eq_president_app_access` (§4.1). `{stakeId, direction:'grant'\|'revoke'}` → `{ok, seats_matched, docs_written, docs_deleted}`. Sweeps auto ward-scope seats holding the Elders Quorum President calling and merges that one entry into / out of `importer_callings[scope]`; `manual_grants` untouched. Auth reads `kindooManagers/{canonical}` directly (not the ~1h-stale claim); `direction` must match the stake's current flag or `failed-precondition`. Single-field `type == 'auto'` query — no composite index. Idempotent. See `spec.md` §8, D23. |
 | `backfillKindooSiteId` | Callable (superadmin-invoked from the Stake List Apply Fixes menu) | Re-derives each seat's `kindoo_site_id` from its ward's building and writes only the diffs (idempotent). **Platform superadmin only** (`isPlatformSuperadmin` claim) — the former active-Kindoo-Manager gate was removed. See `spec.md` §15. |
+| `backfillAuditTtl` | Callable (superadmin-invoked from the Stake List Apply Fixes menu) | Restamps `ttl = timestamp + AUDIT_TTL_MS` on every existing `stakes/{sid}/auditLog` row, deriving from each row's own `timestamp` rather than wall-clock now. `{stakeId}` → `{ok, rows_total, rows_updated, rows_unchanged, rows_skipped_no_timestamp, rows_failed}`. Skip-if-equal, so a re-run reports zero writes. `BulkWriter` with a `.select('timestamp','ttl')` projection — `auditLog` is the one unbounded collection and the fat `before` / `after` maps must not land in memory. Fans no audit rows: `auditTrigger` is registered on the entity collections, not on `auditLog`. **Platform superadmin only** (`isPlatformSuperadmin` claim). See `architecture.md` D36, `spec.md` §5.4. |
 | `mintExtensionToken` | Callable (invoked by the SPA's `/auth/extension` route) | Mints a Firebase **custom** token for the caller's own uid, for the Chrome extension to exchange via `signInWithCustomToken` (`spec.md` §4.1, D33). No payload; gated on `request.auth` and nothing further. No `developerClaims` — user-record claims flow through the exchange untouched. Writes nothing, so no audit row. **Needs `roles/iam.serviceAccountTokenCreator` on `kindoo-app@<project>`, granted to that account on itself** — under ADC `createCustomToken` signs through the IAM `signBlob` API. The emulator substitutes an unsigned token, so a missing grant only ever fails in a deployed environment. |
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel). Each send reads `stakes/{sid}/wards` once to render ward names (§4.2); the two manager-bound sends batch that read with the requester's `access` + `kindooManagers` docs. |
 | `notifyOnAccessGranted` | Firestore write on `stakes/{sid}/access/{memberCanonical}` | Sends the app-access welcome email to the granted member per spec.md §9. Fires only on the no-scopes → at-least-one-scope transition (`scopesFromAccessDoc` over `importer_callings` + `manual_grants`): a scope added to an existing holder, a revoke to zero, and a delete are all silent; a re-grant after a full revoke fires again. Third trigger on this path alongside `syncAccessClaims` and `auditAccessWrites` (§4.5). Reads the stake doc and the member's `kindooManagers` row together — the latter to resolve the D25 tier, which narrows the copy for a limited recipient (§4.5) — plus `stakes/{sid}/wards` for the scope list (§4.2). Not gated on `setup_complete`; suppressed by `notifications_enabled === false`. |
@@ -1527,7 +1534,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |
 
-Twenty-six deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **None is scheduled** (`reconcileAuditGaps`, the last one, was deleted in T-102; see `architecture.md` D35). None is hot-path; all run on the free tier at this scale.
+Twenty-seven deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **None is scheduled** (`reconcileAuditGaps`, the last one, was deleted in T-102; see `architecture.md` D35). None is hot-path; all run on the free tier at this scale.
 
 **Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 
@@ -1581,7 +1588,7 @@ Q2 (duplicate manual/temp blocking), Q3 (multi-calling collapse + utilization re
 
 **Q19. `requests` doc IDs** — kept as UUIDs because a member can submit many requests over time. Could revisit (`<canonical>__<seq>`?), but probably not worth it.
 
-**Q20. TTL on `platformAuditLog`** — defaulted to 365 days; superadmin records may warrant longer.
+**Q20. TTL on `platformAuditLog`** — defaulted to 365 days; superadmin records may warrant longer. **Resolved 2026-08-18 (T-101, `architecture.md` D36): no TTL at all, and none may ever be enabled.** The answer to "longer" turned out to be "never" — the collection records stake creation and superadmin membership, one row per event at a rate of a few per year, and there is no volume argument on the other side. `createStake` stopped stamping `ttl` and `PlatformAuditLog.ttl` is now optional, so the field's absence is what makes the guarantee structural rather than a policy nobody happened to enable: a future `--enable-ttl` on that collection group would find nothing to delete against. Pre-2026-08-18 rows keep their stamped-but-unenforced value; they were deliberately left alone. See §3.3 and §5.2.
 
 **Q21. `reconcileAuditGaps` cadence** — defaulted nightly. First signal of false positives may push to hourly. **Obsolete 2026-08-18** — the job is deleted (`architecture.md` D35); there is no cadence left to tune.
 
