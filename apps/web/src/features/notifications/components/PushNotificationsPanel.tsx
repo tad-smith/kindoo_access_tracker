@@ -6,25 +6,25 @@
 //   2. permission='default' (never asked) — primary "Enable" button.
 //   3. permission='denied' — recovery copy ("re-enable in browser
 //      settings") with no button (we can't re-prompt after denial).
-//   4. permission='granted' — subscription toggle + per-category
-//      "New requests" switch (manager-only category in v1).
+//   4. permission='granted' — subscription toggle + one switch per
+//      push category ("New requests", "Sync reminders").
 //
 // Manager-only invocation is enforced one level up — the panel renders
 // only when the principal holds the manager claim. The hooks
 // themselves are role-agnostic (any signed-in user has a userIndex
-// doc) but the only category we ship in v1 is manager-relevant.
+// doc) but every category we ship is manager-relevant.
 
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { Switch } from '../../../components/ui/Switch';
 import { toast } from '../../../lib/store/toast';
 import {
-  getNewRequestPref,
+  getPushPref,
   useCurrentUserIndex,
   useDisablePushMutation,
   useEnablePushMutation,
   useIsThisDeviceSubscribed,
-  useUpdateNewRequestPrefMutation,
+  useUpdatePushPrefMutation,
 } from '../hooks';
 import { currentPermission, getVapidPublicKey, pushSupportStatus } from '../lib';
 
@@ -36,10 +36,12 @@ export function PushNotificationsPanel() {
   const support = pushSupportStatus();
   const userIndex = useCurrentUserIndex();
   const subscribedHere = useIsThisDeviceSubscribed(userIndex.data);
-  const newRequestPref = getNewRequestPref(userIndex.data);
+  const newRequestPref = getPushPref(userIndex.data, 'newRequest');
+  const syncReminderPref = getPushPref(userIndex.data, 'syncReminder');
   const enable = useEnablePushMutation();
   const disable = useDisablePushMutation();
-  const updatePref = useUpdateNewRequestPrefMutation();
+  const updateNewRequest = useUpdatePushPrefMutation('newRequest');
+  const updateSyncReminder = useUpdatePushPrefMutation('syncReminder');
   const vapidKey = getVapidPublicKey();
 
   // `Notification.permission` is not reactive; we read it on mount
@@ -135,23 +137,50 @@ export function PushNotificationsPanel() {
       <p className="kd-form-hint" data-testid="push-subscribed">
         This device is subscribed to push notifications.
       </p>
-      <label className="kd-switch-label" htmlFor="push-newrequest-toggle">
-        <Switch
-          id="push-newrequest-toggle"
-          checked={newRequestPref}
-          disabled={updatePref.isPending}
-          onCheckedChange={(next) => {
-            updatePref
-              .mutateAsync(next)
-              .then(() =>
-                toast(next ? 'New-request push enabled.' : 'New-request push disabled.', 'success'),
-              )
-              .catch((err) => toast(errorMessage(err), 'error'));
-          }}
-          data-testid="push-newrequest-toggle"
-        />
-        <span>New request notifications</span>
-      </label>
+      {/* `.kd-switch-label` is inline-flex, so sibling switches share a
+          line in a plain block container. Stack them. */}
+      <div className="flex flex-col items-start gap-2" data-testid="push-categories">
+        <label className="kd-switch-label" htmlFor="push-newrequest-toggle">
+          <Switch
+            id="push-newrequest-toggle"
+            checked={newRequestPref}
+            disabled={updateNewRequest.isPending}
+            onCheckedChange={(next) => {
+              updateNewRequest
+                .mutateAsync(next)
+                .then(() =>
+                  toast(
+                    next ? 'New-request push enabled.' : 'New-request push disabled.',
+                    'success',
+                  ),
+                )
+                .catch((err) => toast(errorMessage(err), 'error'));
+            }}
+            data-testid="push-newrequest-toggle"
+          />
+          <span>New request notifications</span>
+        </label>
+        <label className="kd-switch-label" htmlFor="push-syncreminder-toggle">
+          <Switch
+            id="push-syncreminder-toggle"
+            checked={syncReminderPref}
+            disabled={updateSyncReminder.isPending}
+            onCheckedChange={(next) => {
+              updateSyncReminder
+                .mutateAsync(next)
+                .then(() =>
+                  toast(
+                    next ? 'Sync-reminder push enabled.' : 'Sync-reminder push disabled.',
+                    'success',
+                  ),
+                )
+                .catch((err) => toast(errorMessage(err), 'error'));
+            }}
+            data-testid="push-syncreminder-toggle"
+          />
+          <span>Sync reminders for expired temp seats</span>
+        </label>
+      </div>
       <div className="form-actions">
         <Button
           type="button"
