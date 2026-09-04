@@ -46,7 +46,7 @@ import { RosterMemberLine } from '../../../components/roster/RosterMemberLine';
 import { RemovalAffordance } from '../../requests/components/RemovalAffordance';
 import { GrantStakeAccessDialog } from '../../requests/components/GrantStakeAccessDialog';
 import { isScopeAllowed } from '../../requests/scopeOptions';
-import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../../lib/tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '@kindoo/shared';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
 

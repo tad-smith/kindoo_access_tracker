@@ -41,7 +41,7 @@ import { partitionPendingForRoster, pendingRemoveKey } from '../requests/rosterP
 import { canEditSeat, canRemoveSeat } from '../requests/scopeOptions';
 import { scopeLabel } from '../../lib/scopeLabel';
 import { pickGrantForScope, type GrantView } from '../../lib/grants';
-import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '../../lib/tempExpiry';
+import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from '@kindoo/shared';
 import { useStakeTimezone } from '../../lib/useStakeTimezone';
 
 export interface BishopricRosterPageProps {

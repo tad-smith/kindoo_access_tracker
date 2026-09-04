@@ -1,12 +1,14 @@
-// Tests for the stake-timezone datetime formatters.
+// Tests for the stake-timezone date/time helpers.
 
 import { describe, expect, it } from 'vitest';
 import {
   endOfDayInStakeTz,
   formatDateInStakeTz,
   formatDateTimeInStakeTz,
+  hourInStakeTz,
+  previousIsoDate,
   startOfDayInStakeTz,
-} from './datetime';
+} from './stakeTime';
 
 describe('formatDateTimeInStakeTz', () => {
   it('formats a UTC instant in America/Denver as YYYY-MM-DD h:mm am/pm', () => {
@@ -49,6 +51,56 @@ describe('formatDateInStakeTz', () => {
   it('formats date-only in the stake timezone', () => {
     const d = new Date('2026-04-30T05:00:00Z'); // 2026-04-29 in MDT
     expect(formatDateInStakeTz(d, 'America/Denver')).toBe('2026-04-29');
+  });
+});
+
+describe('hourInStakeTz', () => {
+  it('reads the stake-local hour, not the UTC one', () => {
+    // 12:15 UTC is 06:15 in Denver on MDT (UTC-6).
+    const at = new Date('2026-08-18T12:15:00Z');
+    expect(hourInStakeTz(at, 'America/Denver')).toBe(6);
+    expect(hourInStakeTz(at, 'UTC')).toBe(12);
+  });
+
+  it('reports midnight as 0, not 24', () => {
+    expect(hourInStakeTz(new Date('2026-08-18T06:00:00Z'), 'America/Denver')).toBe(0);
+  });
+
+  it('shifts with the stake zone across the date line', () => {
+    // 2026-08-18T23:00Z is 2026-08-19 09:00 in Sydney (UTC+10).
+    expect(hourInStakeTz(new Date('2026-08-18T23:00:00Z'), 'Australia/Sydney')).toBe(9);
+  });
+
+  it('falls back to America/Denver when the stake has no timezone', () => {
+    expect(hourInStakeTz(new Date('2026-08-18T12:15:00Z'), undefined)).toBe(6);
+  });
+
+  it('is NaN for a value that names no instant', () => {
+    expect(hourInStakeTz(null, 'UTC')).toBeNaN();
+  });
+});
+
+describe('previousIsoDate', () => {
+  it('steps back one calendar day', () => {
+    expect(previousIsoDate('2026-08-18')).toBe('2026-08-17');
+  });
+
+  it('carries month, year, and leap-day rollover', () => {
+    expect(previousIsoDate('2026-08-01')).toBe('2026-07-31');
+    expect(previousIsoDate('2026-01-01')).toBe('2025-12-31');
+    expect(previousIsoDate('2026-03-01')).toBe('2026-02-28');
+    expect(previousIsoDate('2028-03-01')).toBe('2028-02-29');
+  });
+
+  it('is unaffected by a DST transition in the stake zone', () => {
+    // 2026-11-01 is the US fall-back date; the answer is a calendar
+    // step, so the 25-hour local day never enters into it.
+    expect(previousIsoDate('2026-11-01')).toBe('2026-10-31');
+  });
+
+  it('returns the empty string for a non-ISO input', () => {
+    expect(previousIsoDate('')).toBe('');
+    expect(previousIsoDate('18/08/2026')).toBe('');
   });
 });
 

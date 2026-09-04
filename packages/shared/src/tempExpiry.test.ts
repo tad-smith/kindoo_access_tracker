@@ -1,6 +1,7 @@
 // Expired-temp-grant predicate (spec §7).
 
 import { describe, expect, it } from 'vitest';
+import { previousIsoDate } from './stakeTime';
 import { isExpiredTempGrant, syncWillClearSeat, todayInStakeTz } from './tempExpiry';
 
 const temp = (end_date?: string) => ({ type: 'temp' as const, ...(end_date ? { end_date } : {}) });
@@ -33,6 +34,28 @@ describe('isExpiredTempGrant', () => {
     expect(isExpiredTempGrant({ type: 'manual', end_date: '2020-01-01' }, '2026-08-17')).toBe(
       false,
     );
+  });
+});
+
+// The sync reminder wants "expired more than 24 hours ago", which is
+// the same predicate run against yesterday rather than today. No second
+// comparison — the boundary shifts, the rule doesn't.
+describe('isExpiredTempGrant against yesterday (the sync-reminder threshold)', () => {
+  const TODAY = '2026-08-18';
+  const yesterday = previousIsoDate(TODAY);
+
+  it('leaves a grant ending today alone — it is still live', () => {
+    expect(isExpiredTempGrant(temp(TODAY), yesterday)).toBe(false);
+  });
+
+  it('leaves a grant that ended yesterday alone — expired, but under 24h', () => {
+    expect(isExpiredTempGrant(temp('2026-08-17'), yesterday)).toBe(false);
+    // …while the display rule already marks it expired today.
+    expect(isExpiredTempGrant(temp('2026-08-17'), TODAY)).toBe(true);
+  });
+
+  it('flags a grant that ended two days ago — reminder-worthy', () => {
+    expect(isExpiredTempGrant(temp('2026-08-16'), yesterday)).toBe(true);
   });
 });
 

@@ -15,10 +15,22 @@
 //
 // The seat is held THROUGH its end date, so expiry begins the day
 // after — compared against the stake's calendar day, not the viewer's.
+//
+// Shared rather than web-local because the rule now has two consumers:
+// the roster surfaces that mark the row, and the scheduled reminder
+// (`functions/src/scheduled/notifySyncReminders.ts`) that nudges a
+// manager to run the Sync which clears it. Two copies of "when is a
+// temp grant expired" would let the badge and the reminder disagree.
 
-import type { Seat } from '@kindoo/shared';
-import { formatDateInStakeTz } from './datetime';
-import type { GrantView } from './grants';
+import type { Seat } from './types/index.js';
+import { formatDateInStakeTz } from './stakeTime.js';
+
+/**
+ * The two fields expiry reads. Structural on purpose: a `Seat`, a
+ * `DuplicateGrant`, and the web's `GrantView` all satisfy it without
+ * being reshaped, so no caller has to pick a type the others can't use.
+ */
+export type ExpirableGrant = { type: string; end_date?: string | undefined };
 
 /**
  * Today's calendar date as `YYYY-MM-DD` in the stake's timezone — the
@@ -37,10 +49,7 @@ export function todayInStakeTz(timezone: string | undefined, now: Date = new Dat
  * there is no date to be past, and treating "unknown" as expired would
  * mute a live seat.
  */
-export function isExpiredTempGrant(
-  grant: Pick<GrantView, 'type' | 'end_date'>,
-  today: string,
-): boolean {
+export function isExpiredTempGrant(grant: ExpirableGrant, today: string): boolean {
   if (grant.type !== 'temp') return false;
   if (!grant.end_date) return false;
   return grant.end_date < today;

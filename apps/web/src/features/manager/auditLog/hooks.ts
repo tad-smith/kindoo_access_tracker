@@ -21,11 +21,11 @@ import {
   type QueryConstraint,
 } from 'firebase/firestore';
 import { useInfiniteQuery } from '@tanstack/react-query';
+import { endOfDayInStakeTz, startOfDayInStakeTz } from '@kindoo/shared';
 import type { AuditLog } from '@kindoo/shared';
 import { db } from '../../../lib/firebase';
 import { auditLogCol } from '../../../lib/docs';
 import { useActiveStake } from '../../../lib/useActiveStake';
-import { endOfDayInStakeTz, startOfDayInStakeTz } from '../../../lib/datetime';
 
 export interface AuditLogFilters {
   action?: string | undefined;

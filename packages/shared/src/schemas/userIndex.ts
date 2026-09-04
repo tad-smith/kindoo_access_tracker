@@ -7,11 +7,15 @@
 import { z } from 'zod';
 import { timestampLikeSchema } from './timestampLike.js';
 
+// Every category key is optional — a merge-write of one category
+// leaves the others absent, and absent reads as off. See
+// `types/userIndex.ts` for why `syncReminder` is its own opt-in.
 export const notificationPrefsSchema = z
   .object({
     push: z
       .object({
-        newRequest: z.boolean(),
+        newRequest: z.boolean().optional(),
+        syncReminder: z.boolean().optional(),
       })
       .optional(),
   })

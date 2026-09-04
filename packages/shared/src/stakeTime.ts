@@ -1,10 +1,15 @@
-// Stake-timezone date/time formatters. Render format
+// Stake-timezone date/time helpers (D20). Render format
 // `yyyy-MM-dd h:mm am/pm` with lowercase am/pm and a space between
 // time and meridiem (`9:30 am` rather than `9:30am`).
 //
 // All app-surfaced timestamps render in the stake's timezone (read
 // from `stake.timezone`, e.g. `America/Denver`) so the audit log,
 // dashboard, and roster cards all agree on local-time semantics.
+// Server-side callers share the module because the fallback zone and
+// the calendar-day boundary are facts about a stake, not about a
+// surface — a second copy of either drifts invisibly from this one.
+//
+// `Intl` only, so `@kindoo/shared` stays runtime-dep-free.
 //
 // Fallback when no timezone is supplied (the stake doc snapshot is
 // still loading, or the field is missing): `America/Denver`. This
@@ -13,6 +18,9 @@
 // stake — the operator would hit a 6-hour negative offset on every
 // audit timestamp before this fallback applies.
 const DEFAULT_STAKE_TZ = 'America/Denver';
+
+/** Shape gate for the `YYYY-MM-DD` strings the calendar helpers take. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Format a Date / Firestore Timestamp / ISO string in the stake's
@@ -59,6 +67,40 @@ export function formatDateInStakeTz(value: unknown, timezone: string | undefined
     month: '2-digit',
     day: '2-digit',
   }).format(date);
+}
+
+/**
+ * Hour of the day (0–23) at `value` in the stake's timezone. The
+ * scheduled reminder job fires hourly and uses this to decide which
+ * stakes are at their send hour right now — `onSchedule` takes one
+ * zone, but `stake.timezone` is per-stake.
+ *
+ * Same `America/Denver` fallback as the formatters.
+ */
+export function hourInStakeTz(value: unknown, timezone: string | undefined): number {
+  const date = toDate(value);
+  if (!date) return Number.NaN;
+  const tz = timezone || DEFAULT_STAKE_TZ;
+  const hour = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: '2-digit',
+    hour12: false,
+  }).format(date);
+  const parsed = Number.parseInt(hour, 10);
+  // `hour12: false` renders midnight as `24` in some engines; normalise.
+  return parsed === 24 ? 0 : parsed;
+}
+
+/**
+ * The calendar day before `dateStr` (both `YYYY-MM-DD`). Pure calendar
+ * arithmetic — `Date.UTC` carries month, year, and leap-day rollover,
+ * and anchoring to UTC keeps DST out of a question that has no instant
+ * in it. Returns the empty string when `dateStr` isn't ISO-shaped.
+ */
+export function previousIsoDate(dateStr: string): string {
+  if (!ISO_DATE.test(dateStr)) return '';
+  const [y, m, d] = dateStr.split('-').map((part) => Number.parseInt(part, 10));
+  return formatDateInStakeTz(new Date(Date.UTC(y!, m! - 1, d! - 1)), 'UTC');
 }
 
 /**

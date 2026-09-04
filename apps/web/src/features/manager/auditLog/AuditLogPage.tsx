@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { canonicalEmail, isAutomatedActor } from '@kindoo/shared';
+import { canonicalEmail, formatDateTimeInStakeTz, isAutomatedActor } from '@kindoo/shared';
 import type { AuditLog } from '@kindoo/shared';
 import { useAuditLogInfinite, type AuditLogFilters } from './hooks';
 import { useStakeDoc } from '../dashboard/hooks';
@@ -20,7 +20,6 @@ import { Button } from '../../../components/ui/Button';
 import { Badge } from '../../../components/ui/Badge';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { EmptyState } from '../../../lib/render/EmptyState';
-import { formatDateTimeInStakeTz } from '../../../lib/datetime';
 
 export interface AuditLogPageProps {
   initialFilters?: AuditLogFilters;
