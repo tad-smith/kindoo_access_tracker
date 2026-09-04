@@ -17,20 +17,23 @@
 // after — compared against the stake's calendar day, not the viewer's.
 //
 // Shared rather than web-local because the rule now has two consumers:
-// the roster surfaces that mark the row, and the scheduled reminder
-// (`functions/src/scheduled/notifySyncReminders.ts`) that nudges a
+// the roster surfaces that mark the row, and the server-side reminder
+// (`functions/src/services/SyncReminderService.ts`) that nudges a
 // manager to run the Sync which clears it. Two copies of "when is a
 // temp grant expired" would let the badge and the reminder disagree.
 
-import type { Seat } from './types/index.js';
+import type { Seat, SeatType } from './types/index.js';
 import { formatDateInStakeTz } from './stakeTime.js';
 
 /**
  * The two fields expiry reads. Structural on purpose: a `Seat`, a
  * `DuplicateGrant`, and the web's `GrantView` all satisfy it without
  * being reshaped, so no caller has to pick a type the others can't use.
+ * All three already type this field as `SeatType`, so it stays narrow —
+ * a typo'd `'tmp'` is a compile error rather than a grant that silently
+ * never matches.
  */
-export type ExpirableGrant = { type: string; end_date?: string | undefined };
+export type ExpirableGrant = { type: SeatType; end_date?: string | undefined };
 
 /**
  * Today's calendar date as `YYYY-MM-DD` in the stake's timezone — the

@@ -2,7 +2,10 @@
 // data-only multicast, prune the tokens FCM rejects as permanently
 // invalid.
 //
-// One copy, two callers (`pushOnRequestSubmit`, `notifySyncReminders`).
+// One copy, two callers: the `pushOnRequestSubmit` trigger, and
+// `sendSyncReminderIfDue` (`services/SyncReminderService.ts`), which is
+// complete but reached by no trigger yet — its invoker arrives with the
+// scheduled-task work.
 // The pruning half in particular is the reason this is shared: it
 // decides which FCM failures cost a user their registration, and two
 // copies of that list would silently disagree about which device stops

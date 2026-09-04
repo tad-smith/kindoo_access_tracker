@@ -70,28 +70,6 @@ export function formatDateInStakeTz(value: unknown, timezone: string | undefined
 }
 
 /**
- * Hour of the day (0–23) at `value` in the stake's timezone. The
- * scheduled reminder job fires hourly and uses this to decide which
- * stakes are at their send hour right now — `onSchedule` takes one
- * zone, but `stake.timezone` is per-stake.
- *
- * Same `America/Denver` fallback as the formatters.
- */
-export function hourInStakeTz(value: unknown, timezone: string | undefined): number {
-  const date = toDate(value);
-  if (!date) return Number.NaN;
-  const tz = timezone || DEFAULT_STAKE_TZ;
-  const hour = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: '2-digit',
-    hour12: false,
-  }).format(date);
-  const parsed = Number.parseInt(hour, 10);
-  // `hour12: false` renders midnight as `24` in some engines; normalise.
-  return parsed === 24 ? 0 : parsed;
-}
-
-/**
  * The calendar day before `dateStr` (both `YYYY-MM-DD`). Pure calendar
  * arithmetic — `Date.UTC` carries month, year, and leap-day rollover,
  * and anchoring to UTC keeps DST out of a question that has no instant

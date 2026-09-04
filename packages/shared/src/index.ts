@@ -70,7 +70,6 @@ export {
   endOfDayInStakeTz,
   formatDateInStakeTz,
   formatDateTimeInStakeTz,
-  hourInStakeTz,
   previousIsoDate,
   startOfDayInStakeTz,
 } from './stakeTime.js';
