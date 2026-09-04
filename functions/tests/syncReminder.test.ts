@@ -115,28 +115,41 @@ describe('expiredTempGrants', () => {
     expect(expiredTempGrants(seats, YESTERDAY)).toEqual([]);
   });
 
-  it('finds an expired duplicate grant sitting alongside a live primary', () => {
+  it('skips an expired duplicate grant beside a live primary — Sync cannot clear it', () => {
     const seat = buildSeat({
       type: 'manual',
       duplicate_grants: [buildDuplicate({ end_date: TWO_DAYS_AGO })],
     });
-    const rows = expiredTempGrants([seat], YESTERDAY);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ scope: 'stake', endDate: TWO_DAYS_AGO });
+    // The grant really has expired. It is excluded because the seat's
+    // other grant keeps the member present in Kindoo, so no `sba-only`
+    // fix is ever emitted and "run Sync" would be false for this row.
+    // The remedy there is a remove request, not this reminder.
+    expect(expiredTempGrants([seat], YESTERDAY)).toEqual([]);
   });
 
-  it('emits one row per expired grant when a seat carries several', () => {
+  it('skips a multi-grant seat even when its own primary grant has expired', () => {
     const seat = buildSeat({
       end_date: TWO_DAYS_AGO,
       duplicate_grants: [
         buildDuplicate({ scope: 'stake', end_date: '2026-08-01' }),
-        // Not expired by more than 24h — excluded even on a seat that
-        // qualifies on another grant.
         buildDuplicate({ scope: 'BR', end_date: YESTERDAY }),
       ],
     });
-    const rows = expiredTempGrants([seat], YESTERDAY);
-    expect(rows.map((r) => r.scope)).toEqual(['stake', 'GE']);
+    expect(expiredTempGrants([seat], YESTERDAY)).toEqual([]);
+  });
+
+  it('lists a single-grant expired seat but not an otherwise identical multi-grant one', () => {
+    // Same member name, same expiry, same scope — the duplicate grant is
+    // the only difference, and it is the whole difference.
+    const clearable = buildSeat({ member_canonical: 'solo@gmail.com', end_date: TWO_DAYS_AGO });
+    const stranded = buildSeat({
+      member_canonical: 'multi@gmail.com',
+      end_date: TWO_DAYS_AGO,
+      duplicate_grants: [buildDuplicate({ scope: 'stake', end_date: TWO_DAYS_AGO })],
+    });
+    expect(expiredTempGrants([clearable, stranded], YESTERDAY).map((r) => r.memberEmail)).toEqual([
+      'solo@gmail.com',
+    ]);
   });
 
   it('sorts oldest-first, then by address', () => {
@@ -402,12 +415,14 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
     expect(emails).toHaveLength(0);
   });
 
-  it('counts a seat once but lists each of its expired grants', async () => {
+  it('lists every expired seat, oldest first, with the plural copy', async () => {
     await seedStake();
     await seedWard('GE', 'Greenwood Ward');
+    await seedSeat({ member_canonical: 'jane@gmail.com', end_date: TWO_DAYS_AGO });
     await seedSeat({
-      end_date: TWO_DAYS_AGO,
-      duplicate_grants: [buildDuplicate({ scope: 'stake', end_date: '2026-08-01' })],
+      member_canonical: 'karl@gmail.com',
+      scope: 'stake',
+      end_date: '2026-08-01',
     });
     await seedManager('alice@gmail.com', true);
     const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
@@ -415,10 +430,30 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
 
     const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
-    expect(outcome).toMatchObject({ status: 'sent', seats: 1, grants: 2 });
+    expect(outcome).toMatchObject({ status: 'sent', seats: 2, grants: 2 });
     expect(emails[0]!.subject).toContain('Two temporary seats have expired');
     expect(emails[0]!.text).toContain('Stake, ended 2026-08-01');
     expect(emails[0]!.text).toContain('Greenwood Ward, ended 2026-08-16');
+  });
+
+  it('sends nothing for an expired seat that Sync cannot clear', async () => {
+    // A second grant keeps the member in Kindoo, so Sync emits no
+    // `sba-only` fix and the mail's only instruction would be wrong.
+    // Tracked separately as its own gap; deliberately not raised here.
+    await seedStake();
+    await seedWard('GE', 'Greenwood Ward');
+    await seedSeat({
+      end_date: TWO_DAYS_AGO,
+      duplicate_grants: [buildDuplicate({ scope: 'stake', end_date: '2026-08-01' })],
+    });
+    await seedManager('alice@gmail.com', true);
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome.status).toBe('nothing-expired');
+    expect(emails).toHaveLength(0);
   });
 
   it('honours the stake email kill-switch, and push is not gated by it', async () => {

@@ -26,6 +26,7 @@ import {
   isExpiredTempGrant,
   isoDateSpanDays,
   previousIsoDate,
+  syncWillClearSeat,
   todayInStakeTz,
 } from '@kindoo/shared';
 import type { Seat, Stake } from '@kindoo/shared';
@@ -53,9 +54,13 @@ export type SyncReminderStatus =
 export type SyncReminderOutcome = {
   stakeId: string;
   status: SyncReminderStatus;
-  /** Seats carrying at least one qualifying grant. */
+  /** Seats carrying a qualifying grant. */
   seats: number;
-  /** Qualifying grants across those seats — a seat can contribute more than one. */
+  /**
+   * Qualifying grants. Equal to `seats` under the current selection,
+   * which admits only single-grant seats; kept distinct so widening the
+   * rule later can't silently change what this number means.
+   */
   grants: number;
   /** Tokens FCM accepted. Zero when nobody opted into the push category. */
   pushed: number;
@@ -222,31 +227,39 @@ export function backoffElapsed(lastSent: string | undefined, today: string): boo
 }
 
 /**
- * Every temp grant on `seats` that expired on or before `cutoff`, in
+ * Every expired temp seat that running Sync will actually clear, in
  * oldest-first order.
  *
- * Both the primary grant and `duplicate_grants[]` are checked: an
- * expired temp grant can sit alongside a live one on the same seat, and
- * that seat is exactly the case a roster reader finds most confusing.
- * Nothing here consults `syncWillClearSeat` — a multi-grant seat is
- * still a seat someone has to deal with, even though Sync alone won't
- * reap it.
+ * Narrowed by `syncWillClearSeat` — the same helper D34 uses to decide
+ * whether to withhold the Remove control. This reminder is a nudge to
+ * run Sync and nothing else, so it may only list seats that running Sync
+ * will in fact clear. A recurring email whose call to action is wrong
+ * for some of its rows is the fastest way to train managers to ignore
+ * all of them.
+ *
+ * An expired grant on a multi-grant seat is therefore absent here. It is
+ * still a seat someone has to deal with — it just needs a remove
+ * request rather than a Sync, so it is not this feature's to raise.
+ * Don't widen the selection back without changing the mail's call to
+ * action to match.
+ *
+ * A seat that passes `syncWillClearSeat` carries no `duplicate_grants`
+ * by definition, so its primary is the only grant there is to check.
  *
  * Pure; exported for unit tests.
  */
 export function expiredTempGrants(seats: readonly Seat[], cutoff: string): ExpiredTempGrant[] {
   const rows: ExpiredTempGrant[] = [];
   for (const seat of seats) {
-    for (const grant of [seat, ...(seat.duplicate_grants ?? [])]) {
-      if (!isExpiredTempGrant(grant, cutoff)) continue;
-      rows.push({
-        memberName: seat.member_name ?? '',
-        memberEmail: seat.member_email ?? seat.member_canonical,
-        scope: grant.scope,
-        // Narrowed by `isExpiredTempGrant`, which is false without it.
-        endDate: grant.end_date!,
-      });
-    }
+    if (!syncWillClearSeat(seat)) continue;
+    if (!isExpiredTempGrant(seat, cutoff)) continue;
+    rows.push({
+      memberName: seat.member_name ?? '',
+      memberEmail: seat.member_email ?? seat.member_canonical,
+      scope: seat.scope,
+      // Narrowed by `isExpiredTempGrant`, which is false without it.
+      endDate: seat.end_date!,
+    });
   }
   return rows.sort(
     (a, b) => a.endDate.localeCompare(b.endDate) || a.memberEmail.localeCompare(b.memberEmail),
