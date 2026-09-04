@@ -15,10 +15,15 @@ const useCurrentUserIndexMock = vi.fn();
 const useIsThisDeviceSubscribedMock = vi.fn();
 const useEnablePushMutationMock = vi.fn();
 const useDisablePushMutationMock = vi.fn();
-const useUpdateNewRequestPrefMutationMock = vi.fn();
+const useUpdatePushPrefMutationMock = vi.fn();
 const pushSupportStatusMock = vi.fn();
 const currentPermissionMock = vi.fn();
 const getVapidPublicKeyMock = vi.fn();
+
+// Type-only import — erased at runtime, so it does not defeat the
+// `../hooks` mock below, and it keeps the category union in step with
+// the shared schema rather than restating it.
+import type { PushCategory } from '../hooks';
 
 vi.mock('../hooks', () => ({
   useCurrentUserIndex: () => useCurrentUserIndexMock(),
@@ -26,9 +31,9 @@ vi.mock('../hooks', () => ({
     useIsThisDeviceSubscribedMock(entry),
   useEnablePushMutation: () => useEnablePushMutationMock(),
   useDisablePushMutation: () => useDisablePushMutationMock(),
-  useUpdateNewRequestPrefMutation: () => useUpdateNewRequestPrefMutationMock(),
-  getNewRequestPref: (entry: UserIndexEntry | undefined) =>
-    entry?.notificationPrefs?.push?.newRequest === true,
+  useUpdatePushPrefMutation: (category: PushCategory) => useUpdatePushPrefMutationMock(category),
+  getPushPref: (entry: UserIndexEntry | undefined, category: PushCategory) =>
+    entry?.notificationPrefs?.push?.[category] === true,
 }));
 
 vi.mock('../lib', () => ({
@@ -58,6 +63,37 @@ function liveResult<T>(data: T | undefined) {
   };
 }
 
+/**
+ * One mutation object per category, so a test can assert that flipping
+ * one switch left the sibling category's mutation untouched.
+ */
+let prefMutations: Record<PushCategory, { mutateAsync: ReturnType<typeof vi.fn> }>;
+
+/** A subscribed user's userIndex doc, with the given push prefs. */
+function subscribedEntry(push: Partial<Record<PushCategory, boolean>>): UserIndexEntry {
+  return {
+    uid: 'u1',
+    typedEmail: 'mgr@example.com',
+    lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+    fcmTokens: { 'device-1': 'token-1' },
+    notificationPrefs: { push },
+  };
+}
+
+/** Put the panel in the granted-and-subscribed state. */
+function renderSubscribed(push: Partial<Record<PushCategory, boolean>> = { newRequest: true }) {
+  currentPermissionMock.mockReturnValue('granted');
+  useIsThisDeviceSubscribedMock.mockReturnValue(true);
+  useCurrentUserIndexMock.mockReturnValue(
+    liveResult<UserIndexEntry | undefined>(subscribedEntry(push)),
+  );
+  return render(
+    <Wrapper>
+      <PushNotificationsPanel />
+    </Wrapper>,
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   pushSupportStatusMock.mockReturnValue('supported');
@@ -75,10 +111,14 @@ beforeEach(() => {
     isPending: false,
     isSuccess: false,
   });
-  useUpdateNewRequestPrefMutationMock.mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue(undefined),
+  prefMutations = {
+    newRequest: { mutateAsync: vi.fn().mockResolvedValue(undefined) },
+    syncReminder: { mutateAsync: vi.fn().mockResolvedValue(undefined) },
+  };
+  useUpdatePushPrefMutationMock.mockImplementation((category: PushCategory) => ({
+    ...prefMutations[category],
     isPending: false,
-  });
+  }));
 });
 
 describe('PushNotificationsPanel', () => {
@@ -149,81 +189,86 @@ describe('PushNotificationsPanel', () => {
     expect(mutateAsync).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the toggle + disable controls once subscribed', () => {
-    currentPermissionMock.mockReturnValue('granted');
-    useIsThisDeviceSubscribedMock.mockReturnValue(true);
-    useCurrentUserIndexMock.mockReturnValue(
-      liveResult<UserIndexEntry | undefined>({
-        uid: 'u1',
-        typedEmail: 'mgr@example.com',
-        lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-        fcmTokens: { 'device-1': 'token-1' },
-        notificationPrefs: { push: { newRequest: true } },
-      }),
-    );
-    render(
-      <Wrapper>
-        <PushNotificationsPanel />
-      </Wrapper>,
-    );
+  it('shows both category toggles + disable controls once subscribed', () => {
+    renderSubscribed({ newRequest: true });
     expect(screen.getByTestId('push-subscribed')).toBeInTheDocument();
     const toggle = screen.getByTestId('push-newrequest-toggle');
     expect(toggle).toBeChecked();
-    // Regression guard: the new-request toggle is a shadcn Switch
-    // (Radix `role="switch"`), not a bare checkbox. Switching back
+    // Regression guard: the category toggles are shadcn Switches
+    // (Radix `role="switch"`), not bare checkboxes. Switching back
     // would silently regress the visual treatment.
     expect(toggle).toHaveAttribute('role', 'switch');
+    expect(screen.getByTestId('push-syncreminder-toggle')).toHaveAttribute('role', 'switch');
     expect(screen.getByTestId('push-disable-button')).toBeInTheDocument();
   });
 
-  it('updates the new-request preference when the toggle is flipped', async () => {
+  it('labels the sync-reminder toggle for the expired temp seats it is about', () => {
+    renderSubscribed();
+    expect(screen.getByText('Sync reminders for expired temp seats')).toBeInTheDocument();
+  });
+
+  it('updates the new-request preference when its toggle is flipped', async () => {
     const user = userEvent.setup();
-    const mutateAsync = vi.fn().mockResolvedValue(undefined);
-    currentPermissionMock.mockReturnValue('granted');
-    useIsThisDeviceSubscribedMock.mockReturnValue(true);
-    useCurrentUserIndexMock.mockReturnValue(
-      liveResult<UserIndexEntry | undefined>({
-        uid: 'u1',
-        typedEmail: 'mgr@example.com',
-        lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-        fcmTokens: { 'device-1': 'token-1' },
-        notificationPrefs: { push: { newRequest: true } },
-      }),
-    );
-    useUpdateNewRequestPrefMutationMock.mockReturnValue({ mutateAsync, isPending: false });
-    render(
-      <Wrapper>
-        <PushNotificationsPanel />
-      </Wrapper>,
-    );
+    renderSubscribed({ newRequest: true });
     await user.click(screen.getByTestId('push-newrequest-toggle'));
-    expect(mutateAsync).toHaveBeenCalledWith(false);
+    expect(prefMutations.newRequest.mutateAsync).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves the sync-reminder preference alone when the new-request toggle is flipped', async () => {
+    const user = userEvent.setup();
+    renderSubscribed({ newRequest: true, syncReminder: true });
+    await user.click(screen.getByTestId('push-newrequest-toggle'));
+    expect(prefMutations.newRequest.mutateAsync).toHaveBeenCalledWith(false);
+    expect(prefMutations.syncReminder.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('shows the sync-reminder toggle off for a manager with no stored preference', () => {
+    // Absent key = opted out. A manager already subscribed for new
+    // requests does not silently start receiving sync reminders.
+    renderSubscribed({ newRequest: true });
+    expect(screen.getByTestId('push-syncreminder-toggle')).not.toBeChecked();
+  });
+
+  it('shows the sync-reminder toggle on when the manager has opted in', () => {
+    renderSubscribed({ newRequest: false, syncReminder: true });
+    expect(screen.getByTestId('push-syncreminder-toggle')).toBeChecked();
+    expect(screen.getByTestId('push-newrequest-toggle')).not.toBeChecked();
+  });
+
+  it('turns the sync-reminder preference on when its toggle is flipped', async () => {
+    const user = userEvent.setup();
+    renderSubscribed({ newRequest: true });
+    await user.click(screen.getByTestId('push-syncreminder-toggle'));
+    expect(prefMutations.syncReminder.mutateAsync).toHaveBeenCalledWith(true);
+  });
+
+  it('leaves the new-request preference alone when the sync-reminder toggle is flipped', async () => {
+    const user = userEvent.setup();
+    renderSubscribed({ newRequest: true, syncReminder: true });
+    await user.click(screen.getByTestId('push-syncreminder-toggle'));
+    expect(prefMutations.syncReminder.mutateAsync).toHaveBeenCalledWith(false);
+    expect(prefMutations.newRequest.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  // `.kd-switch-label` is inline-flex, so two switches in a plain block
+  // container would share a line. They must sit in the stacking wrapper.
+  it('stacks both category switches in one container', () => {
+    renderSubscribed();
+    const group = screen.getByTestId('push-categories');
+    expect(group).toContainElement(screen.getByTestId('push-newrequest-toggle'));
+    expect(group).toContainElement(screen.getByTestId('push-syncreminder-toggle'));
+    expect(group.className).toContain('flex-col');
   });
 
   it('invokes the disable mutation when the user clicks Disable on this device', async () => {
     const user = userEvent.setup();
     const mutateAsync = vi.fn().mockResolvedValue(undefined);
-    currentPermissionMock.mockReturnValue('granted');
-    useIsThisDeviceSubscribedMock.mockReturnValue(true);
-    useCurrentUserIndexMock.mockReturnValue(
-      liveResult<UserIndexEntry | undefined>({
-        uid: 'u1',
-        typedEmail: 'mgr@example.com',
-        lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-        fcmTokens: { 'device-1': 'token-1' },
-        notificationPrefs: { push: { newRequest: true } },
-      }),
-    );
     useDisablePushMutationMock.mockReturnValue({
       mutateAsync,
       isPending: false,
       isSuccess: false,
     });
-    render(
-      <Wrapper>
-        <PushNotificationsPanel />
-      </Wrapper>,
-    );
+    renderSubscribed({ newRequest: true });
     await user.click(screen.getByTestId('push-disable-button'));
     expect(mutateAsync).toHaveBeenCalledTimes(1);
   });
