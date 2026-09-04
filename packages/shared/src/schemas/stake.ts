@@ -36,6 +36,8 @@ export const stakeSchema = z.object({
   web_base_url_override: z.string().optional(),
 
   last_over_caps_json: z.array(overCapEntrySchema),
+  // Stake-local `YYYY-MM-DD`; absent until the sync reminder first sends.
+  last_sync_reminder_date: z.string().optional(),
 
   last_modified_at: timestampLikeSchema,
   last_modified_by: actorRefSchema,

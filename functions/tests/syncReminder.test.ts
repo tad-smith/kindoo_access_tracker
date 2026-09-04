@@ -1,19 +1,23 @@
 // Tests for the expired-temp-seat reminder (T-103).
 //
-// `expiredTempGrants` is pure and runs everywhere. `sendSyncReminder`
-// reads the stake + seats + managers and dispatches email and push, so
-// it runs against the emulator with Resend and FCM mocked at the
-// wrapper level.
+// `expiredTempGrants` and `backoffElapsed` are pure and run everywhere.
+// `sendSyncReminderIfDue` reads the stake + seats + managers and
+// dispatches email and push, so it runs against the emulator with
+// Resend and FCM mocked at the wrapper level.
 //
-// The reminder carries no scheduling of its own — no hour gate, no
-// cron, no send-frequency backoff — so there is nothing of that kind to
-// exercise here. Whatever decides WHEN to call it owns those.
+// The reminder owns its own send frequency but knows nothing about
+// scheduling, so `now` is a plain argument and every backoff case below
+// is a second call with a later `now` — no clock mocking anywhere.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { BatchResponse, MulticastMessage } from 'firebase-admin/messaging';
 import type { DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
-import { expiredTempGrants, sendSyncReminder } from '../src/services/SyncReminderService.js';
+import {
+  backoffElapsed,
+  expiredTempGrants,
+  sendSyncReminderIfDue,
+} from '../src/services/SyncReminderService.js';
 import {
   _setResendSender,
   type EmailPayload,
@@ -157,6 +161,36 @@ describe('expiredTempGrants', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pure: when may the reminder repeat.
+// ---------------------------------------------------------------------------
+
+describe('backoffElapsed', () => {
+  it('sends when there is no stamp — the condition has just tripped', () => {
+    expect(backoffElapsed(undefined, TODAY)).toBe(true);
+  });
+
+  it('holds off on the same day and the two after it', () => {
+    expect(backoffElapsed('2026-08-18', '2026-08-18')).toBe(false);
+    expect(backoffElapsed('2026-08-18', '2026-08-19')).toBe(false);
+    expect(backoffElapsed('2026-08-18', '2026-08-20')).toBe(false);
+  });
+
+  it('sends again on the third day', () => {
+    expect(backoffElapsed('2026-08-18', '2026-08-21')).toBe(true);
+  });
+
+  it('counts across a month boundary', () => {
+    expect(backoffElapsed('2026-08-30', '2026-09-01')).toBe(false);
+    expect(backoffElapsed('2026-08-30', '2026-09-02')).toBe(true);
+  });
+
+  it('sends rather than stalls on a stamp it cannot read or one from the future', () => {
+    expect(backoffElapsed('not-a-date', TODAY)).toBe(true);
+    expect(backoffElapsed('2099-01-01', TODAY)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Integration: the whole unit of work for one stake.
 // ---------------------------------------------------------------------------
 
@@ -267,7 +301,7 @@ async function seedReminderWorthyStake(overrides: Partial<Stake> = {}): Promise<
   });
 }
 
-describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
+describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
   let restoreResend: (() => void) | undefined;
   let restoreFcm: (() => void) | undefined;
 
@@ -296,7 +330,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'sent', seats: 1, grants: 1, pushed: 1 });
     expect(emails).toHaveLength(1);
@@ -326,7 +360,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome.status).toBe('setup-incomplete');
     expect(emails).toHaveLength(0);
@@ -336,7 +370,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder('no-such-stake', { now: NOW });
+    const outcome = await sendSyncReminderIfDue('no-such-stake', NOW);
 
     expect(outcome.status).toBe('stake-missing');
     expect(emails).toHaveLength(0);
@@ -349,7 +383,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'nothing-expired', grants: 0 });
     expect(emails).toHaveLength(0);
@@ -362,7 +396,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: new Date('2026-08-18T05:30:00Z') });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-18T05:30:00Z'));
 
     expect(outcome.status).toBe('nothing-expired');
     expect(emails).toHaveLength(0);
@@ -379,7 +413,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'sent', seats: 1, grants: 2 });
     expect(emails[0]!.subject).toContain('Two temporary seats have expired');
@@ -394,7 +428,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'sent', pushed: 1 });
     expect(emails).toHaveLength(0);
@@ -416,7 +450,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'sent', pushed: 0 });
     expect(emails).toHaveLength(1);
@@ -436,7 +470,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    await sendSyncReminder(STAKE_ID, { now: NOW });
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(pushes).toHaveLength(0);
   });
@@ -453,7 +487,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    await sendSyncReminder(STAKE_ID, { now: NOW });
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(emails[0]!.to).toEqual(['alice@gmail.com']);
     expect(pushes[0]!.tokens).toEqual(['tok-alice']);
@@ -466,7 +500,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     const { sender: resend, calls: emails } = mockResend([]);
     restoreResend = _setResendSender(resend);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome).toMatchObject({ status: 'no-managers', grants: 1 });
     expect(emails).toHaveLength(0);
@@ -481,7 +515,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome.status).toBe('sent');
     expect(pushes).toHaveLength(1);
@@ -505,13 +539,116 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(failing);
 
-    const outcome = await sendSyncReminder(STAKE_ID, { now: NOW });
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     // The email already went out, so a throw here would earn a retry
     // that sends it twice.
     expect(outcome).toMatchObject({ status: 'sent', pushed: 0 });
     expect(outcome.pushError).toContain('FCM unavailable');
     expect(emails).toHaveLength(1);
+  });
+
+  // ---- backoff, end to end ------------------------------------------------
+
+  it('stamps the stake-local send date on the stake doc', async () => {
+    await seedReminderWorthyStake();
+    const { sender: resend } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome.sentOn).toBe(TODAY);
+    const { db } = requireEmulators();
+    const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+    expect(stake.last_sync_reminder_date).toBe(TODAY);
+  });
+
+  it('does not send twice on the same day — the stamp is the dedupe', async () => {
+    await seedReminderWorthyStake();
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
+    // Same day, e.g. an at-least-once invoker redelivering.
+    const second = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-18T18:00:00Z'));
+
+    expect(second).toMatchObject({ status: 'backed-off', grants: 1 });
+    expect(emails).toHaveLength(1);
+  });
+
+  it('stays quiet on the two days after a send, then sends on the third', async () => {
+    await seedReminderWorthyStake();
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
+    const dayOne = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-19T12:00:00Z'));
+    const dayTwo = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-20T12:00:00Z'));
+    const dayThree = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-21T12:00:00Z'));
+
+    expect(dayOne.status).toBe('backed-off');
+    expect(dayTwo.status).toBe('backed-off');
+    expect(dayThree).toMatchObject({ status: 'sent', sentOn: '2026-08-21' });
+    expect(emails).toHaveLength(2);
+  });
+
+  it('clears the stamp once nothing is expired, so the next occurrence sends at once', async () => {
+    await seedReminderWorthyStake();
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+    const { db } = requireEmulators();
+
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    // Manager runs Sync; the stale seat goes away.
+    await db.doc(`stakes/${STAKE_ID}/seats/jane@gmail.com`).delete();
+    const cleared = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-19T12:00:00Z'));
+    expect(cleared.status).toBe('nothing-expired');
+    const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+    expect(stake.last_sync_reminder_date).toBeUndefined();
+
+    // A new temp seat expires the next day — a fresh first send, not the
+    // tail of a backoff it has nothing to do with.
+    await seedSeat({ member_canonical: 'newguy@gmail.com', end_date: '2026-08-18' });
+    const fresh = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-20T12:00:00Z'));
+
+    expect(fresh).toMatchObject({ status: 'sent', sentOn: '2026-08-20' });
+    expect(emails).toHaveLength(2);
+  });
+
+  it('leaves no stamp when there was nobody to notify', async () => {
+    await seedStake();
+    await seedSeat({ end_date: TWO_DAYS_AGO });
+    const { sender: resend } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    const { db } = requireEmulators();
+    const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
+    expect(stake.last_sync_reminder_date).toBeUndefined();
+  });
+
+  it('writes nothing to the stake doc when there is no stamp to clear', async () => {
+    await seedStake();
+    await seedManager('alice@gmail.com', true);
+    const before = (await requireEmulators().db.doc(`stakes/${STAKE_ID}`).get()).updateTime;
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome.status).toBe('nothing-expired');
+    const after = (await requireEmulators().db.doc(`stakes/${STAKE_ID}`).get()).updateTime;
+    expect(after?.isEqual(before!)).toBe(true);
+  });
+
+  it('records that the kill-switch suppressed the email', async () => {
+    await seedReminderWorthyStake({ notifications_enabled: false });
+    const { sender: resend } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome.emailSuppressed).toBe(true);
   });
 
   it('prunes an invalid token, same as the request push path', async () => {
@@ -528,7 +665,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminder', () => {
     restoreResend = _setResendSender(resend);
     restoreFcm = _setSender(fcm);
 
-    await sendSyncReminder(STAKE_ID, { now: NOW });
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     const { db } = requireEmulators();
     const idx = await db.doc('userIndex/alice@gmail.com').get();

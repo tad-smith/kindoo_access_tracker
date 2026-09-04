@@ -124,6 +124,21 @@ export type Stake = {
   // ----- Operational state (server-written) -----
   /** Pools currently over cap; written at end of the over-cap recompute path. Empty array == all clear. */
   last_over_caps_json: OverCapEntry[];
+  /**
+   * Stake-local `YYYY-MM-DD` on which the expired-temp-seat reminder
+   * last went out. Absent ⇒ never sent, so the next qualifying run
+   * fires immediately.
+   *
+   * Reminder state, not schedule state: it carries the every-third-day
+   * backoff while the condition persists, and doubles as the dedupe
+   * against an at-least-once invoker delivering twice in a day. It is
+   * cleared once nothing is expired, so a fresh occurrence is a fresh
+   * first send rather than a wait.
+   *
+   * Bookkeeping — listed in `BOOKKEEPING_FIELDS`, so stamping it fans
+   * no audit row.
+   */
+  last_sync_reminder_date?: string;
 
   // ----- Bookkeeping -----
   last_modified_at: TimestampLike;

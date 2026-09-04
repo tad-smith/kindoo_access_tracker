@@ -8,29 +8,46 @@
 // — per D34's own history — files a removal request for it. Nothing
 // prompts the manager to run Sync. This is that prompt.
 //
-// Deliberately knows nothing about scheduling: no cron expression, no
-// hour gate, no "have I run recently". Whatever decides WHEN to
-// consider a stake calls `sendSyncReminder(stakeId)` and reads the
-// outcome. That keeps the invoker a thin shell and keeps this testable
-// without a clock.
+// The split with whatever schedules this: the caller says "consider
+// this stake now", and everything after that word is here. Nothing in
+// this file knows about hours, cron expressions, or dispatch — the one
+// timezone it reads is the stake's own calendar day, which is domain
+// logic (when did this grant expire?), not scheduling.
 //
-// Send-frequency backoff is likewise NOT here yet — see the module note
-// at the bottom for where it belongs when it lands.
+// The every-third-day backoff lives here for the same reason. It is not
+// expressible as a schedule even in principle: the rule is "don't
+// repeat WHILE the same condition holds, but send immediately on a
+// fresh one", and only the code that can see the condition can apply
+// it. It is also the dedupe any at-least-once invoker needs.
 
 import { logger } from 'firebase-functions';
-import type { Firestore } from 'firebase-admin/firestore';
-import { isExpiredTempGrant, previousIsoDate, todayInStakeTz } from '@kindoo/shared';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
+import {
+  isExpiredTempGrant,
+  isoDateSpanDays,
+  previousIsoDate,
+  todayInStakeTz,
+} from '@kindoo/shared';
 import type { Seat, Stake } from '@kindoo/shared';
 import { getDb } from '../lib/admin.js';
 import { activeManagers } from '../lib/managers.js';
 import { sendPushToSubscribers } from '../lib/push.js';
 import { notifyManagersSyncReminder, type ExpiredTempGrant } from './EmailService.js';
 
+/**
+ * Days that must pass before the reminder repeats while the condition
+ * persists. Sending on day 0 then every third day after: nagging daily
+ * about a backlog someone already knows about trains managers to ignore
+ * the mail.
+ */
+export const SYNC_REMINDER_BACKOFF_DAYS = 3;
+
 export type SyncReminderStatus =
   | 'sent'
   | 'stake-missing'
   | 'setup-incomplete'
   | 'nothing-expired'
+  | 'backed-off'
   | 'no-managers';
 
 export type SyncReminderOutcome = {
@@ -42,26 +59,35 @@ export type SyncReminderOutcome = {
   grants: number;
   /** Tokens FCM accepted. Zero when nobody opted into the push category. */
   pushed: number;
+  /**
+   * True when `notifications_enabled === false` suppressed the email.
+   * The kill-switch is email-only everywhere in this codebase, so a
+   * `sent` outcome can still carry this — push went, email didn't.
+   */
+  emailSuppressed?: boolean;
+  /** Stake-local date stamped on the stake doc, when this run sent. */
+  sentOn?: string;
   /** Set only when the push half threw; the email had already gone out. */
   pushError?: string;
 };
 
 /**
- * Send one stake's reminder, if it has anything to say.
+ * Consider one stake, and send its reminder if one is due.
  *
- * `now` is injectable for tests; production callers pass nothing. `db`
- * likewise defaults to the shared Admin handle.
+ * `now` is explicit rather than read from the clock so the backoff is
+ * testable without clock games; `db` defaults to the shared Admin
+ * handle.
  *
  * Never throws for an ordinary "nothing to do" — those are statuses, so
- * a caller can log them without a try/catch. A genuine fault (Firestore
- * unreachable) still propagates.
+ * a caller can log the outcome without a try/catch. A genuine fault
+ * (Firestore unreachable) still propagates.
  */
-export async function sendSyncReminder(
+export async function sendSyncReminderIfDue(
   stakeId: string,
-  deps: { db?: Firestore; now?: Date } = {},
+  now: Date,
+  deps: { db?: Firestore } = {},
 ): Promise<SyncReminderOutcome> {
   const db = deps.db ?? getDb();
-  const now = deps.now ?? new Date();
   const nothing = (status: SyncReminderStatus): SyncReminderOutcome => ({
     stakeId,
     status,
@@ -70,18 +96,20 @@ export async function sendSyncReminder(
     pushed: 0,
   });
 
-  const stakeSnap = await db.doc(`stakes/${stakeId}`).get();
+  const stakeRef = db.doc(`stakes/${stakeId}`);
+  const stakeSnap = await stakeRef.get();
   if (!stakeSnap.exists) return nothing('stake-missing');
   const stake = stakeSnap.data() as Stake;
   // A stake still in the bootstrap wizard has no managers to nag and no
   // roster worth reading.
   if (stake.setup_complete !== true) return nothing('setup-incomplete');
 
+  const today = todayInStakeTz(stake.timezone, now);
   // "Expired more than 24 hours ago" is the canonical expiry rule run
   // against yesterday rather than today — the boundary moves, the rule
   // doesn't. A temp seat is held THROUGH its `end_date`, so a grant
   // that ended yesterday is expired but has not yet had its day.
-  const cutoff = previousIsoDate(todayInStakeTz(stake.timezone, now));
+  const cutoff = previousIsoDate(today);
 
   // ~250 seats at target scale: read the collection and filter in
   // memory rather than earning a composite index.
@@ -90,13 +118,29 @@ export async function sendSyncReminder(
     seatsSnap.docs.map((d) => d.data() as Seat),
     cutoff,
   );
-  if (grants.length === 0) return nothing('nothing-expired');
+
+  if (grants.length === 0) {
+    // Condition cleared. Drop the stamp so the next occurrence is a
+    // fresh first send rather than serving out a backoff it has no
+    // relation to. Only when there is one — no stamp, no write.
+    if (stake.last_sync_reminder_date !== undefined) {
+      await stakeRef.update({ last_sync_reminder_date: FieldValue.delete() });
+    }
+    return nothing('nothing-expired');
+  }
 
   const seats = new Set(grants.map((g) => g.memberEmail)).size;
+  const partial = { stakeId, seats, grants: grants.length, pushed: 0 };
+
+  if (!backoffElapsed(stake.last_sync_reminder_date, today)) {
+    return { ...partial, status: 'backed-off' };
+  }
+
   const managers = await activeManagers(db, stakeId);
   if (managers.length === 0) {
+    // No stamp: nothing was said, so nothing is being backed off from.
     logger.info('syncReminder: nobody to notify', { stakeId, grants: grants.length });
-    return { ...nothing('no-managers'), seats, grants: grants.length };
+    return { ...partial, status: 'no-managers' };
   }
 
   logger.info('syncReminder: firing', {
@@ -144,14 +188,37 @@ export async function sendSyncReminder(
     logger.error('syncReminder: push failed; email already sent', { stakeId, error: pushError });
   }
 
+  // Stamp last, so a fault before this point leaves the reminder due
+  // rather than silently consumed. Bookkeeping-only by design: the
+  // field is in `BOOKKEEPING_FIELDS`, so `auditTrigger` reads the write
+  // as a no-op and fans no row. Nothing about the stake changed — a
+  // reminder went out — and `lastActor` is deliberately left alone so
+  // the stake doc keeps naming whoever last really edited it.
+  await stakeRef.update({ last_sync_reminder_date: today });
+
   return {
-    stakeId,
+    ...partial,
     status: 'sent',
-    seats,
-    grants: grants.length,
     pushed,
+    sentOn: today,
+    ...(stake.notifications_enabled === false ? { emailSuppressed: true } : {}),
     ...(pushError ? { pushError } : {}),
   };
+}
+
+/**
+ * True when enough days have passed since `lastSent` to send again. No
+ * stamp means the condition has just tripped, which always sends.
+ *
+ * An unparseable or future-dated stamp also sends: refusing to remind
+ * on the strength of a stamp we can't read is the worse failure of the
+ * two, and `isoDateSpanDays` answers `NaN` rather than throwing.
+ */
+export function backoffElapsed(lastSent: string | undefined, today: string): boolean {
+  if (!lastSent) return true;
+  const days = isoDateSpanDays(lastSent, today);
+  if (Number.isNaN(days)) return true;
+  return days >= SYNC_REMINDER_BACKOFF_DAYS || days < 0;
 }
 
 /**
@@ -190,13 +257,3 @@ function pushBody(count: number): string {
   const noun = count === 1 ? 'temporary seat' : 'temporary seats';
   return `${count} expired ${noun} still on the roster — run Sync to clear ${count === 1 ? 'it' : 'them'}.`;
 }
-
-// Where the every-third-day backoff goes when it lands: with the
-// reminder's own state, not with whatever schedules it. The cron says
-// "consider this stake"; only this function can see whether there is
-// anything to say, and the rule is "don't repeat WHILE the same
-// condition holds, but send immediately on a fresh one" — a condition a
-// schedule interval cannot express. It is also the natural home for the
-// at-least-once dedupe any task-queue invoker will need. Storing it
-// beside the invoker's own per-(stake, task) state keeps per-feature
-// fields off the stake doc, and off the audit trigger that watches it.
