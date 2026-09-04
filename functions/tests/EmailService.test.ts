@@ -22,10 +22,14 @@ import {
   buildRejectedHtmlBody,
   buildRejectedSubject,
   buildRejectedTextBody,
+  buildSyncReminderHtmlBody,
+  buildSyncReminderSubject,
+  buildSyncReminderTextBody,
   buildWelcomeHtmlBody,
   buildWelcomeSubject,
   buildWelcomeTextBody,
   formatScopeList,
+  type LabelledExpiredTempGrant,
   type LabelledPool,
   type RequestEmailOpts,
   type RequesterNamedEmailOpts,
@@ -700,6 +704,85 @@ describe('EmailService — pure builders', () => {
     expect(html).toContain('One seat pool is over its cap.');
   });
 
+  // ---- sync reminder (expired temp seats) ----------------------------------
+
+  const labelledGrants: LabelledExpiredTempGrant[] = [
+    {
+      memberName: 'Jane Doe',
+      memberEmail: 'Jane@example.com',
+      scope: 'GE',
+      label: 'Greenwood Ward',
+      endDate: '2026-08-10',
+    },
+    {
+      memberName: '',
+      memberEmail: 'nameless@example.com',
+      scope: 'stake',
+      label: 'Stake',
+      endDate: '2026-08-14',
+    },
+  ];
+
+  it('sync-reminder subject counts the seats in words', () => {
+    expect(buildSyncReminderSubject(labelledGrants)).toBe(
+      '[Stake Building Access] Two temporary seats have expired but are still on the roster',
+    );
+    expect(buildSyncReminderSubject([labelledGrants[0]!])).toBe(
+      '[Stake Building Access] One temporary seat has expired but is still on the roster',
+    );
+  });
+
+  it('sync-reminder text body names every seat, its scope, and its end date', () => {
+    expect(buildSyncReminderTextBody({ grants: labelledGrants, link: SEATS_LINK })).toBe(
+      [
+        'Two temporary seats have expired but are still on the roster.',
+        '',
+        'Run Sync in the Stake Building Access extension to clear them. Until then the ward ' +
+          'still sees a seat whose access has already ended, and may file a removal request for it.',
+        '',
+        '  Jane Doe (Jane@example.com) — Greenwood Ward, ended 2026-08-10',
+        '  nameless@example.com — Stake, ended 2026-08-14',
+        '',
+        'View seats: https://stakebuildingaccess.org/manager/seats',
+      ].join('\n'),
+    );
+  });
+
+  it('sync-reminder text body reads singular for one seat', () => {
+    const body = buildSyncReminderTextBody({ grants: [labelledGrants[0]!], link: SEATS_LINK });
+    expect(body.startsWith('One temporary seat has expired but is still on the roster.\n')).toBe(
+      true,
+    );
+  });
+
+  it('sync-reminder html body renders a seat table with the end date chipped', () => {
+    const html = buildSyncReminderHtmlBody({ grants: labelledGrants, link: SEATS_LINK });
+    expect(html).toContain(
+      '<p style="margin:0 0 16px">Two temporary seats have expired but are still on the roster.</p>',
+    );
+    expect(html).toContain('>Member</th>');
+    expect(html).toContain('>Scope</th>');
+    expect(html).toContain('>Ended</th>');
+    expect(html).toContain('Jane Doe<br />');
+    expect(html).toContain('mailto:Jane@example.com');
+    expect(html).toContain('>Greenwood Ward</td>');
+    expect(html).toContain('>2026-08-10</span>');
+    expect(html).toContain('>View seats</a>');
+  });
+
+  it('sync-reminder html and text carry the same instruction', () => {
+    const opts = { grants: labelledGrants, link: SEATS_LINK };
+    const instruction = 'Run Sync in the Stake Building Access extension to clear them.';
+    expect(buildSyncReminderTextBody(opts)).toContain(instruction);
+    expect(buildSyncReminderHtmlBody(opts)).toContain(instruction);
+  });
+
+  it('sync-reminder falls back to the address when a seat carries no name', () => {
+    const opts = { grants: [labelledGrants[1]!], link: SEATS_LINK };
+    expect(buildSyncReminderTextBody(opts)).toContain('  nameless@example.com — Stake');
+    expect(buildSyncReminderHtmlBody(opts)).not.toContain('<br />');
+  });
+
   // ---- quote safety across every html builder -------------------------------
 
   // Regression: a raw `"` inside an inline style or an interpolated value
@@ -737,6 +820,18 @@ describe('EmailService — pure builders', () => {
         link: SEATS_LINK,
       }),
       buildWelcomeHtmlBody({ ...WELCOME_GMAIL, memberName: 'Jane "JD" Doe' }),
+      buildSyncReminderHtmlBody({
+        grants: [
+          {
+            memberName: 'Ann "Q" <b>Smith</b> & Co',
+            memberEmail: 'ann+"q"@example.com',
+            scope: 'GE',
+            label: 'Green"wood" & <Ward>',
+            endDate: '2026-05-15',
+          },
+        ],
+        link: SEATS_LINK,
+      }),
     ];
     for (const html of bodies) {
       // Every quoted attribute must close right before the tag end or the
