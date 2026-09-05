@@ -223,6 +223,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   run.googleapis.com \
   cloudscheduler.googleapis.com \
+  cloudtasks.googleapis.com \
   fcm.googleapis.com \
   fcmregistrations.googleapis.com \
   secretmanager.googleapis.com \
@@ -243,7 +244,8 @@ What each API does for us:
 | `cloudfunctions.googleapis.com` | Cloud Functions 2nd-gen — auth triggers, claim-sync, audit fan-out, email + push notifications. |
 | `cloudbuild.googleapis.com` | Cloud Functions 2nd-gen builds via Cloud Build under the hood. |
 | `run.googleapis.com` | Cloud Functions 2nd-gen *runs* on Cloud Run (per F1). |
-| `cloudscheduler.googleapis.com` | Weekly Firestore export (§3.4). |
+| `cloudscheduler.googleapis.com` | The hourly `dispatchScheduledTasks` job (both projects, created by `firebase deploy`) and the weekly Firestore export (prod only, §3.4). |
+| `cloudtasks.googleapis.com` | The `runScheduledTask` push queue that `dispatchScheduledTasks` enqueues onto (T-104). `firebase deploy` enables this one itself — the `onTaskDispatched` SDK declares it as a required API — but list it here so the project is fully provisioned before the first deploy rather than during it. |
 | `fcm.googleapis.com` | Firebase Cloud Messaging — push notifications (Phase 10). |
 | `fcmregistrations.googleapis.com` | FCM device-registration API (Phase 10). |
 | `secretmanager.googleapis.com` | Resend API key + any other secrets (Phase 9 onward). |
@@ -330,7 +332,16 @@ Now configure authorized domains:
 
 ### 1.8 Create the runtime service account `kindoo-app`
 
-This is the service account pinned by the eleven Cloud Functions that need a non-default runtime identity — all four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`) and seven callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`). It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+This is the service account pinned by the Cloud Functions that need a non-default runtime identity. It also runs the weekly Firestore export Cloud Scheduler job (created in §3.4 below). It's distinct from the default Cloud Functions compute SA — see step 1.9 for that.
+
+**The source is the list, not this paragraph.** A hand-maintained count here has gone stale twice (T-102 removed a function, T-101 added one and nobody adjusted it), so read it off the code instead:
+
+```bash
+grep -rl 'serviceAccount: APP_SA' functions/src --include='*.ts' | grep -v '\.test\.' | \
+  sed 's#.*/##; s#\.ts$##' | sort
+```
+
+At the time of writing (T-104) that is **thirteen**: the four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), all eight callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `backfillAuditTtl`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`), and the hourly `dispatchScheduledTasks`. Out of a **29-function** deploy surface — the rest fall back to the compute SA. If the grep and this paragraph disagree, the grep is right; fix the paragraph.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -373,13 +384,26 @@ Expected: `Updated IAM policy for serviceAccount [kindoo-app@kindoo-staging.iam.
 
 > **Both existing projects need this run against them.** The self-binding landed with the extension's email sign-in path, after `kindoo-staging` and `kindoo-prod` were provisioned, so neither has it. Run the command above once per project, substituting the project id in all three places, and verify with §5.2.1. It's idempotent — re-running against a project that already has the binding succeeds and changes nothing.
 
+**A second self-binding, for a different reason: `roles/iam.serviceAccountUser`.** T-104's `dispatchScheduledTasks` enqueues Cloud Tasks tasks that carry an OIDC token naming `kindoo-app` itself, and Cloud Tasks requires the task's creator to hold `iam.serviceAccounts.actAs` on the account named in that token. `roles/iam.serviceAccountTokenCreator` above does **not** carry `actAs` — it carries `signBlob` / `signJwt` / `getOpenIdToken` — so the two roles do not substitute for each other and both must be present on the SA:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  kindoo-app@kindoo-staging.iam.gserviceaccount.com \
+  --member="serviceAccount:kindoo-app@kindoo-staging.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser" \
+  --project=kindoo-staging
+```
+
+The matching queue-scoped grant (`roles/cloudtasks.enqueuer`) cannot be done here — the queue does not exist until `firebase deploy` creates it. Both live together as a post-first-deploy step in `infra/runbooks/deploy.md`, "First deploy after T-104," step 3; verify with §5.2.1 and §5.9 below.
+
 What each role does:
 
 - `roles/datastore.user` — Firestore read + write via Admin SDK. (Datastore is the legacy name for the same API.)
 - `roles/secretmanager.secretAccessor` — read API keys (Resend, eventually).
-- `roles/run.invoker` — Cloud Functions 2nd-gen runs on Cloud Run; the invoker role is what lets Cloud Scheduler (or another Function) call it.
+- `roles/run.invoker` — Cloud Functions 2nd-gen runs on Cloud Run; the invoker role is what lets Cloud Scheduler (or another Function) call it. Granted at the *project* level here, which is also what lets Cloud Tasks invoke `runScheduledTask` under this identity — nothing extra is needed for T-104's runner.
 - `roles/eventarc.eventReceiver` — required for any 2nd-gen Cloud Function that pins `kindoo-app` as its service account AND consumes Firestore Eventarc events. Without it, Firebase deploy returns `403 Permission 'eventarc.events.receiveEvent' denied`. Triggers that do not pin an SA fall back to the default compute SA (which gets this role automatically) and are not affected. Surfaced first during the Phase 9/10.5 staging deploy and re-confirmed during prod bring-up — the codebase pins `kindoo-app` for the email and FCM push triggers, both of which consume Firestore document events.
 - `roles/firebasecloudmessaging.admin` — required for the FCM Web push trigger (`pushOnRequestSubmit` and any future push trigger) to call `messaging.send()`. Without it, deploy succeeds but runtime push attempts fail with `mismatched-credential`. Same surfacing path as the Eventarc role above: hit during Phase 9/10.5 staging, re-confirmed during prod bring-up.
+- `roles/iam.serviceAccountUser` — on the SA itself, via its own command above. Carries `iam.serviceAccounts.actAs`, which Cloud Tasks requires of whoever creates a task bearing an OIDC token for this account. Missing, the deploy is clean and every hourly dispatch fails with a `PERMISSION_DENIED` naming `iam.serviceAccounts.actAs`; the scheduled features simply never run. Distinct from the token-creator role below — neither implies the other.
 - `roles/iam.serviceAccountTokenCreator` — on the SA itself, via the separate command above, not the loop. Lets `kindoo-app` sign Firebase **custom** tokens, which `mintExtensionToken` mints so the Chrome extension can sign in a manager who has no Google account (`docs/architecture.md` D33, `docs/spec.md` §4.1). Under Application Default Credentials there's no key file to sign with, so `createCustomToken` signs through the IAM `signBlob` API, and the caller has to hold token-creator on the signing account — the same account here, which is why the binding is self-referential. Missing, it costs nothing at deploy and fails every call at runtime: the manager sees `Sign-in failed: web sign-in failed (mint_failed)` in the extension panel, while the real error (`Permission 'iam.serviceAccounts.signBlob' denied on resource ...`) shows up only in the `mintExtensionToken` logs. The emulator substitutes an unsigned token, so neither a local run nor CI catches a missing grant.
 
 ### 1.9 Note: the default compute SA is what Functions actually run as
@@ -392,7 +416,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the eleven Cloud Functions enumerated in step 1.8 (notification triggers and callables that need a non-default identity). Functions that don't pin an SA fall back to the compute SA.
+`kindoo-app` is the SA pinned by the functions enumerated in step 1.8 (the notification triggers, the callables, and the scheduled dispatcher). Functions that don't pin an SA — the Firestore claim-sync and audit fan-in triggers, and `runScheduledTask` unless its source says otherwise — fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 
@@ -477,11 +501,11 @@ In particular, do not skip step 1.5.1 (Initialize Firebase Hosting via the conso
 When done, you should have:
 
 - A `kindoo-prod` Firebase project on Blaze with $1 budget alert.
-- All 14 services enabled.
+- All 15 services enabled.
 - The default Hosting site initialized via the console wizard.
 - A Firestore database in `us-central1` Native mode, with the `auditLog` TTL policy enabled and no policy on `platformAuditLog`.
 - Authentication with Google sign-in enabled, public name "Stake Building Access," authorized domains: `localhost`, `kindoo-prod.web.app`, `kindoo-prod.firebaseapp.com`.
-- A `kindoo-app` SA with the five F1 project roles, plus `roles/iam.serviceAccountTokenCreator` on itself.
+- A `kindoo-app` SA with the five F1 project roles, plus `roles/iam.serviceAccountTokenCreator` **and** `roles/iam.serviceAccountUser` on itself.
 - The default compute SA with `roles/datastore.user`, `roles/run.invoker`, `roles/secretmanager.secretAccessor`.
 - A registered web app — write its config to `apps/web/.env.production` (gitignored). The prod build (`pnpm deploy:prod`) invokes `vite build` with default mode=production, which loads this file. Copy `apps/web/.env.example` to `apps/web/.env.production` and fill in the prod values (substitute `kindoo-prod` for `kindoo-staging` in `VITE_FIREBASE_PROJECT_ID` and the auth domain).
 
@@ -765,18 +789,18 @@ gcloud iam service-accounts get-iam-policy \
   --project=kindoo-prod --format="value(bindings.role)"
 ```
 
-Expected on each: `roles/iam.serviceAccountTokenCreator`. Empty output means the binding was never applied — re-run the self-grant command in step 1.8 against that project. Nothing local catches this one; extension email sign-in fails at runtime without it.
+Expected on each: **two** roles — `roles/iam.serviceAccountTokenCreator` and `roles/iam.serviceAccountUser`. A missing role means that self-grant was never applied; re-run the matching command from step 1.8 against that project. Nothing local catches either one — the emulator substitutes an unsigned token and never talks to real Cloud Tasks — and each fails a different feature at runtime: without token-creator, extension email sign-in fails (`mint_failed`); without `serviceAccountUser`, `dispatchScheduledTasks` cannot enqueue and every scheduled feature stops.
 
 ### 5.3 Required services enabled
 
 ```bash
 gcloud services list --enabled --project=kindoo-staging | \
-  grep -E 'firestore|cloudfunctions|firebasehosting|identitytoolkit|cloudscheduler|secretmanager'
+  grep -E 'firestore|cloudfunctions|firebasehosting|identitytoolkit|cloudscheduler|cloudtasks|secretmanager'
 gcloud services list --enabled --project=kindoo-prod | \
-  grep -E 'firestore|cloudfunctions|firebasehosting|identitytoolkit|cloudscheduler|secretmanager'
+  grep -E 'firestore|cloudfunctions|firebasehosting|identitytoolkit|cloudscheduler|cloudtasks|secretmanager'
 ```
 
-Expected on each: six matching service rows. If any are missing, re-run step 1.5 for the affected project.
+Expected on each: seven matching service rows. If any are missing, re-run step 1.5 for the affected project.
 
 ### 5.4 Firestore database exists
 
@@ -839,18 +863,47 @@ gcloud storage buckets describe gs://kindoo-prod-backups \
 
 Expected: bucket listed; lifecycle output showing `'age': 90`.
 
-### 5.7 Weekly export scheduler job exists (prod only)
+### 5.7 Cloud Scheduler jobs — one on staging, two on prod
 
 ```bash
-gcloud scheduler jobs describe firestore-weekly-export \
-  --project=kindoo-prod \
-  --location=us-central1 \
-  --format="value(state,schedule)"
+gcloud scheduler jobs list --project=kindoo-staging --location=us-central1 \
+  --format="value(name,state,schedule)"
+gcloud scheduler jobs list --project=kindoo-prod --location=us-central1 \
+  --format="value(name,state,schedule)"
 ```
 
-Expected: `ENABLED 0 2 * * 0`.
+Expected — **staging**, exactly one row, whose name ends `firebase-schedule-dispatchScheduledTasks-us-central1`, `ENABLED`, `0 * * * *`. **Prod**, exactly two rows: that same one, plus `firestore-weekly-export`, `ENABLED`, `0 2 * * 0`.
 
-### 5.8 Repo deploy script dry-run resolves
+Only the export job is created by you (§3.4). The `dispatchScheduledTasks` job is created by `firebase deploy` the first time T-104's dispatcher ships, so before that deploy staging shows zero rows and prod shows one — that is not a provisioning failure, and the fix is a deploy, not a `gcloud scheduler jobs create`.
+
+**Three rows total across both projects is the whole allocation.** Cloud Scheduler's free tier is 3 jobs per *billing account*, not per project, and both projects bill to the same account:
+
+| Slot | Project | Job |
+|---|---|---|
+| 1 | `kindoo-staging` | `dispatchScheduledTasks` (hourly) |
+| 2 | `kindoo-prod` | `dispatchScheduledTasks` (hourly) |
+| 3 | `kindoo-prod` | `firestore-weekly-export` (Sunday 02:00 UTC) |
+
+A fourth row on either project means something created a job that should not exist. A new scheduled *feature* costs no job at all — it is a trigger row in `stakeSchedules/{stakeId}` that the hourly dispatcher fans out over Cloud Tasks (T-104). Cloud Tasks' own free tier is 1M operations/month, which this stack cannot approach.
+
+### 5.8 Cloud Tasks queue exists and `kindoo-app` may enqueue onto it
+
+Both projects, once T-104's `runScheduledTask` has been deployed at least once:
+
+```bash
+for PROJECT in kindoo-staging kindoo-prod; do
+  gcloud tasks queues describe runScheduledTask \
+    --project="$PROJECT" --location=us-central1 --format="value(name,state)"
+  gcloud tasks queues get-iam-policy runScheduledTask \
+    --project="$PROJECT" --location=us-central1 --format="value(bindings.role)"
+done
+```
+
+Expected per project: `projects/<project>/locations/us-central1/queues/runScheduledTask	RUNNING`, then `roles/cloudtasks.enqueuer`.
+
+The queue itself is created by `firebase deploy`. The `roles/cloudtasks.enqueuer` binding is **not** — an empty second line is the expected state straight after a first deploy, and it means no dispatch can ever enqueue. Grant it per `infra/runbooks/deploy.md`, "First deploy after T-104," step 3.
+
+### 5.9 Repo deploy script dry-run resolves
 
 ```bash
 firebase use staging

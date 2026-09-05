@@ -77,9 +77,13 @@
 #     Both hold for every current callable. A future one that breaks either is
 #     a loud, wrong-cause failure rather than a silent pass; exclude it with
 #     VD_SKIP_CALLABLES and note why here.
-#   - Only `onCall` exports are probed. Firestore/Auth triggers and scheduled
-#     functions are invoked through Eventarc/Scheduler with an OIDC identity and
-#     correctly reject anonymous callers, so probing them proves nothing.
+#   - Only `onCall` exports are probed. Firestore/Auth triggers, `onSchedule`
+#     functions and `onTaskDispatched` functions are invoked through Eventarc,
+#     Cloud Scheduler and Cloud Tasks with an OIDC identity and correctly reject
+#     anonymous callers, so probing them proves nothing — and would report a
+#     healthy one as `FAIL — iam-missing`, naming the wrong cause. Check 2
+#     still covers them: they must appear in `firebase functions:list`.
+#     infra/scripts/tests/verify-deploy.test.sh guards all three classes.
 #
 # WHAT IT LEAVES BEHIND
 #   Nothing. Read-only against the project (one unauthenticated POST per

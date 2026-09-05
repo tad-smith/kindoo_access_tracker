@@ -212,7 +212,8 @@ echo ""
 echo "--- vd_parse_exports ---"
 
 FIXTURE_SRC="$TMP_DIR/src"
-mkdir -p "$FIXTURE_SRC/callable" "$FIXTURE_SRC/triggers" "$FIXTURE_SRC/scheduled"
+mkdir -p "$FIXTURE_SRC/callable" "$FIXTURE_SRC/triggers" "$FIXTURE_SRC/scheduled" \
+  "$FIXTURE_SRC/tasks"
 
 cat >"$FIXTURE_SRC/index.ts" <<'FIXTURE'
 // Comment mentioning export { notAnExport } from './nope.js';
@@ -223,6 +224,7 @@ export {
 } from './triggers/multi.js';
 export { internalName as renamedCallable } from './callable/renamed.js';
 export { deltaScheduled } from './scheduled/deltaScheduled.js';
+export { epsilonTaskQueue } from './tasks/epsilonTaskQueue.js';
 export { lineBrokenCallable, wrappedCallable } from './callable/awkward.js';
 export { mixedTrigger, mixedCallable } from './callable/mixed.js';
 FIXTURE
@@ -277,10 +279,19 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 export const deltaScheduled = onSchedule('every day 03:00', async () => {});
 FIXTURE
 
+# Cloud Tasks target. Invoked by Cloud Tasks with an OIDC identity, so an
+# anonymous probe proves nothing about it and it must NOT be classified as a
+# callable. Mentions onCall in a comment on purpose — prose must not promote it.
+cat >"$FIXTURE_SRC/tasks/epsilonTaskQueue.ts" <<'FIXTURE'
+import { onTaskDispatched } from 'firebase-functions/v2/tasks';
+// Reached through the queue, never as an onCall from a browser.
+export const epsilonTaskQueue = onTaskDispatched<{ stakeId: string }>(async () => {});
+FIXTURE
+
 PARSED="$(vd_parse_exports "$FIXTURE_SRC/index.ts")"
 PARSED_NAMES="$(printf '%s\n' "$PARSED" | cut -f1 | sort | tr '\n' ' ')"
 assert_eq "parses single-line, multi-line and aliased exports; skips comments" \
-  "alphaCallable betaTrigger deltaScheduled gammaTrigger lineBrokenCallable mixedCallable mixedTrigger renamedCallable wrappedCallable " \
+  "alphaCallable betaTrigger deltaScheduled epsilonTaskQueue gammaTrigger lineBrokenCallable mixedCallable mixedTrigger renamedCallable wrappedCallable " \
   "$PARSED_NAMES"
 assert_eq "records the local name alongside the exported one" \
   "renamedCallable	./callable/renamed.js	internalName" \
@@ -293,9 +304,28 @@ echo ""
 echo "--- vd_filter_callables ---"
 
 FILTERED="$(printf '%s\n' "$PARSED" | vd_filter_callables "$FIXTURE_SRC" | sort | tr '\n' ' ')"
-assert_eq "finds every callable shape and no triggers or scheduled jobs" \
+assert_eq "finds every callable shape and no triggers, scheduled jobs or task targets" \
   "alphaCallable lineBrokenCallable mixedCallable renamedCallable wrappedCallable " \
   "$FILTERED"
+
+# The two non-callable classes, asserted by name rather than only by the set
+# comparison above, so a failure says WHICH class leaked instead of printing a
+# diff of two long lists. Both are probe-set correctness: a misclassified
+# scheduled or task-queue function is POSTed anonymously, answers 403 because
+# Cloud Scheduler / Cloud Tasks invoke it with an OIDC identity, and is
+# reported as `FAIL — iam-missing` on a healthy deploy.
+case " $FILTERED " in
+  *" deltaScheduled "*)
+    bad "does not misclassify an onSchedule function as a callable" \
+      "deltaScheduled absent from callables" "$FILTERED" ;;
+  *) ok "does not misclassify an onSchedule function as a callable" ;;
+esac
+case " $FILTERED " in
+  *" epsilonTaskQueue "*)
+    bad "does not misclassify an onTaskDispatched function as a callable" \
+      "epsilonTaskQueue absent from callables" "$FILTERED" ;;
+  *) ok "does not misclassify an onTaskDispatched function as a callable" ;;
+esac
 
 echo ""
 echo "--- vd_parse_functions_list ---"
@@ -372,8 +402,43 @@ else
   ok "does not misclassify a Firestore trigger as a callable"
 fi
 
-# The scheduled-function misclassification check lived here; it went away with
-# the last scheduled function, leaving nothing of that class to probe.
+# Same guard for the two classes T-104 reintroduced: an onSchedule dispatcher
+# and an onTaskDispatched runner. Both are invoked with an OIDC identity, so
+# probing them anonymously would report `FAIL — iam-missing` on a perfectly
+# healthy deploy — a false alarm naming the wrong cause, which is worse than no
+# check at all.
+#
+# Deliberately conditional. A branch that has not folded the backend half yet
+# has no exports under scheduled/ or tasks/, and asserting their presence here
+# would fail for a reason that has nothing to do with this file. The label
+# prints the count either way, so an empty class is visible rather than silent
+# — and it is never the only coverage: the fixture-level assertions above run
+# unconditionally and are what actually exercise vd_filter_callables against
+# both shapes.
+assert_no_real_callables_under() {
+  local label="$1" prefix="$2" names count leaked
+  names="$(printf '%s\n' "$REAL_EXPORTS" \
+    | awk -F'\t' -v p="$prefix" 'index($2, p) == 1 {print $1}' | sort -u)"
+  count="$(printf '%s' "$names" | grep -c . || true)"
+
+  if [[ "$count" -eq 0 ]]; then
+    ok "$label — 0 exports under $prefix in index.ts (fixture guard covers the shape)"
+    return
+  fi
+
+  leaked="$(comm -12 <(printf '%s\n' "$names") <(printf '%s\n' "$REAL_CALLABLES") || true)"
+  if [[ -n "$leaked" ]]; then
+    bad "$label" "none of the $count exports under $prefix classified as callables" \
+      "$(printf '%s' "$leaked" | tr '\n' ' ')"
+  else
+    ok "$label — $count export(s) under $prefix, none classified as callables"
+  fi
+}
+
+assert_no_real_callables_under \
+  "does not misclassify a scheduled function as a callable" './scheduled/'
+assert_no_real_callables_under \
+  "does not misclassify a task-queue function as a callable" './tasks/'
 
 echo ""
 echo "--- vd_verify_deploy --dry-run (must not touch the network) ---"
