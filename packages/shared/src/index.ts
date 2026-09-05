@@ -66,6 +66,7 @@ export {
 export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
 export {
   MAX_SCHEDULE_ADVANCES,
+  SYNC_REMINDER_JOB,
   advanceTriggerTime,
   isKnownSchedule,
   isTaskDue,

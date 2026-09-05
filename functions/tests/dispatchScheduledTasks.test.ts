@@ -191,6 +191,42 @@ describe.skipIf(!hasEmulators())('dispatchDue against Firestore', () => {
     expect(await readSchedule(db)).toEqual(disabled);
   });
 
+  it("preserves a manager's toggle written between the read and the commit", async () => {
+    const { db } = requireEmulators();
+    const due = {
+      job: 'demo',
+      enabled: true,
+      schedule: { type: 'daily' as const, hour: 6 },
+      next_trigger_time: Timestamp.fromDate(new Date('2026-09-05T12:00:00.000Z')),
+    };
+    await db.doc(`stakeSchedules/${STAKE_ID}`).set({ tasks: [due], lastActor: DISPATCHER_ACTOR });
+
+    // The enqueue runs after the dispatcher has read the doc and before
+    // it commits, so writing here lands in exactly the window a
+    // manager's toggle would. `tasks` is a Firestore list, so the client
+    // rewrites the whole array — which is what the old unconditional
+    // `set(..., {merge:true})` at the end of the pass reverted.
+    const calls: ScheduledTaskPayload[] = [];
+    const enqueue: EnqueueTask = async (payload) => {
+      calls.push(payload);
+      await db.doc(`stakeSchedules/${STAKE_ID}`).set({
+        tasks: [{ ...due, enabled: false }],
+        lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
+      });
+    };
+
+    await dispatchDue(db, { registry: REGISTRY, enqueue, now: NOW });
+
+    expect(calls).toHaveLength(1);
+    const stamped = (await readSchedule(db))?.tasks[0];
+    // The toggle survives...
+    expect(stamped?.enabled).toBe(false);
+    // ...and the stamp still landed, so the row does not stay
+    // permanently due once it is switched back on.
+    expect(stamped?.last_trigger_time?.toDate().toISOString()).toBe(NOW.toISOString());
+    expect(stamped?.next_trigger_time?.toDate().toISOString()).toBe('2026-09-06T12:00:00.000Z');
+  });
+
   it('seeds every stake independently', async () => {
     const { db } = requireEmulators();
     await db.doc('stakes/other-stake').set({

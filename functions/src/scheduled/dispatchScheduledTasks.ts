@@ -16,6 +16,18 @@
 // uses a stake-local date stamp) — but "must be idempotent" is the
 // contract, not "is probably not called twice".
 //
+// **The stamp is a transaction, the enqueue is not.** `tasks` is a
+// Firestore list, so no single element can be updated by field path and
+// the stamp necessarily rewrites the whole array. A manager toggling
+// `enabled` between the read at the top of a stake's pass and the write
+// at the bottom was therefore silently reverted. The commit re-reads the
+// doc inside `runTransaction` and re-applies only the two timestamp
+// fields this pass computed, onto the array as it stands now — so a
+// concurrent `enabled`, `schedule` or row removal survives. The enqueue
+// stays outside, before it, unconditional: making delivery depend on a
+// transaction that can abort would trade the at-least-once guarantee
+// above for a silently lost fire.
+//
 // **What no test here proves.** Cloud Scheduler actually firing this
 // function, real Cloud Tasks id deduplication, and the OIDC auth on the
 // queue's callback into `runScheduledTask` have no local equivalent: the
@@ -24,7 +36,7 @@
 
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions';
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { Timestamp, type DocumentReference, type Firestore } from 'firebase-admin/firestore';
 import { getFunctions } from 'firebase-admin/functions';
 import {
   advanceTriggerTime,
@@ -87,6 +99,28 @@ export type DispatchSummary = {
 };
 
 /**
+ * One task's computed stamp, held until the commit. Carries the row's
+ * position at read time AND its job name: the commit matches on the
+ * position first and falls back to the name, so a concurrent write that
+ * reordered or inserted rows still lands the stamp on the right row.
+ */
+type PendingStamp = {
+  index: number;
+  job: string;
+  last_trigger_time: Timestamp;
+  next_trigger_time: Timestamp;
+};
+
+/**
+ * Firestore's own default is 5. Three is plenty for a document whose
+ * only other writer is a manager clicking a toggle, and a commit that
+ * loses every attempt costs one hour's stamp — the row stays due and
+ * the next run re-fires it, which is the at-least-once behaviour the
+ * whole design already assumes.
+ */
+const COMMIT_MAX_ATTEMPTS = 3;
+
+/**
  * Admin SDK error code for an id that names an existing (or
  * recently-executed) task. This is the dedupe landing, not a failure:
  * some other invocation already enqueued this stake+job for this hour.
@@ -140,11 +174,11 @@ export async function dispatchDue(
       const stored = scheduleSnap.exists ? (scheduleSnap.data() as Partial<StakeSchedule>) : null;
       const tasks: ScheduledTask[] = Array.isArray(stored?.tasks) ? [...stored.tasks] : [];
 
-      const seeded = seedMissingTasks(tasks, registry, timezone, now);
-      summary.seeded += seeded;
+      const seededRows = seedMissingTasks(tasks, registry, timezone, now);
+      summary.seeded += seededRows.length;
 
-      let stamped = 0;
-      for (const task of tasks) {
+      const stamps: PendingStamp[] = [];
+      for (const [index, task] of tasks.entries()) {
         if (typeof task !== 'object' || task === null || typeof task.job !== 'string') {
           // The row itself, before either guard below can read a field
           // off it. `tasks` is rules-checked as a list of at most 50,
@@ -219,18 +253,23 @@ export async function dispatchDue(
         }
 
         // Stamp AFTER the enqueue — see the at-least-once note in the
-        // file header. Guarded per task so an unexpected throw here
-        // costs this row only: uncaught it would reach the per-stake
-        // handler, which skips the write entirely and would strand
-        // every OTHER task's stamp in the same stake, re-firing them
-        // all an hour later.
+        // file header. Computed here, applied at the commit below;
+        // nothing on the in-memory row is mutated, because the array
+        // this pass read is not the array that gets written. Guarded
+        // per task so an unexpected throw here costs this row only:
+        // uncaught it would reach the per-stake handler, which skips
+        // the write entirely and would strand every OTHER task's stamp
+        // in the same stake, re-firing them all an hour later.
         try {
           const previous = readTimestamp(task.next_trigger_time);
-          task.last_trigger_time = Timestamp.fromDate(now);
-          task.next_trigger_time = Timestamp.fromDate(
-            nextTriggerTime(task.schedule, timezone, previous, now),
-          );
-          stamped += 1;
+          stamps.push({
+            index,
+            job: task.job,
+            last_trigger_time: Timestamp.fromDate(now),
+            next_trigger_time: Timestamp.fromDate(
+              nextTriggerTime(task.schedule, timezone, previous, now),
+            ),
+          });
         } catch (err) {
           summary.failures += 1;
           logger.error('dispatchScheduledTasks: could not advance a stamped task', {
@@ -241,8 +280,8 @@ export async function dispatchDue(
         }
       }
 
-      if (seeded > 0 || stamped > 0) {
-        await scheduleRef.set({ tasks, lastActor: DISPATCHER_ACTOR }, { merge: true });
+      if (seededRows.length > 0 || stamps.length > 0) {
+        await commitScheduleChanges(db, scheduleRef, seededRows, stamps);
       }
     } catch (err) {
       summary.failures += 1;
@@ -262,8 +301,9 @@ export async function dispatchDue(
  * **Only ever adds.** An existing entry is never rewritten, never
  * re-enabled, and never re-scheduled — a manager's `enabled: false` is a
  * decision, and a seeder that "restores defaults" would silently undo it
- * on the next deploy. Mutates `tasks` in place; returns how many it
- * appended.
+ * on the next deploy. Mutates `tasks` in place so the selection pass
+ * below sees the new rows; returns them so the commit can re-check each
+ * against the document as it stands at commit time.
  *
  * This is why `createStake` seeds nothing: the dispatcher's first pass
  * over a new stake does it, which also covers stakes created before a
@@ -274,25 +314,97 @@ function seedMissingTasks(
   registry: JobRegistry,
   timezone: string | undefined,
   now: Date,
-): number {
-  let added = 0;
+): ScheduledTask[] {
+  const added: ScheduledTask[] = [];
   for (const [job, definition] of Object.entries(registry)) {
     // `t?.job` rather than `t.job`: the stored array is rules-checked as
     // a list, never element by element, so a null row can sit in it and
     // must not take the seeding pass down with it. It matches no job
     // name, which is the right answer.
     if (tasks.some((t) => t?.job === job)) continue;
-    tasks.push({
+    const row: ScheduledTask = {
       job,
       enabled: definition.defaultEnabled,
       schedule: definition.defaultSchedule,
       next_trigger_time: Timestamp.fromDate(
         advanceTriggerTime(definition.defaultSchedule, timezone, now),
       ),
-    });
-    added += 1;
+    };
+    tasks.push(row);
+    added.push(row);
   }
   return added;
+}
+
+/**
+ * Write this pass's seeds and stamps onto `stakeSchedules/{stakeId}`
+ * without clobbering a concurrent client write.
+ *
+ * The document is re-read inside the transaction and only the fields
+ * this pass actually decided are re-applied: two timestamps per stamped
+ * row, plus any row that is still missing. Everything else — `enabled`,
+ * `schedule`, a row a manager deleted, a row a manager added — is
+ * carried through from the current document untouched. A manager
+ * flipping `enabled` while the dispatcher is mid-pass therefore keeps
+ * their choice, which matters now that flipping it is a button rather
+ * than a Firestore console edit.
+ *
+ * Deliberately NOT `FieldValue.arrayUnion`: it matches elements by deep
+ * equality, so a stamped row would be appended as a second copy rather
+ * than replacing the original.
+ */
+async function commitScheduleChanges(
+  db: Firestore,
+  scheduleRef: DocumentReference,
+  seededRows: ScheduledTask[],
+  stamps: PendingStamp[],
+): Promise<void> {
+  await db.runTransaction(
+    async (tx) => {
+      // Reads before writes, as every Firestore transaction requires —
+      // and there is exactly one of each.
+      const snap = await tx.get(scheduleRef);
+      const stored = snap.exists ? (snap.data() as Partial<StakeSchedule>) : null;
+      const current: ScheduledTask[] = Array.isArray(stored?.tasks) ? [...stored.tasks] : [];
+
+      for (const stamp of stamps) {
+        const index = indexOfStampTarget(current, stamp);
+        // -1 means the row is gone — someone rewrote `tasks` without it
+        // between this pass's read and here. Its handler was already
+        // enqueued, but re-adding the row to carry a stamp would
+        // resurrect an entry that was deliberately removed.
+        if (index === -1) continue;
+        current[index] = {
+          ...current[index],
+          last_trigger_time: stamp.last_trigger_time,
+          next_trigger_time: stamp.next_trigger_time,
+        } as ScheduledTask;
+      }
+
+      // Re-checked against the CURRENT array, not the one seeding ran
+      // against: a concurrent writer (an overlapping dispatch, or a
+      // manager) may have added the row in the meantime, and seeding
+      // only ever adds what is missing.
+      for (const row of seededRows) {
+        if (current.some((t) => t?.job === row.job)) continue;
+        current.push(row);
+      }
+
+      tx.set(scheduleRef, { tasks: current, lastActor: DISPATCHER_ACTOR }, { merge: true });
+    },
+    { maxAttempts: COMMIT_MAX_ATTEMPTS },
+  );
+}
+
+/**
+ * Where a pending stamp's row sits in the array as it stands at commit
+ * time. Position first, since it is exact when nothing moved and it
+ * keeps two rows naming the same job distinct; job name as the
+ * fallback, for when a concurrent write shifted things.
+ */
+function indexOfStampTarget(current: ScheduledTask[], stamp: PendingStamp): number {
+  if (current[stamp.index]?.job === stamp.job) return stamp.index;
+  return current.findIndex((t) => t?.job === stamp.job);
 }
 
 /**
