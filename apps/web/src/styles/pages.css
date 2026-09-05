@@ -1234,6 +1234,30 @@
   gap: 8px;
 }
 
+/* Inline warning inside a config sub-section — a setting elsewhere on
+   the tab is overriding this one. Warning palette rather than hint grey
+   because the manager needs to act on it, not just read it. */
+.kd-config-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  color: var(--kd-warn-dark);
+  background: var(--kd-warn-tint);
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+
+/* Sync Reminder card. Prose-led rather than list-led — the surrounding
+   tab is form fields, which stretch, but a paragraph at panel width
+   runs past a comfortable measure — so it caps its own and spaces the
+   switch off the copy that explains it. */
+.kd-sync-reminder p {
+  max-width: 74ch;
+}
+.kd-sync-reminder > .kd-switch-label {
+  margin: 14px 0 6px;
+}
+
 /* Auto Callings table — sortable list with grip + arrows. */
 .kd-callings-table-wrap {
   width: 100%;
