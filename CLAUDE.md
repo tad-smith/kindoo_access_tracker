@@ -22,15 +22,27 @@ A door-access tracker that manages Kindoo seat assignments across the units — 
 
 ## Start each session by reading
 
-1. `docs/spec.md` — live source of truth for runtime behaviour.
-2. `docs/firebase-schema.md` — data model + rules + indexes.
-3. The latest `docs/changelog/phase-N-*.md` — what shipped most recently.
-4. `docs/firebase-migration.md` — phase plan (Phase A complete; Phase 12 complete).
-5. `docs/TASKS.md` — cross-workspace work-in-flight.
-6. `docs/BUGS.md` — known defects.
-7. `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail.
-8. `docs/architecture.md` — numbered design decisions (D1, D2, …); cite when overriding.
-9. The `CLAUDE.md` for the workspace you're working in.
+**Read in full — these are small, and they are the live state:**
+
+1. `docs/TASKS.md` — work in flight. Closed entries live in `docs/TASKS-archive.md`; go there only when researching how something was decided.
+2. `docs/BUGS.md` — open defects. Closed ones in `docs/BUGS-archive.md`, same rule.
+3. `docs/open-questions.md` — active ambiguities and the `[RESOLVED]` trail.
+4. The latest `docs/changelog/*.md` — what shipped most recently.
+5. The `CLAUDE.md` for the workspace you're working in.
+
+**Index-first for the big three.** `spec.md` (360 KB), `architecture.md` (310 KB) and `firebase-schema.md` (160 KB) are reference works, not briefing documents — ~200k tokens between them, more than a context window. Take the map, then read only the sections in scope:
+
+```bash
+grep -nE '^#{1,3} ' docs/spec.md              # 52 sections, 1.7 KB
+grep -nE '^#{1,3} ' docs/architecture.md      # 70 sections, 2.6 KB
+grep -nE '^#{1,3} ' docs/firebase-schema.md   # 36 sections, 1.7 KB
+sed -n 'START,ENDp' docs/spec.md              # then read only the slice
+grep -n '^| D38 |' docs/architecture.md       # decisions are table rows, not headings
+```
+
+This governs *how* you read them, not whether they bind. `docs/spec.md` is still the authority on runtime behaviour and `architecture.md` still governs design decisions (D1, D2, …; cite when overriding). If a change might touch a section you have not read, read it then — the index exists so that choice is deliberate rather than blind.
+
+`docs/firebase-migration.md` is history (Phase A and Phase 12 complete). Consult it when researching a past phase decision; it is not session-start reading.
 
 ## Non-negotiable conventions
 

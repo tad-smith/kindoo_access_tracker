@@ -46,7 +46,9 @@ You do NOT:
 
 ## TASKS.md and BUGS.md
 
-Other agents append freely. You own the structure: format consistency, numbering, grouping, archival of resolved entries.
+Other agents append freely. You own the structure: format consistency, numbering, grouping, and archival.
+
+**Closing an entry means moving it.** A `done` / `closed` / `obsolete` task moves to `TASKS-archive.md`, a fixed bug to `BUGS-archive.md` — heading, status line and body verbatim, numbers never reused. The live files carry only live work so every session and every agent can read them whole; the archives are research material, not session-start reading.
 
 **TASKS.md entry format:**
 
@@ -88,7 +90,7 @@ Repro / observed vs expected / context.
    - Why (trade-offs and alternatives considered)
    - What didn't change that you'd expect to (non-changes are load-bearing)
    - Known issues / deferred work → cross-reference TASKS.md / BUGS.md entries
-8. Sweep TASKS.md / BUGS.md: close resolved items, archive stale ones.
+8. Sweep TASKS.md / BUGS.md: close resolved items and move them into `TASKS-archive.md` / `BUGS-archive.md`.
 
 ## Style
 

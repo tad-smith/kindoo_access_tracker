@@ -1,0 +1,603 @@
+# Bugs — archive
+
+Closed and obsolete entries moved out of [`BUGS.md`](BUGS.md) so the live file stays small enough for every session and every agent to read in full. Nothing here is an active defect.
+
+Entries keep their original heading, status line, and body verbatim. Numbers are never reused, so `git grep B-NN` finds an entry whether it lives here or in `BUGS.md`.
+
+Format is unchanged — see the header of `BUGS.md`.
+
+---
+
+## [B-28] Edit Seat opens with the Calling field focused and its text selected
+Status: closed (fixed) `[FIXED 2026-08-10]`
+Owner: @web-engineer
+Severity: low (cosmetic on open, but one keystroke from silently replacing the calling)
+Phase: cross-cutting
+Branch / PR: `fix/b28-edit-seat-dialog-no-autofocus`
+
+**Follow-up to B-27.** PR #280 stopped the suggestion popover from opening on focus; the underlying autofocus that triggered it was left in place. Operator: "fixes the problem, but not cleanly." The dialog still opened with the Calling field ringed and "Ward Clerk" highlighted.
+
+**Symptom (operator-reported).** Edit Seat opens with the Calling text field active and its value selected. Nothing should be focused or selected on open.
+
+**Cause (verified, not assumed).** Radix's `FocusScope` dispatches `focusScope.autoFocusOnMount` — which `Dialog.Content` exposes as `onOpenAutoFocus` — and when it is not default-prevented runs `focusFirst(tabbableCandidates, { select: true })`. The `select: true` is the load-bearing half: `focus()` calls `element.select()` on any focused `HTMLInputElement`. Confirmed in jsdom against the real dialog before changing anything — on mount `document.activeElement` was the Calling input with `selectionStart..selectionEnd` of `0..10`, exactly `"Ward Clerk"`. Every field in this dialog is pre-filled from the seat, so the default lands on a populated input every time.
+
+**Fix.** A narrow opt-in `autoFocusFirstField` prop on the shared `Dialog` (defaults to `true`; only `EditSeatDialog` passes `false`). It prevents the mount autofocus **and redirects focus to the dialog content node**, which is the `role="dialog"` element and already carries `tabIndex={-1}` from Radix's own `FocusScope` — no `tabIndex` of ours was needed. The redirect is the whole point: a bare `e.preventDefault()` leaves focus on the trigger behind the overlay, which breaks the focus trap (`FocusScope`'s last-in-scope memo stays `null`, so a focusin from outside refocuses nothing and focus escapes to the page behind), leaves the dialog unannounced to screen readers, and parks focus on a node `hideOthers` has just made `aria-hidden`. Pinned by test — sabotaging the redirect to a bare `preventDefault` fails four assertions.
+
+**Escape is not one of the behaviours the redirect preserves**, and an earlier draft of this entry wrongly said it was. `DismissableLayer` binds Escape on `ownerDocument`, so it fires wherever focus sits — the Escape-from-mount tests pass with or without the fix. They are behaviour guarantees for this dialog, not regression pins.
+
+**Scope.** Only Edit Seat opts out. Other pre-filled edit dialogs (Configuration's Edit ward / Edit building / Edit organization) still open with their first field focused and selected; select-on-open is a defensible edit-in-place idiom and the operator reported only Edit Seat, so nothing was ruled either way for them.
+
+**Why the tests were green.** Same class of gap as B-27: no test asserted the untouched mount render. `Dialog.test.tsx`'s focus test asserted only "focus is somewhere inside the dialog", which is true of the buggy state, and `EditSeatDialog.test.tsx` began every case with an interaction. Coverage added at both layers for no-field-focused, no-text-selected, Tab-from-mount staying inside, the trap pulling focus back from outside, and Escape-from-mount — plus a test pinning the unchanged **default** so a future flip of `autoFocusFirstField`'s default is caught here rather than in whichever dialog notices.
+
+---
+
+## [B-27] Edit Seat opens with the calling suggestions already covering the buildings checklist
+Status: closed (fixed in PR #280) `[FIXED 2026-08-10]`
+Owner: @web-engineer
+Severity: medium (the form's main control is occluded on every open; no data loss)
+Phase: cross-cutting
+Branch / PR: `fix/b27-calling-combobox-focus-open`
+
+**Symptom (operator-reported).** Opening Edit Seat on a manual seat drops the full calling list over the buildings checklist before anything is clicked or typed. Same component, same defect, in `NewRequestForm` — there it reads as "the list opens when I click the field", which is merely aggressive rather than obstructive, because nothing sits under it.
+
+**Cause.** `CallingCombobox`'s `onFocus` called `setOpen(true)` unconditionally. `EditSeatDialog` is a Radix Dialog and `reason` is its first focusable field, so the Dialog's mount autofocus *is* the interaction that opened the popover. Nothing about the user's intent was consulted.
+
+The component's own header comment claimed the opposite — "the popover only opens when there is something to show" — and had since it was written. The comment described the design; the handler never implemented it.
+
+**Why the tests were green.** `CallingCombobox.test.tsx` existed only to pin the B-18 blur-timer lifecycle. Both of its tests *began* with `fireEvent.focus`, so both asserted against an already-open popover: the buggy state was the fixture. There was no test of the initial, no-interaction render at all, and the E2E (`calling-typeahead-edit-seat.spec.ts`) opened the list through a `fill`, which would have opened it either way. Every layer exercised the field only after the thing that broke it had already happened.
+
+**Fix.** `onFocus={cancelBlurTimer}` — the timer release stays (a mouse pick blurs the input and `handleSelect` refocuses it, and the pending 150ms close would otherwise land on a popover the user is reopening), the `setOpen(true)` goes. Typing (`onChange`) and ArrowDown / ArrowUp still open it; neither can fire on mount. Coverage added for the no-interaction render, the pre-filled-value render, typing, both arrow keys, and a mouse pick — the first two fail against the old handler. The E2E gains a mount assertion that clicks a checkbox *through* where the popover used to paint (`toBeVisible` is not an occlusion test; a click hit-tests).
+
+**A second, latent defect in the same handler.** `handleSelect` sets `open=false` then refocuses the input, which under the old code was one `setOpen(true)` from reopening the list on top of the form after every mouse pick. It never surfaced: the input is OUTSIDE the popover content, so re-focusing it reads to Radix as a focus-outside and its dismissal won the race. Instrumented and confirmed in jsdom rather than assumed. Removing the focus-open makes it structurally unreachable; the outcome is pinned by test regardless, since it rested on a Radix ordering detail nothing states.
+
+---
+
+## [B-25] Sync required EVERY door of a building's rule, so partial door grants read as nothing
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @extension-engineer
+Severity: high (silently mislabels seat provenance, and actively proposes demoting working `auto` seats)
+Phase: cross-cutting
+Branch / PR: `fix/b-25-partial-church-coverage`
+
+**Symptom (operator-reported, production).** In one ward the Church Access Automation granted a group of members access to two of a building's three doors and missed the third. A Kindoo Manager granted that third door directly — a permanent per-user grant, not an AccessRule. Sync then classified those members' seats as `manual` instead of `auto`.
+
+**The governing rule, operator-stated:** *a member is in a building if they can open **any** of its doors — they do not need all of them.* A door you can open is a way in; there is no partial entry.
+
+**Cause.** Both Kindoo-side building sets projected doors through the buildings' access rules with `deriveEffectiveRuleIds`, a **strict subset**: a building was claimed only when *every* door in its rule was present. That is not what building access means, and it is not what "≥1 church-direct grant" means either.
+
+For these members — `direct = {D1, D2}`, `all = {D1, D2, D3}` against a rule of `{D1, D2, D3}`:
+
+- `directGrantBuildings = []` — the identical value produced by a member the church grants **nothing at all**. New seats minted `manual`, and members who already held `auto` seats hit the demote branch, so Sync raised drift rows proposing `auto → manual` on correctly-classified seats.
+- `derivedBuildings` happened to be right *here* (the manager's hand-granted door completed the rule), but for any member holding only **some** of a building's doors it omitted a building they can walk into — and `buildings-mismatch` sources its Update SBA from `derivedBuildings` (`fix.ts`), so the offered fix **removed that building from their seat**. The reachable shape is a **multi-building** seat where one building keeps full coverage and another is partly held: the derived set is non-empty, so `SyncPanel`'s `autoLockedSba` guard (which disables Update SBA only when `derivedBuildings` is `null` or `[]`) does not fire, and the partly-held building is written away. A single-building seat degraded to `[]` and was blocked by that guard — so the bug surfaced as an unfixable row there, not a destructive write. No test covered any of it: the suite had no case of a member holding a strict subset of a building's doors on the all-doors set.
+
+The first pass at this bug fixed only the provenance side and rationalised the split as "access needs every door, provenance needs one" — wrong on the access half, and it left the fix action pointed at a building the member holds. Corrected before merge on the operator's ruling.
+
+**Provenance.** PR #189 relaxed the OUTER predicate (from "every seat building is church-granted" to "non-empty") and left the INNER strict subset in place, so full-coverage semantics survived one level down wearing the relaxed rule's name. `sync-design.md` recorded the two as equivalent — "non-empty (≥1 church-direct door)" — which they only are when the church happens to cover a whole rule.
+
+**Why the tests were green.** Both layers were covered and both were individually correct. `buildingsFromDoors.test.ts` asserted the strict behaviour *on purpose* ("partial church coverage does NOT claim the rule … (strict subset)"), written when the outer predicate still wanted full coverage and never revisited when PR #189 changed what the caller meant. Every detector test passes both building fields in as literals, so none could observe the derivation. And nothing anywhere exercised a member holding a strict subset of a building's doors on the all-doors set — the access half had no coverage at all. The defect lived only in the composition.
+
+**Accepted consequence (operator ruling).** Any-overlap on the all-doors set makes `derivedBuildings` a superset, so a member holding one door of building X now gets X *added* to their seat by `buildings-mismatch`, and the next provision writes X's whole rule — granting doors the church didn't. Ruled intended: if one door puts them in the building, the seat records it and SBA provisions it. Recorded in `spec.md` §8 and covered by a test asserting the add direction is actionable (non-empty `derivedBuildings`, so `autoLockedSba` doesn't block it).
+
+**Fix.** `deriveOverlappingRuleIds` — claim a rule on **one** shared door — and **both** sets derive through it, over their respective door subsets (all doors → `derivedBuildings`, church-granted → `directGrantBuildings`). `deriveEffectiveRuleIds` survives for `provision.ts` alone, where the question genuinely is "would writing this rule add a door". A grant on a door in no SBA-mapped rule counts for nothing on either side (operator's ruling). Regression coverage runs the real derivation into `detect`, at the seam, in four directions: promote fires, an existing `auto` seat is left alone, a member holding one door of a building gets no row offering to strip it, and a member holding one door of a building their seat omits gets an actionable row offering to add it.
+
+---
+
+## [B-26] `scope-mismatch` detects on the site-filtered segment but writes the unfiltered one
+Status: closed (fixed in PR #278) `[FIXED 2026-08-10]`
+Owner: @extension-engineer
+Severity: medium (writes the wrong `scope` — the field utilization counts — plus `kindoo_site_id` / `organization_id` side effects; needs a multi-site Kindoo Description)
+Phase: cross-cutting
+Branch / PR: found reviewing PR #275
+
+The detector emits `scope-mismatch` off `pickSegmentForSite` (the site-filtered pick) but `fix.ts` builds the payload's `newScope` from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment`. On a multi-site Description those resolve to different segments — the unfiltered tiebreaker prefers an app-access segment and then `'stake'`.
+
+So on a foreign run the row can read "Kindoo = Pine Ward" while the click writes `scope: 'stake'` to the seat's primary, along with `applyScopeMismatch`'s `kindoo_site_id` re-stamp and `organization_id` delete.
+
+This is the identical defect [[B-23]] closed for `kindoo-only` by adding `KindooBlock.createScope`; the same fix applies — carry the site-filtered scope and send it. Pre-existing and scoped out of #275, whose own test (`createScope is the site-filtered segment even when primaryScope is not`) demonstrates the divergence with `primaryScope: 'stake'` against a filtered pick of `'FT'`.
+
+## [B-24] `sba-only` removal promotes the wrong grant when the row was surfaced through a duplicate
+Status: closed (fixed in PR #275) `[FIXED 2026-08-10]`
+Owner: @backend-engineer
+Severity: high (destroys a valid home-site grant and reaps its app access; the trigger is a routine calling change)
+Phase: cross-cutting
+Branch / PR: found reviewing PR #275
+
+`SbaOnlyRemovePayload` is `{ memberEmail }` — no scope, no site. So `applySbaOnlyRemove` (`functions/src/callable/syncApplyFix.ts`) cannot tell **which** grant the drift row was surfaced from, and its multi-grant branch unconditionally promotes `duplicate_grants[0]` to primary, drops the current primary, and reaps `importer_callings[removedScope]`.
+
+**Symptom.** A member with `primary = (stake, home)` and `duplicate_grants[0] = (ward, foreign)` loses their ward calling. Kindoo drops the grant on the foreign site; the seat still projects onto that site through the duplicate, so the foreign Sync run emits `sba-only` and offers **Remove From SBA**. Clicking it **promotes the revoked ward grant to primary, destroys the home stake grant, and reaps the member's stake-scope app access** — the opposite of the intended removal on every axis.
+
+**Why the sibling path gets it right.** `removeSeatOnRequestComplete` has three plan kinds — `delete` / `promote` / `drop_duplicate` — because a remove *request* names the grant it targets. The Sync row carries no grant identity, so `applySbaOnlyRemove` has no `drop_duplicate` branch to take. The detector does know: the `sba-only` row's `sba` block is the **projection** (`projectSeatForSite`), so `sba.scope` already names the surfaced grant; nothing carries it to the callable.
+
+**Pre-existing, but B-23 makes it common.** The shape was reachable before via `planAddMerge` (a foreign-ward add landing on a member who already had a seat) and was rare. B-23's merge makes `stake primary + foreign ward duplicate` the **designed steady state** for a whole class of members — every stake-calling holder in a foreign-site unit — and the ward calling ending is a routine event, not an edge case.
+
+**Fix shape.** Carry the surfaced grant's `(scope, kindoo_site_id)` on `SbaOnlyRemovePayload` (the detector has both), and give `applySbaOnlyRemove` a `drop_duplicate` branch keyed on that discriminator: drop just the matching `duplicate_grants[]` entry and rebuild `duplicate_scopes`, leaving the primary alone; keep the existing delete / promote branches for a row surfaced from the primary. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses, and is the same threading B-16's fix needs — the two should probably land together.
+
+**B-23's withholding turned this into a no-removal-path bug (2026-08-10).** PR #275 withholds `sba-only` on duplicate-surfaced rows precisely because this entry makes the button destructive. The side effect is that a merged **auto** parallel-site grant now has no removal path *anywhere*: Sync withholds it, all three web Remove affordances gate on `grant.type !== 'auto'`, and no scheduled reaper exists. So the normal end of life for a merged grant — the calling ends, Kindoo revokes — leaves a permanent phantom duplicate that keeps that ward's `duplicate_scopes` read access, keeps its utilization inflated, and re-emits an unfixable drift row. Fixing this entry is what lifts it.
+
+**Fixed in PR #275** rather than deferred, because B-23's withholding turned it into a no-removal-path bug: with `sba-only` suppressed on these rows and every web Remove affordance gating on `grant.type !== 'auto'`, a merged auto grant could not be deleted at all. `SbaOnlyRemovePayload` now carries the surfaced grant's `scope` (+ `kindooSiteId` as a tiebreaker), taken from the row's `sba` block — which IS the projection, so it names the surfaced grant rather than the primary. `applySbaOnlyRemove` drops that `duplicate_grants[]` entry and rebuilds `duplicate_scopes`, leaving the primary untouched, and reaps no access (a duplicate-only scope never had an `importer_callings` entry — the merge writes none). A payload with no `scope` keeps the historical delete-or-promote, so an extension predating the field behaves exactly as before; both paths have integration tests. `sba-only` is correspondingly **removed** from the duplicate-surfaced withhold list.
+
+**Still open in the same class:** [[B-16]] (`callings-mismatch` / `type-mismatch` / `buildings-mismatch` / `kindoo-unparseable` all still write the primary — their fixes stay withheld on duplicate-surfaced rows) and [[B-26]]. The threading added here is the pattern they need.
+
+## [B-23] A `kindoo-only` fix for a member who already holds a seat on another Kindoo site fails instead of merging
+Status: closed (fixed in PR #275) `[FIXED 2026-08-09]`
+Owner: @backend-engineer
+Severity: high (the drift row is unfixable — Sync re-reports it on every run and the operator has no in-product remedy)
+Phase: cross-cutting
+Branch / PR: `fix/b-23-kindoo-only-merge-existing-seat`
+
+**Symptom.** On a **foreign**-site Sync run, a member whose only SBA grant lives on the **home** site surfaces as `kindoo-only` drift. Clicking **Create SBA seat** fails with the inline error `seat already exists for that member`. The row cannot be fixed, and it re-emits on every subsequent Sync run.
+
+**Reported repro (production).** CS North configures High Plains's Kindoo site as a foreign site to reach the Black Forest building. Kettle Creek is a CS North ward that meets in Black Forest, so its scope lives on that foreign site. Roger is a Kettle Creek member with a **stake** calling, so his SBA seat is `scope: 'stake'` — home site, Lexington building. Church Access Automation then grants him Black Forest access in the High Plains Kindoo site for a new ward calling (Elders Quorum Second Counselor). Syncing the foreign site emits `kindoo-only` for him; the fix fails.
+
+**Mechanism.** Two correct behaviours meet at a path that only knows how to create.
+
+1. `projectSeatForSite` (`extension/src/content/kindoo/sync/detector.ts`) projects each seat onto the active site: a seat contributes only when its primary — or one of its `duplicate_grants[]` — carries that site. Roger's seat is stake-scope ⇒ home, so on the foreign run it projects to `null`, he is absent from `seatsByEmail`, and the `!seat && kuser` branch emits `kindoo-only`. That detection is **right**: the member genuinely has no grant on this site.
+2. `applyKindooOnly` (`functions/src/callable/syncApplyFix.ts:376`) opens with `if (seatSnap.exists) return { success: false, error: 'seat already exists for that member' }`. Seats are keyed by canonical email (one per member per stake, per Q3), so the *doc* exists even though the *grant* doesn't. The guard reads doc-existence as grant-existence and refuses.
+
+The data model already has the right home for this grant: `DuplicateGrant` with a differing `kindoo_site_id` is defined (`packages/shared/src/types/seat.ts`) as a **parallel-site grant** — "a legitimate independent grant on another Kindoo site" (T-42) — and `markRequestComplete`'s `planAddMerge` already appends exactly that shape when an add lands on a member who already has a seat. `applyKindooOnly` is the one grant-creating path that never learned to merge.
+
+**Scope of the failure.** Any member holding grants on two Kindoo sites where SBA learned about them in the order (other site first, this site second). Guaranteed for a stake-calling holder in a foreign-site unit — the stake grant is home-only by policy (spec §15), so it can never satisfy a foreign-site row. The seat cap is not implicated: `scope` (primary) is what counts toward utilization, and a duplicate grant is informational, so merging does not consume a second licence.
+
+**Two rows also lie.** The `kindoo-only` reason reads "Kindoo has a user for this email, but SBA has no seat for them," and the button reads **Create SBA seat**. Both are false for this member — SBA has a seat, on another site.
+
+**Fix (this branch).**
+- `applyKindooOnly` merges when the seat doc exists rather than soft-failing. Slot resolution mirrors `planAddMerge`: match `(scope, type)` against the primary, then `duplicate_grants[]`; on a hit union `building_names` and re-stamp the slot's `kindoo_site_id` to the site the row was surfaced from; on a miss append a `DuplicateGrant` carrying the incoming scope / type / callings / reason / dates / buildings / site. The primary grant's identity is never modified. Auto grants reconcile `importer_callings[scope]` through the same `writeAccessForAutoScope` the create path uses, which is already per-scope merge-safe.
+- The site re-stamp on a slot hit is what makes the fix converge. The row exists precisely because no grant on the seat targeted the active site, so a merge that leaves the stale site in place would clear nothing and the operator would re-click forever.
+- Callings are deliberately **not** rewritten on a slot hit: `callings-mismatch` is the code that owns that axis, and it fires on the next run once the grant is visible on the site.
+- Detector + panel: when the member has a seat that projected to no grant on the active site, the row says so and the button reads **Add SBA grant**.
+
+**A second, pre-existing defect the merge would have amplified — found in review.** The `kindoo-only` payload's `scope` came from `KindooBlock.primaryScope`, which `buildKindooBlock` computes with the **unfiltered** `pickPrimarySegment` — while `intendedCallings` / `intendedFreeText` on the same payload come from the **site-filtered** `pickSegmentForSite`. On a multi-site Description the two disagree: the unfiltered tiebreaker prefers an app-access segment and then `'stake'`, so a foreign-site row arrived carrying the foreign ward's callings under a home segment's scope. Creating a seat that way was already wrong; merging made it worse, because a `scope: 'stake'` payload matches the stake primary's slot, folds the foreign building into the home grant, re-stamps nothing, and returns `success: true` — turning a loud failure into a silent wrong write that still never converges. The home-ward variant appends a wrong-scope duplicate, which also widens that ward's bishopric read access (`duplicate_scopes` is a rules predicate) and its utilization bar. Fixed upstream of the callable: `KindooBlock.createScope` carries the site-filtered segment's scope — the one `intendedShape` was built from — and the dispatcher uses it for `kindoo-only`. `primaryScope` itself is unchanged and is now documented as display-only — **not** because `scope-mismatch` wants the unfiltered pick (an earlier revision of this entry said so, wrongly): `scope-mismatch` *detects* on the site-filtered pick and *sends* the unfiltered one, the same detect-one/write-another split, still open. Tracked as [[B-26]].
+
+**Not fixed here.** Two adjacent defects, both still open, both about a fix path that can't tell WHICH grant a row was surfaced from:
+
+- **B-16** — per-row fixes write the primary's fields even when the row came through a projected duplicate. This entry's own write is not an instance: it *adds* a grant rather than editing one, and targets by `(scope, type)` rather than assuming the primary. But it **does widen B-16's blast radius**, for the same reason it widens B-24 — the trigger for both is the population, not the write. Making `stake primary + foreign ward duplicate` the designed steady state multiplies the members every primary-assuming handler can be pointed at. B-16 was re-scored to **high** and `applyCallingsMismatch` added to its list on the strength of that; the worst case there is a routine ward-calling change silently revoking a member's stake app access. An earlier revision of this entry claimed B-23 "does not widen B-16" — that was wrong, and inconsistent with what this same section says about B-24.
+- **B-24** — `sba-only` removal promotes `duplicate_grants[0]` unconditionally. This entry **does** make B-24 materially more likely: `stake primary + foreign ward duplicate` becomes the designed steady state for every stake-calling holder in a foreign-site unit, and that ward calling ending is routine. Read B-24's interim guidance before actioning a foreign-site `sba-only` row.
+
+**Utilization is a counting rule, not a claim the grant is free.** A merged parallel-site grant consumes no second licence *in the home pool* because `computeOverCaps` counts the primary `scope` only — but the member is a real licensed Kindoo user on the foreign site. `overCaps.ts` folds in parallel-site **stake** duplicates and has no equivalent for the parallel-site **ward** duplicate this fix appends, so that unit's `over_cap_warning` never fires on them. Pre-existing, and an accepted gap: Kindoo is authoritative for what it provisioned, and Sync reconciling to it must not be gated on an SBA cap.
+
+## [B-22] Every Popover inside a modal rendered behind it and could not be used
+Status: closed (fixed) `[FIXED 2026-08-09]`
+Owner: @web-engineer
+Severity: high (every popover inside a modal was unreachable — the calling typeahead in New Request and Edit Seat, and the Create Stake timezone picker)
+Phase: cross-cutting
+Branch / PR: found by T-100's Playwright spec; fixed in the same PR
+
+**Every Popover rendered inside a modal was invisible and unclickable.** `CallingCombobox` in `EditSeatDialog` and in `NewRequestForm` inside `NewRequestDialog`; and `TimezoneCombobox` in `CreateStakeForm`, which is also a Dialog. A manager saw a focused, empty-looking box and no suggestions, so the field silently degraded to free text. Of roughly fifty rows, exactly one was visible, poking out below the dialog's bottom edge.
+
+**Cause.** `PopoverContent` carried shadcn's default `z-50` while `.kd-modal-positioner` is `z-index: 1301` with an opaque `.kd-modal-inner`. Radix mirrors the content's computed z-index onto its portal wrapper, so the popper sat at 50, underneath the dialog panel that had just opened it.
+
+**Evidence.** `document.elementFromPoint` at the centre of the "Branch President" row returned a `<label>` from inside the dialog; Playwright's click retried for 30s with "subtree intercepts pointer events"; the popper wrapper's computed z-index read `50`.
+
+**Not new, and not branch-specific.** The ward list was equally unreachable. It dates to whenever `CallingCombobox` was first placed inside a Dialog — T-96 merely produced the first test that opens the list in a real browser. `GrantStakeAccessDialog` was never affected: its reason is free text and it imports no combobox.
+
+**Why nothing caught it.** `toBeVisible` is DOM visibility, not occlusion, so three assertions passed green against a list no user could reach. Only a real click hit-tests. If that selection assertion is ever softened to a keyboard selection to make a flake go away, this bug becomes invisible again — that is the one thing not to do to this spec.
+
+**Fix.** `apps/web/src/components/ui/Popover.css` at `z-index: 1302`, colocated with `Dialog.css` / `Toast.css` and commented with the whole scale (30 / 40 / 1000 toast / 1300 overlay / 1301 positioner / 1302 popover). One rule fixes every host. `StakeSwitcher` is the only genuinely page-level consumer; raising it over the toast host (1000) is harmless, since it dismisses on outside interaction and the toast host is bottom-left while the trigger is not.
+
+**The Create Stake timezone picker was the worse case, and we nearly missed it.** `TimezoneCombobox` is selection-only — there is no free-text fallback — so with the list unclickable a superadmin could not move a new stake off `DEFAULT_TIMEZONE` at all. The calling field at least degraded to typing.
+
+That miss is the lesson. The first pass recorded `TimezoneCombobox` as unaffected because it appears on Configuration, an ordinary page — without checking its *other* host. Reasoning about a consumer's context instead of reading it is precisely what let the original bug survive.
+
+**Generalise:** any portal-based primitive dropped into a Dialog inherits the same trap, and the audit question is "which hosts render this?", never "where do I think this appears?". A component test cannot see it; only a browser can.
+
+## [B-21] A stake's only unit in a place named "…Branch" is silently stored as a branch
+Status: obsolete (2026-08-09 — the scenario does not occur in practice, and `WARD_NAME_BRANCH_WARNING` covers it at entry)
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found reviewing PR #268
+
+`unitType` reads a trailing `" Branch"` as the discriminator (D31(a)), so a **ward** in a place whose own name ends in "Branch" — Olive Branch, Long Branch — must be stored as `"Olive Branch Ward"`. If the operator types `Olive Branch`, the unit is stored as a branch.
+
+**Why the collision guard does not catch it.** `findUnitNameCollision` compares the candidate against the stake's *existing* unit names, so it fires only when the stake holds **both** `Olive Branch` and `Olive Branch Ward`. The likely shape is a single unit: the stake's only unit in that place is the ward, the operator types `Olive Branch`, nothing else claims the key `olive branch`, the guard returns `null`, and the save goes through. B-20's fix covers the two-unit case and nothing more; it is not a mitigation for this one.
+
+**Consequence, write side.** `resolveScopeName` (`extension/src/content/kindoo/provision.ts:151`) writes a branch's scope name verbatim, so the Description reads `Olive Branch` where Church Access Automation writes `Olive Branch Ward`. The provisioner compares with a strict `!==` (`:764`), so every Sync pass sees a difference and rewrites the church-provisioned Description — indefinitely. The unit also labels as `Branch:` in notification emails (`scopeRowLabel`), and once branch-specific callings land (T-96) it would resolve against the wrong calling table.
+
+**Consequence, read side.** The same misclassification breaks resolution in the other direction, so the symptom is a pair, not just the rewrite. `kindooScopeNameVariants('Olive Branch')` returns the single verbatim key `['olive branch']` — the branch path deliberately registers no suffixed form (D31(c)) — so a church-provisioned description reading `Olive Branch Ward (Bishop)` normalises to `olive branch ward`, misses `wardLookup`, and yields an unresolved segment. `parseDescription` computes `unparseable` as `segments.every((s) => !s.resolvedScope)`, so a single-segment description makes the whole user unparseable. Sync cannot resolve the users it did not itself write.
+
+That surfaces as a **`drift` row, not a manual-review row**. Because `segments.length > 0`, the detector takes the present-but-unparseable path (`extension/src/content/kindoo/sync/detector.ts:848`) and emits `kindoo-unparseable` at severity `drift`, whose stated remedy is to "treat as a stake-scope (church-wide) calling and Update SBA". Applying it moves the unit's members to **stake scope** — a wrong-scope write, not merely a failure to resolve. Two gates suppress the row before that: a foreign active site (`isHomeSite`), and a seat already aligned to the stake-scope target (`unparseableAligned`).
+
+**Blast radius is capped, but not by a confirmation step.** There is no bulk-apply path: Sync's fix actions are per-row only, locked in at Phase 2 (`extension/docs/sync-design.md` — "Per-row only — no bulk fix"), with bulk fix explicitly deferred as out of scope. So the exposure is one deliberate click per affected member, not one sweep that restakes a whole unit. What does *not* cap it is any friction on the click itself: the model is trust-fire, and the panel's own header says so (`extension/src/panel/SyncPanel.tsx:323`) — "Fix buttons apply changes one row at a time — no confirmation, no undo." Both the confirmation dialog and the undo affordance are deliberate omissions, not gaps.
+
+**Applying the row also hides it.** Once a seat sits at stake scope with the raw description recorded, `unparseableAligned` returns true and the `kindoo-unparseable` row is suppressed on every later run. So the mis-scoping stops being reported the moment it is applied — the bug's own symptom is what disappears, not the bug.
+
+**Recovery is a single action.** Rename the unit to `Olive Branch Ward` in Configuration → Wards. Both halves derive from the same misclassification, so the rename closes both at once: `unitType` stops matching `/\sbranch$/i`, so `kindooScopeName` returns `Olive Branch Ward` — exactly what Church Access Automation writes — and `kindooScopeNameVariants` widens from `['olive branch']` to `['olive branch', 'olive branch ward']`, so church-written descriptions resolve. The provisioner does make one final corrective write, since its own earlier passes left `Olive Branch (…)` stored in Kindoo and `descDiffers` is true once more against the new target; it converges after that instead of looping. The rename keeps the original `ward_code` (the doc ID is never re-derived, §5.3), so no seat / request / grant reference is orphaned.
+
+**Seat repair is cleanup afterward, not a second remediation — and the order is load-bearing.** Once descriptions resolve, any seats already moved to stake scope resurface as ordinary `scope-mismatch` drift rows and repair normally. Doing that repair *before* the rename does not hold: the description still fails to resolve, `unparseableAligned` goes false again, and the same `kindoo-unparseable` row returns proposing stake scope a second time.
+
+**Obsolete — this should not have been filed.** Operator ruling, 2026-08-09: the situation it describes will not occur in practice. A stake would need a ward in a place whose own name ends in "Branch", entered without the `" Ward"` suffix, and the operator confirmed production holds no such unit before branch support shipped. The analysis above is left intact because the mechanism is real and the recovery steps would apply if it ever did happen — but it was written as though the scenario were likely, and it is not.
+
+**`WARD_NAME_BRANCH_WARNING` is sufficient.** A red label under the ward-name field fires live, off the same `unitType()` the classifier uses, whenever a typed name would be read as a branch — so an operator naming a ward `Olive Branch` is told so before saving. It is advisory rather than blocking, which is the right shape: a genuine branch must still be nameable. That label, not the collision guard, is what closes this. An earlier draft of the `WARD_NAME_HINT` docblock claimed `unitNameCollision.ts` covered the case — it does not, since that guard needs two colliding units and the shape here is one; the claim was removed in the same PR.
+
+## [B-20] Ward uniqueness compares raw `ward_name`, so `Maple` and `Maple Ward` can both exist
+Status: closed (fixed) `[FIXED 2026-08-08]`
+Owner: @web-engineer
+Severity: low
+Phase: cross-cutting
+Branch / PR: found while documenting PR #268; fixed in the same PR
+
+`architecture.md` D31 makes `"Maple"` and `"Maple Ward"` the same unit — one Kindoo scope name, one pair of lookup keys. The uniqueness guard does not know that. `duplicateWardNameBlocker` (`apps/web/src/features/manager/configuration/hooks.ts:174`) compares `name.trim().toLowerCase()` against each existing `ward.ward_name.trim().toLowerCase()`, so the two forms read as different names and both saves are allowed. They slug to different doc IDs (`maple`, `maple-ward`), so the create-path transaction backstop doesn't catch it either.
+
+**Consequence if it happens.** Both wards register the same two keys in `parseDescription`'s `wardLookup` (`extension/src/content/kindoo/sync/parser.ts`), so the later one in iteration order wins **both** and every member of the other silently resolves to the wrong `ward_code` — wrong seat scope on apply, wrong roster, wrong building. `collidesWithOwnWard` likewise can't distinguish them. Nothing warns; the two rows look distinct in Configuration → Wards.
+
+**Fix.** `findUnitNameCollision` / `unitNameCollisionMessage` (`packages/shared/src/unitNameCollision.ts`), consumed by `duplicateWardNameBlocker` and the bootstrap wizard's pending-list check.
+
+The rule is **variant-set intersection**, not equality of `kindooScopeName`. Canonical-name equality catches `Maple` / `Maple Ward` but misses a branch `Olive Branch` (variants `["olive branch"]`) beside a ward `Olive Branch Ward` (variants `["olive branch","olive branch ward"]`): their canonical names differ, yet they collide on `olive branch` and the parser would still shadow one. Intersection is exactly the invariant `parseDescription` needs.
+
+`parseDescription` was hardened alongside it, for the stakes that already hold such a pair. `buildWardLookup` sorts the units by `ward_code` (ascending, code-unit compare on a copy — `localeCompare` can rank two distinct ids equal and would put array order back into the tie-break) before registering variants, and a key already held by a different `ward_code` keeps its incumbent and warns once.
+
+**The sort is what makes resolution independent of the order Firestore returns wards** — not the keep-incumbent rule. First-wins and last-wins are both functions of array position; switching between them only changes which unit a given order picks. Sorting on `ward_code` — the immutable doc ID, so a stable total order — is what fixes the winner: the contested key goes to the lower `ward_code` on every run. First-wins over that sorted list is still preferable to last-wins, because a later unit keeps every variant the earlier one did not claim, so a branch sorting ahead of the ward that shadows it leaves both units resolvable where last-wins would strand the branch. What is guaranteed is determinism, not that the branch wins — that depends on the two `ward_code`s. The `[sba-ext]` warn still fires, and its dedupe signature is now stable across runs since the owner is always the lower code.
+
+## [B-19] Bootstrap admin of a newly-created stake lands on Not Authorized instead of the wizard
+Status: closed (fixed)
+Owner: @backend-engineer
+Severity: high (blocks onboarding every stake after the first)
+Phase: post Phase 12 (12.4 regression)
+Branch / PR: `fix/bootstrap-admin-wizard-access` (PR #258)
+
+A newly-created stake's bootstrap admin signed in and landed on the **Not Authorized** page instead of the bootstrap wizard.
+
+**Chain:** `createStake` writes `stakes/{slug}` with `setup_complete: false` and a lowercased `bootstrap_admin_email`, minting no claim. On first sign-in, `seedClaimsFromRoleData` finds no role docs for that stake — the wizard is what writes the `kindooManagers` doc that a claim could be minted from, and it hasn't run yet — so the user's claims are `{ canonical }` only, with no `stakes` block at all. `accessibleStakes()` is therefore `[]`. `resolveActiveStake`'s tier 4 (principal-derived) had no fallback for this case and returned `null`. `useActiveStake()` returns `null`, the stake-doc subscription at `apps/web/src/routes/_authed.tsx` is disabled and reports `status: 'pending'` forever, and `setupGate.ts`'s `gateDecision` hits the `stake.status === 'pending' && !principal.isAuthenticated` branch and returns `'not-authorized'`. The wizard branch was never reached — nothing could answer "which stake am I the bootstrap admin of?" before the gate needed to know.
+
+**Phase 12.4 regression.** Before PR #157, the active stake was the hardcoded `'csnorth'` constant, so the gate always had a stake doc to read regardless of the signed-in user's claims. Replacing it with the claims-derived active-stake selector (`apps/web/src/lib/activeStake.ts`) made every stake created *after* the first unreachable for its own bootstrap admin, because nothing populated the selector for a user with zero role claims. The first stake never exercised this path, so the regression sat latent until the second stake was created.
+
+**Relationship to B-2.** B-2 fixed the *email-comparison* half of this same code path (`setupGate.ts`'s `meCanonical` computation used `??` where `||` was needed, so an empty-string canonical never matched `bootstrap_admin_email`). B-2's fix made the gate correctly route to `'wizard'` **once the gate had a stake doc to evaluate against**. It never exercised the *stake-discovery* half described above, because every B-2 repro ran against the hardcoded `'csnorth'` stake, which always had a doc to read. This bug is the discovery half: with a claims-derived selector and zero role claims, the gate never got far enough to reach the email comparison B-2 fixed.
+
+**Resolution.** `StakeClaims.bootstrap?: boolean` — a new custom-claim marker, present-and-true iff the user is the stake's `bootstrap_admin_email` and `setup_complete === false`. Synced by the new `syncBootstrapClaims` trigger on `stakes/{stakeId}` writes, and seeded at first sign-in by `seedClaimsFromRoleData` for a stake created before its admin had a Firebase Auth account. Not a role — grants no access, excluded from `hasAnyRole` / `isAuthenticated`; `isBootstrapAdmin(stakeId)` in `firestore.rules` is unchanged and remains the actual authority. `Principal.bootstrapStakes` collects the marked stakes; `resolveActiveStake`'s tier 4 now falls back to it (sorted, first entry) when the principal's claim-derived accessible set is empty and they are not a platform superadmin. See `docs/architecture.md` D28 for the full design rationale, including the rejected callable-based alternative, and `docs/spec.md` §2.1 / §10 for the resulting behaviour.
+
+**Deploy caveat.** `syncBootstrapClaims` only fires on a write to `stakes/{stakeId}` — a stake created *before* this fix deploys does not get the marker retroactively, because nothing touches its doc to trigger the sync. Its bootstrap admin needs one trivial write to the stake doc after deploy to heal (any field re-save through the console is sufficient). Signing in again does NOT heal it on its own if the admin already has a Firebase Auth account (already attempted sign-in once before this deployed) — `seedClaimsFromRoleData`'s first-sign-in catch-up only runs from `onAuthUserCreate`, which fires once per Auth user, at account creation, not on every sign-in. An admin who has never yet signed in at all is unaffected by this caveat — their first sign-in seeds the marker correctly with no operator action needed. **Operator procedure:** `infra/runbooks/deploy.md` § "One-time fixup: backfill the `bootstrap` claim after PR #258" has the affected-stakes query, the console fixup steps, and why the admin needs a full re-login (not just a reload) afterward.
+
+**Addendum (2026-08-08, same PR).** The claims-based discovery above closes the primary onboarding case but left one shape open: a *previously zero-role* principal who becomes a bootstrap admin **after** stale `localStorage` / `sessionStorage` already named a different, now-inaccessible stake still resolved to the stale value and permission-denied forever — the storage-tier permissive carve-out fired on `accessible.length === 0` alone, before tier 4 ever got to consult `bootstrapStakes`. Fixed by narrowing the storage tiers' permissive gate to also require `bootstrapStakes.length === 0` (falling through to tier 4 once populated). A `signOut()` storage-clear was also tried, on the reasoning that it would additionally stop a stale entry from outliving the session that wrote it and stop one user's stake selection leaking into the next signer's session on a shared browser — but the storage-tier narrowing alone already closes the stale-entry case regardless of sign-out behaviour, so the clear bought nothing there and was reverted by operator decision. Sticky-stake persistence across sign-out is therefore deliberate; the shared-browser leak (for a signer who is themselves a zero-role bootstrap candidate with no `bootstrapStakes` of their own) remains open as a known, accepted limitation. The URL tier is deliberately left permissive regardless of `bootstrapStakes`, via a same-PR follow-up that keeps `stripStakeParamFromUrl()` + `markUrlStakeParamConsumed()` running even for a permanently-"settling" bootstrap-only principal — not a single-shot consume, but a bound: it cleans the address bar and marks the value eligible to clear, but the module-scoped slot itself only clears on a subsequent router navigation or reload, so it can shadow tier 4 for a tab that never navigates again. See `docs/architecture.md` D29(b) for the full mechanism and `docs/spec.md` §2.1 for the resulting behaviour.
+
+---
+
+## [B-18] `CallingCombobox` blur timer outlives the component; flakes CI with "ReferenceError: window is not defined"
+Status: closed (fixed in PR #247)
+Owner: @web-engineer
+Severity: low (CI-only red on green runs; in-browser it is a no-op setState on an unmounted component)
+Branch / PR: `fix/calling-combobox-blur-timer` (PR #247)
+
+`CallingCombobox`'s `onBlur` armed a 150ms popover-close timer that nothing ever cancelled on unmount. The pending callback still ran `setOpen(false)` after the component was gone, which under vitest's jsdom teardown threw an unhandled `ReferenceError` and reddened CI runs whose tests had all passed.
+
+**Symptom (CI):** the `test` job reports every test green — `1521 tests passed` on the observed run — then vitest reports one unhandled error and exits non-zero:
+
+```
+ReferenceError: window is not defined
+  at apps/web/src/features/requests/components/CallingCombobox.tsx:118
+```
+
+Surfaced on an infra PR whose diff contained no TypeScript at all; a re-run was clean. Note the repo's CI uses `continue-on-error` on some steps, so the failing step still reported `conclusion: success` and only the aggregator job went red — the real signal is the `outcome` list in the "Verify all checks passed" step.
+
+**Repro:** not reliable naturally — the leaked timer must fire inside the narrow gap between vitest tearing down one test file's jsdom and installing the next file's; outside that gap a `window` exists and the callback is harmless. Deterministic reproduction: render `CallingCombobox`, focus and blur the input, capture the pending 150ms callback, `unmount()`, `delete globalThis.window`, then invoke the callback — throws the exact error above. `NewRequestDialog.test.tsx` reliably arms the leak (types into the combobox, then clicks submit, blurring it; the file ends ~120ms before the timer is due), but `NewRequestForm.test.tsx` and `EditSeatDialog.test.tsx` drive the same field repeatedly and can be the origin on any given run.
+
+**Root cause:** `cancelBlurTimer` existed but was wired only to `onFocus` and the popover's `onMouseDown` — there was no unmount cleanup, so a blur followed immediately by an unmount left the callback pending with nothing to cancel it. The `ReferenceError` does not come from `setOpen` itself: React 19's `dispatchSetState` calls `requestUpdateLane` → `resolveUpdatePriority`, which reads a bare `window.event` *before* any is-fiber-still-mounted check, so even an unmounted component's `setState` dereferences `window`. Stack confirmed as `resolveUpdatePriority` → `requestUpdateLane` → `dispatchSetState` → `CallingCombobox.tsx:118`. Same failure family as B-13 (post-teardown React work) but a different cause — B-13 was an un-unmounted React root, this is an uncancelled timer.
+
+**Fix (PR #247):** `cancelBlurTimer` is wrapped in `useCallback` and released from a `useEffect` cleanup (`useEffect(() => cancelBlurTimer, [cancelBlurTimer])`), matching the idiom already used by `useLongPress` and `QueuePage` rather than suppressing the unhandled error or stubbing `window`. The leak was real independent of tests — in the browser the same timer fired `setOpen` on an unmounted component whenever the field was blurred and the dialog closed within 150ms, which is what submitting the New Request dialog does. Ships with `apps/web/src/features/requests/components/CallingCombobox.test.tsx` (the component previously had no test file); the unmount test fails before the change and passes after. A sweep of every timer site in `apps/web/src` found no sibling sharing the root cause — `QueuePage` and `useLongPress` already clean up, `toast.ts` is a module-scoped store with tracked handles, `signIn.ts` is an awaited sleep, and `TimezoneCombobox` uses no blur timer.
+
+## [B-17] Claim-sync triggers retry forever (Eventarc storm) when the auth user was deleted before the trigger fired; flakes `syncSuperadminClaims.e2e.test.ts`
+Status: closed (fixed in PR #218)
+Owner: @backend-engineer
+Phase: post Phase 12
+Severity: high (prod: infinite Eventarc retry storm; CI: cross-test flake)
+Branch / PR: `fix/claim-sync-deleted-user-noop` (PR #218)
+
+The three claim appliers in `functions/src/lib/applyClaims.ts` — `applyStakeClaims`, `applySuperadminClaim`, `applyFullClaims` — each began with `auth.getUser(uid)`. When the auth user had been deleted before the claim-sync trigger fired, `getUser` threw `auth/user-not-found`, the trigger raised an unhandled error, and Eventarc retried the delivery forever.
+
+**Symptom (prod):** a role-doc write outlives its auth user — the user is deleted between the role-doc write and the trigger firing — and the matching `syncAccessClaims` / `syncManagersClaims` / `syncSuperadminClaims` trigger enters an infinite retry loop. CI observed ~82 re-throws over ~58s before the run was killed.
+
+**Symptom (CI):** the retry storm saturated the emulator and starved trigger delivery for `functions/tests/syncSuperadminClaims.e2e.test.ts`, which intermittently timed out waiting for a claim that arrived too late. One missing-user race surfaced as two unrelated-looking failures — an infinite retry storm AND a flaky e2e.
+
+**Repro:** delete an auth user, then write (or have a sibling test create-then-delete a user and write) a role doc whose canonical maps to the now-deleted user. The constant in the integration suite is sibling tests creating-then-deleting users under the same emulator; in prod it's a real delete-vs-trigger race.
+
+**Root cause:** the appliers trusted `getUser(uid)` to succeed and let the `auth/user-not-found` throw propagate out of the Firestore trigger. Eventarc treats a thrown trigger as a delivery failure and retries it, so a permanently-missing user produced a permanent retry loop.
+
+**Fix (PR #218):** `getUser` is wrapped by `loadExistingClaims`, which catches `auth/user-not-found` (by Admin SDK error `code`, not message string), emits a `logger.info` skip, and returns a `USER_GONE` sentinel; each applier returns cleanly on the sentinel — no throw, no retry. The claim write is wrapped by `writeClaims`, which tolerates a late `auth/user-not-found` from `setCustomUserClaims` / `revokeRefreshTokens` (the user can vanish mid-apply). Any other error still throws and still retries. Consistent with the existing `uidForCanonical → null` no-op contract the sync triggers already carry (`spec.md` §4). Ships with an emulator-driven test across all three appliers plus a present-user control; de-flakes `syncSuperadminClaims.e2e.test.ts`. See `docs/changelog/fix-claim-sync-deleted-user-noop.md`.
+
+## [B-16] Per-row Sync fixes write the primary grant's fields even when the row was surfaced via a projected duplicate
+Status: closed (fixed in PR #278) `[FIXED 2026-08-10]`
+Owner: @backend-engineer
+Severity: **high** (re-scored 2026-08-09 — see "Severity re-scored" below; was: low, "requires a rare data shape — parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member; 1–2 requests/week at v1 scale")
+
+**Pre-existing** (not a regression). Surfaced by the PR #184 review.
+
+**Symptom:** When a member's primary seat sits on a **foreign** Kindoo site but is surfaced on a **home** Sync run via its home-side duplicate grant, the home Sync row's `sbaBlock` is the projected duplicate's view (`projectSeatForSite` — `extension/src/content/kindoo/sync/`), not the primary. The per-row `syncApplyFix` fix handlers — `applyScopeMismatch`, `applyTypeMismatch`, `applyBuildingsMismatch` — all hardcode writes to the **primary** seat's fields, not the projected duplicate's. Applying a fix from such a row therefore mutates the wrong grant.
+
+**Consequence (worst case, `kindoo-unparseable`):** the fix flips the foreign-site **primary** to `scope='stake'` and clears its `kindoo_site_id` (per the B-15 fix), while the home-ward **duplicate** grant stays as-is. The member ends up with two home grants (a now-stake-scope primary plus the home-ward duplicate) instead of the intended single reshape, and the foreign-site grant is silently lost.
+
+**Why it's a known limitation, not an active defect:** the trigger combination is rare — the member must carry a parallel-site `duplicate_grants[]` entry AND an unparseable Kindoo Description on the same Sync run. The primary-field-write behaviour is a **pre-existing class** shared by all three fix handlers; B-15's new `kindoo_site_id` clearing only amplifies the impact (it now also strips the foreign site, not just flips scope). At v1 scale (12 wards, ~250 seats, 1–2 requests/week) the combination has not been observed. Logged as a known limitation rather than a blocking defect.
+
+**Fix shape (deferred):** the fix handlers need to target the grant the row was surfaced from — thread the projected duplicate's `(scope, kindoo_site_id)` discriminator through `syncApplyFix` and splice/update that `duplicate_grants[]` entry instead of the primary when the row originated from a projection. Mirrors the `(scope, kindoo_site_id)`-keyed targeting `planRemove` already uses (§485, §552). Out of scope for #184 (review-row actionability).
+
+**Severity re-scored, and the handler list extended (2026-08-09, reviewing PR #275).** Two corrections to the entry above; the mechanism is unchanged.
+
+**`applyCallingsMismatch` belongs on the list** and was never on it — it post-dates this entry and has the same defect. It writes `seat.callings` and reconciles `importer_callings[seat.scope]` — the **primary's**, unconditionally — while the detector emits `callings-mismatch` off the projected `sbaBlock`, which on a foreign run is the duplicate. It is also the worst member of the list, because its wrong write is not confined to the seat: for a member with primary `(stake, auto, ['Stake Clerk'])` and a foreign ward duplicate, applying a foreign-run `callings-mismatch` replaces the **stake** grant's callings with the ward calling, and `filterAppAccessCallings('stake', [<ward calling>])` then returns `[]`, so `clearImporterCallingsForScope('stake')` runs and the member **loses SBA app access outright** — `Stake Clerk` is in `STAKE_APP_ACCESS_CALLINGS`. The duplicate keeps its stale callings, so the row re-emits and invites a re-click.
+
+**The old severity basis no longer holds.** It rested on the trigger being rare — "parallel-site `duplicate_grants[]` AND an unparseable Kindoo Description on the same member." B-23's merge makes `stake primary + foreign ward duplicate` the **designed steady state** for every stake-calling holder in a foreign-site unit, and the trigger for `callings-mismatch` is an ordinary calling change, not an unparseable Description. The population is now structural rather than accidental, so: **high**.
+
+**Fixed in PR #278.** Every mismatch payload now carries `SurfacedGrantRef` — the `(scope, kindooSiteId)` of the grant the row came from, read off the row's `sba` block, which IS the per-site projection. `resolveGrantSlot` maps it to the primary or a `duplicate_grants[]` index and `patchGrant` writes that slot, rebuilding `duplicate_scopes` alongside the array so the rules mirror never lags. All five handlers use it: `callings-mismatch`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `kindoo-unparseable`. Access reconciliation follows the surfaced grant's scope, and `sort_order` stays primary-only (it mirrors the primary's `callings[]`, so a duplicate's callings must not move it). A payload naming a scope the seat doesn't hold **soft-fails rather than falling back to the primary** — falling back is the bug. A payload with no scope keeps the historical primary write, which is the version-skew path and correct whenever the row came from the primary. `duplicateGuard.ts`, the interim withholding, is deleted: every code can act on the grant that produced its row.
+
+**Original fix shape (as filed):** thread the surfaced grant's `(scope, kindoo_site_id)` through the fix handlers and target that slot instead of the primary. [[B-24]] needs exactly the same threading for `applySbaOnlyRemove`, and the detector already has the discriminator — an `sba-only` / mismatch row's `sba` block IS the projection. The two should land together.
+
+**Reference:** surfaced in PR #184 review; extended and re-scored in the PR #275 review.
+
+## [B-15] `applyScopeMismatch` doesn't clear `kindoo_site_id` when resolving a seat to stake scope
+Status: closed (fixed in commit `7f8189d`)
+Owner: @backend-engineer
+Severity: low (rare data shape — a foreign-ward seat scope-mismatching to stake; 1–2 requests/week at v1 scale)
+
+**Pre-existing** (not introduced by PR #184). Surfaced by the #184 re-review while narrowing a spec claim about `kindoo_site_id` clearing.
+
+**Symptom:** A foreign-site ward seat (`scope='<foreign-ward>'`, `kindoo_site_id='<foreign-site>'`) whose Kindoo Description parses to a stake-scope primary fires `scope-mismatch`. Applying the Update-SBA fix runs `applyScopeMismatch` (`functions/src/callable/syncApplyFix.ts`) with `newScope==='stake'`, which sets `scope='stake'` but leaves the old foreign `kindoo_site_id` in place. The invariant is stake-scope ⇒ home (`kindoo_site_id` null/absent — spec §15 Phase 1), so the seat is now internally inconsistent.
+
+**Consequence:** `projectSeatForSite` resolves the seat to the foreign site (off its stale `kindoo_site_id`), not home. The seat is then invisible on a home-site Sync run (and mis-scoped on home-stake utilization / roster placement) until something else rewrites the field.
+
+**Fix (commit `7f8189d`):** `applyScopeMismatch` now sets `kindoo_site_id: FieldValue.delete()` in the seat `update` when `newScope==='stake'`, mirroring `applyKindooUnparseable`. A test asserts the field is cleared on the stake resolution. The inverse direction (`newScope` a ward) is unchanged — it leaves `kindoo_site_id` untouched, so a ward-scope seat keeps whatever site its primary already carried.
+
+## [B-14] auditTrigger.test.ts flakes CI with "expected 1, got 2" audit-row count
+Status: closed (fixed on branch `fix/audit-trigger-test-isolation`)
+Owner: @backend-engineer
+Phase: post Phase 12
+Severity: low (CI-only; no runtime impact)
+
+`functions/tests/auditTrigger.test.ts` intermittently failed in CI's integration step, a different test each run, always with the same shape — one more `auditLog` row than expected (`AssertionError: expected [ … ] to have a length of 1 but got 2`). Seen on "creates and deletes are not classified as out-of-band", the "same-actor in-band write (B-5 follow-up)" regression, and others.
+
+**Root cause:** cross-FILE audit-row bleed. CI runs the integration suite with the functions emulator connected (`emulators:exec --only firestore,auth,functions`), so the DEPLOYED `auditXxxWrites` triggers are live. Nearly every sibling integration file (`markRequestComplete`, `syncApplyFix`, `removeSeatOnRequestComplete`, `Expiry`, …) uses `STAKE_ID = 'csnorth'` and writes real seat/request/access docs under `stakes/csnorth/...`; each such write fires the deployed audit trigger asynchronously, fanning a row into `stakes/csnorth/auditLog`. Those async writes can land AFTER the writing file's teardown and bleed into `auditTrigger.test.ts`, which also used `'csnorth'` and reads the whole `auditLog` collection to assert exact counts. The trigger itself is correct — this is purely test isolation. (`auditTrigger.test.ts` drives the handlers directly via `.run()`, which is fully awaited, so there is no late async delivery WITHIN the file; the stray row always originates from another file.)
+
+**Fix:** `auditTrigger.test.ts` now uses a dedicated `STAKE_ID = 'audit-trigger-suite'` that no other file writes audited entities to, so no deployed trigger ever fans a row into this suite's `auditLog`. Added a `beforeEach(clearEmulators)` (alongside the existing `afterEach`) so each test starts from a verified-empty slate via the emulator's synchronous REST blow-away regardless of leftover or late rows. Verified by running the suite 5× back-to-back inside one functions-emulator session (the CI config): 5/5 green, 34/34 tests each, plus a full integration-suite pass to confirm no sibling regressed.
+
+**Branch / PR:** `fix/audit-trigger-test-isolation`.
+
+---
+
+## [B-13] mount.test.tsx flakes CI with "ReferenceError: window is not defined" unhandled errors
+Status: closed (fixed in PR — branch `fix/b-13-mount-test-unhandled-error`)
+Owner: @extension-engineer
+Phase: post v2.2
+Severity: low (CI-only; no runtime impact)
+
+CI's `test` job, "Unit tests" step, finishes vitest with every extension test file green — `mount.test.tsx`'s 6 tests included — then vitest reports 1-3 unhandled errors and exits 1. The workflow's "Verify all checks passed" gate flips to failure. Three T-45 PR-chain CI runs in 24h were bitten; locally on macOS the same suite passes cleanly.
+
+**Symptom:**
+
+```
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+Vitest caught N unhandled errors during the test run.
+ReferenceError: window is not defined
+This error originated in "src/content/mount.test.tsx" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+```
+
+**Stack trace (CI):**
+
+```
+❯ performWorkOnRootViaSchedulerTask  react-dom-client.development.js:18936:7
+❯ Immediate.performWorkUntilDeadline scheduler.development.js:45:48
+❯ processImmediate                   node:internal/timers:484:21
+```
+
+**Root cause:** `src/content/mount.tsx`'s `mountPanel` calls `createRoot(reactRoot).render(<App />)` but never holds onto the `Root` and never unmounts it. The tests didn't unmount either — they cleared `document.body.innerHTML` in `afterEach`, which detaches the host element but does NOT tear down the React fiber tree. React 19's reconciler schedules work via `scheduler`'s `Immediate.performWorkUntilDeadline`, which on Node lands on `processImmediate`. The deferred immediate fires AFTER the test file completes; when vitest's next test file tears down jsdom and the immediate runs in the worker, the scheduler closes over a `window` that no longer exists, throwing `ReferenceError: window is not defined`. The non-deterministic 1-3 error count tracks how many separate scheduler ticks were still pending at teardown. macOS local runs happened to drain the scheduler before the next file's jsdom teardown; Ubuntu CI's different timing exposes the race.
+
+**Repro:** none reliable locally (timing-sensitive). CI reproduces opportunistically; the error originates from `mount.test.tsx` per vitest's "originated in" attribution.
+
+**Fix:** `mountPanel` now stores the `Root` from `createRoot` and exposes an `unmount()` method on `PanelHandles` that calls `root.unmount()`, removes the runtime listener (extracted into a named handler so removal is symmetric), and removes the host element from the DOM. The test suite calls `unmount()` in `afterEach` on every test's returned handles, draining React's scheduler before vitest tears jsdom down. Two `await Promise.resolve()` ticks in `afterEach` drain the mocked `chrome.storage.local.get` `.then` chain that `mountPanel` kicks off. A new test (`unmount tears down the React root, the host, and the runtime listener`) locks the teardown contract. The production caller (`content-script.ts`) doesn't invoke `unmount()` — the panel lives for the lifetime of the page — but the surface is now available for an SPA-navigation tear-down hook in the future.
+
+**Branch / PR:** `fix/b-13-mount-test-unhandled-error`.
+
+---
+
+## [B-12] Manager cannot delete a calling template — "missing or insufficient permissions"
+Status: closed (fixed in PR — branch `fix/b-12-calling-template-delete-rule`)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+Manager-Configuration "Auto Callings" tab — clicking Delete on a `wardCallingTemplates` or `stakeCallingTemplates` row throws `"missing or insufficient permissions"` from Firestore. Editing and adding rows work; only delete fails.
+
+**Symptom:** SPA's `useDeleteWardCallingTemplateWithResequenceMutation` / `useDeleteStakeCallingTemplateWithResequenceMutation` issues a `writeBatch` that deletes the doc and resequences survivors. The delete leg is rejected with `FirebaseError: Missing or insufficient permissions`.
+
+**Repro:** sign in as a Kindoo Manager; Configuration → Auto Callings (ward or stake) → Delete any row; observe the permission error and the row remains.
+
+**Root cause:** `firestore.rules` had a combined `allow write: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);` predicate for both calling-template collections. For a delete, `request.resource.data` is null (no after-state), so `lastActorMatchesAuth` evaluates against an absent value and the predicate fails. Wards / buildings / kindooManagers already split into `allow create, update` + `allow delete` for exactly this reason; calling templates were the odd ones out.
+
+**Fix:** split the combined `write` into `allow create, update: if isManager(stakeId) && lastActorMatchesAuth(request.resource.data);` + `allow delete: if isManager(stakeId);` on both `wardCallingTemplates` and `stakeCallingTemplates`. Same authority that can edit can also delete; no widening beyond that. No SPA change needed — the audit trigger already reads `lastActor` from the BEFORE snapshot on deletes, so the pre-delete stamp from the last upsert/reorder surfaces in the audit row. Both calling-template collections are in the audited list (`auditWardCallingTemplateWrites` + `auditStakeCallingTemplateWrites` in `functions/src/triggers/auditTrigger.ts`).
+
+**Branch / PR:** `fix/b-12-calling-template-delete-rule`.
+
+---
+
+## [B-7] syncApplyFix doesn't populate sort_order or write access docs for auto seats
+Status: closed (fixed in PR — branch `fix/b-7-sync-fix-importer-parity`)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: medium
+
+`functions/src/callable/syncApplyFix.ts` (the Sync Phase 2 per-row fix endpoint) is an incomplete clone of the LCR Sheet importer's seat-create / seat-mutate paths. When a manager uses the extension's Sync Phase 2 fix flow to create or modify an **auto** seat, two fields that the importer always sets get dropped:
+
+1. **`sort_order` on the seat doc.** The importer computes `MIN(sheet_order)` across matched calling templates and stamps it on auto seats (`functions/src/services/Importer.ts:384`; `functions/src/lib/diff.ts:61-65`). The roster pages sort auto seats by this field (`apps/web/src/lib/sort/seats.ts:44-51`); missing values fall to `Number.POSITIVE_INFINITY`, so sync-created auto seats sink to the bottom of the auto band.
+2. **`access` doc creation.** For each matched calling template where `give_app_access === true`, the importer writes a corresponding `access` row that grants the user SBA app login + role (`Importer.ts:328, 344`). The extension's fix path didn't touch `access` at all, so sync-created auto seats never gained app access.
+
+Both fields apply only to auto seats. Manual / temp seats don't have `sort_order` and don't drive `access`-doc creation in the importer — `syncApplyFix` mirrors that.
+
+**Symptom:** a manager clicks Apply on a Sync Phase 2 drift fix that creates or makes-auto a seat. The seat appears on the roster but sorts after every importer-stamped auto seat (no sort_order), and the user doesn't appear in the access roster / can't sign in to the SBA app even when their calling template has `give_app_access=true`.
+
+**Repro:**
+1. Have a Kindoo seat the LCR sheet doesn't yet reflect (or whose type SBA records as non-auto).
+2. Open the extension's Sync tab; pick the corresponding `kindoo-only` / `extra-kindoo-calling` / `type-mismatch (→auto)` drift row.
+3. Click Apply.
+4. SBA roster: seat appears at the bottom of the auto band (no `sort_order`); access roster: user absent even when the calling has `give_app_access=true`.
+
+**Root cause:** the Sync Phase 2 callable was a partial clone of the importer's write logic — it preserved seat shape but lost the template-driven `sort_order` derivation and the parallel `access`-doc fan-out. Behavioural drift between two code paths that touch the same data; invisible to type-check.
+
+**Fix (this PR):**
+- `applyKindooOnly` (auto path): inside the transaction, load calling templates for the seat's scope, compute `sort_order = MIN(sheet_order)`, write the seat with `sort_order` stamped, and write an `access` doc with `importer_callings[scope] = [give_app_access=true callings]`. Manual / temp paths unchanged.
+- `applyExtraKindooCalling` (auto seat): recompute `sort_order` over the full post-append calling set; write/merge `access` doc for any newly-appended `give_app_access=true` callings.
+- `applyTypeMismatch`:
+  - `manual/temp → auto`: stamp `sort_order` from existing callings; write `access` doc for `give_app_access=true` matches.
+  - `auto → manual/temp`: clear `sort_order` (via `FieldValue.delete()`); drop `importer_callings[scope]` on the access doc. If the post-drop importer_callings is empty AND no `manual_grants` remain, delete the access doc (mirrors the importer's `planDiff` `accessDeletes` predicate); otherwise update it.
+- Cross-reference comments added at the top of `syncApplyFix.ts` and mirror-image comments at the top of `Importer.ts` + `diff.ts` so the next agent touching either side knows to update its sibling.
+
+`applyScopeMismatch` / `applyBuildingsMismatch` don't touch type or callings, so the parity bookkeeping doesn't apply to them.
+
+**Branch / PR:** `fix/b-7-sync-fix-importer-parity`.
+
+---
+
+## [B-6] auditDiff reports nested-object key reorderings as field changes
+Status: closed (fixed in PR #86)
+Owner: @backend-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+The audit trigger's `deepEqual` helper (`functions/src/lib/auditDiff.ts:79-88`) compares values with `JSON.stringify(x) === JSON.stringify(y)`. `JSON.stringify` serialises object keys in insertion order, so two structurally identical objects whose keys happen to be ordered differently compare as not equal. Out-of-band writes (Firebase Console, ad-hoc Admin-SDK scripts) routinely round-trip nested-object fields through paths that don't preserve the original key order — the round-tripped value carries identical data with a different key order, and the diff flags the field as changed.
+
+**Symptom:** the audit row's `changed` list includes a nested-object field whose `before` and `after` snapshots contain the same keys and values in different orders. The field-level diff is correct (the bytes really are not byte-equal under `JSON.stringify`); the trigger's classification of the field as changed is wrong.
+
+**Concrete instance (prod, 2026-05-13):** operator made a Firebase Console edit changing only `stakes/csnorth.stake_name` from `STAGING - Colorado Springs North Stake` to `STAGING -- Colorado Springs North Stake` (added one dash). The audit row correctly captured the `stake_name` diff and correctly attributed the actor as `OutOfBand` (B-5 fix landed). It also reported `kindoo_config` as changed, with:
+
+- before: `configured_at=2026-05-13 3:24 am, site_id=27994, configured_by=tad.e.smith@gmail.com, site_name=Colorado Springs North Stake`
+- after: `site_name=Colorado Springs North Stake, configured_by=tad.e.smith@gmail.com, configured_at=2026-05-13 3:24 am, site_id=27994`
+
+Identical data, different key order. The Manager Audit Log page displays nested-object keys in insertion order, so the rearrangement surfaces to the reader as a "change."
+
+**Repro:**
+1. Have a doc with a nested-object field (e.g. `stakes/csnorth.kindoo_config`).
+2. Make any out-of-band write (Console, Admin SDK) that mutates a different field on the same doc.
+3. Observe the audit row reports the nested-object field as changed when only key order differs.
+
+**Severity:** low-medium. No data-integrity impact. Generates spurious audit noise — any out-of-band write that touches a doc with nested-object fields will surface false changes on the untouched nested objects. Reduces trust in audit traceability: an operator scanning audit history can't tell at a glance which "changes" reflect real edits and which are key-order artefacts.
+
+**Root cause:** `functions/src/lib/auditDiff.ts:79-88`'s `deepEqual` uses `JSON.stringify(x) === JSON.stringify(y)`. `JSON.stringify` is order-sensitive for object keys. Firestore's normal SDK writes preserve insertion order, so this worked for in-app writes; Console and Admin-SDK writes can serialise keys differently. The file's leading comment (lines 26-31) already calls out this trade-off as acceptable on the basis that "a key-reordering write is rare" — the first prod out-of-band write demonstrated it isn't.
+
+**Proposed fix:** replace the `JSON.stringify`-based `deepEqual` with a proper recursive deep-equal helper that compares object key-sets and recurses on values, treating object property order as irrelevant. Arrays remain compared positionally. Primitives, `null`, and Firestore Timestamps (`{seconds, nanoseconds}` plain objects on the trigger side) continue to compare correctly because their structure is fixed. A ~25-line pure function; no new dependency. Update the file's leading comment to drop the stale "key-reordering write is rare" caveat. Add unit tests covering the key-order-irrelevance behaviour for at least nested objects, arrays-of-objects, and the Timestamp-shaped plain object.
+
+**Won't fix in:** any in-flight PR — file as a standalone bug, fix in its own PR.
+
+**Fix:** PR #86 replaces the `JSON.stringify`-based `deepEqual` in `functions/src/lib/auditDiff.ts` with a recursive deep-equal helper that compares objects by key set (not key order), recurses on values, and continues to compare arrays positionally; new unit tests in `functions/src/lib/auditDiff.test.ts` cover the key-order-irrelevance behaviour including the prod `kindoo_config` regression case.
+
+**Branch / PR:** PR #86 (`docs/b-6-audit-diff-key-order-false-positive`) — docs entry + fix.
+
+---
+
+## [B-11] New Request screen — when `scope === 'stake'`, all buildings should be checked by default
+Status: closed (fixed in PR #93)
+Owner: @web-engineer
+Phase: post Phase 11
+Severity: low-medium
+
+On the New Request page, picking `scope === 'stake'` leaves every building checkbox unchecked. The manager has to manually tick every building to grant the requested user stake-wide access — for a stake with N buildings, N manual clicks per request, with the failure mode being a quietly-forgotten building rather than a visible error. The expected default is "all buildings checked" because stake-scope means "everywhere"; unchecking specific buildings to exclude is the rare case. Ward-scope requests are unaffected — the building is inherited from the ward and no checkbox UI renders on that path, so this is strictly a stake-scope UX defect.
+
+**Symptom:** on `/new`, choose any member, set scope to `stake`, observe every building checkbox starts unchecked. Submitting without re-checking grants access to zero buildings (or however many the manager manually clicked).
+
+**Repro:**
+1. Open the SBA web app, navigate to `/new` ("New Request").
+2. Pick any member; set scope to `stake`.
+3. Observe: building checkboxes all start unchecked.
+4. Expected: every building checked; manager unchecks specific ones to exclude.
+
+**Severity:** low-medium. No data corruption, no security impact. Pure UX papercut that scales with stake size — every stake-scope request costs N clicks where N is the building count, and a forgotten building silently narrows the grant the manager intended to make stake-wide.
+
+**Suspected layer:** the request form's default-state setter (likely `apps/web/src/features/requests/` form component). The `building_names` field initialises to `[]` regardless of scope; the scope-change handler doesn't repopulate the field when scope flips to `stake`.
+
+**Proposed fix:** in the form's scope-change handler (or the `useFormDefaults` / `react-hook-form` `reset` path), when `scope === 'stake'`, set `building_names` to the stake's full building list (e.g. `stake.buildings.map(b => b.building_name)`). When scope changes to a ward, fall back to whatever the ward path uses today (the ward-scope branch doesn't render the checkbox UI, so the field value there is consumed elsewhere or ignored — confirm during implementation). Coordinate with `react-hook-form` reset semantics so the change re-renders the checkbox row.
+
+**Won't fix in:** any in-flight PR — this is a standalone SPA UX bug, unrelated to the Chrome extension v2.2 work on PR #88. File and fix in its own PR.
+
+**Fix:** PR #93 extends `defaultBuildingsForScope` in `apps/web/src/features/requests/schemas.ts` to accept the buildings catalogue and return every `building_name` for stake scope (ward scope unchanged). `NewRequestForm` threads its `buildings` prop into the initial-default `useMemo`, the scope-change effect, and the post-submit reset, so a stake-scope form mounts with every checkbox pre-ticked and a multi-role principal flipping ward → stake auto-populates the full list. Existing tests asserting "no defaults checked" for stake scope were updated; two new tests lock the B-11 behaviour (mount-in-stake-scope and ward→stake toggle).
+
+**Branch / PR:** PR #93 (`fix/b-11-stake-scope-default-all-buildings`).
+
+---
+
+## [B-5] auditTrigger misattributes out-of-band writes to the doc's prior `lastActor`
+Status: closed (fixed in PR #85)
+Owner: @backend-engineer
+Phase: post Phase 11
+Branch / PR: `fix/b-5-audit-out-of-band-attribution` (PR #85)
+
+`auditTrigger` resolves the actor of an entity write by reading the `lastActor` ActorRef on the after-snapshot of the modified doc. Client paths and Cloud Functions that mutate entities always stamp a fresh `lastActor` alongside the rest of the write, so the field on the after-snapshot reflects who actually made the change and the audit attribution is correct. Out-of-band writes that don't go through those paths — Firestore Console edits, ad-hoc `gcloud firestore` CLI tweaks, scripted Admin-SDK writes that forget to set `lastActor` — leave the field untouched. The audit trigger then reads whatever `lastActor` was already on the doc (typically the most recent scheduled function or trigger that wrote it) and records that prior actor as the author of the new change.
+
+**Symptom:** the audit row's `actor`, field-level `before` / `after` diff, and `op` are all populated, but `actor` names a function or user who did not in fact make the change being recorded. The diff itself is correct — only the attribution is wrong.
+
+**Concrete instance (prod, 2026-05-13):** operator manually edited `stakes/csnorth.kindoo_expected_site_name` in the Firebase Console to drop the `STAGING - ` prefix. The most recent prior write to that doc was from the `runExpiry` scheduled function, which had stamped `lastActor: ExpiryTrigger`. The audit row recording the Console edit reads:
+
+- `actor: ExpiryTrigger`
+- `op: update_stake`
+- `changed: kindoo_expected_site_name`
+- `before: STAGING - Colorado Springs North Stake`
+- `after: Colorado Springs North Stake`
+
+**Repro:** any Firestore Console edit (or other out-of-band write that doesn't stamp `lastActor`) to a doc that has a non-empty `lastActor` from a prior write. Confirm by inspecting the resulting audit row — it will name the previous writer, not the actor who just made the change.
+
+**Severity:** low. No data-integrity impact (the field-level diff is correct); no security impact (Console / CLI writes bypass rules by definition and are gated at the IAM layer, not by audit attribution). The gap is purely in traceability — a row that says "this function changed this field" when the function did nothing of the kind.
+
+**Root cause:** `functions/src/triggers/auditTrigger.ts` trusts `after.lastActor` as the source of attribution unconditionally. There is no check that the current write actually changed `lastActor`, so writes that leave the field stale silently inherit the prior actor.
+
+**Proposed fix (post-v2.1):** compare `before.lastActor` and `after.lastActor`. When the two are equal AND the write mutated other fields, the trigger has no way to know who the real actor was — record a sentinel ActorRef like `{ email: 'out-of-band', canonical: 'out-of-band', source: 'console' }` (exact shape TBD; the field set should signal "attribution unknown, write did not come through a `lastActor`-stamping path"). The Admin Audit page in `apps/web` renders this distinctly from real actors so an operator scanning audit history can immediately tell a Console / CLI edit from an in-app action.
+
+**Won't fix in v2.1 (PR #83).** The extension v2.1 PR is scoped narrowly; this gap predates it and isn't on its critical path. File and defer to a separate backend-engineer task after v2.1 lands.
+
+**Fix shipped on `fix/b-5-audit-out-of-band-attribution`:** `auditTrigger.resolveActor` now compares `before.lastActor` and `after.lastActor` on updates. When they're structurally equal (both present and identical, or both absent), the writer didn't touch the field — the `isNoOpUpdate` gate already rejected pure-bookkeeping writes, so an equal `lastActor` on an update implies a tracked field changed without the canonical write path's actor stamp. The trigger records the sentinel `ActorRef { email: 'OutOfBand', canonical: 'OutOfBand' }` (see `functions/src/lib/systemActors.ts:OUT_OF_BAND_ACTOR`) instead of the stale prior actor. The before/after diff and the action enum are unchanged — only attribution. The Manager Audit Log page recognises `OutOfBand` as a synthetic actor via the shared `isAutomatedActor` helper (`packages/shared/src/systemActors.ts`) and renders it with the same `actor-automated` chip styling as `Importer` / `ExpiryTrigger`, so a Console / CLI edit reads as visually distinct from a real-user action. Creates and deletes are excluded from the detection (no meaningful before/after pair to compare) and fall through to the existing actor resolution. Past audit rows are not backfilled — only future writes get the sentinel treatment.
+
+---
+
+## [B-2] setupGate bootstrap-admin fallback uses `??` where `||` is needed
+Status: closed (fixed in PR #81)
+Owner: @web-engineer
+Phase: post Phase 11 (deferred — non-blocking until next fresh-project bootstrap)
+Branch / PR: `fix/b-2-setupgate-empty-canonical-fallback` (PR #81)
+
+On a fresh Firebase project, the bootstrap admin signs in matching the seed doc's `bootstrap_admin_email` and lands on `SetupInProgress` instead of the bootstrap wizard. The gate's `adminCanonical === meCanonical` equality check fails because `meCanonical` is the empty string at that moment, so the wizard route is never selected even though the seed doc and the typed email agree.
+
+`apps/web/src/lib/setupGate.ts:181` reads `const meCanonical = principal.canonical ?? canonicalEmailFn(principal.email ?? '');`. The principal shape (`apps/web/src/lib/principal.ts` / `principal-derive.ts`) sets `principal.canonical` from the `canonical` custom claim; for a user whose claims have not been minted yet (the bootstrap admin before `onAuthUserCreate` runs to completion), the field is the empty string `''`, not `null` / `undefined`. JavaScript's `??` only falls back on `null` / `undefined` and treats `''` as a present value, so the typed-email canonicalization branch never executes and `meCanonical` stays empty. The subsequent `adminCanonical && meCanonical && adminCanonical === meCanonical` short-circuits on the empty `meCanonical`, the gate returns `setup-in-progress`, and the wizard is never rendered.
+
+**Repro:** fresh Firebase project; seed doc populated with `bootstrap_admin_email` matching a real account; sign in as that account before claims have been minted (i.e., the very first sign-in, before `onAuthUserCreate` finishes its `setCustomUserClaims` write); observe the gate routes to `SetupInProgress` instead of the bootstrap wizard.
+
+**Workaround applied during prod bring-up (2026-05-03):** wait for `onAuthUserCreate` to deploy, delete the existing Auth user record, then sign back in so the trigger fires fresh and mints the canonical claim. After the canonical claim landed, the gate's equality check passed and the wizard rendered correctly.
+
+**Fix shape:** swap `??` for `||` on line 181 so the empty string falls through to the `canonicalEmailFn(principal.email ?? '')` branch. Add a unit test covering the `principal.canonical === ''` case (no claims yet, empty-string canonical) — assert the gate evaluates to `wizard` when `bootstrap_admin_email` matches the typed email.
+
+**Fix shipped in PR #81 (2026-05-03):** `apps/web/src/lib/setupGate.ts` swaps `??` for `||` on the `meCanonical` fallback. The two other `??` operators in the same file (`data.bootstrap_admin_email ?? ''` and `principal.email ?? ''`) were reviewed and left as-is — both pass through `canonicalEmailFn`, which collapses empty input to `''`, and the downstream `adminCanonical && meCanonical && ...` guard already short-circuits on the resulting empty string. `apps/web/src/lib/setupGate.test.ts` adds two regression cases: empty-canonical with matching typed email routes to `wizard`; empty-canonical AND empty-email still routes to `setup-in-progress`.
+
+---
+
+## [B-4] First-login users with pre-existing access docs land on NotAuthorized
+Status: closed (fixed in PR #60)
+Owner: @web-engineer
+Phase: post Phase 11
+Branch / PR: `fix/b-4-first-login-claims-race` (PR #60)
+
+A first-time signer-in whose `access/{canonical}` doc predates their sign-in lands on NotAuthorized for up to ~1h, even though their role data is in place and the canonical-email mapping is correct. Reported in production by an end user whose `access/{canonical}` doc existed prior to first sign-in (gmail dot-strip rule applied — mapping is correct).
+
+**Symptom:** first sign-in by a user who has a pre-existing access / kindooManagers doc lands on NotAuthorized. Reloading the page once fixes it; the user then sees the correct role-gated UI.
+
+**Repro:** any user whose `access/{canonical}` (or `kindooManagers/{canonical}`) row predates their first sign-in. Hits more often when the `onAuthUserCreate` trigger's read+seed work takes more than a few hundred ms (cold start, slow network, contention).
+
+**Mechanism:** after `signInWithPopup` resolves, the client immediately calls `getIdToken(true)` (`apps/web/src/features/auth/signIn.ts`). Server-side, the v1 `auth.user().onCreate` trigger (`functions/src/triggers/onAuthUserCreate.ts`) runs in parallel with the client refresh — it writes `userIndex/{canonical}`, computes claims via `seedClaimsFromRoleData`, then calls `setCustomUserClaims` + `revokeRefreshTokens`. If the client refresh lands at the Auth backend before the trigger finishes `setCustomUserClaims`, the refreshed token has no role claims. `revokeRefreshTokens` invalidates future refreshes, but the just-minted token is cached on the client and used until the SDK's natural ~1h rotation OR a hard page reload (which re-fetches via `onAuthStateChanged`).
+
+**Workaround for affected users:** reload the page once after sign-in.
+
+**Fix shipped in this PR:** bounded poll-and-refresh after the initial `getIdToken(true)`. Probe `getIdTokenResult` for `claims.canonical` (the field the trigger always sets on success); if missing, sleep 500ms, force-refresh, retry. 10 iterations cap the wait at 5s. If claims never arrive, `signIn` still resolves and the gate handles "no claims → NotAuthorized" the same as today. Trigger model is unchanged (v1 async stays — the migration plan picked async over blocking deliberately).
+
+**Status:** open — flip to `closed (fixed in PR #X)` once landed.
+
+---
+
+## [B-3] New Request scope dropdown is not filtered by the user's role union [FIXED 2026-05-03] [REVERSED 2026-07-24]
+Status: closed (fixed in PR #52; manager half reversed in PR #240)
+Owner: @web-engineer
+Phase: post Phase 11
+
+**[REVERSED 2026-07-24 — PR #240.]** The manager half of this fix no longer holds. Kindoo Managers now hold blanket request-creation authority: every scope (the stake and every ward), every request type, with no `access` row of their own. `allowedScopesFor` returns `'stake'` plus every ward in the catalogue for a manager claim, and `isScopeAllowed` returns true for any scope. The **bishopric half of B-3 stands** — a bishopric user with no stake claim still sees only their own wards, and platform superadmin status alone still adds nothing (that half is what the original entry's "Manager / superadmin status no longer adds scope options on its own" was reaching for, and the superadmin clause survives verbatim). The "Defense-in-depth" paragraph below describes a predicate that no longer exists: the rule's create branch is once again `isManager(stakeId) || (scope == 'stake' && isStakeMember(stakeId)) || (scope in bishopricWardOf(stakeId))`, which is where it stood before PR #52. See `architecture.md` D24, T-36's reversal trail, and `docs/changelog/manager-request-any-scope.md`. Original wording preserved below.
+
+The scope dropdown on the New Request page surfaced `stake` plus every configured ward regardless of which roles the signed-in user actually held. A bishopric user with no stake claim could pick wards they had no access to; the rules-side `create` predicate then rejected the submit, leaving the user with a confusing post-submit error rather than a filtered dropdown that would have prevented the mistake at the point of selection.
+
+**Symptom:** signed in as a single-ward bishopric member (no stake claim), the New Request scope dropdown showed `Stake` plus every ward configured for the stake. Selecting any other ward and submitting yielded a permission-denied error from Firestore.
+
+**Repro:** sign in as a user whose claims hold only `bishopricWards: { csnorth: ['CO'] }` (no `stake: true`, no `manager: true`), navigate to `/new`, observe the dropdown contents.
+
+**Suspected layer:** SPA filter on the scope dropdown — the `NewRequestPage` derived its scope list from a code path that treated Kindoo Manager / platform-superadmin status as "show every ward" rather than restricting the dropdown to the role union the user actually holds.
+
+**Fix (this entry):** the scope-derivation logic moved into a pure helper `apps/web/src/features/requests/scopeOptions.ts` that consults only `principal.stakeMemberStakes` + `principal.bishopricWards[stakeId]`. Manager / superadmin status no longer adds scope options on its own — a manager who is also a stake member or a bishopric member inherits those scopes through the same paths every other user does. Unit tests cover every row in the spec table; component tests verify the page wires the helper correctly; an E2E spec proves the filter holds against the live emulator stack.
+
+**Defense-in-depth:** `firestore.rules` already requires the requester hold the role for the scope being created (the `match /requests/{requestId}` create predicate at lines 470–474 evaluates `isManager(stakeId) || (scope == 'stake' && isStakeMember(stakeId)) || (scope in bishopricWardOf(stakeId))`). The current rule lets a Kindoo Manager create in any scope; per the operator-stated spec for this fix, manager status alone should not grant ward-scope creation either. T-36 tracks the rule-side hardening as separate backend-engineer work.
+
+**Branch / PR:** `fix/b-3-new-request-scope-filter`.

@@ -14,8 +14,10 @@ docs/
 ├── firebase-migration.md          # phase plan (Phase A complete; Phase 12 complete)
 ├── open-questions.md              # active ambiguities + [RESOLVED] trail
 ├── navigation-redesign.md         # Phase 10.1 nav redesign design doc
-├── TASKS.md                       # cross-cutting work-in-flight
-├── BUGS.md                        # cross-cutting defects
+├── TASKS.md                       # cross-cutting work-in-flight (live entries only)
+├── TASKS-archive.md               # closed tasks — trail; read only when researching a past decision
+├── BUGS.md                        # cross-cutting defects (open only)
+├── BUGS-archive.md                # closed defects — same rule
 ├── changelog/                     # per-phase entries
 │   ├── README.md
 │   ├── template.md
