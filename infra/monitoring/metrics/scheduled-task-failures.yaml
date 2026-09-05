@@ -1,0 +1,98 @@
+# scheduled-task-failures
+#
+# Counts errors logged by T-104's two scheduled-task functions:
+# `dispatchScheduledTasks` (hourly onSchedule; walks the stakes and enqueues)
+# and `runScheduledTask` (onTaskDispatched; the single generic runner every
+# job's handler is reached through).
+#
+# WHY ONE METRIC FOR BOTH
+# Every scheduled feature in this stack reaches its handler through exactly
+# these two functions, so the pair is the whole failure surface for "a
+# scheduled thing didn't happen". Splitting them would mean two metrics that
+# are always read together. The log entry names which service it came from
+# when you need to tell them apart.
+#
+# NAME TRANSFORMS — the same two that made audit-trigger-failures.yaml count
+# zero for months before T-102 rewrote it. Neither is guessable from the
+# source:
+#
+#   - These are 2nd-gen functions, so they run on Cloud Run and log under
+#     resource.type="cloud_run_revision". The identifier label there is
+#     `service_name`; `function_name` exists only on 1st-gen `cloud_function`
+#     entries and silently matches nothing here.
+#   - Cloud Run service names are RFC1123, so the deployed name is the export
+#     name LOWERCASED: dispatchScheduledTasks -> dispatchscheduledtasks,
+#     runScheduledTask -> runscheduledtask.
+#
+# WHAT THIS CATCHES — the ERROR lines both functions emit:
+#   - "dispatchScheduledTasks: stake failed" — one stake's read/write threw.
+#     Payload: stakeId, errorMessage.
+#   - "dispatchScheduledTasks: enqueue failed" — Cloud Tasks rejected an
+#     enqueue for a non-dedupe reason; the task is left unstamped so the next
+#     hour retries it. Payload: stakeId, job, taskId, errorMessage. This is
+#     the highest-value catch and the likeliest one, because the enqueue IAM
+#     is granted by the operator and not by `firebase deploy` — see
+#     infra/runbooks/deploy.md, "First deploy after T-104," step 3. The
+#     symptom is a PERMISSION_DENIED naming cloudtasks.tasks.create or
+#     iam.serviceAccounts.actAs.
+#   - "dispatchScheduledTasks: unusable row in tasks" / "due task has an
+#     unusable schedule" / "could not advance a stamped task" — a row a
+#     manager or the console put into `tasks` that the dispatcher cannot
+#     use. Rules check `tasks` as a list and never element by element, so
+#     this is reachable. It repeats hourly until the data is fixed,
+#     because an unstampable row stays due; one bad row therefore pins
+#     this metric non-zero and will mask a new failure. See
+#     observability.md shape (5).
+#   - "runScheduledTask: no handler registered for job" / "malformed
+#     payload" — the runner returns rather than throwing on these, so Cloud
+#     Tasks does not retry them and the work is simply dropped. These should
+#     never fire in steady state: the dispatcher checks the registry BEFORE
+#     enqueuing, so an unknown job is caught there (at WARNING, which this
+#     filter does not match). Reaching the runner means a deploy landed
+#     between an enqueue and its execution, or something enqueued onto the
+#     queue by hand.
+#
+# WHAT THIS DELIBERATELY DOES NOT COUNT
+# "dispatchScheduledTasks: due task names an unknown job" is logged at
+# WARNING, not ERROR, because a stored row naming a retired job is inert —
+# it is skipped, never enqueued, and kept on purpose so re-registering the
+# job restores the manager's own `enabled` choice. It repeats hourly while
+# the row stays due. Nothing counts it; see infra/runbooks/observability.md
+# "Scheduled-task dispatch" shape (3) for the query that finds it.
+#
+# THE DISPATCHER DOES NOT THROW ON THESE. It logs each one and continues the
+# walk, returning a summary. A run in which every stake failed still exits 0,
+# so the 5xx-rate alert never fires and `summary.failures` in the INFO
+# "dispatchScheduledTasks: done" payload is not an error signal anywhere.
+# This metric is the only thing that counts them.
+#
+# WHAT THIS CANNOT CATCH — read this before trusting a flat zero.
+# A log-based counter can only count entries that exist. The failure that
+# takes down every scheduled feature at once is the ABSENCE of entries: the
+# Cloud Scheduler job paused, deleted, or never created, so the dispatcher
+# never runs, logs nothing, and this metric reads a healthy zero forever.
+# That one has its own metric read for its absence:
+# scheduled-dispatch-completed.yaml. Read the two together — this counter
+# says "runs are failing", that one says "runs are happening at all", and
+# neither implies the other.
+#
+# To apply (both projects):
+#
+#   for PROJECT in kindoo-staging kindoo-prod; do
+#     gcloud logging metrics create scheduled-task-failures \
+#       --project="$PROJECT" \
+#       --description="Errors from the scheduled-task dispatcher and runner" \
+#       --log-filter='resource.type="cloud_run_revision" AND
+#         resource.labels.service_name=("dispatchscheduledtasks" OR "runscheduledtask") AND
+#         severity>=ERROR'
+#   done
+
+name: scheduled-task-failures
+description: Errors from the scheduled-task dispatcher and runner
+filter: |
+  resource.type="cloud_run_revision" AND
+  resource.labels.service_name=("dispatchscheduledtasks" OR "runscheduledtask") AND
+  severity>=ERROR
+metricKind: DELTA
+valueType: INT64
+unit: '1'

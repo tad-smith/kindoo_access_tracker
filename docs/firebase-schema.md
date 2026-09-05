@@ -8,7 +8,7 @@
 - **Authorization:** Custom claims on the auth token, set by Cloud Function triggers on role-data writes.
 - **Data path (reads):** Client uses Firestore JS SDK directly. Firestore Security Rules enforce per-document access using claims from the auth token.
 - **Data path (writes):** Same — client writes via Firestore SDK; rules enforce field-level invariants and cross-doc invariants via `getAfter()`.
-- **Server-side compute:** Cloud Functions only, for: email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, and callable wrappers (request-completion, `syncApplyFix`). Nothing scheduled. Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
+- **Server-side compute:** Cloud Functions only, for: email send (Resend), audit-log fan-in, custom-claims sync, FCM push fanout, callable wrappers (request-completion, `syncApplyFix`), and the scheduled-task system — one hourly `onSchedule` dispatcher plus one generic `onTaskDispatched` runner, over per-stake rows in `stakeSchedules/{stakeId}` (§3.5, `architecture.md` D38). **Its job registry is empty, so nothing is scheduled today.** Mirror inventory in §7. Auto-seat ingestion runs through the Chrome extension's Sync feature (see `spec.md` §8), not a server-side importer.
 - **Hosting:** Firebase Hosting serves the static SPA build.
 
 No Cloud Run. No Express. No persistent server-side process for the request path.
@@ -288,6 +288,57 @@ And by the phone — `useRemoteApplyJobsByRequest`, a live subscription to the *
 **Three deliberate gaps in the terminal-write rule, all load-bearing.** `finished_at` / `outcome` / `claimed_at` / `claimed_by` are **typed when present but never required** — a denial on the extension's report-back would strand the job in `running` with the phone spinning forever, a worse failure than a terminal row missing a timestamp. `outcome.code` is checked as `is string`, **not** against the code union above — the union is the desktop's vocabulary and must be able to grow without a rules deploy. And `outcome.over_caps` is checked as a **list of at most 64 entries and no deeper**. Do not tighten any of the three; the governing property is that a conjunct here which can only ever deny buys a stranded job.
 
 Two things about that `over_caps` bound are worth stating so nobody reads it as sloppiness. **The per-entry shape is not expressible at any depth** — rules' CEL has no list iteration, no `all` / `exists`, so there is no way to say "every element is an `OverCapEntry`", and typing `over_caps[0]` alone would error on an empty list while proving nothing about the rest. Entry contents are the desktop's to get right for the same reason `outcome.code` is: a malformed entry renders wrong in the writer's own result dialog and reaches nobody else. **And 64 is a render bound, not a storage one** — `message` sits beside it as an unbounded string, so bytes were never what this block defended; `over_caps` is simply the one field the phone draws a row per element from. Reachable entries are the wards over cap plus the stake pool, so a 12-ward stake tops out at 13, which is what keeps the bound from ever denying a real completion. Not enforced at all: that `over_caps` appears only on `applied`. That is an authoring rule for the single writer rather than a security property — a stray warning on a `partial` misinforms the manager about their own completion and reaches no one else — and pinning it would mean threading the target status into a helper the `queued → cancelled` branch also calls, to gain a conjunct that can only deny. It is documented on `RemoteApplyOutcome` in `packages/shared` instead.
+
+### 3.5 `stakeSchedules/{stakeId}` — per-stake scheduled-task rows
+
+One document per stake, holding every scheduled job that stake has been seeded with. Written by the hourly `dispatchScheduledTasks` (Admin SDK) and by that stake's Kindoo Managers. See `spec.md` §17 and `architecture.md` D38.
+
+**Doc ID:** the stake id — the same slug as `stakes/{stakeId}`, which is why the doc is addressable without a query.
+
+**Fields:**
+
+```typescript
+{
+  tasks: ScheduledTask[];   // one row per registry job this stake has been seeded with
+  lastActor: { email: string; canonical: string };
+}
+```
+
+```typescript
+type ScheduledTask = {
+  job: string;                   // registry key (`functions/src/lib/taskRegistry.ts`)
+  enabled: boolean;              // the opt-in; seeded false for every job
+  schedule: TaskSchedule;        // closed set of shapes, below
+  last_trigger_time?: Timestamp; // bookkeeping only
+  next_trigger_time?: Timestamp; // absolute instant of the next dispatch
+};
+
+type TaskSchedule =
+  | { type: 'hourly' }
+  | { type: 'daily';   hour: number }               // hour in stake.timezone
+  | { type: 'weekly';  weekday: number; hour: number } // 0 = Sunday
+  | { type: 'monthly'; day: number; hour: number };    // clamped to month length
+```
+
+Both types live in `packages/shared/src/scheduledTasks.ts`, which also owns the schedule arithmetic (`advanceTriggerTime`, `nextTriggerTime`, `isTaskDue`) and is the only place that decides what a schedule means.
+
+**Top-level, not per-stake, and the reason is auditing.** A sub-collection under `stakes/{stakeId}` would sit inside the slice `auditTrigger.registration.test.ts` derives the audited-collection set from (§7, `architecture.md` D35), forcing either an audit trigger or an exemption for a document the dispatcher rewrites every hour. Keeping the array on the stake parent doc instead would fan an `auditStakeWrites` row on every hourly stamp, and suppressing that through `BOOKKEEPING_FIELDS` would also suppress a manager toggling `enabled` — the one write here worth auditing. So the document sits at top level, the way `remoteApply` does (§3.4), and **writes to it are not audited at all.** That is the accepted cost, recorded rather than worked around. `lastActor` is bookkeeping for a human reading the doc, not an audit trail; the dispatcher stamps the synthetic actor `ScheduledTaskDispatcher`, following the `RemoveTrigger` precedent (`spec.md` §3.3).
+
+**Written by:** the dispatcher (seeding rows, stamping `last_trigger_time` / `next_trigger_time`) and that stake's Kindoo Managers (toggling `enabled`, editing a `schedule`). There is no manager UI — a manager's write is a Firestore console edit today.
+
+**Read by:** nothing in the SPA yet. Read access exists so a member can see the document at all; the surface that would render it is not built.
+
+**Rules:**
+
+- `read` — `isAnyMember(stakeId) || isPlatformSuperadmin()`.
+- `create` / `update` — `isManager(stakeId)` **and** an exact two-key envelope (`tasks`, `lastActor`) **and** `tasks is list` **and** `tasks.size() <= 50` **and** `lastActorMatchesAuth`. A platform superadmin who is not a manager of the stake can read but not write.
+- `delete: if false` — deleting would silently drop every opt-out the document records, and the dispatcher would re-seed defaults on its next pass. Disabling a job is `enabled: false`.
+
+`isManager(stakeId)` reads purely from the token, so it works unchanged at top level (same as `remoteApply`'s use of it). `keysAreExactly` moved out of the `remoteApply` block into the shared helpers (§6) so this block could reach it.
+
+**Element-level validation is not possible and is not attempted.** Rules cannot reach inside array elements, so `isManager` covers `next_trigger_time` as much as it covers `enabled`, and the envelope check is the whole of the shape validation. The blast radius of a manager writing a bogus timing field is their own stake's own job firing early, at most once an hour, against a handler that must be idempotent within its window anyway. The 50-element cap is a storage bound, not a product limit — the registry holds a handful of jobs and each stake gets one row per job.
+
+**No index.** The dispatcher addresses the document by id, one per stake, inside a loop over `stakes`; nothing queries the collection.
 
 ## 4. Per-stake collections
 
@@ -968,6 +1019,11 @@ service cloud.firestore {
         && data.lastActor.email == request.auth.token.email;
     }
 
+    // Rules' List API has hasAll / hasOnly but no hasExactly.
+    function keysAreExactly(data, fields) {
+      return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
+    }
+
     // ===== Top-level collections =====
 
     match /userIndex/{canonicalEmail} {
@@ -1000,11 +1056,6 @@ service cloud.firestore {
 
       function ownsMailbox(owner) {
         return isAuthed() && authedCanonical() == owner;
-      }
-
-      // Rules' List API has hasAll / hasOnly but no hasExactly.
-      function keysAreExactly(data, fields) {
-        return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
       }
 
       // Three keys and only three. `remote_apply_enabled` is the only
@@ -1174,6 +1225,29 @@ service cloud.firestore {
         // Jobs are history.
         allow delete: if false;
       }
+    }
+
+    // ----- stakeSchedules (per-stake scheduled-task rows; D38, §3.5) -----
+    // Top level so the hourly dispatcher's stamp fans no audit row — writes
+    // here are NOT audited, deliberately. Rules govern only the manager-facing
+    // surface: reading the schedule, toggling `enabled`, editing a shape.
+    // Element-level validation is impossible (rules cannot reach inside array
+    // elements), so this checks the envelope only.
+    match /stakeSchedules/{stakeId} {
+
+      function validSchedule(data) {
+        return keysAreExactly(data, ['tasks', 'lastActor'])
+          && data.tasks is list
+          && data.tasks.size() <= 50;
+      }
+
+      allow read: if isAnyMember(stakeId) || isPlatformSuperadmin();
+      allow create, update: if isManager(stakeId)
+        && validSchedule(request.resource.data)
+        && lastActorMatchesAuth(request.resource.data);
+      // Deleting would drop every opt-out recorded here; disabling is
+      // `enabled: false`, not deletion.
+      allow delete: if false;
     }
 
     // ===== Per-stake collections =====
@@ -1556,10 +1630,12 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends the over-cap email when the array goes from empty to non-empty. Reads `stakes/{sid}/wards` once and labels every flagged pool from that one read (§4.2). Subject counts the pools (`spec.md` §9). |
 | `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices, through the shared `sendPushToSubscribers` (`functions/src/lib/push.ts`) with `category: 'newRequest'` |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |
+| `dispatchScheduledTasks` | `onSchedule`, cron `0 * * * *`, `Etc/UTC` | **The only scheduled function.** Walks `stakes`; per stake, seeds a `stakeSchedules/{sid}` row for any registry job the stake lacks (§3.5), enqueues one Cloud Tasks task per due row onto the `runScheduledTask` queue, then stamps `last_trigger_time` / `next_trigger_time`. Enqueue-before-stamp, so delivery is **at-least-once** and every handler must be idempotent within its window; a deterministic task id per (stake, job, UTC hour) makes a same-hour double enqueue a dedupe hit rather than a double run. Never throws — per-stake and per-task failures log at ERROR and are counted into the summary logged as `dispatchScheduledTasks: done`, a string an infra metric matches on and alerts on the *absence* of. Pins `kindoo-app@`. **`SCHEDULED_JOBS` is empty, so a run currently seeds nothing and enqueues nothing.** See `spec.md` §17, `architecture.md` D38. |
+| `runScheduledTask` | `onTaskDispatched`, `maxAttempts: 3` | The one generic worker for every scheduled job. Takes `{stakeId, job}`, resolves the handler from the same registry, calls it with `(stakeId, now)`. A malformed payload or an unregistered job name logs at ERROR and **returns** — retrying either can only fail the same way; a handler that throws propagates so Cloud Tasks retries it. Generic on purpose: a function per job would put a deploy-shape change and a queue behind every scheduled feature. Pins `kindoo-app@`. |
 
-Twenty-seven deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **None is scheduled** (`reconcileAuditGaps`, the last one, was deleted in T-102; see `architecture.md` D35). None is hot-path; all run on the free tier at this scale.
+Twenty-nine deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **Exactly one is scheduled**, `dispatchScheduledTasks`, and it is a dispatcher rather than a feature: a future scheduled feature is a registry entry and a row in `stakeSchedules/{stakeId}`, not a thirtieth function (`architecture.md` D38, amending D35's zero). None is hot-path; all run on the free tier at this scale.
 
-**The sync reminder adds none, and the count above is unchanged at twenty-seven.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`, `architecture.md` D37) is a service module, not a function: it carries no trigger, is not exported from `functions/src/index.ts`, and nothing invokes it — its dispatcher is deferred to T-104. It is complete and tested; it simply has no caller. It writes `stakes/{sid}.last_sync_reminder_date` (§4.1), sends the sync-reminder email through `EmailService`, and pushes through the shared `functions/src/lib/push.ts` with `category: 'syncReminder'`. When the dispatcher lands it adds one scheduled function, at which point D35's "zero scheduled Cloud Functions" needs amending — not before.
+**The sync reminder still adds none, and still has no caller.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`, `architecture.md` D37) is a service module, not a function: it carries no trigger and is not exported from `functions/src/index.ts`. What T-104 changed is only the reason nothing invokes it — the dispatcher now exists and runs hourly, but `SCHEDULED_JOBS` is empty, so the reminder is registered as no job and no task is ever enqueued for it. **No sync reminder can be sent by this deploy.** Registering it is a separate PR. It writes `stakes/{sid}.last_sync_reminder_date` (§4.1), sends the sync-reminder email through `EmailService`, and pushes through the shared `functions/src/lib/push.ts` with `category: 'syncReminder'`.
 
 **Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 

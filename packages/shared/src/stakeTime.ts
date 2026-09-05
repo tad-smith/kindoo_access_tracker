@@ -70,15 +70,28 @@ export function formatDateInStakeTz(value: unknown, timezone: string | undefined
 }
 
 /**
- * The calendar day before `dateStr` (both `YYYY-MM-DD`). Pure calendar
- * arithmetic — `Date.UTC` carries month, year, and leap-day rollover,
- * and anchoring to UTC keeps DST out of a question that has no instant
- * in it. Returns the empty string when `dateStr` isn't ISO-shaped.
+ * `dateStr` (`YYYY-MM-DD`) shifted by `days`, which may be negative.
+ * Pure calendar arithmetic — `Date.UTC` carries month, year, and
+ * leap-day rollover, and anchoring to UTC keeps DST out of a question
+ * that has no instant in it. Returns the empty string when `dateStr`
+ * isn't ISO-shaped.
  */
-export function previousIsoDate(dateStr: string): string {
+export function addIsoDays(dateStr: string, days: number): string {
   if (!ISO_DATE.test(dateStr)) return '';
   const [y, m, d] = dateStr.split('-').map((part) => Number.parseInt(part, 10));
-  return formatDateInStakeTz(new Date(Date.UTC(y!, m! - 1, d! - 1)), 'UTC');
+  return formatDateInStakeTz(new Date(Date.UTC(y!, m! - 1, d! + days)), 'UTC');
+}
+
+/** The calendar day before `dateStr` (both `YYYY-MM-DD`). */
+export function previousIsoDate(dateStr: string): string {
+  return addIsoDays(dateStr, -1);
+}
+
+/** Day of week (0 = Sunday) for the calendar date `dateStr`. `-1` when not ISO-shaped. */
+export function isoDateWeekday(dateStr: string): number {
+  if (!ISO_DATE.test(dateStr)) return -1;
+  const [y, m, d] = dateStr.split('-').map((part) => Number.parseInt(part, 10));
+  return new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay();
 }
 
 /**
@@ -97,7 +110,7 @@ export function previousIsoDate(dateStr: string): string {
  * acceptable at v1 scale.
  */
 export function startOfDayInStakeTz(dateStr: string, timezone: string | undefined): Date {
-  return dayBoundaryInStakeTz(dateStr, timezone, 0, 0, 0, 0);
+  return wallClockInStakeTz(dateStr, timezone, 0, 0, 0, 0);
 }
 
 /**
@@ -108,7 +121,7 @@ export function startOfDayInStakeTz(dateStr: string, timezone: string | undefine
  * `startOfDayInStakeTz`.
  */
 export function endOfDayInStakeTz(dateStr: string, timezone: string | undefined): Date {
-  return dayBoundaryInStakeTz(dateStr, timezone, 23, 59, 59, 999);
+  return wallClockInStakeTz(dateStr, timezone, 23, 59, 59, 999);
 }
 
 /**
@@ -119,14 +132,20 @@ export function endOfDayInStakeTz(dateStr: string, timezone: string | undefined)
  * `Intl`), and subtract the offset. The offset is sampled at noon of the
  * target day so DST transitions near midnight don't land us in the
  * absent/duplicated hour.
+ *
+ * Sampling at noon is also why an hour inside a DST gap resolves to the
+ * neighbouring wall-clock hour rather than erroring: on a spring-forward
+ * day `02:00` local does not exist, and this returns the instant that
+ * renders as `03:00`. Adding hours to `startOfDayInStakeTz` instead
+ * would be off by the whole offset shift for the rest of the day.
  */
-function dayBoundaryInStakeTz(
+export function wallClockInStakeTz(
   dateStr: string,
   timezone: string | undefined,
   hours: number,
-  minutes: number,
-  seconds: number,
-  ms: number,
+  minutes = 0,
+  seconds = 0,
+  ms = 0,
 ): Date {
   const tz = timezone || DEFAULT_STAKE_TZ;
   const [yStr, mStr, dStr] = dateStr.split('-');
@@ -175,7 +194,13 @@ function tzOffsetMs(at: Date, tz: string): number {
   return asUtc - at.getTime();
 }
 
-function toDate(value: unknown): Date | null {
+/**
+ * Coerce a Date / Firestore `Timestamp` / ISO string / epoch millis to a
+ * `Date`, or `null` when it is none of those. Exported for other modules
+ * in this package that read the same loosely-typed timestamp fields;
+ * deliberately not on the package barrel.
+ */
+export function toDate(value: unknown): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return value;
   if (typeof value === 'object') {

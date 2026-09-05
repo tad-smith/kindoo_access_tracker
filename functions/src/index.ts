@@ -31,3 +31,6 @@ export { createStake } from './callable/createStake.js';
 export { backfillAuditTtl } from './callable/backfillAuditTtl.js';
 export { backfillKindooSiteId } from './callable/backfillKindooSiteId.js';
 export { backfillEqPresidentAccess } from './callable/backfillEqPresidentAccess.js';
+
+export { dispatchScheduledTasks } from './scheduled/dispatchScheduledTasks.js';
+export { runScheduledTask } from './tasks/runScheduledTask.js';
