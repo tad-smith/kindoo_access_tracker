@@ -11,7 +11,8 @@ What is monitored, where the data lives, what fires when, and how to add to it. 
 - **Audit trigger failures** — log-based metric on errors from the nine `audit*Writes` fan-in triggers. Mostly transient now that those triggers retry, so read it as a health signal. Defined in `infra/monitoring/metrics/audit-trigger-failures.yaml`.
 - **Audit rows dropped** — log-based metric on audit rows the trigger permanently rejected. Unlike the metric above, every hit is real data loss. Defined in `infra/monitoring/metrics/audit-row-dropped.yaml`.
 - **Claim sync failures** — log-based metric on `syncAccessClaims`, `syncManagersClaims`, `syncSuperadminClaims` exceptions. Defined in `infra/monitoring/metrics/claim-sync-failures.yaml`.
-- **Scheduled-task failures** — log-based metric on errors from `dispatchScheduledTasks` and `runScheduledTask` (T-104). Catches a dispatcher that runs and fails; **cannot** catch one that stops running. Defined in `infra/monitoring/metrics/scheduled-task-failures.yaml`. Read "Scheduled-task dispatch" below before trusting a zero.
+- **Scheduled-task failures** — log-based metric on errors from `dispatchScheduledTasks` and `runScheduledTask` (T-104). The dispatcher logs a failed stake or enqueue and keeps walking, so these never reach the 5xx alert and this metric is the only thing counting them. Defined in `infra/monitoring/metrics/scheduled-task-failures.yaml`.
+- **Scheduled dispatch completed** — log-based metric counting the hourly dispatcher's `done` line, one per healthy hour. **Read for its absence, not its value** — it is the only positive proof that any scheduled work is happening. Defined in `infra/monitoring/metrics/scheduled-dispatch-completed.yaml`. Read "Scheduled-task dispatch" below before trusting a zero on either of these.
 
 ### Not yet wired
 
@@ -19,7 +20,7 @@ These were sketched in the migration plan but the alert/metric YAML files do not
 
 - Auth verification failures > 5/hour. Catches misconfigured client builds or attempted forgery.
 - **Alert on `audit-row-dropped` > 0.** The metric exists; no alert routes off it yet. Any non-zero value means an audit row was thrown away and cannot be reconstructed, and since T-102 removed the reconciliation sweep nothing else will ever surface it. Highest-value alert on this list.
-- **Absence alert on `dispatchScheduledTasks` invocations.** Nothing detects a dispatcher that simply stopped. See "Scheduled-task dispatch" below for why no counter can, and for the condition shape that would.
+- **Metric-absence alert on `scheduled-dispatch-completed`.** The metric exists; no alert routes off it. Nothing detects a dispatcher that simply stopped, and when it stops *every* scheduled feature stops with it, silently. See "Scheduled-task dispatch" below for the condition shape.
 
 ## Where to find data
 
@@ -54,7 +55,7 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 
 **Why this section is longer than its alert coverage deserves: there is no alert.** Every scheduled feature in this stack reaches its handler through one hourly function, `dispatchScheduledTasks`, and one runner, `runScheduledTask`. That is deliberate — it is what keeps the whole system inside Cloud Scheduler's 3-job free tier — but it also means a single silent failure stops *all* scheduled work at once, with no user-visible symptom beyond something not happening. Nobody gets paged. Somebody has to look.
 
-**The three failure shapes, in descending order of how likely they are to go unnoticed.**
+**Four failure shapes, roughly in descending order of how invisible they are.** Only (2) and (4) are counted by a metric; (1) and (3) are found by looking.
 
 **(1) The dispatcher stopped running.** The Cloud Scheduler job was paused, deleted, or never created by a deploy. The dispatcher logs nothing, because it never executes — so `scheduled-task-failures` reads zero, `5xx-rate` reads zero, and every dashboard looks healthy. **No log-based counter can ever detect this**, because there is no log entry to count. This is the failure mode to be afraid of.
 
@@ -71,9 +72,20 @@ gcloud logging read \
 
 Expected: a row `ENABLED	0 * * * *` whose name ends `dispatchScheduledTasks-us-central1`, and at least two log entries in the last three hours. Zero entries against an `ENABLED` job means the job is firing and the function is failing to start — go to (2). No such job at all means a deploy never created it, or something deleted it; re-deploy and walk `infra/runbooks/deploy.md`, "First deploy after T-104."
 
-*What would close this gap:* a Cloud Monitoring alert policy using a **metric-absence** condition (not a threshold) on `run.googleapis.com/request_count` filtered to `service_name="dispatchscheduledtasks"`, with a duration comfortably over one hour — say 3h, so a single missed tick or a slow scheduler doesn't page. It is the only condition type that fires on nothing happening. No YAML exists for it; add it under `infra/monitoring/alerts/` when the operational need is concrete.
+**The line that proves a run happened is `dispatchScheduledTasks: done`.** It is emitted at the end of every completed walk, carrying the run summary `{ stakes, seeded, enqueued, deduped, failures }`. That makes it a better health signal than an invocation count, which only proves a run *started* — a dispatcher that starts and then hangs mid-loop still increments `request_count` and still emits no `done`:
 
-**(2) The dispatcher runs and throws.** Counted by `scheduled-task-failures`. Logs land under `dispatchscheduledtasks`.
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="dispatchscheduledtasks" AND jsonPayload.message:"dispatchScheduledTasks: done"' \
+  --project=kindoo-prod --limit=5 --freshness=3h \
+  --format="value(timestamp,jsonPayload.message)"
+```
+
+*What would close this gap:* a Cloud Monitoring alert policy using a **metric-absence** condition (not a threshold) on the `scheduled-dispatch-completed` metric, with a duration comfortably over one hour — say 3h, so a single missed tick or a slow scheduler doesn't page. Metric-absence is the only condition type that fires on nothing happening. The metric YAML exists (`infra/monitoring/metrics/scheduled-dispatch-completed.yaml`); no alert routes off it. Add one under `infra/monitoring/alerts/` when the operational need is concrete.
+
+**(2) The dispatcher runs, and individual stakes or enqueues fail.** Counted by `scheduled-task-failures`. Logs land under `dispatchscheduledtasks`.
+
+**The dispatcher does not throw on these — and that is deliberate.** A per-stake or per-enqueue failure is logged at `ERROR` and the walk continues, so one broken stake never costs the other eleven their hour. The consequence for monitoring is that **a run in which every stake failed still exits 0**: no 5xx, no alert, and `dispatchScheduledTasks: done` is still emitted with a non-zero `failures` in its summary. The 5xx-rate alert will never tell you about this, and neither will failure shape (1)'s check. `scheduled-task-failures` is the only thing counting it.
 
 ```bash
 gcloud logging read \
@@ -82,13 +94,42 @@ gcloud logging read \
   --format="value(timestamp,jsonPayload.message)"
 ```
 
-The likeliest cause on a newly-deployed project is **not a bug — it is missing IAM**. `firebase deploy` creates the Cloud Tasks queue but does not grant permission to enqueue onto it, so the dispatcher walks the stakes correctly and then fails on every enqueue with a `PERMISSION_DENIED` naming `cloudtasks.tasks.create` or `iam.serviceAccounts.actAs`. Fix: `infra/runbooks/deploy.md`, "First deploy after T-104," step 3. There are exactly two bindings and both are operator-granted.
+Two messages to expect, both prefixed with the function name:
 
-**(3) A job handler throws inside the runner.** Logs land under `runscheduledtask`, also counted by `scheduled-task-failures`. Cloud Tasks retries a failed task, so a single error is usually self-healing and this reads as a rate signal, not a loss signal — the same posture as `audit-trigger-failures`. A handler erroring on every retry until the queue gives up *is* lost work, and nothing reconciles it — re-run the affected stake's job by hand once the cause is fixed. Drop `severity>=ERROR` and widen `--freshness` to see the surrounding entries; which stake and which job a failure belongs to is whatever the handler logged.
+- `dispatchScheduledTasks: stake failed` — one stake's read or write threw. Payload carries `stakeId` and `errorMessage`.
+- `dispatchScheduledTasks: enqueue failed` — Cloud Tasks rejected an enqueue. Payload carries `stakeId`, `job`, `taskId`, `errorMessage`. The task is left unstamped, so the next hour retries it on its own.
+
+The likeliest cause of the second one on a newly-deployed project is **not a bug — it is missing IAM**. `firebase deploy` creates the Cloud Tasks queue but does not grant permission to enqueue onto it, so the dispatcher walks the stakes correctly and then fails on every enqueue with a `PERMISSION_DENIED` naming `cloudtasks.tasks.create` or `iam.serviceAccounts.actAs`. Fix: `infra/runbooks/deploy.md`, "First deploy after T-104," step 3. There are exactly two bindings and both are operator-granted.
+
+**(3) A stored trigger names a job the registry no longer carries.** The dispatcher checks the job name against the registry **before** enqueuing, so such a row is never enqueued and never runs. When it comes due, the dispatcher logs
+
+```
+WARNING  dispatchScheduledTasks: due task names an unknown job
+```
+
+with `{ stakeId, job }`, and it repeats every hour the row stays due. That makes it the durable signal for this condition — but note the severity:
+
+> **No metric counts this.** `scheduled-task-failures` filters `severity>=ERROR` and this line is `WARNING`, deliberately, because the situation is inert rather than broken. Nothing surfaces it except looking:
+>
+> ```bash
+> gcloud logging read \
+>   'resource.type="cloud_run_revision" AND resource.labels.service_name="dispatchscheduledtasks" AND jsonPayload.message:"unknown job"' \
+>   --project=kindoo-prod --limit=20 --freshness=24h \
+>   --format="value(timestamp,jsonPayload.stakeId,jsonPayload.job)"
+> ```
+
+**The fix is usually not to delete the row.** A stale row costs nothing — it is never enqueued — and it is kept on purpose: if the job is re-registered under the same name, the manager's own `enabled` choice is still there, where pruning the row would have silently discarded an opt-out and re-seeded it to `false`. So treat the WARN as "a job was renamed or removed and these stakes still point at the old name": re-register it, rename the stored rows to match, or leave it alone. Removing a stake's row is a decision about that manager's preference, not cleanup.
+
+**(4) The runner rejects a task.** Logs under `runscheduledtask`, counted by `scheduled-task-failures`. Two shapes:
+
+- A handler **throwing** is retried by Cloud Tasks, so a single error is usually self-healing and reads as a rate signal, not a loss signal — the same posture as `audit-trigger-failures`. A handler erroring on every retry until the queue gives up *is* lost work, and nothing reconciles it; re-run that stake's job by hand once the cause is fixed.
+- `runScheduledTask: no handler registered for job` and `runScheduledTask: malformed payload` **should never fire in steady state**, because (3) is where an unknown job is caught — before anything is enqueued. Reaching the runner means one of two things: a deploy landed in the minutes between an enqueue and its execution and removed the job in between (a one-shot race, and dropping the work is the right outcome — the job no longer exists), or something enqueued onto that queue by hand. Neither is retried; the runner logs and returns, so Cloud Tasks records a success. One of these after a deploy is expected noise. A steady trickle of them is not, and means something other than the dispatcher is writing to the queue.
+
+Widen `--freshness` and drop `severity>=ERROR` to see the surrounding `runScheduledTask: running` / `done` entries for context.
 
 **Service names are lowercase in every filter above.** Cloud Run service names are RFC1123, so `dispatchScheduledTasks` logs under `dispatchscheduledtasks`. A filter written with the camelCase export name matches nothing and is indistinguishable from "it never ran" — which is exactly failure (1), so getting this wrong manufactures the scariest symptom out of a typo.
 
-**Scope note.** This covers the dispatch plumbing, not what any individual job does. A trigger that is disabled, or whose `next_trigger_time` is wrong, is a data question — read that stake's `stakeSchedules/{stakeId}` document — not a monitoring one.
+**Scope note.** This covers the dispatch plumbing, not what any individual job does. A trigger that is disabled, or whose `next_trigger_time` is wrong, is a data question — read that stake's `stakeSchedules/{stakeId}` document — not a monitoring one. In particular, **`enqueued: 0` on a healthy dispatcher is normal**: seeded triggers arrive with `enabled: false`, so a project where nobody has opted a stake in dispatches nothing, forever, while every metric here reads green. That is working as designed, and it is why "did anything run?" is not a monitoring question either.
 
 ## How to add a new metric
 

@@ -492,7 +492,13 @@ gcloud tasks queues describe runScheduledTask \
 
 Expected: `projects/kindoo-staging/locations/us-central1/queues/runScheduledTask	RUNNING`. Repeat with `--project=kindoo-prod`.
 
-A `NOT_FOUND` here means the deploy did not get as far as provisioning the queue. Redeploy that one function and read the output rather than re-running the whole deploy:
+That name is what the code addresses — `dispatchScheduledTasks` enqueues via `taskQueue('runScheduledTask')`, and the repo pins no region anywhere, so 2nd-gen's `us-central1` default applies. **Verify it rather than assume it**: the CLI's queue provisioning has no local equivalent and is first exercised on this deploy, so if `describe` says `NOT_FOUND`, list before concluding anything is broken:
+
+```bash
+gcloud tasks queues list --project=kindoo-staging --location=us-central1
+```
+
+If a queue is there under another name or region, note it — the runner's own address is what matters, and a mismatch between it and what the dispatcher enqueues to is the bug. If there is genuinely no queue, the deploy did not get as far as provisioning it. Redeploy that one function and read the output rather than re-running the whole deploy:
 
 ```bash
 firebase deploy --only functions:runScheduledTask --project staging
@@ -559,7 +565,7 @@ gcloud projects get-iam-policy kindoo-staging \
 
 Expected: `roles/run.invoker`. Empty output means step 1.8 was not completed on that project — fix it there, not here.
 
-### 4. Confirm a dispatch actually happened
+### 4. Confirm a dispatch actually happened — and expect nothing to run
 
 Wait for the top of the next hour, then:
 
@@ -570,7 +576,9 @@ gcloud logging read \
   --format="value(timestamp,severity,jsonPayload.message)"
 ```
 
-Expected: at least one entry from the last hour, none at `ERROR`. The service name is **lowercased** — Cloud Run service names are RFC1123, so the export `dispatchScheduledTasks` logs under `dispatchscheduledtasks`. Filtering on the camelCase name matches nothing and looks exactly like "the dispatcher never ran."
+Expected: at least one entry from the last hour, ending in `dispatchScheduledTasks: done`, and none at `ERROR`. That `done` line carries the run summary — `{ stakes, seeded, enqueued, deduped, failures }` — and it is the only line that proves a walk completed rather than merely started.
+
+The service name is **lowercased** — Cloud Run service names are RFC1123, so the export `dispatchScheduledTasks` logs under `dispatchscheduledtasks`. Filtering on the camelCase name matches nothing and looks exactly like "the dispatcher never ran."
 
 To force a run without waiting, use the job name from step 1:
 
@@ -580,6 +588,10 @@ gcloud scheduler jobs run <job-name-from-step-1> \
 ```
 
 No output on success. An empty log read after a forced run, with the job reporting `ENABLED`, is the failure that step 3 exists to prevent — read `runScheduledTask`'s logs too, and see `infra/runbooks/observability.md` "Scheduled-task dispatch."
+
+> **`enqueued: 0` on the first run is the correct result, not a failure.** There is no post-deploy backfill to run and `createStake` seeds nothing. The dispatcher **self-seeds**: on its next hourly pass it writes any missing registry entry onto every stake, including stakes that predate the job, and every seeded trigger arrives with `enabled: false`. So the first run's summary should show a non-zero `seeded` and a zero `enqueued`, and nothing will actually execute until somebody opts a stake in by flipping that flag.
+>
+> The check is therefore "did the documents appear", not "did something happen". An hour after the deploy, open Firestore → `stakeSchedules` and confirm there is one document per stake, each holding the seeded triggers. If `stakeSchedules` is empty an hour later, the dispatcher is not running — go back to step 1.
 
 ## Rollback
 
@@ -794,7 +806,7 @@ After the headers are live, this is a one-time-per-browser cleanup; subsequent d
 
 ## What this runbook does NOT cover
 
-- **Which stake runs which scheduled job** — that is data, not deploy config: the trigger rows in `stakeSchedules/{stakeId}`, seeded by `createStake` and edited by a manager. Deploy owns only the two pieces of plumbing above (the hourly Cloud Scheduler job and the Cloud Tasks queue), and neither changes when a stake opts a job in or out. See `docs/TASKS.md` T-104.
+- **Which stake runs which scheduled job** — that is data, not deploy config: the trigger rows in `stakeSchedules/{stakeId}`, self-seeded by the dispatcher on its next hourly pass and then opted in by a manager. Deploy owns only the two pieces of plumbing above (the hourly Cloud Scheduler job and the Cloud Tasks queue), and neither changes when a stake enables or disables a job. There is no seeding step to run and no backfill. See `docs/TASKS.md` T-104.
 - **Secret Manager updates** — see `infra/runbooks/resend-api-key-setup.md` for the Resend key; add a similar runbook when a new secret is introduced.
 - **Custom-domain / DNS setup** — `infra/runbooks/custom-domain.md`.
 - **Runtime SA grants on the roster Sheet** — `infra/runbooks/granting-importer-sheet-access.md` (deprecated; T-45 removed the importer).
