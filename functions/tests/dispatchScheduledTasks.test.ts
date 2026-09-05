@@ -160,9 +160,10 @@ describe.skipIf(!hasEmulators())('dispatchDue against Firestore', () => {
     });
 
     expect(calls).toHaveLength(1);
-    // Phase held at :17 rather than re-based onto the dispatch minute.
+    // The next top of the hour, not the dispatch minute — an hourly slot
+    // is anchored to the hour so it can't inherit a run's start second.
     expect((await readSchedule(db))?.tasks[0]?.next_trigger_time?.toDate().toISOString()).toBe(
-      '2026-09-05T14:17:00.000Z',
+      '2026-09-05T15:00:00.000Z',
     );
   });
 

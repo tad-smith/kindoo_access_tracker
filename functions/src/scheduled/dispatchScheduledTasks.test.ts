@@ -289,10 +289,12 @@ describe('dispatchDue — selection and stamping', () => {
     await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
 
     expect(calls).toHaveLength(1);
-    // Back on the future side, still on the original :17 phase.
+    // The first slot after `now`, not the ~100 windows in between. The
+    // stale value sat at :17; hourly slots snap to the top of the hour,
+    // so catching up also re-anchors an off-phase stored value.
     expect(
       writes['stakeSchedules/csnorth']?.tasks[0]?.next_trigger_time?.toDate().toISOString(),
-    ).toBe('2026-09-05T14:17:00.000Z');
+    ).toBe('2026-09-05T15:00:00.000Z');
   });
 });
 

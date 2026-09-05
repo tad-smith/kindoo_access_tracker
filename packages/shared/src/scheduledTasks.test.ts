@@ -192,7 +192,12 @@ describe('nextTriggerTime', () => {
       job: 'demo',
       enabled: true,
       schedule: { type: 'hourly' },
-      next_trigger_time: seeded,
+      next_trigger_time: {
+        seconds: Math.floor(seeded.getTime() / 1000),
+        nanoseconds: 0,
+        toDate: () => seeded,
+        toMillis: () => seeded.getTime(),
+      },
     };
     expect(isTaskDue(seededTask, earlierNextHour)).toBe(true);
   });
