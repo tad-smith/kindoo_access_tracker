@@ -9,18 +9,19 @@
 // `enabled` (`useSetSyncReminderEnabledMutation`); seeding, scheduling
 // and the trigger stamps all belong to the hourly dispatcher (D38).
 
-import type { ScheduledTask, StakeSchedule } from '@kindoo/shared';
+import { SYNC_REMINDER_JOB, type ScheduledTask, type StakeSchedule } from '@kindoo/shared';
 import { formatDateTime } from '../../../lib/render/formatDate';
 
 /**
- * Registry key of the expired-temp-seat reminder, as
- * `functions/src/lib/taskRegistry.ts` registers it. Duplicated rather
- * than imported: the registry is Admin-SDK code the SPA cannot pull in.
- * Renaming the job means renaming it here too — the symptom is a toggle
- * stuck on "not seeded yet", since a row naming an unknown job is inert
- * on both sides.
+ * Registry key of the expired-temp-seat reminder. Defined once in
+ * `@kindoo/shared` and re-exported here so this module stays the web
+ * half's single entry point for the feature. The key is the join
+ * between `functions/src/lib/taskRegistry.ts` and this toggle; a second
+ * copy would let a rename on one side leave the other reading a row
+ * that is not there, and the symptom — a toggle stuck on "not seeded
+ * yet" — names neither side.
  */
-export const SYNC_REMINDER_JOB = 'syncReminder';
+export { SYNC_REMINDER_JOB };
 
 /**
  * The stake's `syncReminder` row, or `null` when the dispatcher has not
