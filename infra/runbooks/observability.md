@@ -55,7 +55,7 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 
 **Why this section is longer than its alert coverage deserves: there is no alert.** Every scheduled feature in this stack reaches its handler through one hourly function, `dispatchScheduledTasks`, and one runner, `runScheduledTask`. That is deliberate — it is what keeps the whole system inside Cloud Scheduler's 3-job free tier — but it also means a single silent failure stops *all* scheduled work at once, with no user-visible symptom beyond something not happening. Nobody gets paged. Somebody has to look.
 
-**The three failure shapes, in descending order of how likely they are to go unnoticed.**
+**Four failure shapes, roughly in descending order of how invisible they are.** Only (2) and (4) are counted by a metric; (1) and (3) are found by looking.
 
 **(1) The dispatcher stopped running.** The Cloud Scheduler job was paused, deleted, or never created by a deploy. The dispatcher logs nothing, because it never executes — so `scheduled-task-failures` reads zero, `5xx-rate` reads zero, and every dashboard looks healthy. **No log-based counter can ever detect this**, because there is no log entry to count. This is the failure mode to be afraid of.
 
@@ -101,10 +101,29 @@ Two messages to expect, both prefixed with the function name:
 
 The likeliest cause of the second one on a newly-deployed project is **not a bug — it is missing IAM**. `firebase deploy` creates the Cloud Tasks queue but does not grant permission to enqueue onto it, so the dispatcher walks the stakes correctly and then fails on every enqueue with a `PERMISSION_DENIED` naming `cloudtasks.tasks.create` or `iam.serviceAccounts.actAs`. Fix: `infra/runbooks/deploy.md`, "First deploy after T-104," step 3. There are exactly two bindings and both are operator-granted.
 
-**(3) The runner rejects or fails a task.** Logs land under `runscheduledtask`, also counted by `scheduled-task-failures`. Two shapes, and they behave differently:
+**(3) A stored trigger names a job the registry no longer carries.** The dispatcher checks the job name against the registry **before** enqueuing, so such a row is never enqueued and never runs. When it comes due, the dispatcher logs
+
+```
+WARNING  dispatchScheduledTasks: due task names an unknown job
+```
+
+with `{ stakeId, job }`, and it repeats every hour the row stays due. That makes it the durable signal for this condition — but note the severity:
+
+> **No metric counts this.** `scheduled-task-failures` filters `severity>=ERROR` and this line is `WARNING`, deliberately, because the situation is inert rather than broken. Nothing surfaces it except looking:
+>
+> ```bash
+> gcloud logging read \
+>   'resource.type="cloud_run_revision" AND resource.labels.service_name="dispatchscheduledtasks" AND jsonPayload.message:"unknown job"' \
+>   --project=kindoo-prod --limit=20 --freshness=24h \
+>   --format="value(timestamp,jsonPayload.stakeId,jsonPayload.job)"
+> ```
+
+**The fix is usually not to delete the row.** A stale row costs nothing — it is never enqueued — and it is kept on purpose: if the job is re-registered under the same name, the manager's own `enabled` choice is still there, where pruning the row would have silently discarded an opt-out and re-seeded it to `false`. So treat the WARN as "a job was renamed or removed and these stakes still point at the old name": re-register it, rename the stored rows to match, or leave it alone. Removing a stake's row is a decision about that manager's preference, not cleanup.
+
+**(4) The runner rejects a task.** Logs under `runscheduledtask`, counted by `scheduled-task-failures`. Two shapes:
 
 - A handler **throwing** is retried by Cloud Tasks, so a single error is usually self-healing and reads as a rate signal, not a loss signal — the same posture as `audit-trigger-failures`. A handler erroring on every retry until the queue gives up *is* lost work, and nothing reconciles it; re-run that stake's job by hand once the cause is fixed.
-- `runScheduledTask: no handler registered for job` and `runScheduledTask: malformed payload` are **not** retried — the runner logs and returns, so Cloud Tasks sees a success and the work is dropped silently. Either one means the stored trigger and the code disagree: a job name that was renamed or removed while a stake still had a row naming it. Fix the registry or the stake's `stakeSchedules` document; a retry would not have helped.
+- `runScheduledTask: no handler registered for job` and `runScheduledTask: malformed payload` **should never fire in steady state**, because (3) is where an unknown job is caught — before anything is enqueued. Reaching the runner means one of two things: a deploy landed in the minutes between an enqueue and its execution and removed the job in between (a one-shot race, and dropping the work is the right outcome — the job no longer exists), or something enqueued onto that queue by hand. Neither is retried; the runner logs and returns, so Cloud Tasks records a success. One of these after a deploy is expected noise. A steady trickle of them is not, and means something other than the dispatcher is writing to the queue.
 
 Widen `--freshness` and drop `severity>=ERROR` to see the surrounding `runScheduledTask: running` / `done` entries for context.
 

@@ -37,7 +37,20 @@
 #     iam.serviceAccounts.actAs.
 #   - "runScheduledTask: no handler registered for job" / "malformed
 #     payload" — the runner returns rather than throwing on these, so Cloud
-#     Tasks does not retry them and the work is simply dropped.
+#     Tasks does not retry them and the work is simply dropped. These should
+#     never fire in steady state: the dispatcher checks the registry BEFORE
+#     enqueuing, so an unknown job is caught there (at WARNING, which this
+#     filter does not match). Reaching the runner means a deploy landed
+#     between an enqueue and its execution, or something enqueued onto the
+#     queue by hand.
+#
+# WHAT THIS DELIBERATELY DOES NOT COUNT
+# "dispatchScheduledTasks: due task names an unknown job" is logged at
+# WARNING, not ERROR, because a stored row naming a retired job is inert —
+# it is skipped, never enqueued, and kept on purpose so re-registering the
+# job restores the manager's own `enabled` choice. It repeats hourly while
+# the row stays due. Nothing counts it; see infra/runbooks/observability.md
+# "Scheduled-task dispatch" shape (3) for the query that finds it.
 #
 # THE DISPATCHER DOES NOT THROW ON THESE. It logs each one and continues the
 # walk, returning a summary. A run in which every stake failed still exits 0,
