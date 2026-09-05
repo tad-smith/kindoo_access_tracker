@@ -21,9 +21,13 @@
 //        b. Update `userIndex/{canonical}` removing `fcmTokens[deviceId]`
 //           via `FieldValue.delete()` and setting
 //           `notificationPrefs.push.newRequest = false`.
-//   3. Toggle "New requests" pref while already subscribed →
-//      `useUpdateNewRequestPrefMutation` flips the boolean only;
-//      tokens stay in place.
+//   3. Toggle a push category while already subscribed →
+//      `useUpdatePushPrefMutation(category)` flips that one boolean;
+//      tokens and the sibling category stay in place.
+//
+// Subscribing opts you into `newRequest` only — that is what the
+// Enable button's copy promises. `syncReminder` is opt-in on its own
+// switch, so it stays absent (and reads false) until asked for.
 //
 // Why no explicit `navigator.serviceWorker.register(...)` call: the
 // initial implementation registered the SW with config-as-query-params
@@ -85,9 +89,25 @@ export function useIsThisDeviceSubscribed(entry: UserIndexEntry | undefined): bo
   }, [entry]);
 }
 
-/** Ergonomic accessor for the `notificationPrefs.push.newRequest` flag. */
-export function getNewRequestPref(entry: UserIndexEntry | undefined): boolean {
-  return entry?.notificationPrefs?.push?.newRequest === true;
+type PushPrefs = NonNullable<NonNullable<UserIndexEntry['notificationPrefs']>['push']>;
+
+/**
+ * A push notification category. Derived from the shared type so a new
+ * category is a one-line schema change, not a second union to keep in
+ * step.
+ */
+export type PushCategory = keyof PushPrefs;
+
+/**
+ * Ergonomic accessor for one `notificationPrefs.push.*` flag.
+ *
+ * An absent key reads as OFF: every category is opted into
+ * individually, so a manager already subscribed for `newRequest` does
+ * not silently start receiving `syncReminder` pushes. The server-side
+ * fanout gates on `=== true` to match.
+ */
+export function getPushPref(entry: UserIndexEntry | undefined, category: PushCategory): boolean {
+  return entry?.notificationPrefs?.push?.[category] === true;
 }
 
 /**
@@ -197,11 +217,15 @@ export function useDisablePushMutation() {
 }
 
 /**
- * Toggle the "new request" push category on/off without changing the
- * subscription. Used by the per-category switch when the device is
- * already registered.
+ * Toggle one push category on/off without changing the subscription.
+ * Used by the per-category switches when the device is already
+ * registered. One hook per category so each switch keeps its own
+ * `isPending` — a shared mutation would grey out both.
+ *
+ * The write names only `category`, so a merge leaves every sibling
+ * category as it was.
  */
-export function useUpdateNewRequestPrefMutation() {
+export function useUpdatePushPrefMutation(category: PushCategory) {
   const principal = usePrincipal();
   const qc = useQueryClient();
   return useMutation({
@@ -210,10 +234,11 @@ export function useUpdateNewRequestPrefMutation() {
         throw new Error('Not signed in.');
       }
       const actor = actorOf(principal);
+      const push: Partial<Record<PushCategory, boolean>> = { [category]: enabled };
       await setDoc(
         userIndexRef(db, principal.canonical),
         {
-          notificationPrefs: { push: { newRequest: enabled } },
+          notificationPrefs: { push },
           lastActor: actor,
         } as Partial<UserIndexEntry> & { lastActor: typeof actor },
         { merge: true },

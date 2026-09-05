@@ -67,6 +67,19 @@ export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolv
 export { scopeLabel } from './scopeLabel.js';
 export { sanitizeSlugInput } from './slugInput.js';
 export {
+  endOfDayInStakeTz,
+  formatDateInStakeTz,
+  formatDateTimeInStakeTz,
+  previousIsoDate,
+  startOfDayInStakeTz,
+} from './stakeTime.js';
+export {
+  isExpiredTempGrant,
+  syncWillClearSeat,
+  todayInStakeTz,
+  type ExpirableGrant,
+} from './tempExpiry.js';
+export {
   comparisonDateMs,
   outstandingCutoffMs,
   partitionPendingRequests,

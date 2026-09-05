@@ -163,4 +163,21 @@ describe('isNoOpUpdate', () => {
   it('is false on delete (no after)', () => {
     expect(isNoOpUpdate({ a: 1 }, null)).toBe(false);
   });
+
+  // The sync reminder stamps `last_sync_reminder_date` on the stake doc
+  // every time it sends. `auditStakeWrites` watches that doc, so if the
+  // field were not bookkeeping every send would fan an audit row saying
+  // only that a reminder went out.
+  it('is true when only the sync-reminder stamp changed — first stamp and restamp alike', () => {
+    const stake = { stake_name: 'CSNorth Stake', setup_complete: true };
+    expect(isNoOpUpdate(stake, { ...stake, last_sync_reminder_date: '2026-08-18' })).toBe(true);
+    expect(
+      isNoOpUpdate(
+        { ...stake, last_sync_reminder_date: '2026-08-18' },
+        { ...stake, last_sync_reminder_date: '2026-08-21' },
+      ),
+    ).toBe(true);
+    // …and clearing it when the condition goes away.
+    expect(isNoOpUpdate({ ...stake, last_sync_reminder_date: '2026-08-18' }, stake)).toBe(true);
+  });
 });

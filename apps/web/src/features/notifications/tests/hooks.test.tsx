@@ -7,8 +7,8 @@
 //     newRequest pref to true; refuses cleanly when VAPID is unset.
 //   - `useDisablePushMutation` clears the deviceId slot via deleteField
 //     and flips newRequest pref to false.
-//   - `useUpdateNewRequestPrefMutation` updates only the pref.
-//   - `useIsThisDeviceSubscribed` + `getNewRequestPref` derive correctly.
+//   - `useUpdatePushPrefMutation` updates only its own category's pref.
+//   - `useIsThisDeviceSubscribed` + `getPushPref` derive correctly.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
@@ -58,11 +58,11 @@ vi.mock('../../../lib/docs', () => ({
 }));
 
 import {
-  getNewRequestPref,
+  getPushPref,
   useDisablePushMutation,
   useEnablePushMutation,
   useIsThisDeviceSubscribed,
-  useUpdateNewRequestPrefMutation,
+  useUpdatePushPrefMutation,
 } from '../hooks';
 
 beforeEach(() => {
@@ -125,19 +125,41 @@ describe('useIsThisDeviceSubscribed', () => {
   });
 });
 
-describe('getNewRequestPref', () => {
-  it('returns false when prefs absent', () => {
-    expect(getNewRequestPref(undefined)).toBe(false);
+type PushPrefs = NonNullable<NonNullable<UserIndexEntry['notificationPrefs']>['push']>;
+
+function entryWithPrefs(push: PushPrefs): UserIndexEntry {
+  return {
+    uid: 'u',
+    typedEmail: 'a@b.com',
+    lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
+    notificationPrefs: { push },
+  };
+}
+
+describe('getPushPref', () => {
+  it('returns false for either category when prefs are absent', () => {
+    expect(getPushPref(undefined, 'newRequest')).toBe(false);
+    expect(getPushPref(undefined, 'syncReminder')).toBe(false);
   });
 
-  it('reads the nested boolean', () => {
-    const entry: UserIndexEntry = {
-      uid: 'u',
-      typedEmail: 'a@b.com',
-      lastSignIn: { seconds: 0, nanoseconds: 0, toDate: () => new Date(), toMillis: () => 0 },
-      notificationPrefs: { push: { newRequest: true } },
-    };
-    expect(getNewRequestPref(entry)).toBe(true);
+  it('reads the nested newRequest boolean', () => {
+    expect(getPushPref(entryWithPrefs({ newRequest: true }), 'newRequest')).toBe(true);
+  });
+
+  it('reads the nested syncReminder boolean', () => {
+    expect(getPushPref(entryWithPrefs({ syncReminder: true }), 'syncReminder')).toBe(true);
+  });
+
+  it('reads each category independently', () => {
+    const entry = entryWithPrefs({ newRequest: false, syncReminder: true });
+    expect(getPushPref(entry, 'newRequest')).toBe(false);
+    expect(getPushPref(entry, 'syncReminder')).toBe(true);
+  });
+
+  it('reads an absent syncReminder as off for a manager subscribed to newRequest', () => {
+    // The opt-in default: enabling push consents to new-request pushes,
+    // not to sync reminders. The server gates its fanout on `=== true`.
+    expect(getPushPref(entryWithPrefs({ newRequest: true }), 'syncReminder')).toBe(false);
   });
 });
 
@@ -165,10 +187,14 @@ describe('useEnablePushMutation', () => {
     expect(setDocMock).toHaveBeenCalledTimes(1);
     const writtenBody = setDocMock.mock.calls[0]?.[1] as {
       fcmTokens: Record<string, string>;
-      notificationPrefs: { push: { newRequest: boolean } };
+      notificationPrefs: { push: Record<string, unknown> };
     };
     expect(writtenBody.fcmTokens).toEqual({ 'device-stable-1': 'fcm-token-aaa' });
     expect(writtenBody.notificationPrefs.push.newRequest).toBe(true);
+    // Subscribing opts you into new-request pushes only — that is what
+    // the Enable button's copy promises. Sync reminders stay opt-in, so
+    // old and new subscribers follow one rule instead of diverging.
+    expect(writtenBody.notificationPrefs.push).not.toHaveProperty('syncReminder');
   });
 
   it('returns "denied" without writing when the user blocks the prompt', async () => {
@@ -230,19 +256,62 @@ describe('useDisablePushMutation', () => {
   });
 });
 
-describe('useUpdateNewRequestPrefMutation', () => {
-  it('writes only the pref slot, leaving fcmTokens untouched', async () => {
-    const { result } = renderHook(() => useUpdateNewRequestPrefMutation(), { wrapper: Wrapper });
+describe('useUpdatePushPrefMutation', () => {
+  /** The `push` map of the single setDoc body, whatever keys it names. */
+  function writtenPush(): Record<string, unknown> {
+    expect(setDocMock).toHaveBeenCalledTimes(1);
+    const body = setDocMock.mock.calls[0]?.[1] as {
+      notificationPrefs: { push: Record<string, unknown> };
+      fcmTokens?: unknown;
+    };
+    expect(body.fcmTokens).toBeUndefined();
+    return body.notificationPrefs.push;
+  }
+
+  it('writes only the newRequest pref, leaving fcmTokens untouched', async () => {
+    const { result } = renderHook(() => useUpdatePushPrefMutation('newRequest'), {
+      wrapper: Wrapper,
+    });
 
     await act(async () => {
       await result.current.mutateAsync(false);
     });
-    expect(setDocMock).toHaveBeenCalledTimes(1);
-    const writtenBody = setDocMock.mock.calls[0]?.[1] as {
-      notificationPrefs: { push: { newRequest: boolean } };
-      fcmTokens?: unknown;
-    };
-    expect(writtenBody.notificationPrefs.push.newRequest).toBe(false);
-    expect(writtenBody.fcmTokens).toBeUndefined();
+    expect(writtenPush().newRequest).toBe(false);
+  });
+
+  it('writes only the syncReminder pref, leaving fcmTokens untouched', async () => {
+    const { result } = renderHook(() => useUpdatePushPrefMutation('syncReminder'), {
+      wrapper: Wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(true);
+    });
+    expect(writtenPush().syncReminder).toBe(true);
+  });
+
+  // The failure mode of a nested merge-write: naming both keys in the
+  // body would reset the sibling category to whatever the client last
+  // rendered. The write must mention one key only.
+  it('does not name syncReminder when updating newRequest', async () => {
+    const { result } = renderHook(() => useUpdatePushPrefMutation('newRequest'), {
+      wrapper: Wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(true);
+    });
+    expect(Object.keys(writtenPush())).toEqual(['newRequest']);
+  });
+
+  it('does not name newRequest when updating syncReminder', async () => {
+    const { result } = renderHook(() => useUpdatePushPrefMutation('syncReminder'), {
+      wrapper: Wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(false);
+    });
+    expect(Object.keys(writtenPush())).toEqual(['syncReminder']);
   });
 });

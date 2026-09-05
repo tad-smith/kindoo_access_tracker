@@ -15,8 +15,7 @@
 // payloads.
 
 import type { AuditLog, CompletionStatus } from '@kindoo/shared';
-import { BOOKKEEPING_FIELDS } from '@kindoo/shared';
-import { formatDateTimeInStakeTz } from '../../../lib/datetime';
+import { BOOKKEEPING_FIELDS, formatDateTimeInStakeTz } from '@kindoo/shared';
 
 function completionStatusLabel(status: CompletionStatus): string {
   if (status === 'noop_already_removed') return 'No-op (seat already removed)';

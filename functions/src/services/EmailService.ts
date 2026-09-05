@@ -434,6 +434,87 @@ export function buildOverCapHtmlBody(o: OverCapEmailOpts): string {
   ].join('\n');
 }
 
+// ---- expired temp seats / sync reminder (managers) --------------------------
+
+/**
+ * One temp grant that expired more than a day ago and is still in SBA,
+ * flattened out of the seat carrying it. A seat can contribute more
+ * than one — an expired grant can sit alongside a live one.
+ */
+export type ExpiredTempGrant = {
+  memberName: string;
+  memberEmail: string;
+  /** Raw `scope` — `'stake'` or a ward_code. The service layer labels it. */
+  scope: string;
+  /** ISO `YYYY-MM-DD` the grant ran through. */
+  endDate: string;
+};
+
+/** An expired grant with its `scope` resolved to a display name. */
+export type LabelledExpiredTempGrant = ExpiredTempGrant & { label: string };
+
+export type SyncReminderEmailOpts = { grants: LabelledExpiredTempGrant[]; link: string };
+
+export function buildSyncReminderSubject(grants: LabelledExpiredTempGrant[]): string {
+  return `[Stake Building Access] ${syncReminderLead(grants.length)}`;
+}
+
+export function buildSyncReminderTextBody(o: SyncReminderEmailOpts): string {
+  const lines: string[] = [`${syncReminderLead(o.grants.length)}.`, '', SYNC_REMINDER_ACTION, ''];
+  for (const g of o.grants) {
+    lines.push(`  ${memberText(g)} — ${g.label}, ended ${g.endDate}`);
+  }
+  lines.push('', `View seats: ${o.link}`);
+  return lines.join('\n');
+}
+
+export function buildSyncReminderHtmlBody(o: SyncReminderEmailOpts): string {
+  const rows = o.grants.map(
+    (g) =>
+      `<tr><td style="${TD}">${memberHtml(g)}</td>` +
+      `<td style="${TD}">${escapeHtml(g.label)}</td>` +
+      `<td style="${TD}"><span style="${FLAG}">${escapeHtml(g.endDate)}</span></td></tr>`,
+  );
+  return [
+    `<div style="${WRAPPER}">`,
+    `<p style="${PARA}">${escapeHtml(`${syncReminderLead(o.grants.length)}.`)}</p>`,
+    `<p style="${PARA}">${escapeHtml(SYNC_REMINDER_ACTION)}</p>`,
+    `<table role="presentation" style="${TABLE}">`,
+    `<tr><th style="${TH}">Member</th><th style="${TH}">Scope</th><th style="${TH}">Ended</th></tr>`,
+    ...rows,
+    `</table>`,
+    `<p style="${BUTTON_PARA}"><a href="${escapeHtml(o.link)}" style="${BUTTON}">View seats</a></p>`,
+    `</div>`,
+  ].join('\n');
+}
+
+/**
+ * What the manager is being asked to do. The CTA can only link a page —
+ * Sync itself runs in the extension — so the instruction is spelled out
+ * in the body rather than carried by the button.
+ */
+const SYNC_REMINDER_ACTION =
+  'Run Sync in the Stake Building Access extension to clear them. Until then the ward still ' +
+  'sees a seat whose access has already ended, and may file a removal request for it.';
+
+/** Sentence-cased; subject drops the period, the lead paragraph keeps it. */
+function syncReminderLead(count: number): string {
+  if (count === 1) return 'One temporary seat has expired but is still on the roster';
+  return `${COUNT_WORDS[count] ?? String(count)} temporary seats have expired but are still on the roster`;
+}
+
+function memberText(g: ExpiredTempGrant): string {
+  const name = g.memberName?.trim();
+  return name ? `${name} (${g.memberEmail})` : g.memberEmail;
+}
+
+function memberHtml(g: ExpiredTempGrant): string {
+  const name = g.memberName?.trim();
+  const address = escapeHtml(g.memberEmail);
+  const mailto = `<a href="mailto:${address}" style="${LINK}">${address}</a>`;
+  return name ? `${escapeHtml(name)}<br />${mailto}` : mailto;
+}
+
 // ---- copy fragments shared by both parts -----------------------------------
 
 // Leads name the person, never the address — the Member row carries that.
@@ -728,6 +809,48 @@ export async function notifyManagersOverCap(
       html: buildOverCapHtmlBody(opts),
     }),
     context: { type: 'overCap' },
+  });
+}
+
+/**
+ * Manager-bound: temp seats expired more than a day ago and are still
+ * in SBA, waiting on a Sync.
+ *
+ * The stake-level kill-switch is the only gate — there is no per-user
+ * email preference, so an active manager who never enabled push still
+ * gets this. Push (`notificationPrefs.push.syncReminder`) is a separate
+ * accelerant, not a condition on the email.
+ */
+export async function notifyManagersSyncReminder(
+  deps: BaseDeps & { grants: ExpiredTempGrant[]; managerEmails: string[] },
+): Promise<void> {
+  const { db, stakeId, stake, grants, managerEmails } = deps;
+  if (!emailsEnabled(stake, stakeId, 'syncReminder')) return;
+  if (managerEmails.length === 0) {
+    logger.info('email skipped — no active managers', { stakeId, type: 'syncReminder' });
+    return;
+  }
+  if (grants.length === 0) return;
+  const link = safeBuildLink(deps, '/manager/seats');
+  if (link === undefined) return;
+  // One wards read labels every grant.
+  const labelScope = await loadScopeLabeller(db, stakeId);
+  const opts: SyncReminderEmailOpts = {
+    grants: grants.map((g) => ({ ...g, label: labelScope(g.scope) })),
+    link,
+  };
+  await sendOne(deps, {
+    payload: buildPayload({
+      stake,
+      to: managerEmails,
+      subject: buildSyncReminderSubject(opts.grants),
+      text: buildSyncReminderTextBody(opts),
+      html: buildSyncReminderHtmlBody(opts),
+    }),
+    // The reminder has no request id to key the `email_send_failed`
+    // audit suffix on; the oldest expired grant's end date names what
+    // the run was about and keeps the row legible.
+    context: { type: 'syncReminder', source: grants[0]?.endDate ?? 'unknown' },
   });
 }
 

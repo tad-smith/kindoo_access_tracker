@@ -106,6 +106,43 @@ describe('userIndexEntrySchema', () => {
     };
     expect(() => userIndexEntrySchema.parse(bad)).toThrow();
   });
+
+  it('parses both push categories together', () => {
+    const seed = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'Alice@gmail.com',
+      lastSignIn: T,
+      notificationPrefs: { push: { newRequest: true, syncReminder: true } },
+    };
+    expect(userIndexEntrySchema.parse(seed)).toEqual(seed);
+  });
+
+  it('parses either push category on its own — a one-category merge-write', () => {
+    const onlyReminder = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'Alice@gmail.com',
+      lastSignIn: T,
+      notificationPrefs: { push: { syncReminder: true } },
+    };
+    const onlyNewRequest = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'Alice@gmail.com',
+      lastSignIn: T,
+      notificationPrefs: { push: { newRequest: true } },
+    };
+    expect(userIndexEntrySchema.parse(onlyReminder)).toEqual(onlyReminder);
+    expect(userIndexEntrySchema.parse(onlyNewRequest)).toEqual(onlyNewRequest);
+  });
+
+  it('rejects a non-boolean notificationPrefs.push.syncReminder', () => {
+    const bad = {
+      uid: 'firebase-uid-1',
+      typedEmail: 'a@b.com',
+      lastSignIn: T,
+      notificationPrefs: { push: { syncReminder: 'yes' } },
+    };
+    expect(() => userIndexEntrySchema.parse(bad)).toThrow();
+  });
 });
 
 describe('platformSuperadminSchema', () => {

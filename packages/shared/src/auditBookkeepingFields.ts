@@ -36,4 +36,9 @@ export const BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set<string>([
   'granted_by',
   'detected_at',
   'updated_at',
+  // Backoff stamp for the expired-temp-seat reminder. Server plumbing
+  // on the stake doc: a reminder went out, nothing about the stake
+  // changed. Without it, every third day's stamp would fan a stake
+  // audit row whose whole content is that stamp.
+  'last_sync_reminder_date',
 ]);

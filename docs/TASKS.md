@@ -6,6 +6,108 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-106] Sync reminders — case (1): no Sync in seven days
+Status: pending
+Owner: @extension-engineer (heartbeat) + @backend-engineer (reminder) + @docs-keeper
+Phase: cross-cutting
+
+The other half of the reminder pair. [T-103] shipped case (2) — expired temp seats — because it needed no new recorded state. This is case (1): tell the Kindoo Managers when nobody has run Sync in seven days. It was the condition the operator named first, and it is the one that catches the failure case (2) can only catch a symptom of.
+
+**The blocker, unchanged since it was first scoped: nothing records that a Sync ran.** The drift report is computed entirely in the extension (`extension/src/panel/SyncPanel.tsx`) and only *fixes* reach the server, through `syncApplyFix`. So a manager who syncs every morning and finds no drift writes nothing at all. Two shortcuts were considered and rejected:
+
+- **Derive it from `auditLog` rows stamped with the Sync actor.** Fails on the case that matters most — a clean Sync writes no rows, so the diligent manager is exactly who gets nagged.
+- **Infer it from seat staleness.** That is case (2) wearing a hat; it cannot see seven quiet days.
+
+**So the extension must write a heartbeat** when a scan completes — which puts this behind a Chrome Web Store release, and is the whole reason the two cases were split.
+
+**Key it by Kindoo site, not by stake.** Sync is scoped to the *active* Kindoo site (spec §15), so a stake operating a foreign site has two things to keep synced. One stake-level timestamp would mark the foreign site fresh whenever anyone synced home — silently, and in the direction that suppresses the reminder. `remoteApply/{canonical}/desktops/{siteKey}` is the shape to copy: whole-document `setDoc`, exact key set enforced in rules, written by the extension under manager auth.
+
+**Semantics to settle:** the heartbeat means *someone looked*, not *drift is clear* — a manager who scans, sees five rows, and applies none has still synced. That is the right meaning for "it has been seven days", and it is why case (2) has to stay an independent check rather than being folded in.
+
+**Rollout has a sharp edge.** A manager on an older extension build writes no heartbeat, so every stake reads as never-synced until everyone updates. Decide before shipping whether an absent heartbeat fires the reminder immediately (truthful, self-clearing, noisy during rollout) or stays silent until the first heartbeat ever appears (quiet, but a stake that genuinely never syncs is never chased).
+
+**Most of the delivery already exists.** [T-103] built the email/push machinery, the `syncReminder` push category, the manager recipient resolution, and the backoff. This adds a condition and a data source, not a new notification system. The trigger should come from the scheduled-task system ([T-104]) rather than a dedicated job.
+
+**Bonus the heartbeat unlocks:** a "Last sync" line per site on the manager Configuration page, which is the same data and costs nothing extra.
+
+## [T-105] Expired temp grants on multi-grant seats have no reaper and no reminder
+Status: pending
+Owner: unassigned
+Phase: cross-cutting
+
+A temp grant that expires on a seat carrying **other** grants is stranded. Sync cannot clear it — the `sba-only` fix fires only when the member has no Kindoo user on the site at all (`extension/src/content/kindoo/sync/detector.ts`), and a seat with another live grant keeps them present — which is exactly why D34 keeps the Remove control on that shape instead of withholding it. So the grant sits in SBA until somebody files a remove request by hand.
+
+[T-103]'s sync reminder deliberately **excludes** these seats (operator decision, 2026-09-04): it lists only seats `syncWillClearSeat` says Sync will actually clear, because its one instruction is "run Sync" and a recurring email that says that about a row Sync cannot touch teaches managers to ignore the email. Correct for that feature, but it means nothing now surfaces this shape proactively — the roster badge is the only signal, and only to whoever happens to look.
+
+Worth deciding what, if anything, should chase it: a distinct reminder naming the remove-request remedy, a manager-facing list, or nothing at all on the grounds that the badge plus a leader's own request flow is sufficient. `syncWillClearSeat` (`packages/shared/src/tempExpiry.ts`) already isolates the shape, so whichever way it goes the predicate exists.
+
+## [T-104] Per-stake scheduled tasks — one dispatcher, many triggers
+Status: pending
+Owner: @backend-engineer + @infra-engineer (queue provisioning) + @docs-keeper
+Phase: cross-cutting
+
+A stake-level cron. One hourly Cloud Function walks the stakes, finds triggers that are due, and enqueues a Cloud Tasks push-queue job per (stake, trigger). Adding a scheduled feature becomes a data change, not a new Cloud Scheduler job — which is the point: Scheduler's free tier is three jobs per billing account, and this stack spends two of them on staging+prod copies of any single job.
+
+**Triggers are an array, not a document each.** One array per stake holding every trigger it has opted into. Each entry carries:
+
+- `enabled` — the opt-in flag.
+- `schedule` — a typed JSON object (see below). **Not a cron expression:** the dispatcher only wakes hourly, so a cron string's minute field would be inert and `*/15 * * * *` would silently mean "hourly". A closed set of shapes cannot lie about what it does.
+- the **name of the push-queue job** to enqueue.
+- `last_trigger_time` and `next_trigger_time`.
+
+`next_trigger_time` is the load-bearing field: it is an absolute timestamp precomputed when the trigger last fired, so "is anything due" is one comparison against `now` with no per-stake schedule evaluation and no timezone maths at dispatch time. Timezone (`stake.timezone`) is consumed only when computing the *next* time after a fire.
+
+**Schedule shapes** — four to start, extended as needed:
+
+| type | fields |
+| --- | --- |
+| `hourly` | — |
+| `daily` | hour of day |
+| `weekly` | day of week (+ hour) |
+| `monthly` | day of month (+ hour) |
+
+**Flow.** Hourly dispatcher → for each stake, each enabled trigger whose `next_trigger_time <= now` → enqueue a Cloud Tasks task naming the trigger's queue job and the stake → stamp `last_trigger_time = now` and recompute `next_trigger_time`. Handlers are `onTaskDispatched` functions resolved from a registry keyed by job name; they receive `{stakeId}` and nothing about scheduling.
+
+**Design questions to settle in the PR, not before:**
+
+- **Where the array lives.** On the stake parent doc, the dispatcher gets triggers for free in the read it already makes — but the hourly `next_trigger_time` write then fans an `auditStakeWrites` row unless the fields join `BOOKKEEPING_FIELDS` (`packages/shared/src/auditBookkeepingFields.ts`). A dedicated per-stake doc avoids that and opens a cheaper option: hoist the minimum `next_trigger_time` to the doc level and let one `collectionGroup` query with `where('next_trigger_time','<=',now)` return only the stakes with work, costing zero reads on a quiet hour instead of one per stake.
+- **Cloud Tasks dedupe.** A deterministic task name per (stake, trigger, window) makes a double-enqueue from a dispatcher retry a no-op, which matters because the stamp write can fail after a successful enqueue.
+- **Missed windows.** A trigger whose `next_trigger_time` is long past (queue paused, stake disabled) must fire once and re-base, never replay every window it slept through.
+- **Calendar edges.** `monthly` on day 31 in a 30-day month; DST transitions when advancing a `daily` hour in the stake's zone.
+- **Seeding and opt-in.** Operator decision: `createStake` seeds the known triggers with sensible defaults and a stake opts out by flipping `enabled`. Needs a one-row backfill for the existing stake.
+- **Infra.** The Cloud Tasks queue itself needs provisioning, and the dispatcher re-establishes the single scheduled job that [T-102] removed — `spec.md` §2, `architecture.md` D35, and root `CLAUDE.md` all currently assert zero scheduled Cloud Functions.
+
+**First consumer, already merged.** The sync reminder ([T-103]) shipped 2026-09-04 with no trigger of its own; this task's PR registers `sendSyncReminderIfDue` as a queue job and seeds its trigger. That ordering was deliberate — the reminder proves the handler contract before the dispatcher exists to call it — and it is also a debt: until this lands, `functions/src/services/SyncReminderService.ts` is code nothing runs.
+
+**Inherited from T-103.** The reminder's `last_sync_reminder_date` backoff stamp dedupes **sequential** redelivery only. Two invocations for the same stake overlapping in time both read the pre-write stamp and both send. At one dispatch per stake per hour that needs a retry landing on top of a still-running attempt, so it is unlikely rather than impossible — but the dispatcher is where the guard belongs (deterministic Cloud Tasks names, or a lease), not in the handler.
+
+## [T-103] Sync reminders to Kindoo Managers — expired temp seats (case 2)
+Status: done (2026-09-04 — PR #288)
+Owner: @backend-engineer (function + email + push) + @web-engineer (push toggle) + @docs-keeper
+Phase: cross-cutting
+
+**Done, with one deliberate departure from the plan below: it ships with no schedule at all.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`) is a complete per-stake unit of work — `setup_complete` gate, stake-local cutoff of yesterday, selection, three-day backoff, email, push — that carries no trigger, is not exported from `functions/src/index.ts`, and has no caller. The hourly-`onSchedule` design in the "Schedule" bullet was dropped in favour of [T-104]'s dispatcher: one job per feature does not survive a second feature on a three-job free tier, and merging the handler first proves the contract the dispatcher will call. So `spec.md` §2, `architecture.md` D35, and root `CLAUDE.md` still correctly say zero scheduled Cloud Functions, and the deployed-function count in `firebase-schema.md` §7 is still twenty-seven. **Nothing sends this email today.**
+
+Everything else landed as planned, plus two things the plan did not anticipate. **Selection is narrowed by `syncWillClearSeat`** — only seats Sync will actually reap — because the mail's one instruction is "run Sync" and it is false for a multi-grant seat; that exclusion is now [T-105]. **The module move went further than "`isExpiredTempGrant` / `todayInStakeTz` move to `packages/shared`":** the whole of `apps/web/src/lib/datetime.ts` became `packages/shared/src/stakeTime.ts` and `apps/web/src/lib/tempExpiry.ts` became `packages/shared/src/tempExpiry.ts`, `syncWillClearSeat` included, with `ExpirableGrant` typed `{type: SeatType, end_date?}` rather than `string`. Both files are `Intl`-only, so `@kindoo/shared` stays runtime-dep-free. Push is the separate `notificationPrefs.push.syncReminder` category with its own switch; `newRequest` became optional in the type and schema, absent reads OFF, so existing subscribers needed no backfill. The FCM fanout is extracted to `functions/src/lib/push.ts` and shared with `pushOnRequestSubmit`. `last_sync_reminder_date` is in `BOOKKEEPING_FIELDS`, so the backoff stamp fans no audit row. Recorded as `architecture.md` D37, amending D34 and D20 in place for the moved modules. See `docs/changelog/sync-reminder-expired-temp-seats.md`.
+
+Managers have no prompt to run Sync. Two conditions warrant one: **(1)** no Sync in ≥ 7 days, and **(2)** temp seats that expired more than 24 hours ago and are still sitting in SBA. **This task is case (2) only.** Case (1) is [T-106], deferred because nothing records when a Sync ran — the extension would have to start writing a heartbeat, which gates the whole reminder on a Chrome Web Store release. Case (2) needs no extension change and no new recorded state, so it ships on its own.
+
+**Why it matters.** An expired temp seat is only cleared when a manager's Sync detects it as `sba-only` (spec §7, D34). Until then the ward sees a seat whose Kindoo access already ended and — per D34's own history — starts filing remove requests for it. The reminder is the nudge that closes that gap.
+
+**Delivery.** Email + push to active Kindoo Managers, at ~06:00 in the stake's own timezone.
+
+- **Schedule.** `stake.timezone` is per-stake, `onSchedule` takes one zone, so the job runs **hourly** and fires for a stake only when its local hour is 6. Firing once at a fixed zone would be wrong for any stake outside it. **This is the first scheduled Cloud Function since [T-102] deleted the last one**, so `spec.md` §2, `architecture.md` D35, and root `CLAUDE.md` all currently assert "zero scheduled jobs" and need amending. Re-establishes the single-loop pattern (one job iterating every stake). Two Scheduler slots are free after T-102, so it costs nothing in staging or prod. **[Not done — superseded by T-104; see the Done note above. The reminder carries no schedule, so none of those three assertions changed.]**
+- **Threshold.** A temp seat is held *through* `end_date`, so expiry begins the day after (`isExpiredTempGrant`: `end_date < today`). "Expired more than 24 hours" is therefore `isExpiredTempGrant(grant, yesterday)` — the canonical rule compared against the stake-local date one day back. Do not write a second comparison.
+- **Backoff (operator decision).** Send when the condition first trips, then no more often than **every third day** while it stays true. Needs a `YYYY-MM-DD` stake-local stamp on the stake doc, which doubles as the idempotency guard against a scheduler retry double-sending within the same hour.
+- **Push (operator decision).** A **separate** `notificationPrefs.push.syncReminder` category with its own switch in the Push Notifications panel — not a reuse of `newRequest`, whose switch is labelled "New request notifications" and would silently broaden. Decide the default for managers already subscribed to `newRequest`.
+- Email honours the existing `stake.notifications_enabled` kill-switch; push keeps its own per-user prefs. Skip stakes with `setup_complete !== true`.
+
+**The D34 constraint this forces.** The expiry rule lives in `apps/web/src/lib/tempExpiry.ts` and root `CLAUDE.md` says "and nowhere else". A server-side consumer cannot duplicate it, so `isExpiredTempGrant` / `todayInStakeTz` move to `packages/shared` and the web imports follow. `todayInStakeTz` depends on `formatDateInStakeTz` (`apps/web/src/lib/datetime.ts`, D20), so that helper moves too — it is `Intl`-only, so `packages/shared` stays runtime-dep-free. `isExpiredTempGrant` should take a structural `{type, end_date?}` rather than the web-only `GrantView`. Amend D34 and the CLAUDE.md line in the same PR; `syncWillClearSeat` can move with the module or stay web-side.
+
+**Second consumer of the push fanout.** `pushOnRequestSubmit.ts` carries the only token-collection / data-only-payload / invalid-token-pruning logic, inline. This is its second consumer, so extract a shared helper rather than copy it — the FCM pruning in particular should not exist twice.
+
+**Out of scope.** Case (1) and its sync heartbeat ([T-106]); alert routing for the T-102 monitoring metrics; any change to how Sync itself works.
+
 ## [T-102] Delete `reconcileAuditGaps`; protect audit fan-in with trigger retries instead
 Status: done (2026-08-18 — PR #286)
 Owner: @backend-engineer (code) + @docs-keeper (F8 supersession + cascade)
