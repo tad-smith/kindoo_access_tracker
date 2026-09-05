@@ -1128,7 +1128,7 @@ The stake's whole schedule doc is written once, at the end, and only when someth
 
 ### Turning a job on
 
-**The sync reminder has a manager UI; every other job (should one ever be added) is still a Firestore console edit.** The Configuration page's Config tab carries a **Sync Reminder** card, visible to Kindoo Managers (`isManager`), below the stake-config form. It reads the stake's `syncReminder` row (`useStakeSchedule`) and shows one of three states:
+**The sync reminder has a manager UI; every other job (should one ever be added) is still a Firestore console edit.** The Configuration page's Config tab carries a **Sync Reminder** card, below the stake-config form. The route gate is `useRequireRole('manager')`, which a platform superadmin also passes, so a superadmin holding no manager role on the stake sees the card and is refused by the rules on flipping it — writing `stakeSchedules` requires `isManager` and nothing else (`firestore/tests/stakeSchedules.test.ts` pins both directions). It reads the stake's `syncReminder` row (`useStakeSchedule`) and shows one of three states:
 
 - **Not yet seeded** — no row exists yet (a stake created since the last hourly dispatch). The switch is disabled and the card says the scheduler adds the reminder within the hour.
 - **Seeded, off** — a live switch, plus a line stating that turning it on can send the first reminder within the hour rather than at 06:00 (see below).
