@@ -56,6 +56,16 @@ A door-access tracker that manages Kindoo seat assignments across the units — 
 - Push only when the user asks.
 - Never `--no-verify`, `--force`, or skip hooks. If a hook fails, fix the cause.
 
+### PR reviews are batched, not per-push
+
+`.github/workflows/claude-code-review.yml` fires on every push to an open non-draft PR, and it runs on **the operator's Claude subscription** (`claude_code_oauth_token`), not on API billing. So a review is not free: it draws from the same token pool as the session doing the work, and a full run re-reads `spec.md`, every `CLAUDE.md`, and the whole diff from cold. T-104 (PR #289) burned five of them on one PR because each review finding was fixed and pushed the moment it arrived.
+
+- **Open a PR as a draft.** Pushes still fire the workflow, but the job's `draft == false` gate skips it at no cost. `gh pr ready` when the work is ready to be looked at — that is one review, deliberately requested.
+- **Batch review fixes into one push.** Address everything a review round raised, verify locally, then push once. Re-request with `gh pr ready --undo && gh pr ready`.
+- **Don't disable the reviewer to save tokens.** It has caught real defects in shipped code that local suites and human reading both missed (T-104's hourly slot drift, and a malformed-row throw that stranded a whole stake's schedule). Fewer, later reviews — not fewer eyes.
+
+The in-flight-visibility convention still holds: open the PR after the first commit. Draft is what makes that cheap.
+
 ## Dev loops
 
 - `pnpm dev` — emulators + Vite + functions in parallel.
