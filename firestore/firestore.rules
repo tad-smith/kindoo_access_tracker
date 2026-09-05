@@ -194,6 +194,12 @@ service cloud.firestore {
         && data.lastActor.email == request.auth.token.email;
     }
 
+    // Exact-set match on a document's keys. Rules' List API has
+    // `hasAll` / `hasOnly` but no `hasExactly`; the conjunction is it.
+    function keysAreExactly(data, fields) {
+      return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
+    }
+
     // Extension v2.1 — shape check for `stake.kindoo_config`. Field is
     // optional; absence is fine. When present, must carry `site_id`
     // (number), `site_name` (string), `configured_at` (timestamp), and
@@ -308,12 +314,6 @@ service cloud.firestore {
       // both the presence doc and its jobs.
       function ownsMailbox(owner) {
         return isAuthed() && authedCanonical() == owner;
-      }
-
-      // Exact-set match on a document's keys. Rules' List API has
-      // `hasAll` / `hasOnly` but no `hasExactly`; the conjunction is it.
-      function keysAreExactly(data, fields) {
-        return data.keys().hasOnly(fields) && data.keys().hasAll(fields);
       }
 
       // `RemoteApplyPresence` shape check — three keys, and only three.
@@ -637,6 +637,56 @@ service cloud.firestore {
         // misbehaves.
         allow delete: if false;
       }
+    }
+
+    // ----- stakeSchedules/{stakeId} — the per-stake scheduled-task array -----
+    //
+    // One doc per stake holding every scheduled job that stake has been
+    // seeded with: `{ tasks: ScheduledTask[], lastActor }`. The hourly
+    // dispatcher (`dispatchScheduledTasks`) seeds missing entries and
+    // stamps `last_trigger_time` / `next_trigger_time` via the Admin SDK,
+    // so these rules govern only the manager-facing surface: reading the
+    // schedule, and toggling `enabled` / editing a `schedule` shape.
+    //
+    // **Top level rather than `stakes/{stakeId}/schedules`, deliberately.**
+    // A sub-collection there would land inside the slice
+    // `auditTrigger.registration.test.ts` reads, forcing either an audit
+    // trigger or an `UNAUDITED` entry for a doc the dispatcher rewrites
+    // every hour. Storing the array on the stake parent doc has the same
+    // problem from the other side: the hourly stamp would fan an
+    // `auditStakeWrites` row every fire, and suppressing it via
+    // `BOOKKEEPING_FIELDS` would also suppress a manager toggling
+    // `enabled` — the one part worth auditing. So: **writes here are not
+    // audited at all.** That is the accepted cost.
+    //
+    // `isManager(stakeId)` reads purely from the token, so it works
+    // unchanged at top level (same as `remoteApply`'s use of it).
+    //
+    // Element-level validation is not possible — rules cannot reach
+    // inside array elements — so `validSchedule` checks the envelope
+    // only. The blast radius of a manager writing a bogus
+    // `next_trigger_time` is their own stake's own job firing early, at
+    // most once an hour, and every handler is idempotent within its
+    // window. Don't try to work around the limitation.
+    match /stakeSchedules/{stakeId} {
+
+      // Envelope shape. The `tasks` size cap is a storage bound, not a
+      // product limit: the registry holds a handful of jobs and each
+      // stake gets one entry per job.
+      function validSchedule(data) {
+        return keysAreExactly(data, ['tasks', 'lastActor'])
+          && data.tasks is list
+          && data.tasks.size() <= 50;
+      }
+
+      allow read: if isAnyMember(stakeId) || isPlatformSuperadmin();
+      allow create, update: if isManager(stakeId)
+        && validSchedule(request.resource.data)
+        && lastActorMatchesAuth(request.resource.data);
+      // Deleting the doc would silently drop every opt-out it records;
+      // the dispatcher would then re-seed defaults on its next pass.
+      // Disabling a task is `enabled: false`, not deletion.
+      allow delete: if false;
     }
 
     // ===== Per-stake collections =====

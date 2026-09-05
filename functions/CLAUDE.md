@@ -1,6 +1,8 @@
 # functions — Claude Code guidance
 
-Cloud Functions: Firestore triggers, HTTPS callables, email send, push send, audit fan-in, custom-claims sync. All server-side compute lives here. No scheduled functions.
+Cloud Functions: Firestore triggers, HTTPS callables, email send, push send, audit fan-in, custom-claims sync, and the scheduled-task dispatcher. All server-side compute lives here.
+
+**Exactly one scheduled function, and it stays that way.** `dispatchScheduledTasks` is an hourly cron that walks the stakes and enqueues Cloud Tasks work; every scheduled feature is a `lib/taskRegistry.ts` entry it dispatches, never a second `onSchedule`. Cloud Scheduler's free tier is three jobs per billing account and staging + prod spend two of them on any single job.
 
 **Owner agent:** `backend-engineer`. Also responsible for `firestore/` (rules + indexes).
 
@@ -40,8 +42,12 @@ src/
 │   ├── mintExtensionToken.ts          # custom token for the extension sign-in handoff (D33)
 │   ├── backfillEqPresidentAccess.ts   # reconciles access docs after the EQ-president flag flips
 │   └── backfillKindooSiteId.ts        # one-shot migration helper for Kindoo Sites
-├── services/                          # business logic (EmailService)
-├── lib/                               # admin SDK init, resend client, audit diff, helpers
+├── scheduled/
+│   └── dispatchScheduledTasks.ts      # hourly cron; seeds, selects and enqueues per-stake tasks
+├── tasks/
+│   └── runScheduledTask.ts            # the ONE onTaskDispatched worker; resolves a job from the registry
+├── services/                          # business logic (EmailService, SyncReminderService)
+├── lib/                               # admin SDK init, resend client, audit diff, task registry, helpers
 ├── tests/                             # vitest suites mirroring src/
 └── index.ts                           # function exports for Firebase deploy
 ```
@@ -60,6 +66,9 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running callable. Default memory 256MB.
 - **Read per-stake config once per invocation, outside the transactions.** `syncApplyFix` reads the stake doc after the auth gate and threads the derived options into each handler; the handlers keep their strict reads-before-writes ordering untouched. A config flip landing mid-run is a benign race the next run heals — don't add a mid-transaction read to close it.
 - **Manager auth on callables reads `kindooManagers/{canonical}` directly, not the claim.** The custom claim can be ~1h stale on an idle session. `syncApplyFix` and `backfillEqPresidentAccess` both check the doc plus `active === true`.
+- **Scheduled dispatch is at-least-once; every job handler must be idempotent within its own window.** `dispatchScheduledTasks` enqueues, then stamps `last_trigger_time` / `next_trigger_time`. The reverse order loses a fire silently when the process dies between the two, and a lost fire is invisible — so the double-fire is the failure mode we keep. Two things narrow it without closing it: the deterministic Cloud Tasks id (`{stakeId}--{job}--{YYYYMMDDTHH}`, whose `functions/task-already-exists` rejection is treated as success) dedupes a same-hour retry, and each handler carries its own guard (`sendSyncReminderIfDue` uses a stake-local date stamp). A new job that can't tolerate running twice needs its own guard before it goes in the registry.
+- **A new scheduled feature is a `lib/taskRegistry.ts` entry and nothing else** — no new `onSchedule`, no per-job `onTaskDispatched`, no queue. `defaultEnabled` is `false` for everything: the dispatcher seeds an entry onto every stake automatically, and a seeded job must not start acting on a stake's behalf before a human turns it on. Seeding only ever ADDS a missing entry — never rewrite an existing one, because a manager's `enabled: false` is a decision.
+- **`stakeSchedules/{stakeId}` is top level and deliberately unaudited.** Under `stakes/{stakeId}` it would land inside the slice `auditTrigger.registration.test.ts` reads and force an audit trigger on a doc the dispatcher rewrites hourly; on the stake parent doc the hourly stamp would fan an `auditStakeWrites` row, and `BOOKKEEPING_FIELDS` would suppress the `enabled` toggle along with it. Neither trade is worth it at this collection's value.
 - **Reconcile callables are merge-only over the field they own.** `backfillEqPresidentAccess` adds / removes exactly one calling inside `importer_callings[scope]` rather than reusing `writeAccessForAutoScope`'s wholesale replace — a rebuild would silently "fix" unrelated entries the operator didn't consent to touching. A destructive direction takes an explicit parameter guarded against current config (`failed-precondition` on mismatch), so a stale client confirmation can't write the wrong side.
 
 ## Changing dependencies
