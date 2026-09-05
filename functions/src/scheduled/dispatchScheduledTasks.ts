@@ -40,6 +40,17 @@ import { SCHEDULED_JOBS, type JobRegistry } from '../lib/taskRegistry.js';
 export const TASK_RUNNER_NAME = 'runScheduledTask';
 
 /**
+ * Logged once per completed run. **Load-bearing outside this repo:** the
+ * `scheduled-dispatch-completed` log-based metric
+ * (`infra/monitoring/`) matches this text and alerts on its ABSENCE,
+ * because the dispatcher swallows per-stake failures and a run in which
+ * everything failed still exits 0. Reword it and the metric silently
+ * reads zero, which is indistinguishable from the outage it detects.
+ * Pinned by a test; change both sides and the metric together.
+ */
+export const DISPATCH_DONE_MESSAGE = 'dispatchScheduledTasks: done';
+
+/**
  * Synthetic actor stamped on `stakeSchedules/{stakeId}`. Follows the
  * `'RemoveTrigger'` precedent for server-driven writes. Writes to this
  * collection are NOT audited (the doc is deliberately outside
@@ -284,6 +295,6 @@ export const dispatchScheduledTasks = onSchedule(
       enqueue: enqueueViaCloudTasks,
       now: new Date(),
     });
-    logger.info('dispatchScheduledTasks: done', summary);
+    logger.info(DISPATCH_DONE_MESSAGE, summary);
   },
 );

@@ -13,6 +13,7 @@ import type { ScheduledTask, StakeSchedule } from '@kindoo/shared';
 import type { JobRegistry } from '../lib/taskRegistry.js';
 import {
   DISPATCHER_ACTOR,
+  DISPATCH_DONE_MESSAGE,
   dispatchDue,
   dispatchScheduledTasks,
   scheduledTaskId,
@@ -418,5 +419,14 @@ describe('dispatchScheduledTasks registration', () => {
     // run from the hour bucket the dedupe id is built from.
     expect(endpoint?.scheduleTrigger?.schedule).toBe('0 * * * *');
     expect(endpoint?.scheduleTrigger?.timeZone).toBe('Etc/UTC');
+  });
+
+  it('keeps the completion message the monitoring metric matches', () => {
+    // `infra/monitoring/scheduled-dispatch-completed.yaml` matches this
+    // text and alerts on its ABSENCE. A reword makes the metric read
+    // zero, which looks exactly like the outage it exists to detect —
+    // and nothing else would fail. This assertion is the tripwire; when
+    // it fires, update the metric, don't update the expectation.
+    expect(DISPATCH_DONE_MESSAGE).toBe('dispatchScheduledTasks: done');
   });
 });
