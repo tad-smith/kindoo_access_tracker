@@ -37,18 +37,19 @@ jobs:
             The code in this PR was almost certainly written by another Claude instance. Assume its author had blind spots. Do not trust the PR description — verify everything against the actual diff.
 
             Procedure:
-            1. Find and read `spec.md` (try repo root, `docs/`, and any subproject directories). Read every `CLAUDE.md` at relevant directory levels. These define the source of truth for what the code is supposed to do.
-            2. Read the current phase's changelog entry if present. Identify which phase/task this PR claims to implement.
-            3. Read the full diff: `gh pr diff ${{ github.event.pull_request.number }}`.
-            4. For each non-trivial change, interrogate:
+            1. Read the diff FIRST: `gh pr diff ${{ github.event.pull_request.number }}`. Everything you read after this is scoped by what the diff actually touches.
+            2. Map `docs/spec.md` before reading any of it. It is ~360 KB; reading it end to end spends your budget before you have reviewed anything. Run `grep -nE '^#{1,3} ' docs/spec.md` for the section index (52 sections, ~1.7 KB), then read ONLY the sections the diff bears on, via `sed -n 'START,ENDp' docs/spec.md`. The index exists so the choice is deliberate rather than blind — if a change might violate a section you have not read, read that section then. Same method for `docs/architecture.md`, except its numbered decisions are table rows, so `grep -n '^| D38 |' docs/architecture.md` fetches one.
+            3. Read the root `CLAUDE.md`, plus the per-workspace `CLAUDE.md` for each top-level directory the diff touches (`functions/`, `apps/web/`, `firestore/`, `packages/shared/`, `infra/`, `e2e/`, `extension/`, `docs/`). Skip the ones it does not touch — `extension/CLAUDE.md` alone is 43 KB. Root `CLAUDE.md` carries a "Start each session by reading" list written for an interactive session; this procedure supersedes it for you.
+            4. Read the `docs/changelog/` entry for the task this PR claims to implement, if present, and identify which task (T-NN) it claims. `docs/TASKS.md` holds live entries only; closed ones are in `docs/TASKS-archive.md` if you need the history.
+            5. For each non-trivial change, interrogate:
                - Does the code actually implement what the spec/changelog claims?
                - Spec items claimed-but-not-done? Scope creep not in the spec?
                - Unhandled edge cases, error paths, race conditions, partial-failure modes?
                - Silent failures, swallowed exceptions, fallbacks that mask bugs?
                - Tests that call the new code vs. tests that actually exercise its behavior?
                - Auth, input validation, and trust boundaries — any assumptions worth challenging?
-            5. Post inline review comments on specific lines for concrete issues. Be precise about which line and why.  If it's a trivial concern, indicate in the comment.  Avoid nitpick comments.
-            6. End with one summary comment containing exactly: spec-compliance verdict, up to 10 top risks (these should be real risks not nitpicks or extremely rare edge conditions), other concerns (if it's not a riski/bug, but should be addressed, then it is a concern.  trivial issues and nits are not concerns)), and a merge recommendation (approve / request changes / needs discussion).
+            6. Post inline review comments on specific lines for concrete issues. Be precise about which line and why.  If it's a trivial concern, indicate in the comment.  Avoid nitpick comments.
+            7. End with one summary comment containing exactly: spec-compliance verdict, up to 10 top risks (these should be real risks not nitpicks or extremely rare edge conditions), other concerns (if it's not a riski/bug, but should be addressed, then it is a concern.  trivial issues and nits are not concerns)), and a merge recommendation (approve / request changes / needs discussion).
 
             Tone: terse, no praise, no preamble, no hedging. If the PR is genuinely fine, one line saying so is the right answer. Don't mention a risk or concern just because you want to make it look like you are doing a good review.  Everything you mention has to be addressed and that slows down development, which is a cost.  The comment needs to be worth the cost.  One well-reasoned objection beats five nitpicks. Do NOT comment on style if a linter would catch it.
           claude_args: |
