@@ -200,8 +200,8 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
    === post-deploy verification — staging ===
        region:    us-central1
        baseline:  syncApplyFix
-       exports:   24 (source: functions/src/index.ts)
-       callables: 6
+       exports:   29 (source: functions/src/index.ts)
+       callables: 8
        project:   kindoo-staging
 
      calibrated on 'syncApplyFix': HTTP 401, signature '401:UNAUTHENTICATED'.
@@ -210,18 +210,22 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
 
      FUNCTION                           HTTP   RESULT
      syncApplyFix                       401    healthy (baseline)
+     backfillAuditTtl                   401    healthy
      backfillEqPresidentAccess          401    healthy
      backfillKindooSiteId               401    healthy
      createStake                        401    healthy
      getMyPendingRequests               401    healthy
      markRequestComplete                401    healthy
+     mintExtensionToken                 401    healthy
 
-     deployed set matches functions/src/index.ts (24 functions).
+     deployed set matches functions/src/index.ts (29 functions).
 
    === post-deploy verification PASSED ===
    ```
 
    Every row must read `healthy`. Any `FAIL —` row exits the script non-zero and prints a remediation for that specific failure; see "Post-deploy verification failures" under Troubleshooting.
+
+   **The two T-104 functions do not appear in the probe table, and that is correct.** `dispatchScheduledTasks` (`onSchedule`) and `runScheduledTask` (`onTaskDispatched`) are invoked by Cloud Scheduler and Cloud Tasks with an OIDC identity, so an anonymous probe proves nothing about them — check 1 deliberately covers only `onCall` exports. They are covered by check 2, the `deployed set matches` line, which counts all 29. If either ever shows up as a row in the probe table, discovery has misclassified it; `infra/scripts/tests/verify-deploy.test.sh` guards both classes.
 
    The exact HTTP status and signature are **not** fixed values — the check calibrates on a known-good long-existing callable (`syncApplyFix`) in the same run and compares everything else to it, so it survives Firebase changing its response format. Do not "fix" a changed baseline number; only a mismatch between callables matters.
 
@@ -427,11 +431,155 @@ The following functions are found in your project but do not exist in your local
 
 Answer **y** on each project. Deleting the function also deletes the Cloud Scheduler job that invoked it — that deletion, not the source removal, is what frees the two scheduler slots (one per project).
 
+> Those two slots are spent again by T-104's `dispatchScheduledTasks`, which claims one per project. See "First deploy after T-104" below for the accounting; the allocation is now full.
+
 If you answer no, the deploy still succeeds and the function stays live with nothing to invoke it. The backstop is the post-deploy check: `lib/verify-deploy.sh`'s source-vs-deployed diff reports `warning: deployed but not exported from source` for `reconcileAuditGaps` on every subsequent deploy until you take the prompt. Clear it by re-deploying and answering y, or delete the function directly:
 
 ```bash
 firebase functions:delete reconcileAuditGaps --region us-central1 --project staging   # or: --project prod
 ```
+
+## First deploy after T-104: a scheduler job and a task queue appear
+
+**Walk this once per project — staging and prod each need it on their first deploy after T-104 merges — then cross it off.** It is not a recurring deploy step. T-104 adds two functions of kinds this project has not deployed before, and each brings a piece of Google Cloud infrastructure that `firebase deploy` creates as a side effect:
+
+| Export | Kind | Side effect of the first deploy |
+|---|---|---|
+| `dispatchScheduledTasks` | `onSchedule`, cron `0 * * * *`, `Etc/UTC` | A **Cloud Scheduler job** named after the function, in `us-central1`. |
+| `runScheduledTask` | `onTaskDispatched` | A **Cloud Tasks queue** named after the function, in `us-central1`. |
+
+Both are created by the CLI, not by you. What you have to do afterwards is confirm they exist and grant the IAM the CLI does not grant — step 3 below, which is the part that fails silently if skipped.
+
+### The scheduler free tier is now fully spent
+
+Cloud Scheduler's free tier is **3 jobs per billing account** — per *billing account*, not per project, so a staging and a prod copy of one job cost two slots. Both projects bill to the same account. After this deploy:
+
+| Slot | Project | Job | Created by |
+|---|---|---|---|
+| 1 | `kindoo-staging` | `dispatchScheduledTasks` | `firebase deploy` |
+| 2 | `kindoo-prod` | `dispatchScheduledTasks` | `firebase deploy` |
+| 3 | `kindoo-prod` | `firestore-weekly-export` | operator, by hand (`provision-firebase-projects.md` §3.4) |
+
+That is 3/3. **A future scheduled feature must not become a fourth job** — it becomes a trigger row in that stake's `stakeSchedules/{stakeId}` document, which the hourly dispatcher fans out over Cloud Tasks. Routing new work through the dispatcher instead of through `onSchedule` is the entire reason T-104 exists; a new `onSchedule` export would create a fourth job on each project it deploys to and start billing. Cloud Tasks has its own free tier — 1M operations/month — which at one dispatch per stake per hour this stack cannot approach.
+
+### 1. Confirm the Cloud Scheduler job
+
+```bash
+gcloud scheduler jobs describe firebase-schedule-dispatchScheduledTasks-us-central1 \
+  --project=kindoo-staging --location=us-central1 \
+  --format="value(state,schedule,timeZone)"
+```
+
+Expected: `ENABLED	0 * * * *	Etc/UTC`.
+
+The job name is derived by the CLI, not chosen by you: `firebase-schedule-<export name>-<region>`, and for a 2nd-gen function the job's location is the function's own region (`scheduleIdForFunction` and `upsertScheduleV2` in `firebase-tools` 15.18.0). A later CLI version could derive it differently, so if that name is not found, list rather than guess:
+
+```bash
+gcloud scheduler jobs list --project=kindoo-staging --location=us-central1
+```
+
+Expected: one row whose name contains `dispatchScheduledTasks`. On prod the same list shows **two** rows — that one plus `firestore-weekly-export`, which is operator-created and is not a Function. Repeat both commands with `--project=kindoo-prod`.
+
+### 2. Confirm the Cloud Tasks queue
+
+The queue is named after the function, in the function's region:
+
+```bash
+gcloud tasks queues describe runScheduledTask \
+  --project=kindoo-staging --location=us-central1 \
+  --format="value(name,state)"
+```
+
+Expected: `projects/kindoo-staging/locations/us-central1/queues/runScheduledTask	RUNNING`. Repeat with `--project=kindoo-prod`.
+
+A `NOT_FOUND` here means the deploy did not get as far as provisioning the queue. Redeploy that one function and read the output rather than re-running the whole deploy:
+
+```bash
+firebase deploy --only functions:runScheduledTask --project staging
+```
+
+### 3. Grant the enqueue IAM — the CLI does not do this for you
+
+**This is the step that fails silently.** Verified against the CLI and SDK versions this repo deploys with (`firebase-tools` 15.18.0, `firebase-functions` 7.2.5) by reading their source, because the published documentation does not state it either way:
+
+- `firebase-tools`' `upsertTaskQueue` (`lib/deploy/functions/release/fabricator.js`) always creates the queue, but calls `setEnqueuer` — the function that writes `roles/cloudtasks.enqueuer` onto the queue's IAM policy — **only when the endpoint declares an explicit `invoker`**.
+- `firebase-functions`' `onTaskDispatched` (`lib/v2/providers/tasks.js`) copies `invoker` onto the endpoint with `convertIfPresent`, i.e. only when the developer passes one.
+
+So with a plain `onTaskDispatched` and no `invoker` option, the queue is created and **no principal is granted permission to enqueue onto it**. Nothing fails at deploy; every hourly dispatch then fails at runtime with `PERMISSION_DENIED`.
+
+Two bindings are needed. The **member** is `kindoo-app@<project>` (the dispatcher's runtime service account) in both, but the **resource** differs, and neither is project-wide:
+
+**(a) `roles/cloudtasks.enqueuer`, on the queue resource.** Permission to create tasks in it.
+
+**(b) `roles/iam.serviceAccountUser`, on the `kindoo-app@` service-account resource — that is, on itself.** Cloud Tasks' [`OidcToken`](https://docs.cloud.google.com/tasks/docs/reference/rest/v2/OidcToken) reference requires the caller creating an HTTP-target task to hold `iam.serviceAccounts.actAs` on the service account named in the token, and Google documents no exception for the case where the caller *is* that account — which is our case, because `firebase-admin`'s task client stamps the OIDC token with the app's own resolved service account. `roles/iam.serviceAccountUser` is the predefined role that carries `actAs`.
+
+> **This is a second, distinct self-binding — it does not replace the D33 one.** `kindoo-app@` already holds `roles/iam.serviceAccountTokenCreator` on itself (for `mintExtensionToken`; see the PR #282 section above). That role carries `signBlob` / `signJwt` / `getOpenIdToken` and **not** `actAs`, so it does not satisfy (b), and (b) does not satisfy it. Both must be present. When tidying IAM under T-26, revoke neither.
+
+Check what is already there before granting anything:
+
+```bash
+for PROJECT in kindoo-staging kindoo-prod; do
+  echo "--- $PROJECT: queue policy ---"
+  gcloud tasks queues get-iam-policy runScheduledTask \
+    --project="$PROJECT" --location=us-central1 \
+    --format="value(bindings.role)"
+  echo "--- $PROJECT: kindoo-app SA policy ---"
+  gcloud iam service-accounts get-iam-policy \
+    "kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --project="$PROJECT" --format="value(bindings.role)"
+done
+```
+
+Expected once both bindings are in place: the queue policy prints `roles/cloudtasks.enqueuer`, and the SA policy prints **both** `roles/iam.serviceAccountTokenCreator` and `roles/iam.serviceAccountUser`. If the queue policy is empty — the likely outcome, per the source reading above — grant the missing ones:
+
+```bash
+for PROJECT in kindoo-staging kindoo-prod; do
+  gcloud tasks queues add-iam-policy-binding runScheduledTask \
+    --project="$PROJECT" --location=us-central1 \
+    --member="serviceAccount:kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --role="roles/cloudtasks.enqueuer"
+  gcloud iam service-accounts add-iam-policy-binding \
+    "kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --member="serviceAccount:kindoo-app@$PROJECT.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountUser" \
+    --project="$PROJECT"
+done
+```
+
+Expected: four `Updated IAM policy for ...` lines, each followed by the new policy. Idempotent — safe to re-run, and safe to run even if the CLI turns out to have granted (a) already.
+
+**The third binding you do not need to add: invoker on the runner.** Cloud Tasks calls `runScheduledTask`'s Cloud Run service carrying an OIDC token for `kindoo-app@`, so that account needs `roles/run.invoker` on it. `kindoo-app@` already holds `roles/run.invoker` **at the project level** from provisioning (`provision-firebase-projects.md` §1.8), which covers every Cloud Run service in the project including this one. Confirm rather than assume:
+
+```bash
+gcloud projects get-iam-policy kindoo-staging \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:kindoo-app@kindoo-staging.iam.gserviceaccount.com AND bindings.role:roles/run.invoker" \
+  --format="value(bindings.role)"
+```
+
+Expected: `roles/run.invoker`. Empty output means step 1.8 was not completed on that project — fix it there, not here.
+
+### 4. Confirm a dispatch actually happened
+
+Wait for the top of the next hour, then:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="dispatchscheduledtasks"' \
+  --project=kindoo-staging --limit=20 --freshness=2h \
+  --format="value(timestamp,severity,jsonPayload.message)"
+```
+
+Expected: at least one entry from the last hour, none at `ERROR`. The service name is **lowercased** — Cloud Run service names are RFC1123, so the export `dispatchScheduledTasks` logs under `dispatchscheduledtasks`. Filtering on the camelCase name matches nothing and looks exactly like "the dispatcher never ran."
+
+To force a run without waiting, use the job name from step 1:
+
+```bash
+gcloud scheduler jobs run <job-name-from-step-1> \
+  --project=kindoo-staging --location=us-central1
+```
+
+No output on success. An empty log read after a forced run, with the job reporting `ENABLED`, is the failure that step 3 exists to prevent — read `runScheduledTask`'s logs too, and see `infra/runbooks/observability.md` "Scheduled-task dispatch."
 
 ## Rollback
 
@@ -535,6 +683,8 @@ Run these after any change to `infra/scripts/deploy-*.sh` or `infra/scripts/lib/
    ```
 
    Expected last line: `=== verify-deploy.test.sh: <N> passed, 0 failed ===`, exit 0. These cover the response classifier against synthetic responses for all four failure modes, the export parser against both fixtures and the live `functions/src/index.ts`, and the whole verification run end-to-end with the network stubbed out. No emulators, no credentials, no network.
+
+   **Nothing in CI runs this file** — this manual step is the only gate on it, so run it whenever you touch either script. Two of its lines carry state you should read rather than skim: the `./scheduled/` and `./tasks/` misclassification guards print how many exports of each class they examined, and `0 exports under ...` means the guard found nothing to check in the live `index.ts` and fell back to its fixtures. That is correct on a branch that predates T-104 and wrong on `main` after it.
 
 3. **Dry-run both deploy scripts.**
 
@@ -644,7 +794,7 @@ After the headers are live, this is a one-time-per-browser cleanup; subsequent d
 
 ## What this runbook does NOT cover
 
-- **Cloud Scheduler job management** — managed by the `installScheduledJobs` callable; see `functions/src/callable/installScheduledJobs.ts` and `docs/firebase-migration.md` Phase 8.
+- **Which stake runs which scheduled job** — that is data, not deploy config: the trigger rows in `stakeSchedules/{stakeId}`, seeded by `createStake` and edited by a manager. Deploy owns only the two pieces of plumbing above (the hourly Cloud Scheduler job and the Cloud Tasks queue), and neither changes when a stake opts a job in or out. See `docs/TASKS.md` T-104.
 - **Secret Manager updates** — see `infra/runbooks/resend-api-key-setup.md` for the Resend key; add a similar runbook when a new secret is introduced.
 - **Custom-domain / DNS setup** — `infra/runbooks/custom-domain.md`.
 - **Runtime SA grants on the roster Sheet** — `infra/runbooks/granting-importer-sheet-access.md` (deprecated; T-45 removed the importer).

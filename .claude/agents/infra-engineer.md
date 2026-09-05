@@ -28,7 +28,16 @@ You do NOT:
 - **PWA from day one** via vite-plugin-pwa configured in `apps/web/vite.config.ts`.
 - **PITR is enabled on prod Firestore.** Weekly GCS export; 90-day bucket lifecycle.
 - **Firestore TTL on `auditLog`.** The policy is enabled on the `ttl` field in both projects; the retention duration is not in the policy — it lives in the value each row stamps (`AUDIT_TTL_MS` in `packages/shared`). **`platformAuditLog` has no TTL policy and must not get one** — that trail is deliberately non-expiring.
-- **Cloud Scheduler:** one HTTP-triggered job — `firestore-weekly-export` weekly (calls the Firestore admin export API directly; no stake loop). No scheduled Cloud Functions. One job total, within free tier.
+- **Cloud Scheduler: three jobs, and that is the whole allocation.** The free tier is 3 jobs per *billing account*, not per project, so staging and prod copies of one job cost two slots. After T-104 the drawer is empty:
+
+  | Slot | Project | Job | Created by |
+  |---|---|---|---|
+  | 1 | staging | `dispatchScheduledTasks` (hourly, `0 * * * *`, `Etc/UTC`) | `firebase deploy` |
+  | 2 | prod | `dispatchScheduledTasks` (hourly, `0 * * * *`, `Etc/UTC`) | `firebase deploy` |
+  | 3 | prod | `firestore-weekly-export` (Sunday 02:00 UTC; calls the Firestore admin export API directly, no stake loop) | operator, by hand |
+
+  A **fourth scheduled feature is not a fourth job** — it becomes a trigger row in `stakeSchedules/{stakeId}` that the hourly dispatcher fans out over Cloud Tasks. That indirection is the entire point of T-104; adding an `onSchedule` function instead would go over the free tier. Cloud Tasks has its own free tier of 1M operations/month, which this stack cannot approach.
+- **One scheduled Cloud Function, and one task-dispatched one.** `dispatchScheduledTasks` (`onSchedule`) and `runScheduledTask` (`onTaskDispatched`), both landed in T-104. T-102's "zero scheduled Cloud Functions" held only between T-102 and T-104; don't cite it. The `runScheduledTask` Cloud Tasks queue is auto-provisioned by the Firebase CLI at deploy — the queue, but **not** the IAM to enqueue onto it; see `infra/runbooks/deploy.md`.
 
 ## Invariants
 

@@ -10,6 +10,7 @@ Log-based metric definitions for Cloud Monitoring. Each `*.yaml` file describes 
 | `audit-row-dropped.yaml` | — | Audit rows permanently rejected and thrown away. The only detection path for lost audit rows. Wants an alert on count > 0. |
 | `claim-sync-failures.yaml` | 1 | Cloud Function exceptions on `syncAccessClaims`, `syncManagersClaims`, `syncSuperadminClaims`. |
 | `firestore-rules-denied-count.yaml` | 1 | Firestore rules-denied requests visible in Cloud Logging. High-water mark for misconfigured client queries or attempted privilege escalation. |
+| `scheduled-task-failures.yaml` | — | Errors from T-104's `dispatchScheduledTasks` and `runScheduledTask`. Counts failures that log; **cannot** see a dispatcher that stopped running altogether. |
 
 ## How to apply
 
