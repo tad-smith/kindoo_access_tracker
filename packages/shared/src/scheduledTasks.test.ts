@@ -40,10 +40,18 @@ const weekly = (weekday: number, hour: number): TaskSchedule => ({ type: 'weekly
 const monthly = (day: number, hour: number): TaskSchedule => ({ type: 'monthly', day, hour });
 
 describe('advanceTriggerTime — hourly', () => {
-  it('adds exactly one hour, preserving the minute phase', () => {
+  it('snaps to the next top of the hour rather than carrying the minute phase', () => {
     const from = new Date('2026-09-05T14:17:00.000Z');
     expect(advanceTriggerTime({ type: 'hourly' }, TZ, from).toISOString()).toBe(
-      '2026-09-05T15:17:00.000Z',
+      '2026-09-05T15:00:00.000Z',
+    );
+  });
+
+  it('still moves strictly forward when `from` is already exactly on the hour', () => {
+    // Strictness is what terminates the `nextTriggerTime` loop.
+    const from = new Date('2026-09-05T14:00:00.000Z');
+    expect(advanceTriggerTime({ type: 'hourly' }, TZ, from).toISOString()).toBe(
+      '2026-09-05T15:00:00.000Z',
     );
   });
 
@@ -51,9 +59,9 @@ describe('advanceTriggerTime — hourly', () => {
     // 01:30 MST on spring-forward day; the wall clock jumps to 03:30.
     const from = new Date('2026-03-08T08:30:00.000Z');
     const next = advanceTriggerTime({ type: 'hourly' }, TZ, from);
-    expect(next.toISOString()).toBe('2026-03-08T09:30:00.000Z');
+    expect(next.toISOString()).toBe('2026-03-08T09:00:00.000Z');
     expect(local(from)).toBe('2026-03-08 01:30');
-    expect(local(next)).toBe('2026-03-08 03:30');
+    expect(local(next)).toBe('2026-03-08 03:00');
   });
 });
 
@@ -168,27 +176,41 @@ describe('nextTriggerTime', () => {
   it('re-bases on `now` when nothing is stored', () => {
     const now = new Date('2026-09-05T14:17:00.000Z');
     expect(nextTriggerTime({ type: 'hourly' }, TZ, undefined, now).toISOString()).toBe(
-      '2026-09-05T15:17:00.000Z',
+      '2026-09-05T15:00:00.000Z',
     );
   });
 
-  it('holds an hourly task’s minute phase even when the dispatch ran late', () => {
-    // Seeded at :17; the dispatcher woke at :03 of the following hour.
-    const stored = new Date('2026-09-05T14:17:00.000Z');
+  it('does not strand an hourly task when a later run starts earlier in the hour', () => {
+    // The regression this exists for. A seeded slot used to inherit the
+    // dispatcher's own start second, so a run that woke marginally
+    // earlier than the stored second read as not-due and skipped a
+    // whole hour — repeatedly, because the phase survived.
+    const seeded = advanceTriggerTime({ type: 'hourly' }, TZ, new Date('2026-09-05T14:00:08.000Z'));
+    const earlierNextHour = new Date('2026-09-05T15:00:03.000Z');
+    expect(seeded.getTime()).toBeLessThanOrEqual(earlierNextHour.getTime());
+    const seededTask: ScheduledTask = {
+      job: 'demo',
+      enabled: true,
+      schedule: { type: 'hourly' },
+      next_trigger_time: seeded,
+    };
+    expect(isTaskDue(seededTask, earlierNextHour)).toBe(true);
+  });
+
+  it('advances an hourly task off its stored slot rather than off `now`', () => {
+    const stored = new Date('2026-09-05T14:00:00.000Z');
     const now = new Date('2026-09-05T15:03:00.000Z');
     const next = nextTriggerTime({ type: 'hourly' }, TZ, stored, now);
-    // Computing from `now` would have produced :03 and kept drifting.
-    expect(next.toISOString()).toBe('2026-09-05T15:17:00.000Z');
+    expect(next.toISOString()).toBe('2026-09-05T16:00:00.000Z');
     expect(next.getTime()).toBeGreaterThan(now.getTime());
   });
 
   it('fires once and re-bases after many slept-through windows, rather than replaying them', () => {
-    const stored = new Date('2026-09-01T06:17:00.000Z');
+    const stored = new Date('2026-09-01T06:00:00.000Z');
     const now = new Date('2026-09-05T15:03:00.000Z');
     const next = nextTriggerTime({ type: 'hourly' }, TZ, stored, now);
-    // The first slot after `now`, not the ~100 slots between — and still
-    // on the original :17 phase.
-    expect(next.toISOString()).toBe('2026-09-05T15:17:00.000Z');
+    // The first slot after `now`, not the ~100 slots between.
+    expect(next.toISOString()).toBe('2026-09-05T16:00:00.000Z');
   });
 
   it('keeps a daily task on its wall-clock hour after a multi-day outage', () => {
@@ -204,7 +226,7 @@ describe('nextTriggerTime', () => {
       const stored = new Date('2024-09-05T14:17:00.000Z');
       const now = new Date('2026-09-05T15:03:00.000Z');
       const next = nextTriggerTime({ type: 'hourly' }, TZ, stored, now);
-      expect(next.toISOString()).toBe('2026-09-05T16:03:00.000Z');
+      expect(next.toISOString()).toBe('2026-09-05T16:00:00.000Z');
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]?.[0])).toContain('re-basing on now');
     } finally {
@@ -229,7 +251,7 @@ describe('nextTriggerTime', () => {
   it('re-bases on an unreadable stored value instead of producing an invalid date', () => {
     const now = new Date('2026-09-05T14:17:00.000Z');
     const next = nextTriggerTime({ type: 'hourly' }, TZ, new Date('nonsense'), now);
-    expect(next.toISOString()).toBe('2026-09-05T15:17:00.000Z');
+    expect(next.toISOString()).toBe('2026-09-05T15:00:00.000Z');
   });
 });
 

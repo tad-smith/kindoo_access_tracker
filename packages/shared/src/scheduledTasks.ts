@@ -89,10 +89,20 @@ export function advanceTriggerTime(
 ): Date {
   switch (schedule.type) {
     case 'hourly':
-      // Phase-preserving by construction: exactly one hour on from
-      // whatever minute `from` sits at. No timezone is involved — an
-      // hour is an hour on both sides of a DST transition.
-      return new Date(from.getTime() + MS_PER_HOUR);
+      // The next exact top of the hour, not one hour on from whatever
+      // minute `from` sits at. Snapping is load-bearing: a seeded
+      // slot is derived from the dispatcher's own start instant, which
+      // sits a few cold-start seconds past `:00` and varies run to
+      // run. Carrying that phase forward would strand the task
+      // whenever a later run started marginally earlier in the hour
+      // than the stored second — not yet due, so it waits a further
+      // hour, and the phase survives to do the same again. The other
+      // three shapes already land on wall-clock hours, which is why
+      // only this one could drift. Anchoring to UTC hour boundaries
+      // matches the dispatcher's own `0 * * * *` wake-up, and flooring
+      // in absolute milliseconds keeps DST out of a question that has
+      // no wall clock in it.
+      return new Date(Math.floor(from.getTime() / MS_PER_HOUR) * MS_PER_HOUR + MS_PER_HOUR);
 
     case 'daily': {
       const hour = clamp(schedule.hour, 0, 23);

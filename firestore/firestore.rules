@@ -7,8 +7,8 @@ rules_version = '2';
 //
 //   - Helpers at top: `isAuthed`, `authedCanonical`, `isManager`,
 //     `isStakeMember`, `bishopricWardOf`, `isAnyMember`,
-//     `isPlatformSuperadmin`, `lastActorMatchesAuth`. Defined once,
-//     reused throughout.
+//     `isPlatformSuperadmin`, `lastActorMatchesAuth`, `keysAreExactly`.
+//     Defined once, reused throughout.
 //
 //   - `lastActor` integrity check is the primary defense: every
 //     client write must carry `lastActor.{email, canonical}` matching

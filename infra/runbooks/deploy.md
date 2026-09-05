@@ -589,9 +589,11 @@ gcloud scheduler jobs run <job-name-from-step-1> \
 
 No output on success. An empty log read after a forced run, with the job reporting `ENABLED`, is the failure that step 3 exists to prevent — read `runScheduledTask`'s logs too, and see `infra/runbooks/observability.md` "Scheduled-task dispatch."
 
-> **`enqueued: 0` on the first run is the correct result, not a failure.** There is no post-deploy backfill to run and `createStake` seeds nothing. The dispatcher **self-seeds**: on its next hourly pass it writes any missing registry entry onto every stake, including stakes that predate the job, and every seeded trigger arrives with `enabled: false`. So the first run's summary should show a non-zero `seeded` and a zero `enqueued`, and nothing will actually execute until somebody opts a stake in by flipping that flag.
+> **On the deploy that first ships the dispatcher, `{ stakes: N, seeded: 0, enqueued: 0, deduped: 0, failures: 0 }` is the whole expected result — and `stakeSchedules` does not appear at all.** The job registry (`functions/src/lib/taskRegistry.ts`) ships empty, so there is nothing to seed onto a stake, and the dispatcher only writes a stake's document when it seeds or stamps something. An absent `stakeSchedules` collection is therefore the healthy outcome here, not evidence that anything failed. **Do not go looking for documents on this deploy, and do not read their absence as a broken Scheduler job or a missing IAM grant.**
 >
-> The check is therefore "did the documents appear", not "did something happen". An hour after the deploy, open Firestore → `stakeSchedules` and confirm there is one document per stake, each holding the seeded triggers. If `stakeSchedules` is empty an hour later, the dispatcher is not running — go back to step 1.
+> The `dispatchScheduledTasks: done` line from step 4 is the only proof of life until a job is registered. That is what you are checking for; there is nothing else to see.
+>
+> **What changes when a job is first registered** (the sync-reminder PR is the first): the dispatcher **self-seeds** on its next hourly pass, writing the new entry onto every stake including ones that predate the job — there is no backfill to run and `createStake` seeds nothing. Every seeded trigger arrives `enabled: false`, so `enqueued` stays 0 until somebody opts a stake in by flipping that flag. From that deploy onward the check becomes "did the documents appear": an hour on, `stakeSchedules` should hold one document per stake, and if it is still empty the dispatcher is not running — go back to step 1.
 
 ## Rollback
 
