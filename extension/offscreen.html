@@ -1,0 +1,27 @@
+<!doctype html>
+<!--
+  SPIKE — host page for the offscreen realtime-listener probe.
+
+  Lives at the extension root rather than under src/ because it is a
+  Vite HTML entry: vite.config.ts adds it to build.rollupOptions.input,
+  which is what emits it (and its bundled module) into dist/<mode>/.
+  @crxjs does not discover this file on its own — offscreen documents are
+  created at runtime by chrome.offscreen.createDocument, so they never
+  appear in the manifest for the plugin to crawl.
+
+  No visible UI: the document is never rendered. The body text exists
+  only for whoever opens it from chrome://extensions → Inspect views.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SBA — offscreen listener spike</title>
+  </head>
+  <body>
+    <p>
+      Stake Building Access — offscreen listener spike. This document holds a Firestore realtime
+      listener. It has no UI; see the console.
+    </p>
+    <script type="module" src="/src/offscreen/main.ts"></script>
+  </body>
+</html>
