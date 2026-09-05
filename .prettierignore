@@ -14,6 +14,11 @@ scripts/
 # Firebase local state
 .firebase/
 
+# Per-machine Claude Code state. Untracked and covered by a global
+# gitignore, so CI never sees these — but a local `pnpm lint` still
+# scans them and exits 1 on formatting nobody can commit a fix for.
+**/.claude/settings.local.json
+
 # Generated files
 **/version.gen.ts
 apps/web/src/routeTree.gen.ts
