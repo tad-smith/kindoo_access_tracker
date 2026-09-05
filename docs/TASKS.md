@@ -6,6 +6,30 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
+## [T-106] Sync reminders — case (1): no Sync in seven days
+Status: pending
+Owner: @extension-engineer (heartbeat) + @backend-engineer (reminder) + @docs-keeper
+Phase: cross-cutting
+
+The other half of the reminder pair. [T-103] shipped case (2) — expired temp seats — because it needed no new recorded state. This is case (1): tell the Kindoo Managers when nobody has run Sync in seven days. It was the condition the operator named first, and it is the one that catches the failure case (2) can only catch a symptom of.
+
+**The blocker, unchanged since it was first scoped: nothing records that a Sync ran.** The drift report is computed entirely in the extension (`extension/src/panel/SyncPanel.tsx`) and only *fixes* reach the server, through `syncApplyFix`. So a manager who syncs every morning and finds no drift writes nothing at all. Two shortcuts were considered and rejected:
+
+- **Derive it from `auditLog` rows stamped with the Sync actor.** Fails on the case that matters most — a clean Sync writes no rows, so the diligent manager is exactly who gets nagged.
+- **Infer it from seat staleness.** That is case (2) wearing a hat; it cannot see seven quiet days.
+
+**So the extension must write a heartbeat** when a scan completes — which puts this behind a Chrome Web Store release, and is the whole reason the two cases were split.
+
+**Key it by Kindoo site, not by stake.** Sync is scoped to the *active* Kindoo site (spec §15), so a stake operating a foreign site has two things to keep synced. One stake-level timestamp would mark the foreign site fresh whenever anyone synced home — silently, and in the direction that suppresses the reminder. `remoteApply/{canonical}/desktops/{siteKey}` is the shape to copy: whole-document `setDoc`, exact key set enforced in rules, written by the extension under manager auth.
+
+**Semantics to settle:** the heartbeat means *someone looked*, not *drift is clear* — a manager who scans, sees five rows, and applies none has still synced. That is the right meaning for "it has been seven days", and it is why case (2) has to stay an independent check rather than being folded in.
+
+**Rollout has a sharp edge.** A manager on an older extension build writes no heartbeat, so every stake reads as never-synced until everyone updates. Decide before shipping whether an absent heartbeat fires the reminder immediately (truthful, self-clearing, noisy during rollout) or stays silent until the first heartbeat ever appears (quiet, but a stake that genuinely never syncs is never chased).
+
+**Most of the delivery already exists.** [T-103] built the email/push machinery, the `syncReminder` push category, the manager recipient resolution, and the backoff. This adds a condition and a data source, not a new notification system. The trigger should come from the scheduled-task system ([T-104]) rather than a dedicated job.
+
+**Bonus the heartbeat unlocks:** a "Last sync" line per site on the manager Configuration page, which is the same data and costs nothing extra.
+
 ## [T-105] Expired temp grants on multi-grant seats have no reaper and no reminder
 Status: pending
 Owner: unassigned
@@ -66,7 +90,7 @@ Phase: cross-cutting
 
 Everything else landed as planned, plus two things the plan did not anticipate. **Selection is narrowed by `syncWillClearSeat`** — only seats Sync will actually reap — because the mail's one instruction is "run Sync" and it is false for a multi-grant seat; that exclusion is now [T-105]. **The module move went further than "`isExpiredTempGrant` / `todayInStakeTz` move to `packages/shared`":** the whole of `apps/web/src/lib/datetime.ts` became `packages/shared/src/stakeTime.ts` and `apps/web/src/lib/tempExpiry.ts` became `packages/shared/src/tempExpiry.ts`, `syncWillClearSeat` included, with `ExpirableGrant` typed `{type: SeatType, end_date?}` rather than `string`. Both files are `Intl`-only, so `@kindoo/shared` stays runtime-dep-free. Push is the separate `notificationPrefs.push.syncReminder` category with its own switch; `newRequest` became optional in the type and schema, absent reads OFF, so existing subscribers needed no backfill. The FCM fanout is extracted to `functions/src/lib/push.ts` and shared with `pushOnRequestSubmit`. `last_sync_reminder_date` is in `BOOKKEEPING_FIELDS`, so the backoff stamp fans no audit row. Recorded as `architecture.md` D37, amending D34 and D20 in place for the moved modules. See `docs/changelog/sync-reminder-expired-temp-seats.md`.
 
-Managers have no prompt to run Sync. Two conditions warrant one: **(1)** no Sync in ≥ 7 days, and **(2)** temp seats that expired more than 24 hours ago and are still sitting in SBA. **This task is case (2) only.** Case (1) is deferred to its own task because nothing records when a Sync ran — the extension would have to start writing a heartbeat, which gates the whole reminder on a Chrome Web Store release. Case (2) needs no extension change and no new recorded state, so it ships on its own.
+Managers have no prompt to run Sync. Two conditions warrant one: **(1)** no Sync in ≥ 7 days, and **(2)** temp seats that expired more than 24 hours ago and are still sitting in SBA. **This task is case (2) only.** Case (1) is [T-106], deferred because nothing records when a Sync ran — the extension would have to start writing a heartbeat, which gates the whole reminder on a Chrome Web Store release. Case (2) needs no extension change and no new recorded state, so it ships on its own.
 
 **Why it matters.** An expired temp seat is only cleared when a manager's Sync detects it as `sba-only` (spec §7, D34). Until then the ward sees a seat whose Kindoo access already ended and — per D34's own history — starts filing remove requests for it. The reminder is the nudge that closes that gap.
 
@@ -82,7 +106,7 @@ Managers have no prompt to run Sync. Two conditions warrant one: **(1)** no Sync
 
 **Second consumer of the push fanout.** `pushOnRequestSubmit.ts` carries the only token-collection / data-only-payload / invalid-token-pruning logic, inline. This is its second consumer, so extract a shared helper rather than copy it — the FCM pruning in particular should not exist twice.
 
-**Out of scope.** Case (1) and its sync heartbeat; alert routing for the T-102 monitoring metrics; any change to how Sync itself works.
+**Out of scope.** Case (1) and its sync heartbeat ([T-106]); alert routing for the T-102 monitoring metrics; any change to how Sync itself works.
 
 ## [T-102] Delete `reconcileAuditGaps`; protect audit fan-in with trigger retries instead
 Status: done (2026-08-18 — PR #286)
