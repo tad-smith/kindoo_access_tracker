@@ -35,6 +35,14 @@
 #     infra/runbooks/deploy.md, "First deploy after T-104," step 3. The
 #     symptom is a PERMISSION_DENIED naming cloudtasks.tasks.create or
 #     iam.serviceAccounts.actAs.
+#   - "dispatchScheduledTasks: unusable row in tasks" / "due task has an
+#     unusable schedule" / "could not advance a stamped task" — a row a
+#     manager or the console put into `tasks` that the dispatcher cannot
+#     use. Rules check `tasks` as a list and never element by element, so
+#     this is reachable. It repeats hourly until the data is fixed,
+#     because an unstampable row stays due; one bad row therefore pins
+#     this metric non-zero and will mask a new failure. See
+#     observability.md shape (5).
 #   - "runScheduledTask: no handler registered for job" / "malformed
 #     payload" — the runner returns rather than throwing on these, so Cloud
 #     Tasks does not retry them and the work is simply dropped. These should

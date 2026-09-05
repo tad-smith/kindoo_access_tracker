@@ -299,6 +299,28 @@ describe('dispatchDue — selection and stamping', () => {
 });
 
 describe('dispatchDue — failure handling', () => {
+  it('skips an unparseable row without stranding its siblings', async () => {
+    const { db, writes } = makeDb([{ id: 'csnorth' }], {
+      csnorth: {
+        tasks: [
+          null as unknown as ScheduledTask,
+          task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') }),
+        ],
+        lastActor: DISPATCHER_ACTOR,
+      },
+    });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    const summary = await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
+
+    // Reading `.job` off the null row used to throw into the per-stake
+    // handler, which skips the write — so the healthy sibling below it
+    // enqueued and then lost its stamp, and re-fired every hour.
+    expect(calls).toHaveLength(1);
+    expect(summary).toMatchObject({ enqueued: 1, failures: 1 });
+    expect(writes['stakeSchedules/csnorth']?.tasks[1]?.last_trigger_time).toBeDefined();
+  });
+
   it('skips a due task whose schedule shape is unusable, without enqueuing it', async () => {
     const { db } = makeDb([{ id: 'csnorth' }], {
       csnorth: {

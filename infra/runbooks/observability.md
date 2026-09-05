@@ -55,7 +55,7 @@ For staging, replace `kindoo-prod` with `kindoo-staging` everywhere.
 
 **Why this section is longer than its alert coverage deserves: there is no alert.** Every scheduled feature in this stack reaches its handler through one hourly function, `dispatchScheduledTasks`, and one runner, `runScheduledTask`. That is deliberate — it is what keeps the whole system inside Cloud Scheduler's 3-job free tier — but it also means a single silent failure stops *all* scheduled work at once, with no user-visible symptom beyond something not happening. Nobody gets paged. Somebody has to look.
 
-**Four failure shapes, roughly in descending order of how invisible they are.** Only (2) and (4) are counted by a metric; (1) and (3) are found by looking.
+**Five failure shapes, roughly in descending order of how invisible they are.** Only (2), (4) and (5) are counted by a metric; (1) and (3) are found by looking.
 
 **(1) The dispatcher stopped running.** The Cloud Scheduler job was paused, deleted, or never created by a deploy. The dispatcher logs nothing, because it never executes — so `scheduled-task-failures` reads zero, `5xx-rate` reads zero, and every dashboard looks healthy. **No log-based counter can ever detect this**, because there is no log entry to count. This is the failure mode to be afraid of.
 
@@ -128,6 +128,20 @@ with `{ stakeId, job }`, and it repeats every hour the row stays due. That makes
 Widen `--freshness` and drop `severity>=ERROR` to see the surrounding `runScheduledTask: running` / `done` entries for context.
 
 **Service names are lowercase in every filter above.** Cloud Run service names are RFC1123, so `dispatchScheduledTasks` logs under `dispatchscheduledtasks`. A filter written with the camelCase export name matches nothing and is indistinguishable from "it never ran" — which is exactly failure (1), so getting this wrong manufactures the scariest symptom out of a typo.
+
+**(5) A stored row is malformed and cannot be dispatched.** Counted by `scheduled-task-failures`. `tasks` is rules-checked as a list of at most 50 and **never element by element** — rules cannot reach inside an array element — so a row edited by hand in the Firestore console can hold anything. Three lines, all ERROR, all under `dispatchscheduledtasks`:
+
+```
+ERROR  dispatchScheduledTasks: unusable row in tasks              { stakeId }
+ERROR  dispatchScheduledTasks: due task has an unusable schedule  { stakeId, job, schedule }
+ERROR  dispatchScheduledTasks: could not advance a stamped task   { stakeId, job, errorMessage }
+```
+
+The first two are caught **before** the enqueue, so the handler never runs; the third is a backstop around the stamp for anything that slips past them. In all three the bad row is skipped and left exactly as stored — nothing is pruned, because deleting a row is a decision about a manager's `enabled` choice, not cleanup (same reasoning as (3)).
+
+> **These repeat every hour until the data is fixed**, because a row that cannot be parsed cannot be stamped, so it stays due forever. That is deliberate — a persistent misconfiguration should keep saying so — but it means one bad row is a permanent non-zero `scheduled-task-failures`, which will mask a genuine new failure if you leave it. Fix the row rather than living with the noise.
+
+**The other rows in that stake are unaffected**, which is the whole point of the per-row guards: an early version let one bad row throw into the per-stake handler, which skips the schedule write, so every healthy sibling lost its stamp and re-fired an hour later. If you ever see the ERROR above *together with* a stake's other jobs running repeatedly, that regression is back.
 
 **Scope note.** This covers the dispatch plumbing, not what any individual job does. A trigger that is disabled, or whose `next_trigger_time` is wrong, is a data question — read that stake's `stakeSchedules/{stakeId}` document — not a monitoring one. In particular, **`enqueued: 0` on a healthy dispatcher is normal**: seeded triggers arrive with `enabled: false`, so a project where nobody has opted a stake in dispatches nothing, forever, while every metric here reads green. That is working as designed, and it is why "did anything run?" is not a monitoring question either.
 

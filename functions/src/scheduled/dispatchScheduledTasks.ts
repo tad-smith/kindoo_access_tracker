@@ -145,6 +145,19 @@ export async function dispatchDue(
 
       let stamped = 0;
       for (const task of tasks) {
+        if (typeof task !== 'object' || task === null || typeof task.job !== 'string') {
+          // The row itself, before either guard below can read a field
+          // off it. `tasks` is rules-checked as a list of at most 50,
+          // never element by element, so a `null` or a bare string can
+          // sit in there — and reaching for `.job` on one would throw
+          // into the per-stake handler and strand every sibling's stamp.
+          // Nothing to stamp here either way: an unparseable row is
+          // skipped, so this repeats hourly until someone fixes the data,
+          // which is the correct amount of noise for a real misconfiguration.
+          summary.failures += 1;
+          logger.error('dispatchScheduledTasks: unusable row in tasks', { stakeId });
+          continue;
+        }
         if (!(task.job in registry)) {
           // An entry naming a job that no longer exists (or does not
           // exist yet). Left untouched rather than pruned: re-adding the
@@ -264,7 +277,11 @@ function seedMissingTasks(
 ): number {
   let added = 0;
   for (const [job, definition] of Object.entries(registry)) {
-    if (tasks.some((t) => t.job === job)) continue;
+    // `t?.job` rather than `t.job`: the stored array is rules-checked as
+    // a list, never element by element, so a null row can sit in it and
+    // must not take the seeding pass down with it. It matches no job
+    // name, which is the right answer.
+    if (tasks.some((t) => t?.job === job)) continue;
     tasks.push({
       job,
       enabled: definition.defaultEnabled,
