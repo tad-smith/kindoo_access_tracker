@@ -50,6 +50,14 @@ A door-access tracker that manages Kindoo seat assignments across the units — 
 - **Don't spill scope across phases.** If a need isn't in the current phase's sub-tasks and isn't listed under "Out of scope", stop and ask.
 - **Keep it simple.** Target scale is 12 wards, ~250 seats, 1–2 requests/week. Don't pre-build pagination, polling, batching, or feature flags. See `architecture.md` §1 "Scale targets".
 
+### Subagent dispatch: pick the model from the brief, not the agent
+
+Nothing was pinned, so every agent inherited Opus. T-104 ran four Opus agents in parallel against five Opus review runs drawing on the same subscription pool, and hit the session limit twice.
+
+- **`docs-keeper` and `infra-engineer` are pinned to `model: sonnet`** in their frontmatter.
+- **`backend-engineer`, `web-engineer`, and `extension-engineer` are decided per dispatch.** Judge the brief that was actually written: one that names the file, the line, and the replacement is a targeted change and gets `model: "sonnet"`; one that states a goal and leaves the design open gets Opus, which is what an omitted override already means. Make the call **before** launching — the same agent transcribes on one dispatch and designs on the next, so the model rides on the brief, not on the agent's name.
+- **`effort: high` on every agent, never `xhigh`.** The frontmatter key is `effort`; accepted values are `low | medium | high | xhigh | max`.
+
 ## Commit & push
 
 - Commit only when the user asks.
