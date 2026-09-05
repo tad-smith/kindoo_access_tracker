@@ -67,6 +67,7 @@ export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolv
 export {
   MAX_SCHEDULE_ADVANCES,
   advanceTriggerTime,
+  isKnownSchedule,
   isTaskDue,
   nextTriggerTime,
   type ScheduledTask,

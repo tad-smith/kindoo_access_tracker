@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_SCHEDULE_ADVANCES,
   advanceTriggerTime,
+  isKnownSchedule,
   isTaskDue,
   nextTriggerTime,
   type ScheduledTask,
@@ -257,6 +258,35 @@ describe('nextTriggerTime', () => {
     const now = new Date('2026-09-05T14:17:00.000Z');
     const next = nextTriggerTime({ type: 'hourly' }, TZ, new Date('nonsense'), now);
     expect(next.toISOString()).toBe('2026-09-05T15:00:00.000Z');
+  });
+});
+
+describe('isKnownSchedule', () => {
+  it('accepts the four shapes the module can advance', () => {
+    for (const schedule of [
+      { type: 'hourly' },
+      { type: 'daily', hour: 6 },
+      { type: 'weekly', weekday: 1, hour: 6 },
+      { type: 'monthly', day: 1, hour: 6 },
+    ]) {
+      expect(isKnownSchedule(schedule)).toBe(true);
+    }
+  });
+
+  it('rejects the shapes a hand-edited row can actually hold', () => {
+    for (const bad of [undefined, null, {}, { type: 'yearly' }, { type: 7 }, 'hourly']) {
+      expect(isKnownSchedule(bad)).toBe(false);
+    }
+  });
+
+  it('is what stands between a stored row and a throw', () => {
+    const bad = { type: 'yearly' } as unknown as TaskSchedule;
+    expect(isKnownSchedule(bad)).toBe(false);
+    // Previously this fell out of the switch and returned `undefined`,
+    // which surfaced as a TypeError one frame up.
+    expect(() => advanceTriggerTime(bad, TZ, new Date('2026-09-05T14:00:00.000Z'))).toThrow(
+      /unrecognised schedule type/,
+    );
   });
 });
 

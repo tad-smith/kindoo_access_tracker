@@ -134,17 +134,46 @@ export function advanceTriggerTime(
       const nextYear = month === 12 ? year + 1 : year;
       return monthlyCandidate(nextYear, nextMonth, day, hour, timezone);
     }
+
+    default:
+      // Unreachable through the type, reachable through the data: the
+      // array is manager-writable and rules cannot validate inside its
+      // elements, so a hand-edited `type` lands here. Throwing beats
+      // falling out of the switch and returning `undefined`, which
+      // surfaces as a TypeError one frame up. Callers reading stored
+      // rows should gate on `isKnownSchedule` first.
+      throw new Error(
+        `scheduledTasks: unrecognised schedule type ${JSON.stringify((schedule as { type?: unknown }).type)}`,
+      );
   }
+}
+
+/**
+ * True when `schedule` is a shape `advanceTriggerTime` can actually
+ * advance.
+ *
+ * Exists because `TaskSchedule` is a compile-time claim about data that
+ * arrives from Firestore, where a manager may have typed it. Gate stored
+ * rows on this before doing anything irreversible with them.
+ */
+export function isKnownSchedule(schedule: unknown): schedule is TaskSchedule {
+  if (typeof schedule !== 'object' || schedule === null) return false;
+  const { type } = schedule as { type?: unknown };
+  return type === 'hourly' || type === 'daily' || type === 'weekly' || type === 'monthly';
 }
 
 /**
  * The instant a task should next fire.
  *
- * **Advance from `stored`, never from `now`.** Phase stability is the
- * whole point: an `hourly` task seeded at :17 stays at :17 forever,
- * where re-basing on `now` walks it forward by however late each
- * dispatch happened to run. A `daily 06:00` task is less obviously
- * fragile but has the same property.
+ * Advances from `stored`, not from `now`, stopping at the first slot
+ * strictly after `now`.
+ *
+ * Drift is prevented by the slots themselves: every shape lands on a
+ * wall-clock boundary — `hourly` on the top of the hour, the other three
+ * on their configured hour — so a trigger cannot inherit the second at
+ * which some dispatch happened to run. An earlier `hourly` added an hour
+ * to whatever instant it was handed, which did inherit it, and skipped a
+ * run whenever one dispatch started earlier in the hour than the last.
  *
  * A task that slept through many windows (queue paused, job disabled and
  * re-enabled, a long outage) still fires **once** and re-bases rather

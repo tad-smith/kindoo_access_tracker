@@ -28,6 +28,7 @@ import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { getFunctions } from 'firebase-admin/functions';
 import {
   advanceTriggerTime,
+  isKnownSchedule,
   isTaskDue,
   nextTriggerTime,
   type ScheduledTask,
@@ -156,6 +157,24 @@ export async function dispatchDue(
           }
           continue;
         }
+        if (!isKnownSchedule(task.schedule)) {
+          // Rules cannot validate inside an array element and editing a
+          // row in the Firestore console is the documented way to opt a
+          // stake in, so a malformed `schedule` is reachable input.
+          // Skipped BEFORE the enqueue, not caught after it: advancing
+          // an unrecognised shape throws, and a throw between the
+          // enqueue and the stamp would re-run the handler every hour
+          // for as long as the row sat there.
+          if (isTaskDue(task, now)) {
+            summary.failures += 1;
+            logger.error('dispatchScheduledTasks: due task has an unusable schedule', {
+              stakeId,
+              job: task.job,
+              schedule: task.schedule,
+            });
+          }
+          continue;
+        }
         if (!isTaskDue(task, now)) continue;
 
         const id = scheduledTaskId(stakeId, task.job, now);
@@ -187,13 +206,26 @@ export async function dispatchDue(
         }
 
         // Stamp AFTER the enqueue — see the at-least-once note in the
-        // file header.
-        const previous = readTimestamp(task.next_trigger_time);
-        task.last_trigger_time = Timestamp.fromDate(now);
-        task.next_trigger_time = Timestamp.fromDate(
-          nextTriggerTime(task.schedule, timezone, previous, now),
-        );
-        stamped += 1;
+        // file header. Guarded per task so an unexpected throw here
+        // costs this row only: uncaught it would reach the per-stake
+        // handler, which skips the write entirely and would strand
+        // every OTHER task's stamp in the same stake, re-firing them
+        // all an hour later.
+        try {
+          const previous = readTimestamp(task.next_trigger_time);
+          task.last_trigger_time = Timestamp.fromDate(now);
+          task.next_trigger_time = Timestamp.fromDate(
+            nextTriggerTime(task.schedule, timezone, previous, now),
+          );
+          stamped += 1;
+        } catch (err) {
+          summary.failures += 1;
+          logger.error('dispatchScheduledTasks: could not advance a stamped task', {
+            stakeId,
+            job: task.job,
+            errorMessage: messageOf(err),
+          });
+        }
       }
 
       if (seeded > 0 || stamped > 0) {

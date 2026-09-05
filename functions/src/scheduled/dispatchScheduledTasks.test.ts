@@ -299,6 +299,63 @@ describe('dispatchDue — selection and stamping', () => {
 });
 
 describe('dispatchDue — failure handling', () => {
+  it('skips a due task whose schedule shape is unusable, without enqueuing it', async () => {
+    const { db } = makeDb([{ id: 'csnorth' }], {
+      csnorth: {
+        tasks: [
+          task({
+            schedule: { type: 'yearly' } as unknown as ScheduledTask['schedule'],
+            next_trigger_time: at('2026-09-05T12:00:00.000Z'),
+          }),
+        ],
+        lastActor: DISPATCHER_ACTOR,
+      },
+    });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    const summary = await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
+
+    // Not enqueued at all — advancing it would throw after the handler
+    // had already been queued, re-running it every hour.
+    expect(calls).toHaveLength(0);
+    expect(summary).toMatchObject({ enqueued: 0, failures: 1 });
+  });
+
+  it('does not let one unusable row strand its siblings’ stamps', async () => {
+    const { db, writes } = makeDb([{ id: 'csnorth' }], {
+      csnorth: {
+        tasks: [
+          task({
+            schedule: { type: 'yearly' } as unknown as ScheduledTask['schedule'],
+            next_trigger_time: at('2026-09-05T12:00:00.000Z'),
+          }),
+          task({ job: 'other', next_trigger_time: at('2026-09-05T12:00:00.000Z') }),
+        ],
+        lastActor: DISPATCHER_ACTOR,
+      },
+    });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    await dispatchDue(db, {
+      registry: registry({
+        other: {
+          handler: async () => undefined,
+          defaultSchedule: { type: 'daily', hour: 6 },
+          defaultEnabled: false,
+        },
+      }),
+      enqueue,
+      now: NOW,
+    });
+
+    // The healthy sibling enqueued AND stamped. Before the per-task
+    // guard the bad row threw into the per-stake handler, which skips
+    // the write, so this stamp was lost and 'other' re-fired hourly.
+    expect(calls).toHaveLength(1);
+    expect(writes['stakeSchedules/csnorth']?.tasks[1]?.last_trigger_time).toBeDefined();
+    expect(writes['stakeSchedules/csnorth']?.tasks[0]?.last_trigger_time).toBeUndefined();
+  });
+
   it('treats `functions/task-already-exists` as a successful dedupe and still stamps', async () => {
     const { db, writes } = makeDb([{ id: 'csnorth' }], {
       csnorth: {
