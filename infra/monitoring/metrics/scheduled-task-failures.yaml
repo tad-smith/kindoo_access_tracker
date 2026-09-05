@@ -24,25 +24,36 @@
 #     name LOWERCASED: dispatchScheduledTasks -> dispatchscheduledtasks,
 #     runScheduledTask -> runscheduledtask.
 #
-# WHAT THIS CATCHES
-#   - The dispatcher throwing (Firestore read of stakeSchedules failed, a
-#     schedule shape it can't advance, an unhandled error mid-walk).
-#   - The dispatcher failing to ENQUEUE. This is the highest-value catch and
-#     the likeliest one, because the enqueue IAM is granted by the operator
-#     and not by `firebase deploy` — see infra/runbooks/deploy.md, "First
-#     deploy after T-104," step 3. The symptom is a PERMISSION_DENIED naming
-#     either cloudtasks.tasks.create or iam.serviceAccounts.actAs.
-#   - A job handler throwing inside the runner. Cloud Tasks retries these, so
-#     like audit-trigger-failures this is a rate signal, not a loss signal.
+# WHAT THIS CATCHES — the ERROR lines both functions emit:
+#   - "dispatchScheduledTasks: stake failed" — one stake's read/write threw.
+#     Payload: stakeId, errorMessage.
+#   - "dispatchScheduledTasks: enqueue failed" — Cloud Tasks rejected an
+#     enqueue for a non-dedupe reason; the task is left unstamped so the next
+#     hour retries it. Payload: stakeId, job, taskId, errorMessage. This is
+#     the highest-value catch and the likeliest one, because the enqueue IAM
+#     is granted by the operator and not by `firebase deploy` — see
+#     infra/runbooks/deploy.md, "First deploy after T-104," step 3. The
+#     symptom is a PERMISSION_DENIED naming cloudtasks.tasks.create or
+#     iam.serviceAccounts.actAs.
+#   - "runScheduledTask: no handler registered for job" / "malformed
+#     payload" — the runner returns rather than throwing on these, so Cloud
+#     Tasks does not retry them and the work is simply dropped.
+#
+# THE DISPATCHER DOES NOT THROW ON THESE. It logs each one and continues the
+# walk, returning a summary. A run in which every stake failed still exits 0,
+# so the 5xx-rate alert never fires and `summary.failures` in the INFO
+# "dispatchScheduledTasks: done" payload is not an error signal anywhere.
+# This metric is the only thing that counts them.
 #
 # WHAT THIS CANNOT CATCH — read this before trusting a flat zero.
 # A log-based counter can only count entries that exist. The failure that
 # takes down every scheduled feature at once is the ABSENCE of entries: the
 # Cloud Scheduler job paused, deleted, or never created, so the dispatcher
 # never runs, logs nothing, and this metric reads a healthy zero forever.
-# Detecting that needs a metric-absence alert on the dispatcher's invocation
-# count, not a threshold on this counter. Nothing is wired for it; see
-# infra/runbooks/observability.md "Not yet wired."
+# That one has its own metric read for its absence:
+# scheduled-dispatch-completed.yaml. Read the two together — this counter
+# says "runs are failing", that one says "runs are happening at all", and
+# neither implies the other.
 #
 # To apply (both projects):
 #

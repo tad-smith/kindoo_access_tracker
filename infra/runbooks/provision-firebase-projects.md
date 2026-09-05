@@ -341,7 +341,7 @@ grep -rl 'serviceAccount: APP_SA' functions/src --include='*.ts' | grep -v '\.te
   sed 's#.*/##; s#\.ts$##' | sort
 ```
 
-At the time of writing (T-104) that is **thirteen**: the four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), all eight callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `backfillAuditTtl`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`), and the hourly `dispatchScheduledTasks`. Out of a **29-function** deploy surface — the rest fall back to the compute SA. If the grep and this paragraph disagree, the grep is right; fix the paragraph.
+At the time of writing (T-104) that is **fourteen**: the four notification triggers (`notifyOnRequestWrite`, `notifyOnOverCap`, `pushOnRequestSubmit`, `notifyOnAccessGranted`), all eight callables (`markRequestComplete`, `syncApplyFix`, `getMyPendingRequests`, `backfillKindooSiteId`, `backfillAuditTtl`, `createStake`, `backfillEqPresidentAccess`, `mintExtensionToken`), and both T-104 functions (`dispatchScheduledTasks`, `runScheduledTask`). Out of a **29-function** deploy surface — the rest fall back to the compute SA. If the grep and this paragraph disagree, the grep is right; fix the paragraph.
 
 ```bash
 gcloud iam service-accounts create kindoo-app \
@@ -416,7 +416,7 @@ This trips people up the first time. Cloud Functions 2nd-gen runs on Cloud Run, 
 
 For staging, substituting your project number from step 1.2, that's e.g., `123456789012-compute@developer.gserviceaccount.com`.
 
-`kindoo-app` is the SA pinned by the functions enumerated in step 1.8 (the notification triggers, the callables, and the scheduled dispatcher). Functions that don't pin an SA — the Firestore claim-sync and audit fan-in triggers, and `runScheduledTask` unless its source says otherwise — fall back to the compute SA.
+`kindoo-app` is the SA pinned by the functions enumerated in step 1.8 (the notification triggers, the callables, and both T-104 scheduled-task functions). Functions that don't pin an SA — the Firestore claim-sync and audit fan-in triggers — fall back to the compute SA.
 
 In Phase 1 the function we deploy (`hello`) needs no special permissions — it's a pure callable returning `{version, builtAt, env}`. From Phase 2 onward, when `auth.user().onCreate` writes to Firestore, the compute SA must have `roles/datastore.user` and the Functions deploy will fail without it. Add it now while you're already in IAM:
 

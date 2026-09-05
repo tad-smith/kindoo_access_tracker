@@ -1,0 +1,63 @@
+# scheduled-dispatch-completed
+#
+# Counts completed runs of `dispatchScheduledTasks` (T-104). One entry per
+# hour on a healthy project.
+#
+# THIS METRIC IS READ FOR ITS ABSENCE, NOT ITS VALUE.
+# Every scheduled feature in this stack reaches its handler through one hourly
+# function. If that function stops running — Cloud Scheduler job paused,
+# deleted, or never created by a deploy — nothing errors, nothing 5xxes, and
+# every failure metric reads a healthy zero, because there are no log entries
+# to count. The only positive proof that a dispatch happened is this line.
+# Alert on its ABSENCE over a window comfortably longer than an hour (3h
+# leaves room for one missed tick), using a metric-absence condition rather
+# than a threshold. No alert YAML exists yet; see
+# infra/runbooks/observability.md "Not yet wired."
+#
+# WHY THE `done` LINE AND NOT run.googleapis.com/request_count
+# request_count proves an invocation STARTED. This line is emitted at the end
+# of the walk, so it proves one FINISHED — it also catches a dispatcher that
+# starts and then hangs or dies mid-loop, which request_count cannot see.
+#
+# COUPLING TO BE AWARE OF — same shape as audit-row-dropped.yaml. The match is
+# on a log message emitted by dispatchScheduledTasks. Reword
+# "dispatchScheduledTasks: done" and this metric silently goes to zero, which
+# is indistinguishable from the outage it exists to detect. The substring
+# below is the stable part.
+#
+# The entry's payload carries the run summary — { stakes, seeded, enqueued,
+# deduped, failures } — which is where you read what the run actually did. No
+# labels are extracted here; the count answers "did it run", the log entry
+# answers "what happened".
+#
+# NOTE ON `failures`: per-stake and per-enqueue failures are logged and the
+# walk CONTINUES, so a run in which every stake failed still emits this line
+# and still exits 0. A non-zero `summary.failures` never reaches the 5xx alert
+# and never suppresses this metric. Pair it with scheduled-task-failures.yaml,
+# which counts the ERROR lines those failures emit.
+#
+# Name transforms, same two as every other 2nd-gen filter here:
+# resource.type="cloud_run_revision" (not the 1st-gen cloud_function), and the
+# Cloud Run service name is the export name LOWERCASED
+# (dispatchScheduledTasks -> dispatchscheduledtasks).
+#
+# To apply (both projects):
+#
+#   for PROJECT in kindoo-staging kindoo-prod; do
+#     gcloud logging metrics create scheduled-dispatch-completed \
+#       --project="$PROJECT" \
+#       --description="Completed runs of the hourly scheduled-task dispatcher" \
+#       --log-filter='resource.type="cloud_run_revision" AND
+#         resource.labels.service_name="dispatchscheduledtasks" AND
+#         jsonPayload.message:"dispatchScheduledTasks: done"'
+#   done
+
+name: scheduled-dispatch-completed
+description: Completed runs of the hourly scheduled-task dispatcher
+filter: |
+  resource.type="cloud_run_revision" AND
+  resource.labels.service_name="dispatchscheduledtasks" AND
+  jsonPayload.message:"dispatchScheduledTasks: done"
+metricKind: DELTA
+valueType: INT64
+unit: '1'
