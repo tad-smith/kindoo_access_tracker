@@ -574,7 +574,7 @@ The compiled table is global (the calling hierarchy is churchwide), so there is 
 
 ## 9. Email notifications
 
-Seven notification types ship via Resend (five in Phase 9, the app-access welcome email, and the sync reminder). The first six are fired by Firestore triggers on the relevant entity changes; the seventh is not event-driven and is described under "Sync reminder" below — **it has no dispatcher yet, so nothing sends it today**.
+Seven notification types ship via Resend (five in Phase 9, the app-access welcome email, and the sync reminder). The first six are fired by Firestore triggers on the relevant entity changes; the seventh is not event-driven and is described under "Sync reminder" below — it is driven by the scheduled-task dispatcher (§17) instead, checking daily and mailing only when its own three-day backoff allows.
 
 | Trigger | Recipients | Subject | Link back |
 | --- | --- | --- | --- |
@@ -584,7 +584,7 @@ Seven notification types ship via Resend (five in Phase 9, the app-access welcom
 | Request cancelled | active Kindoo Managers | `[Stake Building Access] Request cancelled by <requester name + calling> — <scope label>` | `<base>/manager/queue` |
 | Over-cap detected | active Kindoo Managers | `[Stake Building Access] One seat pool is over its cap` (one pool) / `[Stake Building Access] <Two … Twelve> seat pools are over their cap` (more; numerals past twelve) | `<base>/manager/seats` |
 | App access granted | the granted member | `[Stake Building Access] You can now request building access for <scope list>` (limited tier: `… request temporary building access for …`) | `<base>/` and `<base>/help/requesting-access.html` |
-| Sync reminder (not yet dispatched) | active Kindoo Managers | `[Stake Building Access] One temporary seat has expired but is still on the roster` (one seat) / `[Stake Building Access] <Two … Twelve> temporary seats have expired but are still on the roster` (more; numerals past twelve) | `<base>/manager/seats` |
+| Sync reminder | active Kindoo Managers | `[Stake Building Access] One temporary seat has expired but is still on the roster` (one seat) / `[Stake Building Access] <Two … Twelve> temporary seats have expired but are still on the roster` (more; numerals past twelve) | `<base>/manager/seats` |
 
 `<base>` is `WEB_BASE_URL` (set per project via `functions/.env.<project>`) unless the stake carries a `web_base_url_override` — see "Per-stake base URL" below. **All seven emails ship an HTML part and a plain-text fallback**: `EmailPayload.html` alongside the always-required `text`, which Resend delivers as the multipart alternative. The two parts always say the same thing; the only permitted difference is markup. Every email includes a link back to the relevant page. The R-1 completion email surfaces a `Note from the manager` row carrying `request.completion_note` so the requester knows nothing visibly changed. The over-cap email lists every flagged pool with its current count / cap / overage and a deep-link to the filtered All Seats page.
 
@@ -620,7 +620,7 @@ What the tier buys is **one word, in two places**: the subject reads `You can no
 
 **Sync reminder — expired temp seats.** The one notification that is not fired by an entity write. §7 leaves a gap with no owner: Kindoo ends a temp user's access on the end date, the SBA seat survives until a manager runs Sync, and nothing prompts that Sync. This is the prompt. `sendSyncReminderIfDue(stakeId, now)` in `functions/src/services/SyncReminderService.ts` considers one stake and sends if one is due (`architecture.md` D37).
 
-**Nothing calls it yet.** It is not exported from `functions/src/index.ts` and no trigger wraps it. What changed with T-104 is only the reason: the scheduled-task dispatcher now exists and runs hourly (§17), but its job registry (`functions/src/lib/taskRegistry.ts`) is empty, so `sendSyncReminderIfDue` is registered as no job and nothing enqueues it. Registering it is a separate PR. Until then no sync reminder can be sent, and everything below describes what happens once something calls it.
+**The scheduled-task dispatcher calls it.** `sendSyncReminderIfDue` is still not exported from `functions/src/index.ts` and no trigger wraps it directly — it is a plain service function, called the same way any registered job is: `runScheduledTask` (§17) resolves it out of `SCHEDULED_JOBS` and invokes it with `(stakeId, now)`. The registry entry is `syncReminder`, scheduled `daily` at `hour: 6` in the stake's own timezone, seeded `enabled: false` like every job. A stake's manager turns it on from the Configuration page's Sync Reminder card (§17, "Turning a job on"); until they do, the row exists but nothing sends. Everything below describes what happens once a run considers the stake.
 
 It sends when all of these hold:
 
@@ -1084,7 +1084,7 @@ The work itself is the same code the desktop's own **Provision & Complete** butt
 
 The system's one cron. An hourly Cloud Function walks every stake, finds the jobs whose slot has arrived, and enqueues one Cloud Tasks task per (stake, job); a single generic runner picks each task up and calls the handler. Adding a scheduled feature is one entry in a registry — not a new Cloud Scheduler job, not a new function, not a new queue. See `architecture.md` D38.
 
-**Nothing is scheduled today.** The registry (`functions/src/lib/taskRegistry.ts`) ships empty. The dispatcher deploys, runs every hour, walks the stakes, seeds nothing, and enqueues nothing. No email, push, or write of any kind results from a run. The sync reminder (§9) is the first intended consumer and is not registered yet.
+**One job is registered: the sync reminder.** The registry (`functions/src/lib/taskRegistry.ts`) carries `syncReminder → sendSyncReminderIfDue` (§9), `{type:'daily', hour: 6}`, `defaultEnabled: false`. Daily is a **check** cadence, not a mail cadence — the handler's own three-day backoff (§9) is what decides whether anything actually sends, so checking daily just keeps a brand-new expiry from waiting up to a week for its first nudge, which a `weekly` schedule would do.
 
 ### The two functions
 
@@ -1107,7 +1107,7 @@ Both pin the `kindoo-app@` service account.
 }
 ```
 
-Reading it is open to any member of the stake and to a platform superadmin; writing it is limited to that stake's Kindoo Managers, and deleting it is denied outright — deletion would silently drop every opt-out the doc records, and the dispatcher would re-seed defaults on its next pass. Disabling a job is `enabled: false`, not deletion. **Writes to this collection are not audited** (`architecture.md` D38, `firebase-schema.md` §3.5).
+Reading it is open to any member of the stake and to a platform superadmin; writing it is limited to that stake's Kindoo Managers, and deleting it is denied outright — deletion would silently drop every opt-out the doc records, and the dispatcher would re-seed defaults on its next pass. Disabling a job is `enabled: false`, not deletion. **Writes to this collection are not audited** (`architecture.md` D38, `firebase-schema.md` §3.5). The rules permit a manager to write any field in the envelope, but the one client write path that exists — the Configuration page's Sync Reminder toggle, below — touches `enabled` alone; nothing in the SPA writes `schedule` or either timestamp.
 
 ### Schedule shapes
 
@@ -1128,6 +1128,16 @@ The stake's whole schedule doc is written once, at the end, and only when someth
 
 ### Turning a job on
 
-There is no manager UI. A job is enabled by editing `stakeSchedules/{stakeId}` in the Firestore console. That is the deliberate consequence of seeding every job disabled: a job that appears on a stake by seeding must not start acting on that stake's behalf before a human turns it on.
+**The sync reminder has a manager UI; every other job (should one ever be added) is still a Firestore console edit.** The Configuration page's Config tab carries a **Sync Reminder** card, visible to Kindoo Managers (`isManager`), below the stake-config form. It reads the stake's `syncReminder` row (`useStakeSchedule`) and shows one of three states:
 
-**Expect the first run at the next hourly tick, not at the job's configured slot.** A disabled row is never stamped — it is not due, so nothing advances it — and its `next_trigger_time` goes stale while it sits off. Flipping `enabled: true` therefore makes it due immediately: a `daily hour: 6` job enabled at 15:40 runs at about 16:00, then re-bases onto 06:00 and keeps to it. This is the "fires once and re-bases" rule of the Stamp step above, not a defect, but it is worth knowing before flipping the flag — for the sync reminder that first run is an email to every Kindoo Manager on the stake. Enable a job when you are willing for it to run within the hour.
+- **Not yet seeded** — no row exists yet (a stake created since the last hourly dispatch). The switch is disabled and the card says the scheduler adds the reminder within the hour.
+- **Seeded, off** — a live switch, plus a line stating that turning it on can send the first reminder within the hour rather than at 06:00 (see below).
+- **Seeded, on** — the switch, plus **"Next check: <time>"** in the stake's timezone, or **"within the hour"** when the stored slot has already passed.
+
+Flipping the switch calls `useSetSyncReminderEnabledMutation`, which transacts a read-modify-write of the whole `tasks` array and changes `enabled` alone — it never creates the row and never touches `schedule` or either timestamp. If the dispatcher's own transactional stamp (below) lands between the read and the write, the manager's write retries against the dispatcher's result rather than being lost.
+
+**Two stake-level switches now bear on one mail, and they don't do the same thing.** `notifications_enabled` (§9) is **email-only**: with it off, the reminder's push still reaches subscribers of `notificationPrefs.push.syncReminder` and the three-day backoff stamp is still consumed — only the Resend send is skipped. The card does not disable the toggle under the kill-switch, because the toggle is not inert there; it shows a warning line instead, naming the kill-switch as the reason no email will go out.
+
+**Expect the first run at the next hourly tick, not at the job's configured slot.** A disabled row is never stamped — it is not due, so nothing advances it — and its `next_trigger_time` goes stale while it sits off. Flipping `enabled: true` therefore makes it due immediately: a `daily hour: 6` job enabled at 15:40 runs at about 16:00, then re-bases onto 06:00 and keeps to it. This is the "fires once and re-bases" rule of the Stamp step above, not a defect, but it is worth knowing before flipping the flag — for the sync reminder that first run is an email to every active Kindoo Manager on the stake, if any seat is already expired. The card states this before the flip. Enable a job when you are willing for it to run within the hour.
+
+**The dispatcher's stamp is a transaction, not a blind overwrite.** Every run used to read `stakeSchedules/{stakeId}`, mutate the in-memory `tasks` array, and write the whole thing back once at the end of the per-stake pass; a manager's `enabled` write landing in that window was silently reverted. `commitScheduleChanges` now writes inside `runTransaction`, re-reading the document and re-applying only that pass's computed stamps and newly seeded rows onto the array as it currently stands, so a manager's concurrent toggle (or a hand-edited `schedule`, or a row a manager removed) survives a dispatch pass. See `architecture.md` D39.
