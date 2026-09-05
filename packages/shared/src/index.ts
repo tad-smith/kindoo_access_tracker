@@ -64,6 +64,15 @@ export {
   type RequesterDisplay,
 } from './requesterDisplay.js';
 export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
+export {
+  MAX_SCHEDULE_ADVANCES,
+  advanceTriggerTime,
+  isTaskDue,
+  nextTriggerTime,
+  type ScheduledTask,
+  type StakeSchedule,
+  type TaskSchedule,
+} from './scheduledTasks.js';
 export { scopeLabel } from './scopeLabel.js';
 export { sanitizeSlugInput } from './slugInput.js';
 export {
