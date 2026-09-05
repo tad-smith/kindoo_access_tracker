@@ -593,6 +593,8 @@ No output on success. An empty log read after a forced run, with the job reporti
 >
 > The `dispatchScheduledTasks: done` line from step 4 is the only proof of life until a job is registered. That is what you are checking for; there is nothing else to see.
 >
+> **What this deploy does NOT prove: step 3's two IAM grants.** Nothing is enqueued, so neither `cloudtasks.enqueuer` nor the `serviceAccountUser` self-binding is exercised, and `enqueued: 0` reads identically whether both grants are in place or neither is. Registering a job does not settle it either — seeded rows arrive `enabled: false`, so the first real enqueue is the first time somebody flips one on. **Do that on staging first**: enable one job there, wait for the next hourly tick, and confirm a `runScheduledTask` invocation actually appears. Until that round trip has been seen once, treat the grants as unverified, and do not let the first `enabled: true` in the estate be a prod console edit.
+>
 > **What changes when a job is first registered** (the sync-reminder PR is the first): the dispatcher **self-seeds** on its next hourly pass, writing the new entry onto every stake including ones that predate the job — there is no backfill to run and `createStake` seeds nothing. Every seeded trigger arrives `enabled: false`, so `enqueued` stays 0 until somebody opts a stake in by flipping that flag. From that deploy onward the check becomes "did the documents appear": an hour on, `stakeSchedules` should hold one document per stake, and if it is still empty the dispatcher is not running — go back to step 1.
 
 ## Rollback

@@ -1111,7 +1111,7 @@ Reading it is open to any member of the stake and to a platform superadmin; writ
 
 ### Schedule shapes
 
-A closed set, not cron strings: `{type:'hourly'}`, `{type:'daily', hour}`, `{type:'weekly', weekday, hour}`, `{type:'monthly', day, hour}`. `hour`, `weekday` (0 = Sunday) and `day` are read in the **stake's** timezone. The dispatcher wakes only on the hour, so a cron string's minute field would be inert and `*/15 * * * *` would silently mean "hourly"; a shape cannot lie about what it does. `hourly` carries no fields — its phase within the hour comes from the stored `next_trigger_time`. A `monthly` day past the length of a month clamps to that month's last day, so a monthly job fires every month. The arithmetic lives in `packages/shared/src/scheduledTasks.ts` and nowhere else.
+A closed set, not cron strings: `{type:'hourly'}`, `{type:'daily', hour}`, `{type:'weekly', weekday, hour}`, `{type:'monthly', day, hour}`. `hour`, `weekday` (0 = Sunday) and `day` are read in the **stake's** timezone. The dispatcher wakes only on the hour, so a cron string's minute field would be inert and `*/15 * * * *` would silently mean "hourly"; a shape cannot lie about what it does. `hourly` carries no fields because it has no phase to carry: its slots are the top of each UTC hour, and a stored value sitting off the hour is re-anchored on the next dispatch rather than preserved. A `monthly` day past the length of a month clamps to that month's last day, so a monthly job fires every month. The arithmetic lives in `packages/shared/src/scheduledTasks.ts` and nowhere else.
 
 ### What one run does, per stake
 
@@ -1129,3 +1129,5 @@ The stake's whole schedule doc is written once, at the end, and only when someth
 ### Turning a job on
 
 There is no manager UI. A job is enabled by editing `stakeSchedules/{stakeId}` in the Firestore console. That is the deliberate consequence of seeding every job disabled: a job that appears on a stake by seeding must not start acting on that stake's behalf before a human turns it on.
+
+**Expect the first run at the next hourly tick, not at the job's configured slot.** A disabled row is never stamped — it is not due, so nothing advances it — and its `next_trigger_time` goes stale while it sits off. Flipping `enabled: true` therefore makes it due immediately: a `daily hour: 6` job enabled at 15:40 runs at about 16:00, then re-bases onto 06:00 and keeps to it. This is the "fires once and re-bases" rule of the Stamp step above, not a defect, but it is worth knowing before flipping the flag — for the sync reminder that first run is an email to every Kindoo Manager on the stake. Enable a job when you are willing for it to run within the hour.

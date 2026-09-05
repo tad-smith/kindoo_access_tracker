@@ -28,9 +28,9 @@ import {
  * read in the **stake's** timezone, which is the only reason this needs
  * a timezone at all.
  *
- * `hourly` carries no fields: its phase within the hour comes from the
- * stored `next_trigger_time`, not from the shape (see
- * `nextTriggerTime`).
+ * `hourly` carries no fields because it has no phase to carry: its slots
+ * are the top of each UTC hour. An off-phase stored value is re-anchored
+ * on the next dispatch rather than preserved (see `advanceTriggerTime`).
  */
 export type TaskSchedule =
   | { type: 'hourly' }
