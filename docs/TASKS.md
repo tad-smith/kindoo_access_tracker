@@ -26,7 +26,7 @@ The other half of the reminder pair. [T-103] shipped case (2) — expired temp s
 
 **Rollout has a sharp edge.** A manager on an older extension build writes no heartbeat, so every stake reads as never-synced until everyone updates. Decide before shipping whether an absent heartbeat fires the reminder immediately (truthful, self-clearing, noisy during rollout) or stays silent until the first heartbeat ever appears (quiet, but a stake that genuinely never syncs is never chased).
 
-**Most of the delivery already exists.** [T-103] built the email/push machinery, the `syncReminder` push category, the manager recipient resolution, and the backoff. This adds a condition and a data source, not a new notification system. The trigger should come from the scheduled-task system ([T-104]) rather than a dedicated job.
+**Most of the delivery already exists.** [T-103] built the email/push machinery, the `syncReminder` push category, the manager recipient resolution, and the backoff. This adds a condition and a data source, not a new notification system. The trigger should come from the scheduled-task system ([T-104]) rather than a dedicated job — **and that path now exists**: [T-104] shipped 2026-09-05, so this reminder is a `taskRegistry` entry plus a handler of the shape `(stakeId, now) => Promise<unknown>`, with no Cloud Scheduler job and no new function of its own (`spec.md` §17). The handler must be idempotent within its own window; dispatch is at-least-once.
 
 **Bonus the heartbeat unlocks:** a "Last sync" line per site on the manager Configuration page, which is the same data and costs nothing extra.
 
@@ -42,9 +42,17 @@ A temp grant that expires on a seat carrying **other** grants is stranded. Sync 
 Worth deciding what, if anything, should chase it: a distinct reminder naming the remove-request remedy, a manager-facing list, or nothing at all on the grounds that the badge plus a leader's own request flow is sufficient. `syncWillClearSeat` (`packages/shared/src/tempExpiry.ts`) already isolates the shape, so whichever way it goes the predicate exists.
 
 ## [T-104] Per-stake scheduled tasks — one dispatcher, many triggers
-Status: in progress
+Status: done (2026-09-05 — PR #289)
 Owner: @backend-engineer + @infra-engineer (queue provisioning) + @docs-keeper
 Phase: cross-cutting
+
+**Done, and it ships with an empty job registry, so no user-visible behaviour changed.** `SCHEDULED_JOBS` (`functions/src/lib/taskRegistry.ts`) is `{}`. `dispatchScheduledTasks` deploys, runs hourly, walks the stakes, seeds nothing and enqueues nothing; `runScheduledTask` is never invoked; `sendSyncReminderIfDue` is still code nothing runs, and no email or push can be sent by this PR. What shipped is the machinery and the shapes: two functions (inventory 27 → 29, both pinning `APP_SA`), the top-level `stakeSchedules/{stakeId}` collection with its rules, and `packages/shared/src/scheduledTasks.ts`. Registering the sync reminder is the third PR of the operator's split.
+
+Everything in "Design settled 2026-09-05" below landed as written. Two things worth adding. `keysAreExactly` was **hoisted out of the `remoteApply` block** into the shared rules helpers so the new top-level block could reach it — the only edit this PR made to an existing rules path. And `DISPATCH_DONE_MESSAGE` is exported and pinned by a test: the `scheduled-dispatch-completed` log metric matches that exact string and alerts on its *absence*, because the dispatcher swallows per-stake failures and a run in which everything failed still exits 0.
+
+**Three things have no local equivalent and are first exercised on staging:** Cloud Scheduler actually firing the dispatcher, real Cloud Tasks id dedupe, and the queue's OIDC auth into the runner. The unit tests use a fake enqueuer and the integration tests stub it, so a green suite says nothing about any of the three. **Two IAM bindings must be granted by hand per project** — `roles/cloudtasks.enqueuer` on the queue, and `roles/iam.serviceAccountUser` on `kindoo-app@` on itself — because `firebase deploy` grants neither and the failure is a runtime `PERMISSION_DENIED`, not a deploy error. Procedure: `infra/runbooks/deploy.md`, "First deploy after T-104".
+
+Recorded as `architecture.md` D38, which amends D35's "zero scheduled Cloud Functions" in place. See `docs/changelog/scheduled-tasks.md` and `spec.md` §17.
 
 A stake-level cron. One hourly Cloud Function walks the stakes, finds triggers that are due, and enqueues a Cloud Tasks push-queue job per (stake, trigger). Adding a scheduled feature becomes a data change, not a new Cloud Scheduler job — which is the point: Scheduler's free tier is three jobs per billing account, and this stack spends two of them on staging+prod copies of any single job.
 
