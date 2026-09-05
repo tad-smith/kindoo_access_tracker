@@ -65,14 +65,26 @@ Bridge between canonical-email-keyed role data and Firebase Auth's uid-keyed use
   uid: string;             // Firebase Auth uid
   typedEmail: string;      // exactly as Google returned it
   lastSignIn: Timestamp;   // bumped on each authenticated request, debounced to ~1/hour
+
+  // FCM Web Push, written by the user themselves from the Notifications panel.
+  fcmTokens?: Record<string, string>;   // deviceId (localStorage UUID) → registration token
+  notificationPrefs?: {
+    push?: {
+      newRequest?: boolean;             // new request → managers (Phase 10.5)
+      syncReminder?: boolean;           // expired temp seats (spec §9, D37)
+    };
+  };
+  lastActor?: { email: string; canonical: string };  // stamped on every self-write
 }
 ```
 
-**Written by:** `onAuthUserCreate` Cloud Function on first sign-in; `bumpLastSignIn` callable function (or implicit on first authenticated request per session).
+**Every push category key is optional and absent reads as OFF.** A merge-write of one category must be expressible without asserting anything about its siblings, and an unanswered question must not read as "yes" — so both the server fanout (`functions/src/lib/push.ts`) and the web accessor gate on `=== true`, never `!== false`. Adding `syncReminder` therefore needed no backfill: existing `newRequest` subscribers start off. Neither key gates email; email has no per-user opt-in, only the stake-level `notifications_enabled` kill-switch (§4.1).
 
-**Read by:** `syncAccessClaims`, `syncManagersClaims` Cloud Function triggers (translate canonical email → uid).
+**Written by:** `onAuthUserCreate` Cloud Function on first sign-in; `bumpLastSignIn` callable function (or implicit on first authenticated request per session); the signed-in user themselves for `fcmTokens` + `notificationPrefs` (subscribe / unsubscribe / per-category toggle); `functions/src/lib/push.ts` deletes an `fcmTokens` slot whose token FCM rejects as permanently invalid.
 
-**Rules:** read by the user themselves (typed-email match against auth token); writes server-only.
+**Read by:** `syncAccessClaims`, `syncManagersClaims` Cloud Function triggers (translate canonical email → uid); the push fanout (`fcmTokens` + `notificationPrefs`).
+
+**Rules:** read by the user themselves (uid match against the auth token). Self-**update** is permitted for `fcmTokens`, `notificationPrefs`, and `lastActor` only (`hasOnly`, plus `lastActorMatchesAuth` so the writer is stamped); every other field is server-only, and create / delete are forbidden to clients outright. The rule does not enumerate push categories, so adding one needs no rules change.
 
 ### 3.2 `platformSuperadmins/{canonicalEmail}`
 
@@ -348,7 +360,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
   // Hidden operator-only escape hatch — there is NO UI for it anywhere; the operator
   // sets it by hand in the Firestore console, and `createStake` never writes it. When
   // it trims to a non-empty value starting `http://` or `https://` it is the base URL
-  // for ALL of this stake's email links (all six templates — `spec.md` §9), replacing
+  // for ALL of this stake's email links (all seven templates — `spec.md` §9), replacing
   // the `WEB_BASE_URL` function param. Absent, empty, or missing the scheme ⇒ ignored
   // (a rejected value emits a `logger.warn` from `EmailService.resolveBaseUrl`) and the
   // param applies. Exists because the app is dual-hosted, so a stake whose members live
@@ -368,6 +380,17 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
     over_by: number;
   }>;
 
+  // Stake-local `YYYY-MM-DD` on which the expired-temp-seat sync reminder last went
+  // out (`spec.md` §9, D37). Absent ⇒ never sent, so the next qualifying run fires
+  // immediately. Reminder state, not schedule state: it carries the three-day backoff
+  // while the condition persists and doubles as the dedupe against an at-least-once
+  // invoker delivering twice in a day. DELETED when nothing is expired, so a fresh
+  // occurrence is a fresh first send. Listed in `BOOKKEEPING_FIELDS`
+  // (`packages/shared/src/auditBookkeepingFields.ts`), so stamping it fans no audit
+  // row and `lastActor` is deliberately left alone — a reminder went out; nothing
+  // about the stake changed.
+  last_sync_reminder_date?: string;
+
   // Deprecated (LCR Sheet importer removed — see notes above)
   last_import_at?: Timestamp;          // deprecated
   last_import_summary?: string;        // deprecated
@@ -380,7 +403,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Config tab); manager who is also a platform superadmin, via Configuration → Kindoo Config → Home Kindoo Site (`kindoo_expected_site_name` + `kindoo_config`, by dotted path so the wizard's captured `site_name` survives — `spec.md` §15; the superadmin gate there is UI-only, and the superadmin-without-a-manager-role case is T-91); extension configure wizard (`kindoo_config`); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Config tab); manager who is also a platform superadmin, via Configuration → Kindoo Config → Home Kindoo Site (`kindoo_expected_site_name` + `kindoo_config`, by dotted path so the wizard's captured `site_name` survives — `spec.md` §15; the superadmin gate there is UI-only, and the superadmin-without-a-manager-role case is T-91); extension configure wizard (`kindoo_config`); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); `sendSyncReminderIfDue` (`last_sync_reminder_date` — stamped after a reminder sends, deleted when nothing is expired; §7); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -1531,10 +1554,12 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 | `notifyOnRequestWrite` | Firestore write on `stakes/{sid}/requests/{rid}` | Sends Resend email per spec.md §9 (submit, complete, reject, cancel). Each send reads `stakes/{sid}/wards` once to render ward names (§4.2); the two manager-bound sends batch that read with the requester's `access` + `kindooManagers` docs. |
 | `notifyOnAccessGranted` | Firestore write on `stakes/{sid}/access/{memberCanonical}` | Sends the app-access welcome email to the granted member per spec.md §9. Fires only on the no-scopes → at-least-one-scope transition (`scopesFromAccessDoc` over `importer_callings` + `manual_grants`): a scope added to an existing holder, a revoke to zero, and a delete are all silent; a re-grant after a full revoke fires again. Third trigger on this path alongside `syncAccessClaims` and `auditAccessWrites` (§4.5). Reads the stake doc and the member's `kindooManagers` row together — the latter to resolve the D25 tier, which narrows the copy for a limited recipient (§4.5) — plus `stakes/{sid}/wards` for the scope list (§4.2). Not gated on `setup_complete`; suppressed by `notifications_enabled === false`. |
 | `notifyOnOverCap` | Firestore write on `stakes/{sid}` (`last_over_caps_json` change) | Sends the over-cap email when the array goes from empty to non-empty. Reads `stakes/{sid}/wards` once and labels every flagged pool from that one read (§4.2). Subject counts the pools (`spec.md` §9). |
-| `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices |
+| `pushOnRequestSubmit` | Firestore write on `stakes/{sid}/requests/{rid}` (status=`pending` on create) | Fans FCM Web Push to active managers' subscribed devices, through the shared `sendPushToSubscribers` (`functions/src/lib/push.ts`) with `category: 'newRequest'` |
 | `removeSeatOnRequestComplete` | Firestore write on `stakes/{sid}/requests/{rid}` (status flips to complete and type='remove') | Deletes the matching seat doc + writes audit (Admin SDK bypass for the deletion) |
 
 Twenty-seven deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **None is scheduled** (`reconcileAuditGaps`, the last one, was deleted in T-102; see `architecture.md` D35). None is hot-path; all run on the free tier at this scale.
+
+**The sync reminder adds none, and the count above is unchanged at twenty-seven.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`, `architecture.md` D37) is a service module, not a function: it carries no trigger, is not exported from `functions/src/index.ts`, and nothing invokes it — its dispatcher is deferred to T-104. It is complete and tested; it simply has no caller. It writes `stakes/{sid}.last_sync_reminder_date` (§4.1), sends the sync-reminder email through `EmailService`, and pushes through the shared `functions/src/lib/push.ts` with `category: 'syncReminder'`. When the dispatcher lands it adds one scheduled function, at which point D35's "zero scheduled Cloud Functions" needs amending — not before.
 
 **Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 
