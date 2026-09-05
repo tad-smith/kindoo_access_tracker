@@ -12,8 +12,11 @@ import type {
   KindooManager,
   KindooSite,
   Organization,
+  ScheduledTask,
   Seat,
   Stake,
+  StakeSchedule,
+  TimestampLike,
   Ward,
 } from '@kindoo/shared';
 import { unitNameCollisionMessage } from '@kindoo/shared';
@@ -39,6 +42,8 @@ const updateIgnoredWardsMock = vi.fn();
 const updateHomeKindooSiteMock = vi.fn();
 const usePrincipalMock = vi.fn();
 const backfillEqPresidentAccessMock = vi.fn();
+const useStakeScheduleMock = vi.fn();
+const setSyncReminderEnabledMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -69,6 +74,11 @@ vi.mock('./hooks', () => ({
   }),
   useBackfillEqPresidentAccessMutation: () => ({
     mutateAsync: backfillEqPresidentAccessMock,
+    isPending: false,
+  }),
+  useStakeSchedule: () => useStakeScheduleMock(),
+  useSetSyncReminderEnabledMutation: () => ({
+    mutateAsync: setSyncReminderEnabledMock,
     isPending: false,
   }),
 }));
@@ -162,6 +172,48 @@ function stakeDocResult(overrides: Partial<Stake> = {}) {
   };
 }
 
+// `stakeSchedules/{stakeId}` live result. `undefined` tasks models the
+// document not existing yet — the state a stake sits in until the
+// hourly dispatcher has seeded it once.
+function scheduleDocResult(tasks: ScheduledTask[] | undefined) {
+  return {
+    data:
+      tasks === undefined
+        ? undefined
+        : ({
+            tasks,
+            lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+          } satisfies StakeSchedule),
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  };
+}
+
+function syncReminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    job: 'syncReminder',
+    enabled: false,
+    schedule: { type: 'daily', hour: 6 },
+    ...overrides,
+  };
+}
+
+function timestamp(iso: string): TimestampLike {
+  const d = new Date(iso);
+  return {
+    seconds: Math.floor(d.getTime() / 1000),
+    nanoseconds: 0,
+    toDate: () => d,
+    toMillis: () => d.getTime(),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   updateStakeConfigMock.mockResolvedValue(undefined);
@@ -185,6 +237,11 @@ beforeEach(() => {
     docs_written: 3,
     docs_deleted: 0,
   });
+  setSyncReminderEnabledMock.mockResolvedValue(undefined);
+  // Default: the hourly dispatcher has seeded the reminder row and it
+  // is off, which is the steady state for every stake until a manager
+  // turns it on.
+  useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow()]));
   useStakeDocMock.mockReturnValue(stakeDocResult());
   useWardsMock.mockReturnValue(liveResult<Ward>([]));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
@@ -1899,5 +1956,162 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
       );
     });
     expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
+  });
+});
+
+describe('Sync Reminder card (Config tab)', () => {
+  it('sits below the stake config form rather than inside it', () => {
+    // It writes `stakeSchedules/{stakeId}`, not the stake doc, and saves
+    // on flip — inside the form it would look covered by Save config.
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const card = screen.getByTestId('config-sync-reminder');
+    expect(card.closest('form')).toBeNull();
+    expect(within(card).getByTestId('config-sync-reminder-enabled')).toBeInTheDocument();
+  });
+
+  it('disables the switch and says the scheduler will add it when no schedule doc exists', () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+    expect(screen.getByTestId('config-sync-reminder-unseeded')).toHaveTextContent(
+      /scheduler adds this reminder to your stake within the hour/i,
+    );
+  });
+
+  it('disables the switch when the schedule doc exists but carries no syncReminder row', () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        {
+          job: 'someOtherJob',
+          enabled: true,
+          schedule: { type: 'hourly' },
+        } satisfies ScheduledTask,
+      ]),
+    );
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+    expect(screen.getByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
+  });
+
+  it('never offers to create the row itself', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('shows the switch off, and warns about the first run, for a seeded but disabled row', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const sw = screen.getByTestId('config-sync-reminder-enabled');
+    expect(sw).toBeEnabled();
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
+      /first check runs within the hour of switching this on/i,
+    );
+    expect(screen.queryByTestId('config-sync-reminder-next')).toBeNull();
+  });
+
+  it('shows the switch on and the next check for a seeded, enabled row', () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        syncReminderRow({
+          enabled: true,
+          next_trigger_time: timestamp('2099-01-02T13:00:00Z'),
+        }),
+      ]),
+    );
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.getByTestId('config-sync-reminder-next')).toHaveTextContent(
+      /Next check: 2099-01-02 06:00 \(America\/Denver\)/,
+    );
+    expect(screen.queryByTestId('config-sync-reminder-first-run')).toBeNull();
+  });
+
+  it('reports the next check as within the hour when the stored slot has gone stale', () => {
+    // What a manager sees right after switching it on: the row was
+    // never stamped while off, so it is due at the next hourly tick.
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
+      ]),
+    );
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const next = screen.getByTestId('config-sync-reminder-next');
+    expect(next).toHaveTextContent(/Next check: within the hour/);
+    expect(next).not.toHaveTextContent(/America\/Denver/);
+  });
+
+  it('flips the row on when the switch is turned on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(true));
+  });
+
+  it('flips the row off when the switch is turned off', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(false));
+  });
+
+  it('is not covered by the config form Save button', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByRole('button', { name: /Save config/ }));
+    await waitFor(() => expect(updateStakeConfigMock).toHaveBeenCalled());
+    // The stake-doc write carries no scheduled-task field — the two
+    // documents are saved by two different controls.
+    expect(Object.keys(updateStakeConfigMock.mock.calls[0]![0] as object)).not.toContain('tasks');
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+  });
+
+  describe('when the stake-level email kill-switch is off', () => {
+    beforeEach(() => {
+      useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
+    });
+
+    it('says the email is blocked and names the setting that blocks it', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const warning = screen.getByTestId('config-sync-reminder-blocked');
+      expect(warning).toHaveTextContent(/Email Notifications Enabled is off for this stake/i);
+      expect(warning).toHaveTextContent(/no reminder email will be sent/i);
+    });
+
+    it('says push still goes out, because the kill-switch gates email only', () => {
+      // `EmailService.emailsEnabled` short-circuits Resend; the FCM
+      // fanout in `SyncReminderService` is untouched by the flag, and
+      // the every-third-day backoff is consumed either way.
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const warning = screen.getByTestId('config-sync-reminder-blocked');
+      expect(warning).toHaveTextContent(/still get the push/i);
+      expect(warning).toHaveTextContent(/backoff is still consumed/i);
+    });
+
+    it('leaves the switch usable, since the opt-in still governs push', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const sw = screen.getByTestId('config-sync-reminder-enabled');
+      expect(sw).toBeEnabled();
+      await user.click(sw);
+      await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(true));
+    });
+
+    it('does not warn while the row is still unseeded', () => {
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.queryByTestId('config-sync-reminder-blocked')).toBeNull();
+    });
+  });
+
+  it('does not warn about the kill-switch when email notifications are on', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.queryByTestId('config-sync-reminder-blocked')).toBeNull();
   });
 });

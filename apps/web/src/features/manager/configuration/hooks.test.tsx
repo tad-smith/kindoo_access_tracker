@@ -10,7 +10,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AccessRequest, Building, Seat, Ward } from '@kindoo/shared';
+import type {
+  AccessRequest,
+  Building,
+  ScheduledTask,
+  Seat,
+  TimestampLike,
+  Ward,
+} from '@kindoo/shared';
 
 // ---- Pure helpers ---------------------------------------------------
 
@@ -637,6 +644,7 @@ const runTransactionMock = vi.fn(async (_db: unknown, fn: (tx: unknown) => Promi
     get: (ref: unknown) => getDocMock(ref),
     set: (ref: unknown, data: unknown, options?: unknown) =>
       options === undefined ? setDocMock(ref, data) : setDocMock(ref, data, options),
+    update: (ref: unknown, data: unknown) => updateDocMock(ref, data),
   };
   return fn(tx);
 });
@@ -695,6 +703,11 @@ vi.mock('../../../lib/docs', async () => {
       __sentinel: 'kindooSitesCol',
       path: `stakes/${stakeId}/kindooSites`,
     }),
+    stakeScheduleRef: (_db: unknown, stakeId: string) => ({
+      __sentinel: 'stakeScheduleRef',
+      path: `stakeSchedules/${stakeId}`,
+      id: stakeId,
+    }),
   };
 });
 
@@ -716,10 +729,12 @@ vi.mock('../../../lib/useActiveStake', () => ({
   useMemberDataStake: () => 'csnorth',
 }));
 
+import { SYNC_REMINDER_JOB } from './syncReminder';
 import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteOrganizationMutation,
+  useSetSyncReminderEnabledMutation,
   useUpdateHomeKindooSiteMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
@@ -1781,5 +1796,123 @@ describe('useDeleteOrganizationMutation', () => {
       }),
     ).rejects.toThrow(/Cannot delete/i);
     expect(deleteDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Sync reminder --------------------------------------------------
+
+const actor = { email: 'mgr@example.com', canonical: 'mgr@example.com' };
+
+function ts(iso: string): TimestampLike {
+  const d = new Date(iso);
+  return {
+    seconds: Math.floor(d.getTime() / 1000),
+    nanoseconds: 0,
+    toDate: () => d,
+    toMillis: () => d.getTime(),
+  };
+}
+
+function reminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    job: SYNC_REMINDER_JOB,
+    enabled: false,
+    schedule: { type: 'daily', hour: 6 },
+    ...overrides,
+  };
+}
+
+// A second registry job sharing the array. Present in every write
+// assertion so "only the syncReminder row changed" is tested rather
+// than assumed.
+function otherRow(): ScheduledTask {
+  return {
+    job: 'someOtherJob',
+    enabled: true,
+    schedule: { type: 'weekly', weekday: 1, hour: 9 },
+    next_trigger_time: ts('2026-09-07T15:00:00Z'),
+  };
+}
+
+describe('useSetSyncReminderEnabledMutation', () => {
+  const scheduleSnap = (data: Record<string, unknown> | undefined) => ({
+    exists: () => data !== undefined,
+    data: () => data,
+  });
+
+  it('flips enabled on the syncReminder row and leaves every other row alone', async () => {
+    const other = otherRow();
+    getDocMock.mockResolvedValue(
+      scheduleSnap({
+        tasks: [
+          other,
+          reminderRow({ enabled: false, next_trigger_time: ts('2026-09-06T12:00:00Z') }),
+        ],
+        lastActor: { email: 'someone@else.com', canonical: 'someone@else.com' },
+      }),
+    );
+    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    await result.current.mutateAsync(true);
+
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [ref, body] = updateDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakeSchedules/csnorth' });
+    // Exactly the two fields the rules' `keysAreExactly` admits, and
+    // no `next_trigger_time` write — that field is the dispatcher's.
+    expect(Object.keys(body as object).sort()).toEqual(['lastActor', 'tasks']);
+    expect((body as { lastActor: unknown }).lastActor).toEqual(actor);
+    const tasks = (body as { tasks: ScheduledTask[] }).tasks;
+    expect(tasks).toHaveLength(2);
+    // The unrelated row is carried through unchanged.
+    expect(tasks[0]).toEqual(other);
+    // Only `enabled` moved; the schedule shape and the dispatcher's
+    // stamp both survive.
+    expect(tasks[1]).toEqual({
+      job: SYNC_REMINDER_JOB,
+      enabled: true,
+      schedule: { type: 'daily', hour: 6 },
+      next_trigger_time: expect.objectContaining({ seconds: expect.any(Number) }),
+    });
+  });
+
+  it('turns the reminder back off without disturbing the rest of the row', async () => {
+    getDocMock.mockResolvedValue(
+      scheduleSnap({
+        tasks: [reminderRow({ enabled: true, last_trigger_time: ts('2026-09-05T12:00:00Z') })],
+        lastActor: actor,
+      }),
+    );
+    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    await result.current.mutateAsync(false);
+
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const tasks = (updateDocMock.mock.calls[0]![1] as { tasks: ScheduledTask[] }).tasks;
+    expect(tasks[0]!.enabled).toBe(false);
+    expect(tasks[0]!.last_trigger_time).toBeDefined();
+  });
+
+  it('runs inside a transaction so a concurrent dispatch stamp is not clobbered', async () => {
+    getDocMock.mockResolvedValue(scheduleSnap({ tasks: [reminderRow()], lastActor: actor }));
+    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    await result.current.mutateAsync(true);
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to write when the stake has no schedule document yet', async () => {
+    // Seeding belongs to the dispatcher: creating the doc here would
+    // pin a schedule the registry never chose.
+    getDocMock.mockResolvedValue(scheduleSnap(undefined));
+    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added the sync reminder/i);
+    expect(updateDocMock).not.toHaveBeenCalled();
+    expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to append the row when the document exists without it', async () => {
+    getDocMock.mockResolvedValue(scheduleSnap({ tasks: [otherRow()], lastActor: actor }));
+    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added the sync reminder/i);
+    expect(updateDocMock).not.toHaveBeenCalled();
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 });
