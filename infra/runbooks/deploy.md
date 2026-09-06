@@ -123,15 +123,19 @@ Verifying with a real `npm ci` ...
   require('firebase-admin/database') OK
 
 Resolved versions:
-  @firebase/app                0.14.11
-  firebase-admin               13.8.0
-  firebase-functions           7.2.5
+  @firebase/app                0.14.13
+  firebase-admin               13.10.0
+  firebase-functions           7.3.2
   resend                       4.8.0
-  @firebase/database-compat    2.1.5
+  @firebase/database-compat    2.1.7
   @grpc/grpc-js                1.14.4
 
-Wrote functions/deploy-lock/package-lock.json (287 packages).
+Wrote functions/deploy-lock/package-lock.json (273 packages).
 ```
+
+Versions and the package count are illustrative — they move with every
+dependency refresh. What matters is that the run succeeds and the diff is
+reviewed.
 
 Needs network (npm registry). Commit the regenerated lockfile in the same commit as the `functions/package.json` change. Review its diff: it is the only place the deployed transitive tree is visible.
 
@@ -148,14 +152,16 @@ Expected:
 ```
 deploy-lock check: OK
   functions/deploy-lock/package-lock.json
-  lockfileVersion 3, 287 packages pinned
+  lockfileVersion 3, 273 packages pinned
 
   DEPENDENCY                 DECLARED      pnpm-lock     deploy-lock
-  @firebase/app              ^0.14.11      0.14.11       0.14.11
-  firebase-admin             ^13.8.0       13.8.0        13.8.0
-  firebase-functions         ^7.2.5        7.2.5         7.2.5
-  resend                     ^4.5.1        4.8.0         4.8.0
+  @firebase/app              ^0.14.13      0.14.13       0.14.13
+  firebase-admin             ^13.10.0      13.10.0       13.10.0
+  firebase-functions         ^7.3.2        7.3.2         7.3.2
+  resend                     ^4.8.0        4.8.0         4.8.0
 ```
+
+Versions will differ — only the three columns agreeing matters.
 
 Offline — no registry lookup, no `node_modules`, no credentials. It asserts the lockfile's root dependency set matches `functions/package.json` at the versions `pnpm-lock.yaml` resolves. It deliberately never re-resolves, so an upstream publishing a new version cannot turn it red; what it catches is someone editing dependencies and forgetting `pnpm deps:relock`.
 
@@ -506,7 +512,7 @@ firebase deploy --only functions:runScheduledTask --project staging
 
 ### 3. Grant the enqueue IAM — the CLI does not do this for you
 
-**This is the step that fails silently.** Verified against the CLI and SDK versions this repo deploys with (`firebase-tools` 15.18.0, `firebase-functions` 7.2.5) by reading their source, because the published documentation does not state it either way:
+**This is the step that fails silently.** Verified against the CLI and SDK versions this repo deploys with (`firebase-tools` 15.18.0, `firebase-functions` 7.3.2) by reading their source, because the published documentation does not state it either way:
 
 - `firebase-tools`' `upsertTaskQueue` (`lib/deploy/functions/release/fabricator.js`) always creates the queue, but calls `setEnqueuer` — the function that writes `roles/cloudtasks.enqueuer` onto the queue's IAM policy — **only when the endpoint declares an explicit `invoker`**.
 - `firebase-functions`' `onTaskDispatched` (`lib/v2/providers/tasks.js`) copies `invoker` onto the endpoint with `convertIfPresent`, i.e. only when the developer passes one.
@@ -742,7 +748,7 @@ Run these after any change to `functions/package.json` dependencies, `functions/
    ls functions/lib
    ```
 
-   Expected last build line: `External (Cloud Build \`npm ci\` installs): @firebase/app@0.14.11, firebase-admin@13.8.0, ...` — exact versions, no carets. `ls` must show `index.js`, `index.js.map`, `node_modules` (symlink), `package.json`, `package-lock.json`.
+   Expected last build line: `External (Cloud Build \`npm ci\` installs): @firebase/app@0.14.13, firebase-admin@13.10.0, ...` (versions will differ) — exact versions, no carets. `ls` must show `index.js`, `index.js.map`, `node_modules` (symlink), `package.json`, `package-lock.json`.
 
 3. **Reproduce Cloud Build's install.** This is the only local way to prove the artifact installs; `firebase deploy` cannot be dry-run through Cloud Build.
 
