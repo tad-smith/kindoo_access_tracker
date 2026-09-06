@@ -1257,8 +1257,13 @@
   gap: 4px;
 }
 /* A sub-option, indented to sit under the option it belongs to. The
-   indent lines the switch up with the parent row's LABEL text (24px
-   switch + 8px gap), so the nesting reads without a connector. */
+   indent lines the child's switch up with the parent row's LABEL text
+   (44px switch + 8px gap), so the nesting reads without a connector.
+   Held at every breakpoint on purpose: the alignment IS the association,
+   and a phone is where a manager most needs it to be unambiguous. It
+   was briefly halved below 480px when the third row's label ran to 39
+   characters and wrapped; at 29 it fits on one line down to 320px, so
+   the compromise is no longer paid for. */
 .kd-setting-toggle--sub {
   margin-left: 52px;
 }
@@ -1268,15 +1273,6 @@
 .kd-setting-toggle--disabled > .kd-switch-label {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-/* The indent costs more than it earns on a phone: at 375px the sub-row's
-   label wraps to three lines. Halve it — the offset still reads as
-   nesting against the row above. */
-@media (max-width: 480px) {
-  .kd-setting-toggle--sub {
-    margin-left: 24px;
-  }
 }
 
 /* Auto Callings table — sortable list with grip + arrows. */
