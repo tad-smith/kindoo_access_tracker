@@ -57,6 +57,8 @@ import type {
   DataWriteKindooSiteEidResponse,
   DataWriteRemotePresenceRequest,
   DataWriteRemotePresenceResponse,
+  DataWriteSyncHeartbeatRequest,
+  DataWriteSyncHeartbeatResponse,
   EidStakeCandidate,
   EidStakeChoiceMap,
   ExtensionRequest,
@@ -66,6 +68,7 @@ import type {
   ResolveEidStakesPayload,
   ResponseFor,
   SyncDataBundle,
+  SyncHeartbeatInput,
   WireError,
   WriteKindooConfigPayload,
 } from './messaging';
@@ -78,6 +81,7 @@ export type {
   RemoteApplyPresenceInput,
   RemoteApplyRunningJobRef,
 } from './messaging';
+export type { SyncHeartbeatInput } from './messaging';
 
 /** Public alias for the stake-config bundle the panel passes between
  * components. */
@@ -347,6 +351,20 @@ export async function syncApplyFix(input: SyncApplyFixInput): Promise<SyncApplyF
   const req: DataSyncApplyFixRequest = { type: 'data.syncApplyFix', payload: input };
   const res: DataSyncApplyFixResponse = await sendMessage(req);
   return unwrap(res);
+}
+
+/**
+ * Record that a drift scan just completed for one Kindoo site (T-106).
+ *
+ * Called once per completed scan — not per drift row, not on a timer,
+ * and not conditionally on the scan coming back clean. A manager who
+ * scans, sees five rows and applies none has still synced, and treating
+ * that as "no sync" would nag exactly the manager doing the right thing.
+ */
+export async function writeSyncHeartbeat(payload: SyncHeartbeatInput): Promise<void> {
+  const req: DataWriteSyncHeartbeatRequest = { type: 'data.writeSyncHeartbeat', payload };
+  const res: DataWriteSyncHeartbeatResponse = await sendMessage(req);
+  unwrap(res);
 }
 
 /**

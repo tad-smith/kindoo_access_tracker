@@ -32,7 +32,12 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { scopeLabel, type Ward } from '@kindoo/shared';
-import { ExtensionApiError, getSyncData, type SyncDataBundle } from '../lib/extensionApi';
+import {
+  ExtensionApiError,
+  getSyncData,
+  writeSyncHeartbeat,
+  type SyncDataBundle,
+} from '../lib/extensionApi';
 import { readKindooSession, type KindooSessionError } from '../content/kindoo/auth';
 import { listAllEnvironmentUsers, type KindooEnvironmentUser } from '../content/kindoo/endpoints';
 import { KindooApiError } from '../content/kindoo/client';
@@ -235,6 +240,13 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       const ctx: DispatchContext = { stakeId };
       const activeSiteLabel = describeActiveSite(activeSite, bundle);
       setStep({ kind: 'report', result, ctx, activeSiteLabel, wards: bundle.wards });
+      // The scan is complete and its report is on screen — this is the
+      // moment "someone looked at this site" becomes true, whatever the
+      // report says. Fire-and-forget, and `recordSyncHeartbeat` swallows
+      // its own failures: the heartbeat is bookkeeping for the seven-day
+      // reminder, and a failed write must never turn a rendered drift
+      // report into the error step.
+      void recordSyncHeartbeat(stakeId, activeSite);
     } catch (err) {
       const message =
         err instanceof KindooApiError ? describeKindooError(err) : describeExtensionError(err);
@@ -254,6 +266,43 @@ export function SyncPanel({ stakeId }: SyncPanelProps) {
       />
     </div>
   );
+}
+
+/** Manifest version stamped onto the heartbeat, matching what the
+ * remote-apply desktop presence doc writes. Optional-chained because
+ * `getManifest` is absent under the jsdom test stub. */
+function extensionVersion(): string {
+  return chrome.runtime?.getManifest?.()?.version ?? '0.0.0';
+}
+
+/**
+ * Stamp `syncHeartbeats/{stakeId}/sites/{siteKey}` after a completed
+ * scan (T-106).
+ *
+ * The drift scan runs entirely in the extension and only *fixes* reach
+ * the server, so a stake that is clean writes nothing at all and reads
+ * as never-synced. This is the only write that says otherwise.
+ *
+ * Never rejects. Offline, a rules change, a lost manager role — none of
+ * those are the manager's problem in the moment they asked for a drift
+ * report, so the failure is logged and dropped. The reminder mail is
+ * the only thing that degrades, and only until the next scan.
+ *
+ * An `unknown` active site never reaches here: the caller short-circuits
+ * before the enrichment loop, so no scan completed and there is no site
+ * to key the document by.
+ */
+async function recordSyncHeartbeat(stakeId: string, activeSite: ActiveSite): Promise<void> {
+  if (activeSite.kind === 'unknown') return;
+  try {
+    await writeSyncHeartbeat({
+      stakeId,
+      kindooSiteId: activeSite.kind === 'foreign' ? activeSite.siteId : null,
+      extVersion: extensionVersion(),
+    });
+  } catch (err) {
+    console.warn('[sba-ext] sync: could not record the sync heartbeat', err);
+  }
 }
 
 /**
