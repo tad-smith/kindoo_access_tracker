@@ -14,12 +14,14 @@ const getEnvironmentsMock = vi.fn();
 const applyFixMock = vi.fn();
 const buildRuleDoorMapMock = vi.fn();
 const enrichUsersWithDerivedBuildingsMock = vi.fn();
+const writeSyncHeartbeatMock = vi.fn();
 
 vi.mock('../lib/extensionApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/extensionApi')>('../lib/extensionApi');
   return {
     ...actual,
     getSyncData: (...args: unknown[]) => getSyncDataMock(...args),
+    writeSyncHeartbeat: (...args: unknown[]) => writeSyncHeartbeatMock(...args),
   };
 });
 
@@ -101,6 +103,8 @@ describe('SyncPanel', () => {
     applyFixMock.mockReset();
     buildRuleDoorMapMock.mockReset();
     enrichUsersWithDerivedBuildingsMock.mockReset();
+    writeSyncHeartbeatMock.mockReset();
+    writeSyncHeartbeatMock.mockResolvedValue(undefined);
     readKindooSessionMock.mockReturnValue({
       ok: true,
       session: { token: 'sess', eid: 27994 },
@@ -1328,5 +1332,159 @@ describe('SyncPanel', () => {
     const ruleIdsArg = buildRuleDoorMapMock.mock.calls[0]![2] as number[];
     expect(ruleIdsArg).toEqual([6248]);
     expect(ruleIdsArg).not.toContain(9999);
+  });
+});
+
+describe('SyncPanel — sync heartbeat (T-106)', () => {
+  beforeEach(() => {
+    getSyncDataMock.mockReset();
+    readKindooSessionMock.mockReset();
+    listAllEnvironmentUsersMock.mockReset();
+    applyFixMock.mockReset();
+    buildRuleDoorMapMock.mockReset();
+    enrichUsersWithDerivedBuildingsMock.mockReset();
+    writeSyncHeartbeatMock.mockReset();
+    writeSyncHeartbeatMock.mockResolvedValue(undefined);
+    readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'sess', eid: 27994 } });
+    buildRuleDoorMapMock.mockResolvedValue(new Map());
+    enrichUsersWithDerivedBuildingsMock.mockImplementation(async (_s, _e, users) => users);
+  });
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  /** One drifting SBA seat with no matching Kindoo user → one `sba-only` row. */
+  function bundleWithDrift() {
+    const b = bundle();
+    b.seats.push({
+      member_canonical: 'orphan@example.com',
+      member_email: 'orphan@example.com',
+      member_name: 'Orphan',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+    } as never);
+    return b;
+  }
+
+  it('writes exactly one heartbeat for the home site when a clean scan completes', async () => {
+    const user = userEvent.setup();
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+
+    await waitFor(() => expect(writeSyncHeartbeatMock).toHaveBeenCalledTimes(1));
+    expect(writeSyncHeartbeatMock).toHaveBeenCalledWith({
+      stakeId: 'csnorth',
+      kindooSiteId: null,
+      extVersion: expect.any(String),
+    });
+  });
+
+  it('still writes the heartbeat when the scan finds drift and nothing is applied', async () => {
+    // The heartbeat means *someone looked*, not *drift is clear*.
+    // Withholding it here would nag exactly the manager who ran Sync,
+    // read the report, and decided the rows could wait.
+    const user = userEvent.setup();
+    getSyncDataMock.mockResolvedValue(bundleWithDrift());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+
+    await waitFor(() => expect(writeSyncHeartbeatMock).toHaveBeenCalledTimes(1));
+    expect(applyFixMock).not.toHaveBeenCalled();
+  });
+
+  it('writes one heartbeat per completed scan, not one per drift row', async () => {
+    const user = userEvent.setup();
+    const b = bundleWithDrift();
+    b.seats.push({
+      member_canonical: 'second@example.com',
+      member_email: 'second@example.com',
+      member_name: 'Second',
+      scope: 'CO',
+      type: 'auto',
+      callings: ['Sunday School Teacher'],
+      building_names: ['Maple Building'],
+      duplicate_grants: [],
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+    expect(screen.getByTestId('sba-sync-row-second@example.com')).toBeInTheDocument();
+
+    await waitFor(() => expect(writeSyncHeartbeatMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('keys the heartbeat by the foreign site when the session is on one', async () => {
+    const user = userEvent.setup();
+    readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'sess', eid: 30000 } });
+    const b = bundle();
+    (b.kindooSites as unknown[]).push({
+      id: 'east-stake',
+      display_name: 'East Stake',
+      kindoo_expected_site_name: 'East Stake Building',
+      kindoo_eid: 30000,
+    } as never);
+    getSyncDataMock.mockResolvedValue(b);
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-report')).toBeInTheDocument());
+
+    await waitFor(() => expect(writeSyncHeartbeatMock).toHaveBeenCalledTimes(1));
+    expect(writeSyncHeartbeatMock.mock.calls[0]![0]).toMatchObject({
+      stakeId: 'csnorth',
+      kindooSiteId: 'east-stake',
+    });
+  });
+
+  it('renders the report normally when the heartbeat write fails', async () => {
+    // Bookkeeping must never break the feature the manager came for.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const user = userEvent.setup();
+    writeSyncHeartbeatMock.mockRejectedValue(new Error('permission-denied'));
+    getSyncDataMock.mockResolvedValue(bundleWithDrift());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-list')).toBeInTheDocument());
+
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    // The report is still on screen — no fall-through to the error step.
+    expect(screen.getByTestId('sba-sync-row-orphan@example.com')).toBeInTheDocument();
+    expect(screen.queryByTestId('sba-sync-error')).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('writes no heartbeat when the active Kindoo site is unknown', async () => {
+    // No scan completed — the panel short-circuits before enrichment,
+    // and there is no site to key the document by.
+    const user = userEvent.setup();
+    readKindooSessionMock.mockReturnValue({ ok: true, session: { token: 'sess', eid: 99999 } });
+    getSyncDataMock.mockResolvedValue(bundle());
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.queryByTestId('sba-sync-report')).toBeNull());
+    expect(writeSyncHeartbeatMock).not.toHaveBeenCalled();
+  });
+
+  it('writes no heartbeat when the scan itself fails', async () => {
+    const user = userEvent.setup();
+    getSyncDataMock.mockRejectedValue(new Error('boom'));
+    listAllEnvironmentUsersMock.mockResolvedValue([]);
+    await renderSync();
+    await user.click(screen.getByTestId('sba-sync-run'));
+    await waitFor(() => expect(screen.getByTestId('sba-sync-error')).toBeInTheDocument());
+    expect(writeSyncHeartbeatMock).not.toHaveBeenCalled();
   });
 });

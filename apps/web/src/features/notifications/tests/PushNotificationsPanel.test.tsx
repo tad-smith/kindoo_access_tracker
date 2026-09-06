@@ -202,9 +202,12 @@ describe('PushNotificationsPanel', () => {
     expect(screen.getByTestId('push-disable-button')).toBeInTheDocument();
   });
 
-  it('labels the sync-reminder toggle for the expired temp seats it is about', () => {
+  // Deliberately not "…for expired temp seats": the reminder covers two
+  // conditions since T-106, and a label naming one of them reads as a
+  // promise that the other will not arrive.
+  it('labels the sync-reminder toggle for both conditions it covers', () => {
     renderSubscribed();
-    expect(screen.getByText('Sync reminders for expired temp seats')).toBeInTheDocument();
+    expect(screen.getByText('Sync reminders')).toBeInTheDocument();
   });
 
   it('updates the new-request preference when its toggle is flipped', async () => {

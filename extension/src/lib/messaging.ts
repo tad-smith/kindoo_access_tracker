@@ -423,6 +423,37 @@ export interface RemoteApplyRevokeInput {
   extVersion: string;
 }
 
+// ---- Sync heartbeat (T-106) -------------------------------------------
+
+/**
+ * Record that a drift scan just completed for one Kindoo site.
+ *
+ * The scan itself runs entirely in the extension and only *fixes* reach
+ * the server, so a manager whose stake is clean writes nothing at all
+ * and looks identical to one who has not synced in a month. This is the
+ * write that closes that gap — see `SyncHeartbeat` in `@kindoo/shared`.
+ *
+ * It means *someone looked*, not *drift is clear*: a scan that surfaces
+ * five rows and applies none still sends it.
+ */
+export interface DataWriteSyncHeartbeatRequest {
+  type: 'data.writeSyncHeartbeat';
+  payload: SyncHeartbeatInput;
+}
+
+export interface SyncHeartbeatInput {
+  /** Stake the scan covered. */
+  stakeId: string;
+  /**
+   * Foreign `kindooSites` doc id, or `null` for the home site. The doc
+   * id is this value through `remoteApplySiteKey` — derived once in the
+   * SW rather than sent alongside, so the two can never disagree.
+   */
+  kindooSiteId: string | null;
+  /** `chrome.runtime.getManifest().version`. */
+  extVersion: string;
+}
+
 /**
  * Fetch a page of `queued` jobs from the operator's mailbox. A page,
  * not one job: with two Kindoo tabs on two sites of one stake, the
@@ -546,7 +577,8 @@ export type ExtensionRequest =
   | DataRemoteApplyQueuedJobsRequest
   | DataRemoteApplyRunningJobsRequest
   | DataRemoteApplyClaimJobRequest
-  | DataRemoteApplyFinishJobRequest;
+  | DataRemoteApplyFinishJobRequest
+  | DataWriteSyncHeartbeatRequest;
 
 // ---- Response envelopes ------------------------------------------------
 
@@ -573,6 +605,7 @@ export type DataRemoteApplyQueuedJobsResponse = Result<RemoteApplyJobRef[]>;
 export type DataRemoteApplyRunningJobsResponse = Result<RemoteApplyRunningJobRef[]>;
 export type DataRemoteApplyClaimJobResponse = Result<{ claimed: boolean }>;
 export type DataRemoteApplyFinishJobResponse = Result<{ ok: true }>;
+export type DataWriteSyncHeartbeatResponse = Result<{ ok: true }>;
 
 /** Lookup from a request `type` to its response shape. */
 export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequest
@@ -617,7 +650,9 @@ export type ResponseFor<R extends ExtensionRequest> = R extends AuthGetStateRequ
                                         ? DataRemoteApplyClaimJobResponse
                                         : R extends DataRemoteApplyFinishJobRequest
                                           ? DataRemoteApplyFinishJobResponse
-                                          : never;
+                                          : R extends DataWriteSyncHeartbeatRequest
+                                            ? DataWriteSyncHeartbeatResponse
+                                            : never;
 
 // ---- Push (SW → CS) ---------------------------------------------------
 

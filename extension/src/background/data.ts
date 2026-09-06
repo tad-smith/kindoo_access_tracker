@@ -22,6 +22,7 @@
 // signs the v1 callable invocations. Firestore rules gate the actual
 // authorisation.
 
+import type { FieldValue } from 'firebase/firestore';
 import {
   collection,
   deleteDoc,
@@ -44,9 +45,10 @@ import type {
   RemoteApplyJob,
   Seat,
   Stake,
+  SyncHeartbeat,
   Ward,
 } from '@kindoo/shared';
-import { canonicalEmail } from '@kindoo/shared';
+import { canonicalEmail, remoteApplySiteKey } from '@kindoo/shared';
 import type { User } from 'firebase/auth/web-extension';
 import { firestore } from '../lib/firebase';
 import type {
@@ -55,6 +57,7 @@ import type {
   RemoteApplyJobRef,
   RemoteApplyPresenceInput,
   RemoteApplyRunningJobRef,
+  SyncHeartbeatInput,
   WriteKindooConfigPayload,
 } from '../lib/messaging';
 
@@ -732,6 +735,39 @@ export async function writeRemotePresence(
     ext_version: payload.extVersion,
     lastActor: actorRef,
   });
+}
+
+/**
+ * Stamp `syncHeartbeats/{stakeId}/sites/{siteKey}` — "someone completed
+ * a drift scan of this site just now".
+ *
+ * Whole-document `setDoc`, no merge and no read-modify-write: there is
+ * exactly one document per site and the rules pin its key set, so a
+ * merge could only ever produce a superset and a `permission-denied`.
+ *
+ * Deliberately keyed by stake + site rather than by manager. A stake can
+ * have several Kindoo Managers and any one of them syncing freshens the
+ * site for all of them, so last-writer-wins on a single timestamp is
+ * exactly the question the reminder asks. `lastActor` churns as
+ * different managers scan, which costs nothing because the collection
+ * is top-level and therefore unaudited.
+ */
+export async function writeSyncHeartbeat(payload: SyncHeartbeatInput, actor: User): Promise<void> {
+  const actorRef = await readActor(actor);
+  const db = firestore();
+  // Doc id and `kindoo_site_id` encode the same site two ways because a
+  // doc id cannot be null. Both derive from the one caller-supplied
+  // value through the shared helper, so they cannot drift.
+  const siteKey = remoteApplySiteKey(payload.kindooSiteId);
+  const ref = doc(db, 'syncHeartbeats', payload.stakeId, 'sites', siteKey);
+  const heartbeat: Omit<SyncHeartbeat, 'last_sync_at'> & { last_sync_at: FieldValue } = {
+    stake_id: payload.stakeId,
+    kindoo_site_id: payload.kindooSiteId,
+    last_sync_at: serverTimestamp(),
+    ext_version: payload.extVersion,
+    lastActor: actorRef,
+  };
+  await setDoc(ref, heartbeat);
 }
 
 /**

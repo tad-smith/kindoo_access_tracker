@@ -33,6 +33,7 @@ import {
   writeKindooConfig,
   writeKindooSiteEid,
   writeRemotePresence,
+  writeSyncHeartbeat,
 } from './data';
 import type {
   AuthSnapshot,
@@ -381,6 +382,22 @@ export async function handleRequest(req: ExtensionRequest): Promise<unknown> {
           };
         }
         await finishRemoteApplyJob(req.jobId, req.payload, user);
+        return { ok: true, data: { ok: true } };
+      } catch (err) {
+        return { ok: false, error: toWireError(err) };
+      }
+    }
+    case 'data.writeSyncHeartbeat': {
+      try {
+        await waitForAuthHydrated();
+        const user = currentUser();
+        if (!user) {
+          return {
+            ok: false,
+            error: { code: 'unauthenticated', message: 'sign in before recording a sync' },
+          };
+        }
+        await writeSyncHeartbeat(req.payload, user);
         return { ok: true, data: { ok: true } };
       } catch (err) {
         return { ok: false, error: toWireError(err) };

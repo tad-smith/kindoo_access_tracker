@@ -1995,9 +1995,9 @@ function SyncReminderToggle({ notificationsEnabled }: SyncReminderToggleProps) {
     >
       <p>
         A daily check that emails your active Kindoo Managers when a temporary seat has expired in
-        Kindoo but is still on the SBA roster. Its one instruction is to run Sync, which clears
-        those seats. While seats stay expired it repeats at most every third day, and it stops on
-        its own once they are gone.
+        Kindoo but is still on the SBA roster, or when a Kindoo site has not been synced in a week.
+        Its one instruction is to run Sync. While either is true it repeats at most every third day,
+        and it stops on its own once both are clear.
       </p>
     </SettingToggle>
   );

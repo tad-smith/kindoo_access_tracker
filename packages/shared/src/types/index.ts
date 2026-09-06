@@ -53,5 +53,6 @@ export type {
   SyncApplyFixResult,
   TypeMismatchPayload,
 } from './syncApplyFix.js';
+export type { SyncHeartbeat } from './syncHeartbeat.js';
 export type { TimestampLike, UserIndexEntry } from './userIndex.js';
 export type { Ward } from './ward.js';

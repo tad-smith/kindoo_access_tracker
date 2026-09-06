@@ -41,6 +41,7 @@ const loadKindooManagerByEmailMock = vi.fn();
 const loadSyncDataMock = vi.fn();
 const writeKindooSiteEidMock = vi.fn();
 const resolveEidStakesMock = vi.fn();
+const writeSyncHeartbeatMock = vi.fn();
 vi.mock('./data', () => ({
   loadStakeConfig: (...args: unknown[]) => loadStakeConfigMock(...args),
   writeKindooConfig: (...args: unknown[]) => writeKindooConfigMock(...args),
@@ -49,6 +50,7 @@ vi.mock('./data', () => ({
   loadSyncData: (...args: unknown[]) => loadSyncDataMock(...args),
   writeKindooSiteEid: (...args: unknown[]) => writeKindooSiteEidMock(...args),
   resolveEidStakes: (...args: unknown[]) => resolveEidStakesMock(...args),
+  writeSyncHeartbeat: (...args: unknown[]) => writeSyncHeartbeatMock(...args),
 }));
 
 describe('handleRequest', () => {
@@ -71,6 +73,7 @@ describe('handleRequest', () => {
     loadSyncDataMock.mockReset();
     writeKindooSiteEidMock.mockReset();
     resolveEidStakesMock.mockReset();
+    writeSyncHeartbeatMock.mockReset();
   });
   afterEach(() => {
     vi.resetModules();
@@ -662,6 +665,57 @@ describe('handleRequest', () => {
     expect(result).toEqual({
       ok: false,
       error: { code: 'permission-denied', message: 'not a manager' },
+    });
+  });
+
+  it('data.writeSyncHeartbeat forwards the payload + current user to the writer', async () => {
+    const user = { uid: 'u1', email: 'mgr@example.com', displayName: 'Manager' };
+    currentUserMock.mockReturnValue(user);
+    writeSyncHeartbeatMock.mockResolvedValue(undefined);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeSyncHeartbeat',
+      payload: { stakeId: 'csnorth', kindooSiteId: null, extVersion: '1.2.3' },
+    });
+    expect(writeSyncHeartbeatMock).toHaveBeenCalledWith(
+      { stakeId: 'csnorth', kindooSiteId: null, extVersion: '1.2.3' },
+      user,
+    );
+    expect(result).toEqual({ ok: true, data: { ok: true } });
+  });
+
+  it('data.writeSyncHeartbeat rejects with unauthenticated when no user is signed in', async () => {
+    currentUserMock.mockReturnValue(null);
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeSyncHeartbeat',
+      payload: { stakeId: 'csnorth', kindooSiteId: null, extVersion: '1.2.3' },
+    });
+    expect(writeSyncHeartbeatMock).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'unauthenticated', message: 'sign in before recording a sync' },
+    });
+  });
+
+  it('data.writeSyncHeartbeat surfaces writer rejections as wire errors', async () => {
+    // The panel drops these on the floor — the heartbeat is bookkeeping
+    // — but the dispatcher must still report rather than throw across
+    // the message boundary.
+    currentUserMock.mockReturnValue({ uid: 'u1', email: 'mgr@example.com', displayName: 'M' });
+    writeSyncHeartbeatMock.mockRejectedValue(
+      Object.assign(new Error('Missing or insufficient permissions.'), {
+        code: 'permission-denied',
+      }),
+    );
+    const { handleRequest } = await import('./messages');
+    const result = await handleRequest({
+      type: 'data.writeSyncHeartbeat',
+      payload: { stakeId: 'csnorth', kindooSiteId: 'east-stake', extVersion: '1.2.3' },
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'permission-denied', message: 'Missing or insufficient permissions.' },
     });
   });
 });
