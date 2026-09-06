@@ -71,7 +71,7 @@ Bridge between canonical-email-keyed role data and Firebase Auth's uid-keyed use
   notificationPrefs?: {
     push?: {
       newRequest?: boolean;             // new request → managers (Phase 10.5)
-      syncReminder?: boolean;           // expired temp seats (spec §9, D37)
+      syncReminder?: boolean;           // expired temp seats or a stale Kindoo site (spec §9, D37, D40)
     };
   };
   lastActor?: { email: string; canonical: string };  // stamped on every self-write
@@ -340,6 +340,42 @@ Both types live in `packages/shared/src/scheduledTasks.ts`, which also owns the 
 
 **No index.** The dispatcher addresses the document by id, one per stake, inside a loop over `stakes`; nothing queries the collection.
 
+### 3.6 `syncHeartbeats/{stakeId}/sites/{siteKey}` — last-synced-when, per Kindoo site
+
+One document per Kindoo site a stake operates, stamped by the extension whenever a drift scan completes. It answers the question `stakeSchedules`'s `syncReminder` job cannot answer on its own: whether anyone has looked at a site recently. Written by that stake's Kindoo Managers (Firestore client SDK, from the extension's service worker); read by the `syncReminder` job's Admin SDK run (`spec.md` §9, `architecture.md` D40).
+
+**Doc ID:** `siteKey`, the `remoteApplySiteKey` form — `'home'` for the stake's own Kindoo environment (which carries no `kindooSites` doc; see §4.11), otherwise the foreign site's `kindooSites` doc id. Same convention `remoteApply/{canonicalEmail}/desktops/{siteKey}` (§3.4) uses, and derived the same way: the caller passes a `kindooSiteId` (`string | null`), never a bare `siteKey`, so a doc id and the site it names cannot disagree by construction.
+
+**Fields:**
+
+```typescript
+{
+  stake_id: string;
+  kindoo_site_id: string | null;  // null on home; a `kindooSites` doc id otherwise
+  last_sync_at: Timestamp;        // server-stamped, when the scan completed
+  ext_version: string;            // extension manifest version that wrote it
+  lastActor: { email: string; canonical: string };
+}
+```
+
+`SyncHeartbeat` lives in `packages/shared/src/types/syncHeartbeat.ts`.
+
+**Top-level, not per-stake — same reasoning as `stakeSchedules` (§3.5).** `auditTrigger` fans a row for every write beneath `stakes/{stakeId}`, and a completed drift scan is frequent enough (every Sync, whether or not it finds anything to fix) that a per-stake home would bury the audit log under heartbeats. The collection sits outside that path and **is not audited at all** — the same accepted cost §3.5 records, not worked around a second time.
+
+**Keyed by stake and site, never by manager.** A stake can have several Kindoo Managers; any one of them syncing a site freshens it for all of them, so the document is shared and last-writer-wins on `last_sync_at`. That is exactly the question the reminder asks — when did *anyone* last sync this site — and one document per site means every write lands directly, with no read-modify-write and so no clobber race of the kind `stakeSchedules` needed a transaction to fix (D39(f)).
+
+**Written by:** the extension's `writeSyncHeartbeat` (`extension/src/background/data.ts`), called once per completed scan from `SyncPanel.tsx` — **unconditional on the scan's result**, fire-and-forget, and its own failure is swallowed so a denied or offline write never turns a rendered drift report into an error screen. A whole-document `setDoc`, never `{ merge: true }`: there is exactly one document per site and rules pin its exact key set, so a merge could only ever produce a superset and a `permission-denied`.
+
+**Read by:** `sendSyncReminderIfDue` (Admin SDK, bypasses rules) as the only reader anywhere. **There is no "last synced" display in the app** — this collection backs one scheduled-job condition and nothing else.
+
+**Rules:**
+
+- `read` — `isManager(stakeId) || isPlatformSuperadmin()`. No SPA surface reads this collection today; the read rule exists for a manager to inspect the raw document, not for a product surface.
+- `create` / `update` — `isManager(stakeId)` **and** an exact five-key envelope (`stake_id`, `kindoo_site_id`, `last_sync_at`, `ext_version`, `lastActor`) **and** `stake_id is string` **and** (`kindoo_site_id == null` or `is string`) **and** `last_sync_at is timestamp` **and** `ext_version is string` **and** `lastActorMatchesAuth`. The rule does **not** check `kindoo_site_id` against `siteKey` — the two are related by `remoteApplySiteKey` (`null` ↔ `'home'`), which rules cannot express without pinning that shared constant a second time here. Same carve-out, same rationale, as `remoteApply`'s `desktops` block (§3.4).
+- `delete: if false`. **Deliberate, and load-bearing.** An absent document reads as "never synced" — the one state that silences the reminder permanently. Un-configuring a foreign Kindoo site therefore strands its heartbeat rather than clearing it; the reminder handler compensates by only ever considering sites the stake **currently** operates (home plus every live `kindooSites` doc), intersected against the heartbeats that exist, so a stranded heartbeat for a site the stake no longer operates is simply never read.
+
+**No index.** The reminder handler reads the whole `sites` subcollection for one stake per run (a handful of documents at target scale) and filters in memory; nothing queries across stakes.
+
 ## 4. Per-stake collections
 
 All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` tab in the Apps Script app.
@@ -454,7 +490,7 @@ All under `stakes/{stakeId}/`. The parent stake doc holds what was the `Config` 
 }
 ```
 
-**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Config tab); manager who is also a platform superadmin, via Configuration → Kindoo Config → Home Kindoo Site (`kindoo_expected_site_name` + `kindoo_config`, by dotted path so the wizard's captured `site_name` survives — `spec.md` §15; the superadmin gate there is UI-only, and the superadmin-without-a-manager-role case is T-91); extension configure wizard (`kindoo_config`); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); `sendSyncReminderIfDue` (`last_sync_reminder_date` — stamped after a reminder sends, deleted when nothing is expired; §7); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
+**Written by:** `createStake` (doc creation, including `eq_president_app_access: false`); bootstrap wizard (initial); manager via Configuration page (Config tab keys, plus `kindoo_ignored_wards` from the Kindoo Config tab); manager who is also a platform superadmin, via Configuration → Kindoo Config → Home Kindoo Site (`kindoo_expected_site_name` + `kindoo_config`, by dotted path so the wizard's captured `site_name` survives — `spec.md` §15; the superadmin gate there is UI-only, and the superadmin-without-a-manager-role case is T-91); extension configure wizard (`kindoo_config`); `markRequestComplete` / `removeSeatOnRequestComplete` (`last_over_caps_json` after over-cap recompute); `sendSyncReminderIfDue` (`last_sync_reminder_date` — stamped after a reminder sends, deleted only when both the expired-seat and stale-site conditions have cleared; §7, `architecture.md` D40); operator by hand in the Firestore console (`web_base_url_override` only — it has no writer in the codebase).
 
 **Read by:** every page (stake metadata is in the bootstrap response).
 
@@ -1250,6 +1286,32 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ----- syncHeartbeats (per-Kindoo-site last-synced-when; D40, §3.6) -----
+    // Top level for the same audit-fan-in reason as stakeSchedules above — a
+    // completed scan is frequent. NOT audited, deliberately.
+    match /syncHeartbeats/{stakeId}/sites/{siteKey} {
+
+      function validHeartbeat(data) {
+        return keysAreExactly(data, ['stake_id', 'kindoo_site_id', 'last_sync_at',
+                                     'ext_version', 'lastActor'])
+          && data.stake_id is string
+          && (data.kindoo_site_id == null || data.kindoo_site_id is string)
+          && data.last_sync_at is timestamp
+          && data.ext_version is string;
+      }
+
+      // No SPA surface reads this; the reminder handler uses the Admin SDK
+      // and bypasses rules entirely. Manager read is for debugging only.
+      allow read: if isManager(stakeId) || isPlatformSuperadmin();
+      allow create, update: if isManager(stakeId)
+        && validHeartbeat(request.resource.data)
+        && lastActorMatchesAuth(request.resource.data);
+      // An absent document reads as "never synced" — the one state that
+      // silences the reminder for good. Staleness is a timestamp going old,
+      // never a missing document.
+      allow delete: if false;
+    }
+
     // ===== Per-stake collections =====
 
     match /stakes/{stakeId} {
@@ -1635,7 +1697,7 @@ The other wizard-adjacent collections (access, seats, requests, auditLog) are NO
 
 Twenty-nine deployed functions — `functions/src/index.ts` is the authoritative list, and the `auditTrigger` row above accounts for nine of them. **Exactly one is scheduled**, `dispatchScheduledTasks`, and it is a dispatcher rather than a feature: a future scheduled feature is a registry entry and a row in `stakeSchedules/{stakeId}`, not a thirtieth function (`architecture.md` D38, amending D35's zero). None is hot-path; all run on the free tier at this scale.
 
-**The sync reminder still adds no function, but it now has a caller.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`, `architecture.md` D37) is still a service module, not a function: it carries no trigger of its own and is not exported from `functions/src/index.ts`. T-104 (D38) built the caller path; T-107 (`architecture.md` D39) is what actually calls it — `SCHEDULED_JOBS` registers it as `syncReminder`, `runScheduledTask` resolves and invokes it, and a stake's Kindoo Managers turn it on from the **Sync reminders** slider on the Configuration page's Config tab, seeded `enabled: false` like every job. It writes `stakes/{sid}.last_sync_reminder_date` (§4.1), sends the sync-reminder email through `EmailService`, and pushes through the shared `functions/src/lib/push.ts` with `category: 'syncReminder'`. Registering it made `runScheduledTask` the first scheduled handler that sends email, so the `runScheduledTask` row below now carries the same `RESEND_API_KEY` binding as the three notify triggers — without it the send failed silently while still reporting success (see D39(g)).
+**The sync reminder still adds no function, but it now has a caller and a second condition.** `sendSyncReminderIfDue(stakeId, now)` (`functions/src/services/SyncReminderService.ts`, `architecture.md` D37, D40) is still a service module, not a function: it carries no trigger of its own and is not exported from `functions/src/index.ts`. T-104 (D38) built the caller path; T-107 (`architecture.md` D39) is what actually calls it — `SCHEDULED_JOBS` registers it as `syncReminder`, `runScheduledTask` resolves and invokes it, and a stake's Kindoo Managers turn it on from the **Sync reminders** slider on the Configuration page's Config tab, seeded `enabled: false` like every job. It writes `stakes/{sid}.last_sync_reminder_date` (§4.1), sends the sync-reminder email through `EmailService`, and pushes through the shared `functions/src/lib/push.ts` with `category: 'syncReminder'`. Registering it made `runScheduledTask` the first scheduled handler that sends email, so the `runScheduledTask` row below now carries the same `RESEND_API_KEY` binding as the three notify triggers — without it the send failed silently while still reporting success (see D39(g)). T-106 (`architecture.md` D40) added the second condition on top: each run also reads `syncHeartbeats/{stakeId}/sites` (§3.6) to find any operated Kindoo site whose last heartbeat is seven or more stake-local days old, and mails on either condition rather than only the expired-seat one — no new function, no new registry entry, no new secret.
 
 **Remote apply adds none (§3.4, D27).** Both ends of the mailbox are client SDK writes gated by rules, and the work the desktop does once it claims a job runs through the two callables that already exist — `getMyPendingRequests` to re-resolve the request and `markRequestComplete` to close it. There is no server-side participant in the transport at all: no trigger fires on `remoteApply`, and no audit row is fanned for a job doc (the audited row is the `complete_request` / seat write that `markRequestComplete` produces, exactly as it would for a desktop-initiated apply).
 

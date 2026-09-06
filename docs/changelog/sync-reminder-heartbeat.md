@@ -1,0 +1,44 @@
+# Sync reminder — the stale-site heartbeat, T-106's other half
+
+**Shipped:** 2026-09-06
+**Commits:** PR #293 (`feat/t106-sync-heartbeat`) — shared type + rules start `7435cf2`, rules `53c5903`, extension half `9585167`, backend half `65bd594`, docs (this commit)
+
+## What shipped
+
+T-103 shipped case (2) of the reminder the operator asked for — expired temp seats — because it needed no new recorded state. This is case (1), the condition named first: tell the Kindoo Managers when nobody has run Sync in seven days. It was blocked on one fact nothing recorded: Sync's drift scan runs entirely in the extension and only *fixes* reach the server, so a manager who syncs every morning and finds nothing wrong writes nothing at all — indistinguishable from a manager who has not synced in a month.
+
+- **The heartbeat.** `writeSyncHeartbeat` (`extension/src/background/data.ts`) stamps `syncHeartbeats/{stakeId}/sites/{siteKey}`, called once per completed scan from `SyncPanel.tsx` — after the drift report renders, unconditional on the result. A scan showing five rows with nothing applied still writes it: **the heartbeat means someone looked, not that drift is clear.** The write is fire-and-forget and swallows its own failure so an offline manager or a denied write never turns a rendered report into an error screen. `siteKey` is derived server-side (well, service-worker-side) via the shared `remoteApplySiteKey`, not accepted from the panel, so the doc id and `kindoo_site_id` cannot disagree.
+- **The document.** Top-level, not under `stakes/{stakeId}` — same reason as `stakeSchedules` (D38): `auditTrigger` fans a row for every write beneath that path and a scan is frequent, so a per-stake home would bury the audit log. Keyed by stake and site, never by manager: a stake can have several Kindoo Managers, and any one syncing freshens the site for all of them, so the document is shared and last-writer-wins on one timestamp — one doc per site, whole-document `setDoc`, no read-modify-write and no clobber race (contrast D39(f), which needed a transaction because `stakeSchedules` has none of these properties). Firestore rules deny `delete` outright: an absent document reads as "never synced," the one state that would silence the reminder permanently.
+- **The condition.** `sendSyncReminderIfDue` (`functions/src/services/SyncReminderService.ts`) now evaluates two independent conditions and sends at most one mail naming whichever fired. `SYNC_STALE_DAYS = 7` lives in that file, not in `@kindoo/shared` — only the handler evaluates staleness, and a shared constant would advertise a second consumer that does not exist. Staleness is measured in stake-local calendar days, the same arithmetic the expiry half already used, so the two conditions can't drift a few hours apart from each other.
+- **Operated sites.** Home (always) plus every `kindooSites` doc, **intersected with the heartbeat documents that exist.** The intersection is load-bearing, not defensive: since a heartbeat can never be deleted, un-configuring a foreign site would otherwise strand its document, and without the intersection it would age past seven days forever into a nag nobody can clear or act on. A configured foreign site with no wards assigned is still counted — keeping it configured is the statement that the stake operates it.
+- **One job, one toggle, one backoff.** No new `taskRegistry` entry — the existing `syncReminder` job grows a condition. Managers see no new control. The mail's lead sentence, subject, body sections, and push title/body all branch on which condition(s) fired; a "both" mail joins the two clauses with `, and`.
+
+## Why
+
+**An absent heartbeat is silent, not chased.** A stake that never wrote one is never mailed. Firing on absence would be more literally truthful — it would also mail every stake for the whole extension rollout (nobody has a heartbeat until they update), and teach managers to treat the reminder as noise. That is the one failure this feature cannot afford, so the asymmetry is deliberate: a site that heartbeated once and then went quiet for a week is stale; a site that has simply never heartbeated is not.
+
+**One job rather than two.** Both conditions share their one instruction — *run Sync* — and a manager who receives two separate mails saying the same thing learns to open neither. The checks stay independent internally: a heartbeat proves someone looked, not that drift is clear, so it cannot be folded into or substitute for the expired-seat check.
+
+**No "last sync" display.** The heartbeat is read by `sendSyncReminderIfDue` alone. A per-site "last synced" line on the Configuration page was floated as a nearly-free bonus when T-106 was first scoped — the data would already exist — but shipping a read surface widens this PR's blast radius for a feature nobody asked for yet, and the reminder itself is the actual ask.
+
+**The two windows differ on purpose.** Staleness is seven days; backoff is three. A stake that stays stale is therefore mailed every third day, not once. The backoff stamp covers *the reminder having been sent*, not either condition individually — seats clearing while the site stays stale does not reset the gap, and a sync happening while seats stay expired does not either. Both conditions share the one stamp because they share the one mail.
+
+**`SYNC_STALE_DAYS` stays out of `@kindoo/shared`.** The extension only ever stamps a timestamp; it never asks whether that timestamp is old. Putting the threshold in the shared package would advertise a second reader that doesn't exist and invite one to appear beside the handler without the handler's context.
+
+**Rules deny `delete` rather than letting a manager clear a stuck heartbeat by hand.** The alternative — allowing delete so an operator can un-stick a wrongly-stale site — reintroduces the exact silent-permanently state the collection exists to prevent: a deleted heartbeat reads identically to a heartbeat that never existed, and the reminder would then never chase that site again even if it goes quiet for a year. The operated-sites intersection is the actual answer to "the site stopped mattering": un-configure it, and its stranded heartbeat stops being read.
+
+## What didn't change that you'd expect to
+
+- **Stamp-last.** `sendSyncReminderIfDue` still reads `last_sync_reminder_date` before sending and writes it after — delivery is at-least-once, and claiming the stamp first would trade a rare duplicate mail for up to three days of silence about an actively stale condition. Unchanged by T-106; both conditions now share the read/write.
+- **Delivery is still at-least-once**, and the heartbeat write itself is idempotent by construction (whole-document `setDoc`, one document per site) — a duplicate scan just overwrites the same document with a newer timestamp.
+- **The single Sync-reminder toggle.** No second switch, no second push category. `notificationPrefs.push.syncReminder` now gates push for both conditions, exactly as it already gated the expired-seat one.
+- **No new registry entry, no new Cloud Function, no new Cloud Scheduler job.** `SCHEDULED_JOBS` still carries exactly the one `syncReminder` entry from T-107 (D39). Cloud Scheduler's free tier is unaffected.
+- **No manager-facing UI at all.** No new switch, no new page, no "last synced" display. The Configuration page's Sync reminders row is unchanged; it still means the same one thing it meant before this PR.
+- **`SyncReminderService.ts`'s public shape is otherwise stable.** `sendSyncReminderIfDue(stakeId, now)` still takes the same two arguments and still returns a status plus counts — only the status vocabulary and the outcome shape grew (see below).
+
+## Known issues / deferred
+
+- **`SyncReminderOutcome.status` renamed `nothing-expired` → `nothing-due`**, and gained `staleSites: number`. This is a breaking rename of a return-value literal, not additive — any caller pattern-matching the old string needs updating. No caller does today outside `runScheduledTask` and the test suite, both updated in this PR.
+- **[B-29]** — the Configuration page's `InfoTip` and the Notifications page's push-category label still describe only the expired-seat condition (and the `InfoTip` copy's "stops on its own once they are gone" is now inaccurate — the stamp survives until *both* conditions clear). Filed rather than fixed here: no `apps/web/` file was touched by this PR, and the fix is copy-only, owned by `web-engineer`.
+- **No dead-letter behaviour**, same gap T-103's changelog already noted for the expired-seat half: a push failure is reported on the outcome and logged; an email failure lands as an `email_send_failed` audit row. Neither retries, and both are invisible unless someone reads logs.
+- **T-105** — expired grants on multi-grant seats still have no reaper and no reminder. Unaffected by this PR; the stale-site condition doesn't touch seat-level logic at all.
