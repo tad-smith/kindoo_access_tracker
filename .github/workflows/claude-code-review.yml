@@ -18,6 +18,10 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      # Required: the action exchanges an OIDC token for a GitHub App token
+      # in `setupGitHubToken`. Not cloud auth — removing it fails the job in
+      # ~24s with "Could not fetch an OIDC token".
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
