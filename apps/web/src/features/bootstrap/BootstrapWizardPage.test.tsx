@@ -228,7 +228,7 @@ describe('<BootstrapWizardPage />', () => {
     // Opt-in: the persisted field is absent on a fresh stake, so the
     // switch must render off (not on, as `notifications_enabled` would).
     expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(within(step).getByLabelText(/Elders Quorum Presidents Get App Access/i)).toBe(sw);
+    expect(within(step).getByLabelText(/EQ Presidents Have SBA Access/i)).toBe(sw);
   });
 
   it('step 1 shows the opt-in switch on when the stake already has it set', () => {

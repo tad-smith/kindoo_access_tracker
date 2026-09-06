@@ -499,7 +499,7 @@ function Step1Form() {
             />
           )}
         />
-        <span>Elders Quorum Presidents Get App Access</span>
+        <span>EQ Presidents Have SBA Access</span>
       </label>
       <div className="form-actions">
         <Button type="submit" disabled={mutation.isPending || formState.isSubmitting}>

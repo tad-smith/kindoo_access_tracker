@@ -1792,7 +1792,7 @@ function ConfigKeysTab() {
         <SettingToggle
           id="config-eq-president-access"
           testId="config-eq-president-access"
-          label="Elders Quorum Presidents Get App Access"
+          label="EQ Presidents Have SBA Access"
           checked={stake.data.eq_president_app_access === true}
           disabled={setToggle.isPending}
           onChange={onToggleEqPresident}

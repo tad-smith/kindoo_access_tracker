@@ -335,7 +335,7 @@ describe('<ConfigurationPage />', () => {
     expect(sw).toHaveAttribute('role', 'switch');
     expect(sw).toHaveAttribute('aria-checked', 'false');
     expect(
-      screen.getByLabelText(/Elders Quorum Presidents Get App Access/i, {
+      screen.getByLabelText(/EQ Presidents Have SBA Access/i, {
         selector: '[role="switch"]',
       }),
     ).toBe(sw);
