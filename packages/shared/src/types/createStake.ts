@@ -42,5 +42,4 @@ export type CreateStakeError =
   | 'invalid_timezone';
 
 export type CreateStakeResult =
-  | { success: true; stakeId: string }
-  | { success: false; error: CreateStakeError };
+  { success: true; stakeId: string } | { success: false; error: CreateStakeError };

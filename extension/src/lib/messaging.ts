@@ -43,8 +43,7 @@ export interface PrincipalSnapshot {
 }
 
 export type AuthSnapshot =
-  | { status: 'signed-out' }
-  | { status: 'signed-in'; user: PrincipalSnapshot };
+  { status: 'signed-out' } | { status: 'signed-in'; user: PrincipalSnapshot };
 
 /** Wire shape for errors crossing the SW boundary. */
 export interface WireError {

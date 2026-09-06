@@ -573,8 +573,7 @@ async function applyKindooOnly(
 /** What `planKindooOnlyMerge` decided: the seat fields to write, or a
  * refusal carrying the message the extension shows inline. */
 type KindooOnlyMergePlan =
-  | { kind: 'write'; update: Record<string, unknown> }
-  | { kind: 'refuse'; error: string };
+  { kind: 'write'; update: Record<string, unknown> } | { kind: 'refuse'; error: string };
 
 const SLOT_ALREADY_ON_SITE =
   'that grant is already recorded on this Kindoo site — nothing to merge. ' +

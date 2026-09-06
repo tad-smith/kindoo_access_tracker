@@ -87,12 +87,7 @@ import { toast } from '../../../lib/store/toast';
 import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../../lib/wardCopy';
 
 export type ConfigTabKey =
-  | 'config'
-  | 'managers'
-  | 'wards'
-  | 'buildings'
-  | 'kindoo-sites'
-  | 'organizations';
+  'config' | 'managers' | 'wards' | 'buildings' | 'kindoo-sites' | 'organizations';
 
 const TABS: Array<{ key: ConfigTabKey; label: string }> = [
   { key: 'config', label: 'Config' },
