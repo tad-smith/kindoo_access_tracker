@@ -2,7 +2,13 @@
 
 import { describe, expect, it } from 'vitest';
 import type { ScheduledTask, TimestampLike } from '@kindoo/shared';
-import { SYNC_REMINDER_JOB, syncReminderNextCheckLabel, syncReminderTask } from './syncReminder';
+import {
+  SYNC_REMINDER_JOB,
+  syncReminderDueAtOnce,
+  syncReminderNextCheckLabel,
+  syncReminderSlotLabel,
+  syncReminderTask,
+} from './syncReminder';
 
 const actor = { email: 'mgr@example.com', canonical: 'mgr@example.com' };
 
@@ -94,5 +100,64 @@ describe('syncReminderNextCheckLabel', () => {
       next_trigger_time: 'tomorrow' as any,
     });
     expect(syncReminderNextCheckLabel(row, 'America/Denver', now)).toBe('within the hour');
+  });
+});
+
+// `syncReminderDueAtOnce` is what stops the toggle's copy asserting
+// "the first check runs within the hour" in the one window where it is
+// false: on rollout the dispatcher seeds every stake with the next
+// local 06:00, so a manager switching the reminder on that afternoon
+// waits until the following morning.
+
+describe('syncReminderDueAtOnce', () => {
+  const now = new Date('2026-09-05T18:30:00Z');
+
+  it('is false for a row that has not been seeded — there is nothing to turn on', () => {
+    expect(syncReminderDueAtOnce(null, now)).toBe(false);
+  });
+
+  it('is false while the seeded slot is still ahead, off or on', () => {
+    const slot = ts('2026-09-06T12:00:00Z');
+    expect(
+      syncReminderDueAtOnce(reminderRow({ enabled: false, next_trigger_time: slot }), now),
+    ).toBe(false);
+    expect(
+      syncReminderDueAtOnce(reminderRow({ enabled: true, next_trigger_time: slot }), now),
+    ).toBe(false);
+  });
+
+  it('is true once the stored slot has passed, which is when the stamp has gone stale', () => {
+    const row = reminderRow({ next_trigger_time: ts('2026-09-05T12:00:00Z') });
+    expect(syncReminderDueAtOnce(row, now)).toBe(true);
+  });
+
+  it('is true for a row carrying no stored slot at all', () => {
+    expect(syncReminderDueAtOnce(reminderRow(), now)).toBe(true);
+  });
+
+  it('is true when the stored slot is unreadable, matching the label’s fallback', () => {
+    // The tasks array is manager-writable and rules cannot validate
+    // inside its elements, so a hand-edited value reaches here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(syncReminderDueAtOnce(reminderRow({ next_trigger_time: 'tomorrow' as any }), now)).toBe(
+      true,
+    );
+  });
+});
+
+describe('syncReminderSlotLabel', () => {
+  it('prints the stored slot even while the row is off, unlike the next-check label', () => {
+    const row = reminderRow({ enabled: false, next_trigger_time: ts('2026-09-06T12:00:00Z') });
+    expect(syncReminderSlotLabel(row, 'America/Denver')).toBe('2026-09-06 06:00');
+  });
+
+  it('prints the same instant in the stake’s own timezone', () => {
+    const row = reminderRow({ enabled: false, next_trigger_time: ts('2026-09-06T12:00:00Z') });
+    expect(syncReminderSlotLabel(row, 'Pacific/Honolulu')).toBe('2026-09-06 02:00');
+  });
+
+  it('says nothing when there is no row, or no stamp on it', () => {
+    expect(syncReminderSlotLabel(null, 'America/Denver')).toBeNull();
+    expect(syncReminderSlotLabel(reminderRow(), 'America/Denver')).toBeNull();
   });
 });

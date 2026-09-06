@@ -734,8 +734,10 @@ import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteOrganizationMutation,
+  useSetStakeToggleMutation,
   useSetSyncReminderEnabledMutation,
   useUpdateHomeKindooSiteMutation,
+  useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
   useUpsertKindooSiteMutation,
   useUpsertOrganizationMutation,
@@ -1914,5 +1916,68 @@ describe('useSetSyncReminderEnabledMutation', () => {
     await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added the sync reminder/i);
     expect(updateDocMock).not.toHaveBeenCalled();
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---- Stake config: Save-backed fields vs. write-on-flip sliders -----
+//
+// The Config tab splits one document across two save models, so what
+// each write touches is the invariant. `Save config` must not carry the
+// sliders (a stale form value would revert a flip made after the page
+// loaded), and a slider must not carry the form's fields (it would
+// commit edits the manager had not pressed Save on).
+
+describe('useUpdateStakeConfigMutation', () => {
+  it("writes the three form fields and neither of the tab's sliders", async () => {
+    const { result } = renderHook(() => useUpdateStakeConfigMutation(), { wrapper });
+    await result.current.mutateAsync({
+      stake_name: 'Test Stake',
+      stake_seat_cap: 200,
+      timezone: 'America/Denver',
+    });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [ref, body] = updateDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth' });
+    expect(Object.keys(body as object).sort()).toEqual([
+      'lastActor',
+      'last_modified_at',
+      'last_modified_by',
+      'stake_name',
+      'stake_seat_cap',
+      'timezone',
+    ]);
+  });
+});
+
+describe('useSetStakeToggleMutation', () => {
+  it('writes only the named Boolean, so one slider cannot revert another', async () => {
+    const { result } = renderHook(() => useSetStakeToggleMutation(), { wrapper });
+    await result.current.mutateAsync({ field: 'notifications_enabled', value: false });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const [ref, body] = updateDocMock.mock.calls[0]!;
+    expect(ref).toMatchObject({ path: 'stakes/csnorth' });
+    expect(Object.keys(body as object).sort()).toEqual([
+      'lastActor',
+      'last_modified_at',
+      'last_modified_by',
+      'notifications_enabled',
+    ]);
+    expect((body as { notifications_enabled: boolean }).notifications_enabled).toBe(false);
+  });
+
+  it('writes eq_president_app_access on its own, leaving the email switch untouched', async () => {
+    const { result } = renderHook(() => useSetStakeToggleMutation(), { wrapper });
+    await result.current.mutateAsync({ field: 'eq_president_app_access', value: true });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const body = updateDocMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(body['eq_president_app_access']).toBe(true);
+    expect(body).not.toHaveProperty('notifications_enabled');
+  });
+
+  it("stamps lastActor, which the rules' integrity check requires on every write", async () => {
+    const { result } = renderHook(() => useSetStakeToggleMutation(), { wrapper });
+    await result.current.mutateAsync({ field: 'notifications_enabled', value: true });
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    expect((updateDocMock.mock.calls[0]![1] as { lastActor: unknown }).lastActor).toEqual(actor);
   });
 });

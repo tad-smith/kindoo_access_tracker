@@ -1,12 +1,14 @@
-// The Config tab's Sync Reminder card, against real rules and a real
-// `stakeSchedules/{stakeId}` document.
+// The Config tab's stake-level sliders, against real rules and real
+// documents.
 //
-// Component tests cover the three states against a mocked mutation
+// Component tests cover the states against mocked mutations
 // (`apps/web/src/features/manager/configuration/ConfigurationPage.test.tsx`).
-// What only this layer can prove is the write itself: the rules admit
-// a manager's flip, the client transaction rewrites the array without
-// disturbing the dispatcher's `next_trigger_time`, and no document is
-// created when the dispatcher has not seeded one.
+// What only this layer can prove is the writes themselves: that the
+// rules admit a manager flipping each one, that a slider writes its own
+// field and nothing else, that the sync-reminder transaction rewrites
+// the tasks array without disturbing the dispatcher's
+// `next_trigger_time`, and that no schedule document is created when
+// the dispatcher has not seeded one.
 
 import { expect, test, type Page } from '@playwright/test';
 import {
@@ -24,6 +26,9 @@ const STAKE_ID = 'csnorth';
 // A slot far enough out that the card prints it rather than "within the
 // hour", and stable across whenever the suite happens to run.
 const NEXT_SLOT = '2099-01-02T13:00:00.000Z';
+// A slot already behind us, which is what a row that has sat disabled
+// looks like: the dispatcher never stamps a disabled row.
+const STALE_SLOT = '2020-01-02T13:00:00.000Z';
 
 async function signInViaTestHatch(page: Page, email: string): Promise<void> {
   await page.waitForFunction(() =>
@@ -67,14 +72,14 @@ async function signInAsManager(
 }
 
 /** Seed the row the hourly dispatcher would have seeded. */
-async function seedReminderRow(enabled: boolean): Promise<void> {
+async function seedReminderRow(enabled: boolean, slot: string = NEXT_SLOT): Promise<void> {
   await writeDoc(`stakeSchedules/${STAKE_ID}`, {
     tasks: [
       {
         job: 'syncReminder',
         enabled,
         schedule: { type: 'daily', hour: 6 },
-        next_trigger_time: new Date(NEXT_SLOT),
+        next_trigger_time: new Date(slot),
       },
     ],
     lastActor: { email: 'dispatcher@example.com', canonical: 'dispatcher@example.com' },
@@ -88,22 +93,110 @@ async function readReminderRow(): Promise<Record<string, unknown> | undefined> {
   return tasks?.find((t) => t['job'] === 'syncReminder');
 }
 
-test.describe('Sync Reminder toggle (Configuration → Config)', () => {
+async function readStake(): Promise<Record<string, unknown> | undefined> {
+  const docs = await listDocs('stakes');
+  return docs.find((d) => d.__id__ === STAKE_ID);
+}
+
+/** Open a slider's information affordance and hand back its panel. */
+function openTip(page: Page, testId: string) {
+  return (async () => {
+    await page.getByTestId(`${testId}-info`).click();
+    const panel = page.getByTestId(`${testId}-info-panel`);
+    await expect(panel).toBeVisible();
+    return panel;
+  })();
+}
+
+test.describe('Config tab sliders (Configuration → Config)', () => {
   test.beforeEach(async () => {
     await clearAuth();
     await clearFirestore();
   });
 
-  test('is inert, with an explanation, before the dispatcher has seeded the row', async ({
+  test('each slider writes its own field the moment it moves, with no Save', async ({ page }) => {
+    await seedReminderRow(false);
+    await signInAsManager(page, 'mgr-sliders@example.com');
+    await page.goto(`/manager/configuration?tab=config`);
+
+    // Email notifications: on by default (absent field), flipped off.
+    const email = page.getByTestId('config-notifications-enabled');
+    await expect(email).toHaveAttribute('aria-checked', 'true');
+    await email.click();
+    await expect(async () => {
+      expect((await readStake())?.['notifications_enabled']).toBe(false);
+    }).toPass();
+    // The write touched that field alone — the form's fields are the
+    // Save button's business, not a slider's.
+    expect((await readStake())?.['stake_name']).toBe('Test Stake');
+
+    // Elders Quorum Presidents: opt-in, so absent reads off.
+    const eq = page.getByTestId('config-eq-president-access');
+    await expect(eq).toHaveAttribute('aria-checked', 'false');
+    await eq.click();
+    await expect(async () => {
+      expect((await readStake())?.['eq_president_app_access']).toBe(true);
+    }).toPass();
+    expect((await readStake())?.['notifications_enabled']).toBe(false);
+  });
+
+  test('Save config leaves the sliders alone, so a flip is not reverted by a later Save', async ({
+    page,
+  }) => {
+    await seedReminderRow(true);
+    await signInAsManager(page, 'mgr-save@example.com');
+    await page.goto(`/manager/configuration?tab=config`);
+
+    await page.getByTestId('config-eq-president-access').click();
+    await expect(async () => {
+      expect((await readStake())?.['eq_president_app_access']).toBe(true);
+    }).toPass();
+    // Decline the backfill offer the flip raises; it is a separate action.
+    await page.getByTestId('config-eq-backfill-cancel').click();
+
+    await page.getByRole('button', { name: /^Save config$/ }).click();
+    await expect(page.getByText('Config saved.')).toBeVisible();
+
+    const stake = await readStake();
+    expect(stake?.['eq_president_app_access']).toBe(true);
+    // The reminder row is a different document entirely and Save never
+    // reaches it.
+    expect((await readReminderRow())?.['enabled']).toBe(true);
+  });
+
+  test('the sync reminder sits under Email Notifications Enabled, indented', async ({ page }) => {
+    await seedReminderRow(false);
+    await signInAsManager(page, 'mgr-order@example.com');
+    await page.goto(`/manager/configuration?tab=config`);
+
+    const rows = page.getByTestId('config-toggles').locator('.kd-setting-toggle');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toHaveAttribute('data-testid', 'config-notifications-enabled-row');
+    await expect(rows.nth(1)).toHaveAttribute('data-testid', 'config-sync-reminder-row');
+    await expect(rows.nth(2)).toHaveAttribute('data-testid', 'config-eq-president-access-row');
+    await expect(rows.nth(1)).toHaveClass(/kd-setting-toggle--sub/);
+
+    // The indent is real geometry, not just a class.
+    const parent = await rows.nth(0).boundingBox();
+    const child = await rows.nth(1).boundingBox();
+    expect(child!.x).toBeGreaterThan(parent!.x);
+  });
+
+  test('is inert, with the explanation behind the affordance, before the row is seeded', async ({
     page,
   }) => {
     await signInAsManager(page, 'mgr-sr-unseeded@example.com');
     await page.goto(`/manager/configuration?tab=config`);
-    await expect(page.getByTestId('config-sync-reminder')).toBeVisible();
     await expect(page.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
-    await expect(page.getByTestId('config-sync-reminder-unseeded')).toContainText(
+    await expect(page.getByTestId('config-sync-reminder-row')).toHaveClass(
+      /kd-setting-toggle--disabled/,
+    );
+
+    const tip = await openTip(page, 'config-sync-reminder');
+    await expect(tip.getByTestId('config-sync-reminder-unseeded')).toContainText(
       /within the hour/i,
     );
+
     // Clicking a disabled control must not conjure the document.
     await page.getByTestId('config-sync-reminder-enabled').click({ force: true });
     await expect(page.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
@@ -158,11 +251,15 @@ test.describe('Sync Reminder toggle (Configuration → Config)', () => {
 
     const toggle = page.getByTestId('config-sync-reminder-enabled');
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
-    await expect(page.getByTestId('config-sync-reminder-next')).toContainText('2099-01-02 06:00');
+    let tip = await openTip(page, 'config-sync-reminder');
+    await expect(tip.getByTestId('config-sync-reminder-next')).toContainText('2099-01-02 06:00');
+    await page.keyboard.press('Escape');
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await expect(page.getByTestId('config-sync-reminder-next')).toHaveCount(0);
+
+    tip = await openTip(page, 'config-sync-reminder');
+    await expect(tip.getByTestId('config-sync-reminder-next')).toHaveCount(0);
 
     await expect(async () => {
       const row = await readReminderRow();
@@ -170,31 +267,92 @@ test.describe('Sync Reminder toggle (Configuration → Config)', () => {
     }).toPass();
   });
 
-  test('names the stake email kill-switch when it is off, and stays usable', async ({ page }) => {
+  test('promises a check today only once the seeded slot has passed', async ({ page }) => {
+    // The rollout case. Every existing stake is seeded with its next
+    // local 06:00, so a manager enabling it that afternoon waits until
+    // the morning — the tip must not promise otherwise.
+    await seedReminderRow(false, NEXT_SLOT);
+    await signInAsManager(page, 'mgr-sr-future@example.com');
+    await page.goto(`/manager/configuration?tab=config`);
+
+    let firstRun = (await openTip(page, 'config-sync-reminder')).getByTestId(
+      'config-sync-reminder-first-run',
+    );
+    await expect(firstRun).toContainText(/does not run it straight away/i);
+    await expect(firstRun).toContainText('2099-01-02 06:00');
+    await page.keyboard.press('Escape');
+
+    // Once the stored slot is behind us the row is due at the next tick,
+    // and the same line says so.
+    await seedReminderRow(false, STALE_SLOT);
+    await page.reload();
+    firstRun = (await openTip(page, 'config-sync-reminder')).getByTestId(
+      'config-sync-reminder-first-run',
+    );
+    await expect(firstRun).toContainText(/within the hour of switching this on/i);
+  });
+
+  test('is greyed and locked, but still shows its own state, when the email switch is off', async ({
+    page,
+  }) => {
     // `notifications_enabled: false` suppresses the reminder email in
-    // `EmailService` but not the push, so the card warns rather than
-    // disabling a control that still does something.
-    await seedReminderRow(false);
+    // `EmailService` but not the push, and never changes the row's own
+    // `enabled`. So the slider greys out — you cannot change it — while
+    // still reading ON, because it is still running.
+    await seedReminderRow(true);
     await signInAsManager(page, 'mgr-sr-blocked@example.com', { notifications_enabled: false });
     await page.goto(`/manager/configuration?tab=config`);
 
-    const warning = page.getByTestId('config-sync-reminder-blocked');
-    await expect(warning).toContainText(/Email Notifications Enabled is off for this stake/i);
-    await expect(warning).toContainText(/still get the push/i);
-    await expect(page.getByTestId('config-sync-reminder-enabled')).toBeEnabled();
+    const toggle = page.getByTestId('config-sync-reminder-enabled');
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('config-sync-reminder-row')).toHaveClass(
+      /kd-setting-toggle--disabled/,
+    );
+
+    const tip = await openTip(page, 'config-sync-reminder');
+    const blocked = tip.getByTestId('config-sync-reminder-blocked');
+    await expect(blocked).toContainText(/Email Notifications Enabled is off/i);
+    await expect(blocked).toContainText(/this setting is locked/i);
+    await expect(blocked).toContainText(/still get the push/i);
+
+    // Nothing wrote `enabled: false` on the way past.
+    expect((await readReminderRow())?.['enabled']).toBe(true);
+  });
+});
+
+// A real touch context: `devices['Desktop Chrome']` has no touch, and
+// `.tap()` is the whole point here — the "i" affordance exists because
+// managers open this page on a phone and an iPad, where nothing hovers.
+test.describe('Config tab sliders on a touch phone', () => {
+  test.use({ hasTouch: true, viewport: { width: 375, height: 812 } });
+
+  test.beforeEach(async () => {
+    await clearAuth();
+    await clearFirestore();
   });
 
-  test('is usable at a 375px mobile viewport', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 812 });
+  test('every slider’s tooltip opens by tap, and the stack fits 375px', async ({ page }) => {
     await seedReminderRow(false);
     await signInAsManager(page, 'mgr-sr-mobile@example.com');
     await page.goto(`/manager/configuration?tab=config`);
 
+    for (const testId of [
+      'config-notifications-enabled',
+      'config-sync-reminder',
+      'config-eq-president-access',
+    ]) {
+      await page.getByTestId(`${testId}-info`).tap();
+      await expect(page.getByTestId(`${testId}-info-panel`)).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId(`${testId}-info-panel`)).toHaveCount(0);
+    }
+
     const toggle = page.getByTestId('config-sync-reminder-enabled');
     await expect(toggle).toBeVisible();
-    await toggle.click();
+    await toggle.tap();
     await expect(toggle).toHaveAttribute('aria-checked', 'true');
-    // The card must not push the page into a horizontal scroll.
+    // The stack must not push the page into a horizontal scroll.
     const overflows = await page.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth,
     );

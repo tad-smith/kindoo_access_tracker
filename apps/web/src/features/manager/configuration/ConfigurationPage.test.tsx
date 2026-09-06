@@ -44,6 +44,7 @@ const usePrincipalMock = vi.fn();
 const backfillEqPresidentAccessMock = vi.fn();
 const useStakeScheduleMock = vi.fn();
 const setSyncReminderEnabledMock = vi.fn();
+const setStakeToggleMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -67,6 +68,7 @@ vi.mock('./hooks', () => ({
   useUpsertOrganizationMutation: () => ({ mutateAsync: upsertOrganizationMock, isPending: false }),
   useDeleteOrganizationMutation: () => ({ mutateAsync: deleteOrganizationMock }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: updateStakeConfigMock, isPending: false }),
+  useSetStakeToggleMutation: () => ({ mutateAsync: setStakeToggleMock, isPending: false }),
   useUpdateIgnoredWardsMutation: () => ({ mutateAsync: updateIgnoredWardsMock, isPending: false }),
   useUpdateHomeKindooSiteMutation: () => ({
     mutateAsync: updateHomeKindooSiteMock,
@@ -217,6 +219,8 @@ function timestamp(iso: string): TimestampLike {
 beforeEach(() => {
   vi.clearAllMocks();
   updateStakeConfigMock.mockResolvedValue(undefined);
+  setStakeToggleMock.mockResolvedValue(undefined);
+  setSyncReminderEnabledMock.mockResolvedValue(undefined);
   updateIgnoredWardsMock.mockResolvedValue(undefined);
   updateHomeKindooSiteMock.mockResolvedValue(undefined);
   // Default: an ordinary manager, not a platform superadmin.
@@ -298,7 +302,11 @@ describe('<ConfigurationPage />', () => {
 
   it('renders the email-notifications switch with the email-specific label', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    const sw = screen.getByLabelText(/Email Notifications Enabled/i);
+    // Scoped to the switch: the InfoTip beside it is also labelled with
+    // the option's name ("More about …").
+    const sw = screen.getByLabelText(/Email Notifications Enabled/i, {
+      selector: '[role="switch"]',
+    });
     expect(sw).toBeInTheDocument();
     expect(sw).toHaveAttribute('role', 'switch');
   });
@@ -308,7 +316,11 @@ describe('<ConfigurationPage />', () => {
     const sw = screen.getByTestId('config-eq-president-access');
     expect(sw).toHaveAttribute('role', 'switch');
     expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByLabelText(/Elders Quorum Presidents Get App Access/i)).toBe(sw);
+    expect(
+      screen.getByLabelText(/Elders Quorum Presidents Get App Access/i, {
+        selector: '[role="switch"]',
+      }),
+    ).toBe(sw);
   });
 
   it('shows the Elders Quorum President switch checked when the stake has opted in', () => {
@@ -1827,35 +1839,112 @@ describe('Organizations tab', () => {
   });
 });
 
-// ---- Elders Quorum President app-access toggle ----------------------
+// ---- Stake config form vs. the sliders below it ---------------------
 //
-// The toggle itself is an ordinary config field. What's load-bearing is
-// the post-save backfill offer: it appears only when the saved value
-// actually FLIPPED, and only once setup is complete (initial setup has
-// no seats to reconcile, so the wizard must never raise it).
+// The Config tab is two controls-with-different-save-semantics stacked:
+// a react-hook-form saved by `Save config`, and beneath it a stack of
+// sliders that write on flip. The line between them is the thing worth
+// pinning — a slider that drifted back into the form would be governed
+// by a Save button the manager has no reason to press.
 
-describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
-  async function saveConfig(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole('button', { name: /^Save config$/ }));
-  }
-
-  it('saves eq_president_app_access: true when the switch is turned on', async () => {
+describe('<ConfigurationPage /> Config tab save boundary', () => {
+  it('Save config writes the three form fields and neither slider', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
-    await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalledWith(
-        expect.objectContaining({ eq_president_app_access: true }),
-      );
-    });
+    await user.click(screen.getByRole('button', { name: /^Save config$/ }));
+    await waitFor(() => expect(updateStakeConfigMock).toHaveBeenCalled());
+    expect(Object.keys(updateStakeConfigMock.mock.calls[0]![0] as object).sort()).toEqual([
+      'stake_name',
+      'stake_seat_cap',
+      'timezone',
+    ]);
+    expect(setStakeToggleMock).not.toHaveBeenCalled();
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
   });
 
-  it('offers to grant access to current Elders Quorum Presidents after turning the switch on', async () => {
+  it('renders the three sliders below the form, not inside it', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    for (const id of [
+      'config-notifications-enabled',
+      'config-sync-reminder-enabled',
+      'config-eq-president-access',
+    ]) {
+      expect(screen.getByTestId(id).closest('form')).toBeNull();
+    }
+  });
+});
+
+// ---- Email Notifications Enabled ------------------------------------
+
+describe('<ConfigurationPage /> email notifications slider', () => {
+  it('reads on when the stake field is absent, since email defaults on', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('reads off when the stake has turned email off', () => {
+    useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  });
+
+  it('writes the field the moment the slider moves, with no Save', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-notifications-enabled'));
+    await waitFor(() =>
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'notifications_enabled',
+        value: false,
+      }),
+    );
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('reports the failure and leaves the config form alone when the write is rejected', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    setStakeToggleMock.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-notifications-enabled'));
+    await vi.waitFor(() => {
+      const errors = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
+      expect(errors.map((t) => t.message)).toContain('Missing or insufficient permissions.');
+    });
+  });
+});
+
+// ---- Elders Quorum President app-access slider -----------------------
+//
+// An ordinary write-on-flip slider. What's load-bearing is the backfill
+// offer: it follows the flip (there is no Save to hang it off any more)
+// and only once setup is complete, since initial setup has no seats to
+// reconcile.
+
+describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
+  it('writes eq_president_app_access the moment the slider is turned on', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
+    await vi.waitFor(() => {
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'eq_president_app_access',
+        value: true,
+      });
+    });
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('offers to grant access to current Elders Quorum Presidents after turning the slider on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
     await screen.findByRole('heading', {
       name: 'Grant access to current Elders Quorum Presidents?',
     });
@@ -1868,7 +1957,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
     await vi.waitFor(() => {
       expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('grant');
@@ -1886,7 +1974,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-cancel'));
     await vi.waitFor(() => {
       expect(
@@ -1898,12 +1985,11 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     expect(backfillEqPresidentAccessMock).not.toHaveBeenCalled();
   });
 
-  it('offers to revoke access after turning the switch off', async () => {
+  it('offers to revoke access after turning the slider off', async () => {
     useStakeDocMock.mockReturnValue(stakeDocResult({ eq_president_app_access: true }));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await screen.findByRole('heading', { name: 'Revoke access from Elders Quorum Presidents?' });
     expect(screen.getByRole('button', { name: 'Revoke access now' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Leave access in place' })).toBeInTheDocument();
@@ -1923,7 +2009,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
     await vi.waitFor(() => {
       expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('revoke');
@@ -1934,51 +2019,124 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     });
   });
 
-  it('does not offer a backfill when the save leaves the toggle unchanged', async () => {
-    const user = userEvent.setup();
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    await saveConfig(user);
-    await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalled();
-    });
-    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
-  });
-
-  it('does not offer a backfill when the toggle flips before setup is complete', async () => {
+  it('does not offer a backfill when the slider flips before setup is complete', async () => {
     useStakeDocMock.mockReturnValue(stakeDocResult({ setup_complete: false }));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalledWith(
-        expect.objectContaining({ eq_president_app_access: true }),
-      );
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'eq_president_app_access',
+        value: true,
+      });
     });
+    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
+  });
+
+  it('does not offer a backfill when the write is rejected', async () => {
+    setStakeToggleMock.mockRejectedValue(new Error('nope'));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await vi.waitFor(() => expect(setStakeToggleMock).toHaveBeenCalled());
     expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
   });
 });
 
-describe('Sync Reminder card (Config tab)', () => {
-  it('sits below the stake config form rather than inside it', () => {
-    // It writes `stakeSchedules/{stakeId}`, not the stake doc, and saves
-    // on flip — inside the form it would look covered by Save config.
+// ---- Slider tooltips -------------------------------------------------
+//
+// The body of each row is slider + name; everything explanatory hangs
+// off an "i" affordance beside it. It has to open on a tap, because
+// managers use this page from a phone and an iPad where nothing hovers.
+
+describe('<ConfigurationPage /> slider tooltips', () => {
+  const TIPS: Array<[string, RegExp]> = [
+    ['config-notifications-enabled', /stake-wide switch for email/i],
+    ['config-sync-reminder', /temporary seat has expired in Kindoo/i],
+    ['config-eq-president-access', /Sync grants app access/i],
+  ];
+
+  it.each(TIPS)('%s keeps its explanation behind the information affordance', (testId) => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    const card = screen.getByTestId('config-sync-reminder');
-    expect(card.closest('form')).toBeNull();
-    expect(within(card).getByTestId('config-sync-reminder-enabled')).toBeInTheDocument();
+    expect(screen.getByTestId(`${testId}-info`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`${testId}-info-panel`)).toBeNull();
   });
 
-  it('disables the switch and says the scheduler will add it when no schedule doc exists', () => {
+  it.each(TIPS)('%s opens its explanation on a click', async (testId, copy) => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId(`${testId}-info`));
+    const panel = await screen.findByTestId(`${testId}-info-panel`);
+    expect(panel).toHaveTextContent(copy);
+  });
+
+  it('does not require a hover, which a touch device never produces', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.hover(screen.getByTestId('config-notifications-enabled-info'));
+    expect(screen.queryByTestId('config-notifications-enabled-info-panel')).toBeNull();
+    await user.click(screen.getByTestId('config-notifications-enabled-info'));
+    expect(await screen.findByTestId('config-notifications-enabled-info-panel')).toBeVisible();
+  });
+
+  it('stays reachable on a row whose slider is disabled, since it carries the reason', async () => {
     useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
-    expect(screen.getByTestId('config-sync-reminder-unseeded')).toHaveTextContent(
+    await user.click(screen.getByTestId('config-sync-reminder-info'));
+    expect(await screen.findByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
+  });
+
+  it('names the option it explains, so three identical icons are still distinguishable', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-info')).toHaveAttribute(
+      'aria-label',
+      'More about Sync reminders',
+    );
+  });
+});
+
+// ---- Sync reminders slider -------------------------------------------
+
+describe('<ConfigurationPage /> sync reminders slider', () => {
+  /** Open the row's tooltip and hand back its panel. */
+  async function openTip(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByTestId('config-sync-reminder-info'));
+    return screen.findByTestId('config-sync-reminder-info-panel');
+  }
+
+  it('sits directly beneath Email Notifications Enabled, indented under it', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const rows = Array.from(
+      screen.getByTestId('config-toggles').querySelectorAll('.kd-setting-toggle'),
+    );
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'config-notifications-enabled-row',
+      'config-sync-reminder-row',
+      'config-eq-president-access-row',
+    ]);
+    expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass('kd-setting-toggle--sub');
+    expect(screen.getByTestId('config-notifications-enabled-row')).not.toHaveClass(
+      'kd-setting-toggle--sub',
+    );
+  });
+
+  it('greys and disables the slider until the dispatcher has seeded the row', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+    expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
+    const tip = await openTip(user);
+    expect(within(tip).getByTestId('config-sync-reminder-unseeded')).toHaveTextContent(
       /scheduler adds this reminder to your stake within the hour/i,
     );
   });
 
-  it('disables the switch when the schedule doc exists but carries no syncReminder row', () => {
+  it('disables the slider when the schedule doc exists but carries no syncReminder row', () => {
     useStakeScheduleMock.mockReturnValue(
       scheduleDocResult([
         {
@@ -1990,7 +2148,6 @@ describe('Sync Reminder card (Config tab)', () => {
     );
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
-    expect(screen.getByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
   });
 
   it('never offers to create the row itself', async () => {
@@ -2001,59 +2158,15 @@ describe('Sync Reminder card (Config tab)', () => {
     expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
   });
 
-  it('shows the switch off, and warns about the first run, for a seeded but disabled row', () => {
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    const sw = screen.getByTestId('config-sync-reminder-enabled');
-    expect(sw).toBeEnabled();
-    expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
-      /first check runs within the hour of switching this on/i,
-    );
-    expect(screen.queryByTestId('config-sync-reminder-next')).toBeNull();
-  });
-
-  it('shows the switch on and the next check for a seeded, enabled row', () => {
-    useStakeScheduleMock.mockReturnValue(
-      scheduleDocResult([
-        syncReminderRow({
-          enabled: true,
-          next_trigger_time: timestamp('2099-01-02T13:00:00Z'),
-        }),
-      ]),
-    );
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
-    expect(screen.getByTestId('config-sync-reminder-next')).toHaveTextContent(
-      /Next check: 2099-01-02 06:00 \(America\/Denver\)/,
-    );
-    expect(screen.queryByTestId('config-sync-reminder-first-run')).toBeNull();
-  });
-
-  it('reports the next check as within the hour when the stored slot has gone stale', () => {
-    // What a manager sees right after switching it on: the row was
-    // never stamped while off, so it is due at the next hourly tick.
-    useStakeScheduleMock.mockReturnValue(
-      scheduleDocResult([
-        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
-      ]),
-    );
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    const next = screen.getByTestId('config-sync-reminder-next');
-    expect(next).toHaveTextContent(/Next check: within the hour/);
-    expect(next).not.toHaveTextContent(/America\/Denver/);
-  });
-
-  it('flips the row on when the switch is turned on', async () => {
+  it('flips the row on when the slider is turned on', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-sync-reminder-enabled'));
     await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(true));
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
   });
 
-  it('flips the row off when the switch is turned off', async () => {
+  it('flips the row off when the slider is turned off', async () => {
     useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
@@ -2061,15 +2174,81 @@ describe('Sync Reminder card (Config tab)', () => {
     await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(false));
   });
 
-  it('is not covered by the config form Save button', async () => {
+  it('shows the next check for a seeded, enabled row', async () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2099-01-02T13:00:00Z') }),
+      ]),
+    );
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    await user.click(screen.getByRole('button', { name: /Save config/ }));
-    await waitFor(() => expect(updateStakeConfigMock).toHaveBeenCalled());
-    // The stake-doc write carries no scheduled-task field — the two
-    // documents are saved by two different controls.
-    expect(Object.keys(updateStakeConfigMock.mock.calls[0]![0] as object)).not.toContain('tasks');
-    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const tip = await openTip(user);
+    expect(within(tip).getByTestId('config-sync-reminder-next')).toHaveTextContent(
+      /Next check: 2099-01-02 06:00 \(America\/Denver\)/,
+    );
+    expect(within(tip).queryByTestId('config-sync-reminder-first-run')).toBeNull();
+  });
+
+  it('reports the next check as within the hour when the stored slot has gone stale', async () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const tip = await openTip(user);
+    const next = within(tip).getByTestId('config-sync-reminder-next');
+    expect(next).toHaveTextContent(/Next check: within the hour/);
+    expect(next).not.toHaveTextContent(/America\/Denver/);
+  });
+
+  describe('when it is off and the manager is deciding whether to turn it on', () => {
+    it('promises a check within the hour only when the stored slot has already passed', async () => {
+      useStakeScheduleMock.mockReturnValue(
+        scheduleDocResult([
+          syncReminderRow({ enabled: false, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
+        ]),
+      );
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      expect(within(tip).getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
+        /first check runs within the hour of switching this on/i,
+      );
+    });
+
+    it('names the seeded slot instead when it is still in the future', async () => {
+      // The rollout case, and the one the old copy got wrong: the
+      // dispatcher seeds every existing stake with the next local 06:00,
+      // so a manager enabling it that afternoon waits until tomorrow.
+      useStakeScheduleMock.mockReturnValue(
+        scheduleDocResult([
+          syncReminderRow({ enabled: false, next_trigger_time: timestamp('2099-01-02T13:00:00Z') }),
+        ]),
+      );
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      const firstRun = within(tip).getByTestId('config-sync-reminder-first-run');
+      expect(firstRun).toHaveTextContent(/does not run it straight away/i);
+      expect(firstRun).toHaveTextContent(/2099-01-02 06:00 \(America\/Denver\)/);
+      expect(firstRun).not.toHaveTextContent(/within the hour/i);
+    });
+
+    it('promises a check within the hour when the row was seeded with no slot at all', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      expect(within(tip).getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
+        /within the hour of switching this on/i,
+      );
+      expect(within(tip).queryByTestId('config-sync-reminder-next')).toBeNull();
+    });
   });
 
   describe('when the stake-level email kill-switch is off', () => {
@@ -2077,41 +2256,69 @@ describe('Sync Reminder card (Config tab)', () => {
       useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
     });
 
-    it('says the email is blocked and names the setting that blocks it', () => {
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const warning = screen.getByTestId('config-sync-reminder-blocked');
-      expect(warning).toHaveTextContent(/Email Notifications Enabled is off for this stake/i);
-      expect(warning).toHaveTextContent(/no reminder email will be sent/i);
-    });
-
-    it('says push still goes out, because the kill-switch gates email only', () => {
-      // `EmailService.emailsEnabled` short-circuits Resend; the FCM
-      // fanout in `SyncReminderService` is untouched by the flag, and
-      // the every-third-day backoff is consumed either way.
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const warning = screen.getByTestId('config-sync-reminder-blocked');
-      expect(warning).toHaveTextContent(/still get the push/i);
-      expect(warning).toHaveTextContent(/backoff is still consumed/i);
-    });
-
-    it('leaves the switch usable, since the opt-in still governs push', async () => {
+    it('greys and disables the slider — the parent decides whether it can be changed', async () => {
       const user = userEvent.setup();
       render(<ConfigurationPage />, { wrapper: Wrapper });
       const sw = screen.getByTestId('config-sync-reminder-enabled');
-      expect(sw).toBeEnabled();
+      expect(sw).toBeDisabled();
+      expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass(
+        'kd-setting-toggle--disabled',
+      );
       await user.click(sw);
-      await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(true));
+      expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
     });
 
-    it('does not warn while the row is still unseeded', () => {
-      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    it('never writes enabled: false as a side effect — the row keeps its own value', () => {
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
       render(<ConfigurationPage />, { wrapper: Wrapper });
-      expect(screen.queryByTestId('config-sync-reminder-blocked')).toBeNull();
+      // Greyed, but still reading ON, because it is still running.
+      expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+    });
+
+    it('says the grey means locked, not paused, and names the switch that locks it', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      const blocked = within(tip).getByTestId('config-sync-reminder-blocked');
+      expect(blocked).toHaveTextContent(/Email Notifications Enabled is off/i);
+      expect(blocked).toHaveTextContent(/this setting is locked/i);
+      expect(blocked).toHaveTextContent(/It is not paused/i);
+    });
+
+    it('says push still goes out and the backoff is still consumed, because the kill-switch gates email only', async () => {
+      // `EmailService.emailsEnabled` short-circuits Resend; the FCM
+      // fanout in `SyncReminderService` is untouched by the flag, and
+      // the every-third-day backoff is consumed either way.
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      const blocked = within(tip).getByTestId('config-sync-reminder-blocked');
+      expect(blocked).toHaveTextContent(/still get the push/i);
+      expect(blocked).toHaveTextContent(/backoff is still consumed/i);
+    });
+
+    it('does not claim to be locked while the row is still unseeded', async () => {
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      expect(within(tip).queryByTestId('config-sync-reminder-blocked')).toBeNull();
+      expect(within(tip).getByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
     });
   });
 
-  it('does not warn about the kill-switch when email notifications are on', () => {
+  it('does not mention the kill-switch when email notifications are on', async () => {
+    const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    expect(screen.queryByTestId('config-sync-reminder-blocked')).toBeNull();
+    const tip = await openTip(user);
+    expect(within(tip).queryByTestId('config-sync-reminder-blocked')).toBeNull();
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeEnabled();
+    expect(screen.getByTestId('config-sync-reminder-row')).not.toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
   });
 });
