@@ -6,20 +6,6 @@ Format per bug: `## [B-NN] <short imperative title>` then `Status:`, `Owner:`, o
 
 ---
 
-## [B-29] Sync reminder UI copy still describes only the expired-seat condition
-Status: open
-Owner: @web-engineer
-Phase: cross-cutting
-
-T-106 (PR #293) gave `sendSyncReminderIfDue` a second, independent condition — a Kindoo site nobody has synced in seven days — but touched no file under `apps/web/`, so two pieces of copy now describe only half of what the toggle they sit beside actually does:
-
-- `apps/web/src/features/manager/configuration/ConfigurationPage.tsx` (`SyncReminderToggle`'s `InfoTip`, ~line 1997): "A daily check that emails your active Kindoo Managers when a temporary seat has expired in Kindoo but is still on the SBA roster… it stops on its own once they are gone." That last clause is now wrong as well as incomplete — the backoff stamp is deleted only when *both* conditions clear (`architecture.md` D40), so a stake with a stale site but no expired seats keeps getting reminded, contradicting "stops on its own once they are gone."
-- `apps/web/src/features/notifications/components/PushNotificationsPanel.tsx` (line 181): the push-category label reads `Sync reminders for expired temp seats`, which is the same one-condition framing.
-
-Neither is a functional bug — the toggle and the push category still gate the right thing — but a manager reading either string has no way to learn the reminder now also fires on a stale sync. Update both strings (and any test pinning them) to name both conditions; `docs/spec.md` §9 and the "sync heartbeat" paragraph there describe the current behaviour to word it against.
-
----
-
 ## [B-1] iPhone PWA notification tap doesn't navigate to the deep-link target
 Status: open
 Owner: @web-engineer
