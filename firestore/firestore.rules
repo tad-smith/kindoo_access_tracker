@@ -689,6 +689,46 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Sync heartbeats: when a Kindoo site was last scanned, one doc per
+    // site. Top-level rather than under `stakes/{stakeId}` for the same
+    // reason `stakeSchedules` is — `auditTrigger` fans a row for every
+    // write beneath that path, and a scan is frequent enough that a
+    // per-stake home would bury the audit log under heartbeats.
+    //
+    // Keyed by stake and site, never by manager: a stake can have several
+    // Kindoo Managers and any one of them syncing freshens the site for
+    // all of them, so the document is shared and last-writer-wins on a
+    // single timestamp. That is exactly the question the reminder asks —
+    // when did *anyone* last sync this site — and one doc per site means
+    // each write lands directly, with no read-modify-write to race.
+    //
+    // The rule does NOT check `kindoo_site_id` against `siteKey`; the two
+    // are related by `remoteApplySiteKey` (null <-> 'home'), which rules
+    // cannot express without pinning a shared constant here as well. Same
+    // carve-out, and same rationale, as `remoteApply`'s `desktops`.
+    match /syncHeartbeats/{stakeId}/sites/{siteKey} {
+
+      function validHeartbeat(data) {
+        return keysAreExactly(data, ['stake_id', 'kindoo_site_id', 'last_sync_at',
+                                     'ext_version', 'lastActor'])
+          && data.stake_id is string
+          && (data.kindoo_site_id == null || data.kindoo_site_id is string)
+          && data.last_sync_at is timestamp
+          && data.ext_version is string;
+      }
+
+      // No SPA surface reads this — the reminder handler uses the Admin
+      // SDK and bypasses rules entirely. Manager read is for debugging.
+      allow read: if isManager(stakeId) || isPlatformSuperadmin();
+      allow create, update: if isManager(stakeId)
+        && validHeartbeat(request.resource.data)
+        && lastActorMatchesAuth(request.resource.data);
+      // Deleting would read as "never synced", which is the one state
+      // that silences the reminder for good. Staleness is a timestamp
+      // going old, never a missing document.
+      allow delete: if false;
+    }
+
     // ===== Per-stake collections =====
 
     match /stakes/{stakeId} {
