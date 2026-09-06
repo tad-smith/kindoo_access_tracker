@@ -1234,6 +1234,47 @@
   gap: 8px;
 }
 
+/* Config tab's stake-level sliders. They sit below `Save config` and
+   write on flip, so the rule above them is doing real work: it marks
+   where the Save button's reach ends. Same treatment as
+   `.kd-config-subsection` for that reason — the page already uses a top
+   rule to fence one block off from the one above. */
+.kd-config-toggles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--kd-border);
+}
+
+/* One slider row: switch + name, then the "i" affordance. */
+.kd-setting-toggle {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+/* A sub-option, indented to sit under the option it belongs to. The
+   indent lines the child's switch up with the parent row's LABEL text
+   (44px switch + 8px gap), so the nesting reads without a connector.
+   Held at every breakpoint on purpose: the alignment IS the association,
+   and a phone is where a manager most needs it to be unambiguous. It
+   was briefly halved below 480px when the third row's label ran to 39
+   characters and wrapped; at 29 it fits on one line down to 320px, so
+   the compromise is no longer paid for. */
+.kd-setting-toggle--sub {
+  margin-left: 52px;
+}
+/* Greyed while the control cannot be changed. The label only — the
+   InfoTip beside it is where the reason lives, so it stays at full
+   contrast and full opacity. */
+.kd-setting-toggle--disabled > .kd-switch-label {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Auto Callings table — sortable list with grip + arrows. */
 .kd-callings-table-wrap {
   width: 100%;

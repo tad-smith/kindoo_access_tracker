@@ -254,7 +254,7 @@
   <p>The full roster across every ward and the stake, with filters for scope, building, and type. You can request a <strong>removal</strong> from here, but there's no edit button (edits are made from the roster pages). A foreign-site member's row may show a <span class="ui">Give Access To Stake Buildings</span> button — see <a href="#sites">Section 8</a>.</p>
 
   <h4>Configuration</h4>
-  <p>Tabs, in order: <strong>Config</strong> (seat cap, time zone, notification switch, and the <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> switch — see <a href="#appaccess">Section 9</a>), <strong>Managers</strong>, <strong>Kindoo Config</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
+  <p>Tabs, in order. <strong>Config</strong> holds <strong>Stake name</strong>, <strong>Stake seat cap</strong>, and <strong>Time zone</strong> above a rule, saved together with a <span class="ui">Save&nbsp;config</span> button; below the rule sit three sliders that each save the instant you flip them, with no button involved: <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>, <span class="ui">Sync&nbsp;reminders</span> indented beneath it, and <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> (see <a href="#appaccess">Section 9</a> and <a href="#notifications">Section 11</a>). Each slider has a tappable "i" beside it that explains what it does. Then <strong>Managers</strong>, <strong>Kindoo Config</strong>, <strong>Buildings</strong>, <strong>Wards</strong>, and <strong>Organizations</strong>. Buildings come before Wards because a ward must reference a building.</p>
 
   <h4>App Access</h4>
   <p>Shows who can sign in to the web app. Calling-based access is managed automatically and is read-only; you can add <strong>manual</strong> access for someone whose calling isn't on the standard list, at either <strong>Full</strong> or <strong>Limited</strong> level. See <a href="#appaccess">Section 9</a>.</p>
@@ -263,7 +263,7 @@
   <p>A filterable history of every change. See <a href="#audit">Section 12</a>.</p>
 
   <h4>Notifications</h4>
-  <p>Turn on push notifications for new requests, per device. See <a href="#notifications">Section 11</a>.</p>
+  <p>Turn on push, per device, for new requests and for sync reminders about expired temp seats — two independent switches. See <a href="#notifications">Section 11</a>.</p>
 
   <!-- 5 -->
   <h2 id="processing"><span class="num">5.</span> Processing requests (the daily workflow)</h2>
@@ -392,7 +392,7 @@
     <figcaption>Fig 7.1 — The Sync drift report.</figcaption>
   </figure>
 
-  <div class="callout"><span class="lbl">When to run Sync</span><p>Sync runs only when you start it — there's no schedule. Run it after callings change in your stake (new Bishopric, new Elders Quorum President, releases) and whenever a roster looks out of date. Newly-called leaders can't sign in to SBA until a Sync that picks up their calling has run. If you've just turned on <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span>, the backfill offered when you save that setting grants your <em>current</em> Elders Quorum Presidents access straight away — see <a href="#appaccess">Section 9</a>.</p></div>
+  <div class="callout"><span class="lbl">When to run Sync</span><p>Sync runs only when you start it — there's no schedule. Run it after callings change in your stake (new Bishopric, new Elders Quorum President, releases) and whenever a roster looks out of date. Newly-called leaders can't sign in to SBA until a Sync that picks up their calling has run. If you've just turned on <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span>, the backfill offered the moment you flip it grants your <em>current</em> Elders Quorum Presidents access straight away — see <a href="#appaccess">Section 9</a>.</p></div>
 
   <div class="callout tip"><span class="lbl">Sync never touches Kindoo</span><p>There is no "update Kindoo" action in Sync — every fix only adjusts SBA to match what Kindoo already shows. The only way SBA writes <em>into</em> Kindoo is when you process a request from the queue (<a href="#processing">Section 5</a>).</p></div>
 
@@ -424,7 +424,7 @@
   <div class="callout"><span class="lbl">A branch's list is shorter, and it isn't the ward list renamed</span><p>A branch gets <strong>four</strong> callings where a ward gets five: there is no Branch Executive Secretary, because branches don't have that calling. Assistant clerks grant no app access in either kind of unit.</p><p>SBA works out whether a unit is a ward or a branch from its <strong>name</strong> — a name ending in &ldquo;Branch&rdquo; is a branch, the same rule used everywhere else (see <a href="#setup">Section 2</a>). So if a branch presidency can't sign in, check the unit's name under <span class="ui">Configuration &rarr; Wards</span> first: a branch stored without &ldquo;Branch&rdquo; on the end is treated as a ward, and a Branch President is not on the ward list.</p></div>
 
   <h3>Elders Quorum Presidents</h3>
-  <p>Elders Quorum Presidents can assign temporary access for building cleaning and building lockup assignments. Not every stake works that way, so this one calling is a stake setting rather than a fixed rule. Turn on <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> under <span class="ui">Configuration&nbsp;→&nbsp;Config</span> and every Elders Quorum President in your stake can sign in.</p>
+  <p>Elders Quorum Presidents can assign temporary access for building cleaning and building lockup assignments. Not every stake works that way, so this one calling is a stake setting rather than a fixed rule. Turn on <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> under <span class="ui">Configuration&nbsp;→&nbsp;Config</span> and every Elders Quorum President in your stake can sign in.</p>
   <p>The access this calling grants is <span class="badge limited">LIMITED</span>, not full — it matches what the calling is for. An Elders Quorum President can request <strong>temporary</strong> access for their own ward's building, up to <strong>90 days</strong> at a time, and can change or remove only those temporary seats. Ongoing access isn't offered to them, and automatic and ongoing rows on their roster show no Edit or Remove option. <a href="#levels">Full and Limited access</a> below has the detail.</p>
   <p>Three things to know:</p>
   <ul>
@@ -432,8 +432,8 @@
     <li><strong>It applies to units, not the stake.</strong> Wards and branches both, on the same terms. The stake-level list above is unchanged either way.</li>
     <li><strong>A full grant outranks it.</strong> Levels are worked out per person per stake, so an Elders Quorum President you also give a full manual grant is full everywhere in the stake.</li>
   </ul>
-  <div class="callout imp"><span class="lbl">Turning it off does not remove anyone's access on its own</span><p>The setting decides what happens as callings change from here on. Anyone who already has access keeps it until their callings next change through Sync. That's why saving a change to this switch offers you a second step.</p></div>
-  <p>When you save the Config tab after <strong>changing</strong> this switch, SBA asks whether you also want to apply it to people who already hold the calling:</p>
+  <div class="callout imp"><span class="lbl">Turning it off does not remove anyone's access on its own</span><p>The setting decides what happens as callings change from here on. Anyone who already has access keeps it until their callings next change through Sync. That's why flipping this switch offers you a second step.</p></div>
+  <p>The moment you flip <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> — there's no separate save step, the slider writes as soon as you touch it — SBA asks whether you also want to apply the change to people who already hold the calling:</p>
   <ul>
     <li>Turning it <strong>on</strong> → <span class="ui">Grant&nbsp;access&nbsp;now</span> gives every current Elders Quorum President access immediately, instead of waiting for the next Sync run. Choose <span class="ui">Not&nbsp;now</span> to skip it.</li>
     <li>Turning it <strong>off</strong> → <span class="ui">Revoke&nbsp;access&nbsp;now</span> removes the access they were given. Choose <span class="ui">Leave&nbsp;access&nbsp;in&nbsp;place</span> to leave them alone.</li>
@@ -478,11 +478,15 @@
       <tr><td>A request is rejected</td><td>The original requester</td></tr>
       <tr><td>A request is cancelled</td><td>Active Kindoo Managers</td></tr>
       <tr><td>A pool goes over cap</td><td>Active Kindoo Managers</td></tr>
+      <tr><td>A temporary seat has expired but is still on the roster</td><td>Active Kindoo Managers</td></tr>
     </tbody>
   </table>
-  <p>Emails come from <code>noreply@mail.stakebuildingaccess.org</code> with your stake's name in the sender. You can set a reply-to address and turn all email off with the <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span> switch in <span class="ui">Configuration&nbsp;→&nbsp;Config</span> — the same tab that carries the <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> switch (<a href="#appaccess">Section 9</a>).</p>
+  <p>Emails come from <code>noreply@mail.stakebuildingaccess.org</code> with your stake's name in the sender. You can set a reply-to address and turn all email off with the <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span> switch in <span class="ui">Configuration&nbsp;→&nbsp;Config</span> — the same tab that carries the <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> switch (<a href="#appaccess">Section 9</a>).</p>
+  <h3>Sync reminders</h3>
+  <p>The last row in the table above is off by default and set per stake. Turn it on with the <span class="ui">Sync&nbsp;reminders</span> switch under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, nested beneath <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>. Once it's on, SBA checks daily for temporary seats that have expired in Kindoo but are still sitting on your roster, and mails your active Kindoo Managers — at most every third day while any stay expired. Its one instruction is to run <strong>Sync</strong>, which clears those seats; the reminder stops on its own once none are left.</p>
+  <div class="callout imp"><span class="lbl">Greyed out doesn't mean stopped</span><p><span class="ui">Sync&nbsp;reminders</span> is nested under <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>, so turning that parent switch off greys the reminder row — but the reminder keeps running underneath it. Any manager subscribed to its push (below) still gets the push, and its every-third-day timer keeps ticking; only the email itself is suppressed. And because the row is greyed while the parent is off, you can't turn the reminder off from here without first turning <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span> back on.</p></div>
   <h3>Push notifications</h3>
-  <p>On the <span class="ui">Notifications</span> page you can enable push notifications for <strong>new requests</strong>, per device. Enabling it on your phone doesn't affect your laptop, and vice versa.</p>
+  <p>On the <span class="ui">Notifications</span> page you can enable push, per device, for two categories that work independently: <strong>new requests</strong> and <strong>sync reminders for expired temp seats</strong>. Subscribing to one doesn't subscribe you to the other, and enabling either on your phone doesn't affect your laptop, and vice versa.</p>
 
   <!-- 12 -->
   <h2 id="audit"><span class="num">12.</span> The audit log</h2>
@@ -519,7 +523,7 @@
   <p>If they lead a <strong>branch</strong>, check the unit's name too. A branch is identified by its name ending in &ldquo;Branch&rdquo;; stored without it, the unit is treated as a ward, and Branch President is not on the ward list. Fix the name under <span class="ui">Configuration &rarr; Wards</span>, then run Sync.</p>
 
   <h4>An Elders Quorum President can't sign in.</h4>
-  <p>Check that <span class="ui">Elders&nbsp;Quorum&nbsp;Presidents&nbsp;Get&nbsp;App&nbsp;Access</span> is on under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, then run Sync so their calling is picked up. If you turned that setting on and skipped the <span class="ui">Grant&nbsp;access&nbsp;now</span> step, a Sync run is what grants them access. Note the setting covers the president only — not quorum counselors or the secretary — and their calling must be current in Kindoo. (See <a href="#appaccess">Section 9</a>.)</p>
+  <p>Check that <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> is on under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, then run Sync so their calling is picked up. If you turned that setting on and skipped the <span class="ui">Grant&nbsp;access&nbsp;now</span> step, a Sync run is what grants them access. Note the setting covers the president only — not quorum counselors or the secretary — and their calling must be current in Kindoo. (See <a href="#appaccess">Section 9</a>.)</p>
 
   <h4>A leader says the request form only offers temporary access.</h4>
   <p>They have <strong>Limited</strong> access. On the <span class="ui">App&nbsp;Access</span> page, check the <span class="ui">Scope</span> column of their row for a <span class="badge limited">LIMITED</span> badge. Two things land someone there: a manual grant added at the <strong>Limited</strong> level, or the <strong>Elders Quorum President</strong> calling in a stake with that setting on. For a manual grant, delete it and re-add it at the <strong>Full</strong> level — there's no in-place level edit. For an Elders Quorum President, Limited is what the calling grants; give them a full manual grant if they need more. Either way, one full grant anywhere in the stake makes them full everywhere in it. (See <a href="#levels">Section 9</a>.)</p>

@@ -68,12 +68,17 @@ import {
   useWards,
 } from './hooks';
 import { Button } from '../../components/ui/Button';
+import { InfoTip } from '../../components/ui/InfoTip';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Switch } from '../../components/ui/Switch';
 import { ToastHost } from '../../components/ui/Toast';
 import { LoadingSpinner } from '../../lib/render/LoadingSpinner';
 import { toast } from '../../lib/store/toast';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../lib/eqPresidentAccessCopy';
 import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT, WARD_NAME_LABEL } from '../../lib/wardCopy';
 import {
   canonicalEmail as canonicalEmailFn,
@@ -485,22 +490,39 @@ function Step1Form() {
         </p>
       ) : null}
       {/* No backfill dialog here: a stake still in setup has no existing
-          seats to reconcile, so the toggle just saves. */}
-      <label className="kd-switch-label" htmlFor="bootstrap-eq-president-access">
-        <Controller
-          name="eq_president_app_access"
-          control={control}
-          render={({ field }) => (
-            <Switch
-              id="bootstrap-eq-president-access"
-              checked={field.value === true}
-              onCheckedChange={field.onChange}
-              data-testid="bootstrap-eq-president-access"
-            />
-          )}
-        />
-        <span>Elders Quorum Presidents Get App Access</span>
-      </label>
+          seats to reconcile, so the toggle just saves.
+
+          The "i" carries the only description of this setting a
+          first-time admin will see — the Config tab's copy of the row is
+          behind a page they have not reached yet — so the two read from
+          the same constants rather than each holding their own string. */}
+      <div className="kd-setting-toggle">
+        <label className="kd-switch-label" htmlFor="bootstrap-eq-president-access">
+          <Controller
+            name="eq_president_app_access"
+            control={control}
+            render={({ field }) => (
+              <Switch
+                id="bootstrap-eq-president-access"
+                checked={field.value === true}
+                onCheckedChange={field.onChange}
+                data-testid="bootstrap-eq-president-access"
+              />
+            )}
+          />
+          <span>{EQ_PRESIDENT_ACCESS_LABEL}</span>
+        </label>
+        {/* Opens upward: the wizard card is narrow and the default
+            downward panel covered Save, which is the control a
+            first-time admin needs immediately after reading this. */}
+        <InfoTip
+          label={EQ_PRESIDENT_ACCESS_LABEL}
+          side="top"
+          data-testid="bootstrap-eq-president-access-info"
+        >
+          <p>{EQ_PRESIDENT_ACCESS_TIP}</p>
+        </InfoTip>
+      </div>
       <div className="form-actions">
         <Button type="submit" disabled={mutation.isPending || formState.isSubmitting}>
           {mutation.isPending ? 'Saving…' : 'Save'}

@@ -81,7 +81,9 @@ gcloud secrets add-iam-policy-binding RESEND_API_KEY \
 
 The triggers (`notifyOnRequestWrite`, `notifyOnOverCap`) declare
 `secrets: [RESEND_API_KEY]` in their options block; Cloud Functions
-mounts the secret as the `RESEND_API_KEY` env var at runtime.
+mounts the secret as the `RESEND_API_KEY` env var at runtime. So does
+`runScheduledTask` — the scheduled-task handlers it runs out of the
+registry include the sync reminder, which sends email.
 
 ### 4. Set `WEB_BASE_URL` on the functions deploy
 

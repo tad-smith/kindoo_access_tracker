@@ -26,7 +26,7 @@
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -62,7 +62,10 @@ import {
   useManagers,
   useRequests,
   useSeats,
+  useSetStakeToggleMutation,
+  useSetSyncReminderEnabledMutation,
   useStakeDoc,
+  useStakeSchedule,
   useUpdateHomeKindooSiteMutation,
   useUpdateIgnoredWardsMutation,
   useUpdateStakeConfigMutation,
@@ -73,13 +76,21 @@ import {
   useUpsertWardMutation,
   useWards,
 } from './hooks';
+import { syncReminderTask } from './syncReminder';
 import { useOrganizations, sortOrganizations } from '../../organizations/hooks';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
+import { InfoTip } from '../../../components/ui/InfoTip';
 import { Input } from '../../../components/ui/Input';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
+import { cn } from '../../../lib/cn';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../../lib/eqPresidentAccessCopy';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -1607,13 +1618,31 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
 }
 
 // ---- Config keys tab ------------------------------------------------
+//
+// Two blocks, and the split is the point:
+//
+//   * a react-hook-form over the stake doc's typed fields, saved by an
+//     explicit `Save config`;
+//   * beneath it, a stack of sliders that each write the moment they
+//     move.
+//
+// A slider inside the form would look covered by a Save button that
+// does not cover it, and a slider that waited for Save would be the
+// only control on the page whose visible state was a lie until you
+// pressed something. So the Save button sits above the rule and covers
+// exactly what is above it.
+//
+// `Sync reminders` is nested under `Email Notifications Enabled` — an
+// indent, not a section — because the parent decides whether the child
+// can be changed, not whether it runs. See `SyncReminderToggle`.
 
 function ConfigKeysTab() {
   const stake = useStakeDoc();
   const update = useUpdateStakeConfigMutation();
+  const setToggle = useSetStakeToggleMutation();
   const backfill = useBackfillEqPresidentAccessMutation();
-  // Non-null while the post-save backfill offer is on screen; the value
-  // is the direction the flag just moved.
+  // Non-null while the backfill offer is on screen; the value is the
+  // direction the flag just moved.
   const [backfillPrompt, setBackfillPrompt] = useState<'grant' | 'revoke' | null>(null);
 
   const defaults = useMemo<ConfigForm>(() => {
@@ -1622,10 +1651,6 @@ function ConfigKeysTab() {
       stake_name: s?.stake_name ?? '',
       stake_seat_cap: s?.stake_seat_cap ?? 0,
       timezone: s?.timezone ?? 'America/Denver',
-      notifications_enabled: s?.notifications_enabled ?? true,
-      // Opt-in, so absent means off. Deliberately NOT `?? true` like
-      // `notifications_enabled` above.
-      eq_president_app_access: s?.eq_president_app_access === true,
     };
   }, [stake.data]);
 
@@ -1636,18 +1661,41 @@ function ConfigKeysTab() {
   const { control, register, handleSubmit, formState } = form;
 
   async function onSubmit(input: ConfigForm) {
+    try {
+      await update.mutateAsync(input);
+      toast('Config saved.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function onToggleNotifications(next: boolean) {
+    try {
+      await setToggle.mutateAsync({ field: 'notifications_enabled', value: next });
+      toast(next ? 'Email notifications turned on.' : 'Email notifications turned off.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function onToggleEqPresident(next: boolean) {
     // Read the persisted value before the write lands — the live stake
     // snapshot updates underneath us once the mutation resolves.
     const prev = stake.data?.eq_president_app_access === true;
     try {
-      await update.mutateAsync(input);
-      toast('Config saved.', 'success');
+      await setToggle.mutateAsync({ field: 'eq_president_app_access', value: next });
+      toast(
+        next
+          ? 'Elders Quorum Presidents will get app access.'
+          : 'Elders Quorum Presidents will no longer get app access.',
+        'success',
+      );
       // Offer the reconcile pass only on a real flip. The `setup_complete`
       // guard is defensive — routing keeps everyone on the bootstrap
       // wizard until setup completes — but it pins the requirement that
       // initial setup never raises a backfill dialog.
-      if (input.eq_president_app_access !== prev && stake.data?.setup_complete === true) {
-        setBackfillPrompt(input.eq_president_app_access ? 'grant' : 'revoke');
+      if (next !== prev && stake.data?.setup_complete === true) {
+        setBackfillPrompt(next ? 'grant' : 'revoke');
       }
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -1667,7 +1715,7 @@ function ConfigKeysTab() {
     } catch (err) {
       toast(errorMessage(err), 'error');
     } finally {
-      // Close either way: the config save already landed, and Sync
+      // Close either way: the setting write already landed, and Sync
       // self-heals the access docs on its next run, so a failed backfill
       // is a delay rather than a broken state.
       setBackfillPrompt(null);
@@ -1678,72 +1726,80 @@ function ConfigKeysTab() {
     return <LoadingSpinner />;
   }
 
+  const notificationsEnabled = stake.data.notifications_enabled !== false;
+
   return (
-    <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
-      <h2>Stake config</h2>
-      <label>
-        Stake name
-        <Input {...register('stake_name')} />
-      </label>
-      <label>
-        Stake seat cap
-        <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
-      </label>
-      <label htmlFor="config-timezone">
-        Timezone (IANA, e.g. America/Denver)
-        <Controller
-          name="timezone"
-          control={control}
-          render={({ field }) => (
-            <TimezoneCombobox
-              id="config-timezone"
-              value={field.value}
-              onChange={field.onChange}
-              data-testid="config-timezone"
-            />
-          )}
-        />
-      </label>
-      <label className="kd-switch-label" htmlFor="config-notifications-enabled">
-        <Controller
-          name="notifications_enabled"
-          control={control}
-          render={({ field }) => (
-            <Switch
-              id="config-notifications-enabled"
-              checked={field.value === true}
-              onCheckedChange={field.onChange}
-              data-testid="config-notifications-enabled"
-            />
-          )}
-        />
-        <span>Email Notifications Enabled</span>
-      </label>
-      <label className="kd-switch-label" htmlFor="config-eq-president-access">
-        <Controller
-          name="eq_president_app_access"
-          control={control}
-          render={({ field }) => (
-            <Switch
-              id="config-eq-president-access"
-              checked={field.value === true}
-              onCheckedChange={field.onChange}
-              data-testid="config-eq-president-access"
-            />
-          )}
-        />
-        <span>Elders Quorum Presidents Get App Access</span>
-      </label>
-      {formState.errors.stake_name ? (
-        <p role="alert" className="kd-form-error">
-          {formState.errors.stake_name.message}
-        </p>
-      ) : null}
-      <div className="form-actions">
-        <Button type="submit" disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save config'}
-        </Button>
+    <>
+      <form className="kd-wizard-form" onSubmit={handleSubmit(onSubmit)}>
+        <h2>Stake config</h2>
+        <label>
+          Stake name
+          <Input {...register('stake_name')} />
+        </label>
+        <label>
+          Stake seat cap
+          <Input type="number" min={0} {...register('stake_seat_cap', { valueAsNumber: true })} />
+        </label>
+        <label htmlFor="config-timezone">
+          Timezone (IANA, e.g. America/Denver)
+          <Controller
+            name="timezone"
+            control={control}
+            render={({ field }) => (
+              <TimezoneCombobox
+                id="config-timezone"
+                value={field.value}
+                onChange={field.onChange}
+                data-testid="config-timezone"
+              />
+            )}
+          />
+        </label>
+        {formState.errors.stake_name ? (
+          <p role="alert" className="kd-form-error">
+            {formState.errors.stake_name.message}
+          </p>
+        ) : null}
+        <div className="form-actions">
+          <Button type="submit" disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save config'}
+          </Button>
+        </div>
+      </form>
+
+      <div className="kd-config-toggles" data-testid="config-toggles">
+        <SettingToggle
+          id="config-notifications-enabled"
+          testId="config-notifications-enabled"
+          label="Email Notifications Enabled"
+          checked={notificationsEnabled}
+          disabled={setToggle.isPending}
+          onChange={onToggleNotifications}
+        >
+          <p>
+            The stake-wide switch for email from Stake Building Access — new-request notices,
+            approvals, denials, and reminders. Turn it off and this stake sends no email at all.
+          </p>
+          <p>
+            It gates email only. Push notifications to managers who subscribed to them are
+            unaffected.
+          </p>
+        </SettingToggle>
+
+        <SyncReminderToggle notificationsEnabled={notificationsEnabled} />
+
+        <SettingToggle
+          id="config-eq-president-access"
+          testId="config-eq-president-access"
+          label={EQ_PRESIDENT_ACCESS_LABEL}
+          checked={stake.data.eq_president_app_access === true}
+          disabled={setToggle.isPending}
+          onChange={onToggleEqPresident}
+        >
+          <p>{EQ_PRESIDENT_ACCESS_TIP}</p>
+        </SettingToggle>
       </div>
+
       <Dialog
         open={backfillPrompt !== null}
         onOpenChange={(next) => {
@@ -1776,6 +1832,168 @@ function ConfigKeysTab() {
           </Dialog.ConfirmButton>
         </Dialog.Footer>
       </Dialog>
-    </form>
+    </>
+  );
+}
+
+// ---- Setting slider -------------------------------------------------
+//
+// One row of the toggle stack: slider, the option's name, and an "i"
+// affordance carrying everything the name does not say. The body stays
+// at slider + name so the stack reads as a list of settings rather than
+// as prose; the explanation is one tap away, on a phone as much as on a
+// desktop (`InfoTip` is click/tap-triggered, not hover).
+//
+// `sub` indents the row to show it belongs to the option above it.
+// `disabled` greys the label with the slider, but never the InfoTip —
+// the tip explains what the setting is, and that stays worth reading
+// when the control is inert.
+//
+// `pending` is a THIRD state and must not be folded into `disabled`. A
+// row whose value has not arrived yet renders a placeholder where the
+// switch goes, never a switch: a disabled-and-off switch is a settled
+// value, and showing one for a setting that is actually on is simply
+// wrong. It reads as "not ready", which is what the tooltip says at the
+// same moment.
+
+interface SettingToggleProps {
+  id: string;
+  /** Prefix for the row's `-row` and `-info` test ids. */
+  testId: string;
+  /** Test id of the switch itself. Defaults to `testId`. */
+  switchTestId?: string;
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  /** The row's value has not loaded yet. Renders a placeholder, not a switch. */
+  pending?: boolean;
+  sub?: boolean;
+  onChange: (next: boolean) => void | Promise<void>;
+  /** Tooltip body. Paragraphs, not a single run-on sentence. */
+  children: ReactNode;
+}
+
+function SettingToggle({
+  id,
+  testId,
+  switchTestId = testId,
+  label,
+  checked,
+  disabled = false,
+  pending = false,
+  sub = false,
+  onChange,
+  children,
+}: SettingToggleProps) {
+  return (
+    <div
+      className={cn(
+        'kd-setting-toggle',
+        sub && 'kd-setting-toggle--sub',
+        (disabled || pending) && 'kd-setting-toggle--disabled',
+      )}
+      data-testid={`${testId}-row`}
+      aria-busy={pending || undefined}
+    >
+      {pending ? (
+        <span className="kd-switch-label">
+          <Skeleton
+            className="h-6 w-11 rounded-full"
+            role="status"
+            aria-label={`Loading ${label}`}
+            data-testid={`${switchTestId}-pending`}
+          />
+          <span>{label}</span>
+        </span>
+      ) : (
+        <label className="kd-switch-label" htmlFor={id}>
+          <Switch
+            id={id}
+            checked={checked}
+            disabled={disabled}
+            onCheckedChange={(next) => {
+              void onChange(next);
+            }}
+            data-testid={switchTestId}
+          />
+          <span>{label}</span>
+        </label>
+      )}
+      <InfoTip label={label} data-testid={`${testId}-info`}>
+        {children}
+      </InfoTip>
+    </div>
+  );
+}
+
+// ---- Sync reminder --------------------------------------------------
+//
+// A sub-option of Email Notifications Enabled in the UI and NOT in
+// behaviour, which is the whole subtlety of this row.
+//
+// The reminder honours its own `enabled` value, full stop: with the
+// stake's email kill-switch off, an enabled reminder still runs, still
+// pushes to managers who subscribed, and still consumes its
+// every-third-day backoff — `notifications_enabled` gates Resend and
+// nothing else. So greying the control means "you cannot change this
+// right now", never "this is not running", and the tip says so rather
+// than letting the grey imply dormancy. Nothing here ever writes
+// `enabled: false` as a side effect of the parent switch.
+//
+// Its two disabled causes are distinct from a third state, "value not
+// loaded yet". `useStakeSchedule` is a second subscription — the stake
+// doc gates this whole tab's render, so the reminder row's snapshot
+// always lands strictly after the row becomes visible — and until it
+// does, `syncReminderTask` reads null. Rendering that as a
+// disabled-and-off switch would show every manager, on every load of
+// this tab, a settled "off and unavailable" for a reminder that is on.
+// So `pending` renders a placeholder instead: no value shown until
+// there is one.
+//
+// The other disabled cause is the ordinary state of a new stake: the
+// hourly dispatcher seeds every registry job onto every stake, so until
+// it has run once there is no row to flip. The client must never create
+// the row itself — seeding is what decides the default schedule, and a
+// client-created row would pin one the registry never chose.
+
+interface SyncReminderToggleProps {
+  /** `stake.notifications_enabled`, absent read as on (its default). */
+  notificationsEnabled: boolean;
+}
+
+function SyncReminderToggle({ notificationsEnabled }: SyncReminderToggleProps) {
+  const schedule = useStakeSchedule();
+  const setEnabled = useSetSyncReminderEnabledMutation();
+
+  const task = useMemo(() => syncReminderTask(schedule.data), [schedule.data]);
+  const seeded = task !== null;
+  const enabled = task?.enabled === true;
+
+  return (
+    <SettingToggle
+      id="config-sync-reminder-enabled"
+      testId="config-sync-reminder"
+      switchTestId="config-sync-reminder-enabled"
+      label="Sync reminders"
+      sub
+      checked={enabled}
+      pending={schedule.isPending}
+      disabled={!seeded || !notificationsEnabled || setEnabled.isPending}
+      onChange={async (next) => {
+        try {
+          await setEnabled.mutateAsync(next);
+          toast(next ? 'Sync reminder turned on.' : 'Sync reminder turned off.', 'success');
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      }}
+    >
+      <p>
+        A daily check that emails your active Kindoo Managers when a temporary seat has expired in
+        Kindoo but is still on the SBA roster. Its one instruction is to run Sync, which clears
+        those seats. While seats stay expired it repeats at most every third day, and it stops on
+        its own once they are gone.
+      </p>
+    </SettingToggle>
   );
 }

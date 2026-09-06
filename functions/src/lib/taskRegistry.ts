@@ -12,7 +12,8 @@
 // unit of work for one stake at one instant. `SyncReminderService`'s
 // `sendSyncReminderIfDue` is the shape to copy.
 
-import type { TaskSchedule } from '@kindoo/shared';
+import { SYNC_REMINDER_JOB, type TaskSchedule } from '@kindoo/shared';
+import { sendSyncReminderIfDue } from '../services/SyncReminderService.js';
 
 export type ScheduledJob = {
   /** One stake, one instant. Must be idempotent — see `dispatchScheduledTasks`. */
@@ -33,11 +34,29 @@ export type JobRegistry = Record<string, ScheduledJob>;
  * Every schedulable job, keyed by the name stored in
  * `stakeSchedules/{stakeId}.tasks[].job`.
  *
- * Empty: the dispatcher ships before its first consumer.
- * `sendSyncReminderIfDue` (`services/SyncReminderService.ts`) is
- * registered as `syncReminder` in the follow-up that wires it up.
- *
  * Never reach for this constant directly from dispatch or run code —
  * both take the registry as a parameter so tests can pass a fixture.
  */
-export const SCHEDULED_JOBS: JobRegistry = {};
+export const SCHEDULED_JOBS: JobRegistry = {
+  /**
+   * The expired-temp-seat reminder (D37, spec §9).
+   *
+   * `daily` is a CHECK cadence, not a mail cadence. The handler's own
+   * `SYNC_REMINDER_BACKOFF_DAYS = 3` decides whether anything is sent,
+   * so a stake whose seats stay expired is mailed at most every third
+   * day while being looked at every day. Weekly here would instead
+   * delay a brand-new expiry by up to a week, which is the case the
+   * reminder exists for.
+   *
+   * 06:00 in the stake's own timezone: in the manager's inbox before
+   * the working day, not overnight.
+   *
+   * Keyed off the shared constant because the manager toggle finds this
+   * row by the same string — a literal on each side would drift.
+   */
+  [SYNC_REMINDER_JOB]: {
+    handler: sendSyncReminderIfDue,
+    defaultSchedule: { type: 'daily', hour: 6 },
+    defaultEnabled: false,
+  },
+};
