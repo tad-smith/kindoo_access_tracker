@@ -125,6 +125,10 @@ export const organizationFormSchema = z.object({
 });
 export type OrganizationForm = z.infer<typeof organizationFormSchema>;
 
+// Stake config — the three fields `Save config` covers. The tab's two
+// stake-level Booleans (`notifications_enabled`,
+// `eq_president_app_access`) are NOT here: they render as sliders that
+// write on flip, so they belong to no form.
 export const configSchema = z.object({
   stake_name: z.string().trim().min(1, 'Stake name is required.'),
   stake_seat_cap: z
@@ -132,9 +136,5 @@ export const configSchema = z.object({
     .int()
     .min(0, 'Seat cap must be 0 or greater.'),
   timezone: z.string().trim().min(1, 'Timezone is required.'),
-  notifications_enabled: z.boolean(),
-  // Opt-in: the persisted field is optional and absent means off, so the
-  // form resolves it as `=== true` rather than `?? true`.
-  eq_president_app_access: z.boolean(),
 });
 export type ConfigForm = z.infer<typeof configSchema>;

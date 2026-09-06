@@ -8,6 +8,23 @@ Format is unchanged — see the header of `TASKS.md`.
 
 ---
 
+## [T-107] Register the sync reminder as the dispatcher's first job, with a per-stake opt-in toggle
+Status: done (2026-09-05 — PR #290)
+Owner: @backend-engineer + @web-engineer + @docs-keeper
+Phase: cross-cutting
+
+The third of three PRs. [T-103] built `sendSyncReminderIfDue` with no trigger; [T-104] built the dispatcher with an empty registry. This wires them together and gives Kindoo Managers a switch.
+
+**Backend.** One entry in `SCHEDULED_JOBS`: `syncReminder`, `{ type: 'daily', hour: 6 }`, `defaultEnabled: false`. Daily is a *check* cadence, not a mail cadence — `SYNC_REMINDER_BACKOFF_DAYS = 3` means a stake whose seats stay expired is mailed at most every third day.
+
+**Stamp-last stands.** Delivery is at-least-once and `sendSyncReminderIfDue` reads its backoff stamp before sending and writes it after, so two overlapping executions can both mail. Deliberate: claiming the stamp first would trade a duplicate nudge for up to three days of silence about seats that are actively expired, and the mail's one instruction ("run Sync") is idempotent.
+
+**The clobber race is not deliberate and is fixed here.** `dispatchScheduledTasks` reads `stakeSchedules/{stakeId}` at :139 and writes the whole `tasks` array back at :245; `tasks` is a list, so Firestore cannot update one element by path. A manager flipping `enabled` inside that window is silently reverted. Invisible while there was no UI — with a toggle it reads as "I turned it off and it turned itself back on."
+
+**Web.** A toggle on the Configuration page's Config tab. It only ever flips `enabled` on a row the dispatcher already seeded; it never creates one. Two stake-level switches now bear on the same mail, and `notifications_enabled` silently wins, so the card names that rather than offering a toggle that does nothing.
+
+**Done.** All three PRs (T-103, T-104, T-107) landed, and the web half shipped a second cut before merge: the standalone card described above was reworked into a three-row slider stack on the Config tab (Email Notifications Enabled, Sync reminders nested beneath it, EQ Presidents Have SBA Access), each writing on flip, with the explanatory prose moved into a tap-triggered `InfoTip` per row. The Sync reminders row now greys and disables under its parent rather than staying live with a warning beside it — `notifications_enabled` still gates email only, not push or the backoff stamp, and the row's tip says so. Registering the job also exposed a silent email failure (`runScheduledTask` needed its own `RESEND_API_KEY` binding), fixed in the same PR. The clobber-race fix shipped as designed. Recorded as `architecture.md` D39, amending D38(f)'s "no manager UI" clause and D37's "still has no caller" clause in place. See `docs/changelog/sync-reminder-wiring.md`.
+
 ## [T-104] Per-stake scheduled tasks — one dispatcher, many triggers
 Status: done (2026-09-05 — PR #289)
 Owner: @backend-engineer + @infra-engineer (queue provisioning) + @docs-keeper

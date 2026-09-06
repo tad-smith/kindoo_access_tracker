@@ -25,6 +25,7 @@ export {
   CommandItem,
   CommandList,
 } from './Command';
+export { InfoTip, type InfoTipProps } from './InfoTip';
 export { Input } from './Input';
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover';
 export { Select } from './Select';

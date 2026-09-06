@@ -12,11 +12,18 @@ import type {
   KindooManager,
   KindooSite,
   Organization,
+  ScheduledTask,
   Seat,
   Stake,
+  StakeSchedule,
+  TimestampLike,
   Ward,
 } from '@kindoo/shared';
 import { unitNameCollisionMessage } from '@kindoo/shared';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../../lib/eqPresidentAccessCopy';
 
 const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
@@ -39,6 +46,9 @@ const updateIgnoredWardsMock = vi.fn();
 const updateHomeKindooSiteMock = vi.fn();
 const usePrincipalMock = vi.fn();
 const backfillEqPresidentAccessMock = vi.fn();
+const useStakeScheduleMock = vi.fn();
+const setSyncReminderEnabledMock = vi.fn();
+const setStakeToggleMock = vi.fn();
 
 vi.mock('./hooks', () => ({
   useStakeDoc: () => useStakeDocMock(),
@@ -62,6 +72,7 @@ vi.mock('./hooks', () => ({
   useUpsertOrganizationMutation: () => ({ mutateAsync: upsertOrganizationMock, isPending: false }),
   useDeleteOrganizationMutation: () => ({ mutateAsync: deleteOrganizationMock }),
   useUpdateStakeConfigMutation: () => ({ mutateAsync: updateStakeConfigMock, isPending: false }),
+  useSetStakeToggleMutation: () => ({ mutateAsync: setStakeToggleMock, isPending: false }),
   useUpdateIgnoredWardsMutation: () => ({ mutateAsync: updateIgnoredWardsMock, isPending: false }),
   useUpdateHomeKindooSiteMutation: () => ({
     mutateAsync: updateHomeKindooSiteMock,
@@ -69,6 +80,11 @@ vi.mock('./hooks', () => ({
   }),
   useBackfillEqPresidentAccessMutation: () => ({
     mutateAsync: backfillEqPresidentAccessMock,
+    isPending: false,
+  }),
+  useStakeSchedule: () => useStakeScheduleMock(),
+  useSetSyncReminderEnabledMutation: () => ({
+    mutateAsync: setSyncReminderEnabledMock,
     isPending: false,
   }),
 }));
@@ -162,9 +178,71 @@ function stakeDocResult(overrides: Partial<Stake> = {}) {
   };
 }
 
+// `stakeSchedules/{stakeId}` live result. `undefined` tasks models the
+// document not existing yet — the state a stake sits in until the
+// hourly dispatcher has seeded it once.
+function scheduleDocResult(tasks: ScheduledTask[] | undefined) {
+  return {
+    data:
+      tasks === undefined
+        ? undefined
+        : ({
+            tasks,
+            lastActor: { email: 'mgr@example.com', canonical: 'mgr@example.com' },
+          } satisfies StakeSchedule),
+    error: null,
+    status: 'success',
+    isPending: false,
+    isLoading: false,
+    isSuccess: true,
+    isError: false,
+    isFetching: false,
+    fetchStatus: 'idle',
+  };
+}
+
+// The frame before the `stakeSchedules/{stakeId}` snapshot lands. The
+// stake doc gates this tab's render, so this state is always reached
+// with the row already on screen — it is what every manager sees on
+// every load of the Config tab.
+function schedulePendingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
+function syncReminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    job: 'syncReminder',
+    enabled: false,
+    schedule: { type: 'daily', hour: 6 },
+    ...overrides,
+  };
+}
+
+function timestamp(iso: string): TimestampLike {
+  const d = new Date(iso);
+  return {
+    seconds: Math.floor(d.getTime() / 1000),
+    nanoseconds: 0,
+    toDate: () => d,
+    toMillis: () => d.getTime(),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   updateStakeConfigMock.mockResolvedValue(undefined);
+  setStakeToggleMock.mockResolvedValue(undefined);
+  setSyncReminderEnabledMock.mockResolvedValue(undefined);
   updateIgnoredWardsMock.mockResolvedValue(undefined);
   updateHomeKindooSiteMock.mockResolvedValue(undefined);
   // Default: an ordinary manager, not a platform superadmin.
@@ -185,6 +263,11 @@ beforeEach(() => {
     docs_written: 3,
     docs_deleted: 0,
   });
+  setSyncReminderEnabledMock.mockResolvedValue(undefined);
+  // Default: the hourly dispatcher has seeded the reminder row and it
+  // is off, which is the steady state for every stake until a manager
+  // turns it on.
+  useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow()]));
   useStakeDocMock.mockReturnValue(stakeDocResult());
   useWardsMock.mockReturnValue(liveResult<Ward>([]));
   useBuildingsMock.mockReturnValue(liveResult<Building>([]));
@@ -241,7 +324,11 @@ describe('<ConfigurationPage />', () => {
 
   it('renders the email-notifications switch with the email-specific label', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    const sw = screen.getByLabelText(/Email Notifications Enabled/i);
+    // Scoped to the switch: the InfoTip beside it is also labelled with
+    // the option's name ("More about …").
+    const sw = screen.getByLabelText(/Email Notifications Enabled/i, {
+      selector: '[role="switch"]',
+    });
     expect(sw).toBeInTheDocument();
     expect(sw).toHaveAttribute('role', 'switch');
   });
@@ -251,7 +338,9 @@ describe('<ConfigurationPage />', () => {
     const sw = screen.getByTestId('config-eq-president-access');
     expect(sw).toHaveAttribute('role', 'switch');
     expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByLabelText(/Elders Quorum Presidents Get App Access/i)).toBe(sw);
+    expect(screen.getByLabelText(EQ_PRESIDENT_ACCESS_LABEL, { selector: '[role="switch"]' })).toBe(
+      sw,
+    );
   });
 
   it('shows the Elders Quorum President switch checked when the stake has opted in', () => {
@@ -1770,35 +1859,112 @@ describe('Organizations tab', () => {
   });
 });
 
-// ---- Elders Quorum President app-access toggle ----------------------
+// ---- Stake config form vs. the sliders below it ---------------------
 //
-// The toggle itself is an ordinary config field. What's load-bearing is
-// the post-save backfill offer: it appears only when the saved value
-// actually FLIPPED, and only once setup is complete (initial setup has
-// no seats to reconcile, so the wizard must never raise it).
+// The Config tab is two controls-with-different-save-semantics stacked:
+// a react-hook-form saved by `Save config`, and beneath it a stack of
+// sliders that write on flip. The line between them is the thing worth
+// pinning — a slider that drifted back into the form would be governed
+// by a Save button the manager has no reason to press.
 
-describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
-  async function saveConfig(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByRole('button', { name: /^Save config$/ }));
-  }
-
-  it('saves eq_president_app_access: true when the switch is turned on', async () => {
+describe('<ConfigurationPage /> Config tab save boundary', () => {
+  it('Save config writes the three form fields and neither slider', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
-    await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalledWith(
-        expect.objectContaining({ eq_president_app_access: true }),
-      );
-    });
+    await user.click(screen.getByRole('button', { name: /^Save config$/ }));
+    await waitFor(() => expect(updateStakeConfigMock).toHaveBeenCalled());
+    expect(Object.keys(updateStakeConfigMock.mock.calls[0]![0] as object).sort()).toEqual([
+      'stake_name',
+      'stake_seat_cap',
+      'timezone',
+    ]);
+    expect(setStakeToggleMock).not.toHaveBeenCalled();
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
   });
 
-  it('offers to grant access to current Elders Quorum Presidents after turning the switch on', async () => {
+  it('renders the three sliders below the form, not inside it', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    for (const id of [
+      'config-notifications-enabled',
+      'config-sync-reminder-enabled',
+      'config-eq-president-access',
+    ]) {
+      expect(screen.getByTestId(id).closest('form')).toBeNull();
+    }
+  });
+});
+
+// ---- Email Notifications Enabled ------------------------------------
+
+describe('<ConfigurationPage /> email notifications slider', () => {
+  it('reads on when the stake field is absent, since email defaults on', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('reads off when the stake has turned email off', () => {
+    useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  });
+
+  it('writes the field the moment the slider moves, with no Save', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-notifications-enabled'));
+    await waitFor(() =>
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'notifications_enabled',
+        value: false,
+      }),
+    );
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('reports the failure and leaves the config form alone when the write is rejected', async () => {
+    const { useToastStore } = await import('../../../lib/store/toast');
+    setStakeToggleMock.mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-notifications-enabled'));
+    await vi.waitFor(() => {
+      const errors = useToastStore.getState().toasts.filter((t) => t.kind === 'error');
+      expect(errors.map((t) => t.message)).toContain('Missing or insufficient permissions.');
+    });
+  });
+});
+
+// ---- Elders Quorum President app-access slider -----------------------
+//
+// An ordinary write-on-flip slider. What's load-bearing is the backfill
+// offer: it follows the flip (there is no Save to hang it off any more)
+// and only once setup is complete, since initial setup has no seats to
+// reconcile.
+
+describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
+  it('writes eq_president_app_access the moment the slider is turned on', async () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
+    await vi.waitFor(() => {
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'eq_president_app_access',
+        value: true,
+      });
+    });
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('offers to grant access to current Elders Quorum Presidents after turning the slider on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
     await screen.findByRole('heading', {
       name: 'Grant access to current Elders Quorum Presidents?',
     });
@@ -1811,7 +1977,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
     await vi.waitFor(() => {
       expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('grant');
@@ -1829,7 +1994,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-cancel'));
     await vi.waitFor(() => {
       expect(
@@ -1841,12 +2005,11 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     expect(backfillEqPresidentAccessMock).not.toHaveBeenCalled();
   });
 
-  it('offers to revoke access after turning the switch off', async () => {
+  it('offers to revoke access after turning the slider off', async () => {
     useStakeDocMock.mockReturnValue(stakeDocResult({ eq_president_app_access: true }));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await screen.findByRole('heading', { name: 'Revoke access from Elders Quorum Presidents?' });
     expect(screen.getByRole('button', { name: 'Revoke access now' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Leave access in place' })).toBeInTheDocument();
@@ -1866,7 +2029,6 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await user.click(await screen.findByTestId('config-eq-backfill-confirm'));
     await vi.waitFor(() => {
       expect(backfillEqPresidentAccessMock).toHaveBeenCalledWith('revoke');
@@ -1877,27 +2039,240 @@ describe('<ConfigurationPage /> Elders Quorum President app-access', () => {
     });
   });
 
-  it('does not offer a backfill when the save leaves the toggle unchanged', async () => {
-    const user = userEvent.setup();
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    await saveConfig(user);
-    await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalled();
-    });
-    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
-  });
-
-  it('does not offer a backfill when the toggle flips before setup is complete', async () => {
+  it('does not offer a backfill when the slider flips before setup is complete', async () => {
     useStakeDocMock.mockReturnValue(stakeDocResult({ setup_complete: false }));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     await user.click(screen.getByTestId('config-eq-president-access'));
-    await saveConfig(user);
     await vi.waitFor(() => {
-      expect(updateStakeConfigMock).toHaveBeenCalledWith(
-        expect.objectContaining({ eq_president_app_access: true }),
-      );
+      expect(setStakeToggleMock).toHaveBeenCalledWith({
+        field: 'eq_president_app_access',
+        value: true,
+      });
     });
     expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
+  });
+
+  it('does not offer a backfill when the write is rejected', async () => {
+    setStakeToggleMock.mockRejectedValue(new Error('nope'));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-eq-president-access'));
+    await vi.waitFor(() => expect(setStakeToggleMock).toHaveBeenCalled());
+    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
+  });
+});
+
+// ---- Slider tooltips -------------------------------------------------
+//
+// The body of each row is slider + name; everything explanatory hangs
+// off an "i" affordance beside it. It has to open on a tap, because
+// managers use this page from a phone and an iPad where nothing hovers.
+
+describe('<ConfigurationPage /> slider tooltips', () => {
+  const TIPS: Array<[string, RegExp]> = [
+    ['config-notifications-enabled', /stake-wide switch for email/i],
+    ['config-sync-reminder', /temporary seat has expired in Kindoo/i],
+    ['config-eq-president-access', new RegExp(EQ_PRESIDENT_ACCESS_TIP.slice(0, 40), 'i')],
+  ];
+
+  it.each(TIPS)('%s keeps its explanation behind the information affordance', (testId) => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId(`${testId}-info`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`${testId}-info-panel`)).toBeNull();
+  });
+
+  it.each(TIPS)('%s opens its explanation on a click', async (testId, copy) => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId(`${testId}-info`));
+    const panel = await screen.findByTestId(`${testId}-info-panel`);
+    expect(panel).toHaveTextContent(copy);
+  });
+
+  it('does not require a hover, which a touch device never produces', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.hover(screen.getByTestId('config-notifications-enabled-info'));
+    expect(screen.queryByTestId('config-notifications-enabled-info-panel')).toBeNull();
+    await user.click(screen.getByTestId('config-notifications-enabled-info'));
+    expect(await screen.findByTestId('config-notifications-enabled-info-panel')).toBeVisible();
+  });
+
+  it('stays readable on a row whose slider is disabled — what the setting is still matters', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+    await user.click(screen.getByTestId('config-sync-reminder-info'));
+    expect(await screen.findByTestId('config-sync-reminder-info-panel')).toHaveTextContent(
+      /temporary seat has expired in Kindoo/i,
+    );
+  });
+
+  it('names the option it explains, so three identical icons are still distinguishable', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-info')).toHaveAttribute(
+      'aria-label',
+      'More about Sync reminders',
+    );
+  });
+});
+
+// ---- Sync reminders slider -------------------------------------------
+
+describe('<ConfigurationPage /> sync reminders slider', () => {
+  it('sits directly beneath Email Notifications Enabled, indented under it', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    const rows = Array.from(
+      screen.getByTestId('config-toggles').querySelectorAll('.kd-setting-toggle'),
+    );
+    expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
+      'config-notifications-enabled-row',
+      'config-sync-reminder-row',
+      'config-eq-president-access-row',
+    ]);
+    expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass('kd-setting-toggle--sub');
+    expect(screen.getByTestId('config-notifications-enabled-row')).not.toHaveClass(
+      'kd-setting-toggle--sub',
+    );
+  });
+
+  describe('before its snapshot has landed', () => {
+    beforeEach(() => {
+      useStakeScheduleMock.mockReturnValue(schedulePendingResult());
+    });
+
+    it('renders no switch at all, so it cannot show a value it does not have', () => {
+      // The defect this replaces: `syncReminderTask(undefined)` is null
+      // while pending, so the row collapsed into "not seeded" and
+      // rendered a disabled, unchecked switch — indistinguishable from
+      // a settled off, on a stake whose reminder is on.
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.queryByTestId('config-sync-reminder-enabled')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      expect(screen.getByTestId('config-sync-reminder-row')).toHaveAttribute('aria-busy', 'true');
+    });
+
+    it('is the only thing that distinguishes loading from never-seeded', () => {
+      // The tooltip states what the setting is and nothing about its
+      // state, so the control itself carries the whole distinction: a
+      // placeholder while loading, a real (disabled, off) switch once we
+      // know the row was never seeded.
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-sync-reminder-enabled-pending')).toBeNull();
+      const sw = screen.getByTestId('config-sync-reminder-enabled');
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('leaves the two stake-doc sliders alone — they render from data the tab already has', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(screen.getByTestId('config-eq-president-access')).toBeInTheDocument();
+      expect(screen.queryByTestId('config-notifications-enabled-pending')).toBeNull();
+    });
+
+    it('settles onto the row’s real value once the snapshot arrives', () => {
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-sync-reminder-enabled-pending')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    });
+  });
+
+  it('greys and disables the slider until the dispatcher has seeded the row', () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+    expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
+  });
+
+  it('disables the slider when the schedule doc exists but carries no syncReminder row', () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([
+        {
+          job: 'someOtherJob',
+          enabled: true,
+          schedule: { type: 'hourly' },
+        } satisfies ScheduledTask,
+      ]),
+    );
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
+  });
+
+  it('never offers to create the row itself', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('flips the row on when the slider is turned on', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(true));
+    expect(updateStakeConfigMock).not.toHaveBeenCalled();
+  });
+
+  it('flips the row off when the slider is turned off', async () => {
+    useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-sync-reminder-enabled'));
+    await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(false));
+  });
+
+  describe('when the stake-level email kill-switch is off', () => {
+    beforeEach(() => {
+      useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
+    });
+
+    it('greys and disables the slider — the parent decides whether it can be changed', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const sw = screen.getByTestId('config-sync-reminder-enabled');
+      expect(sw).toBeDisabled();
+      expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass(
+        'kd-setting-toggle--disabled',
+      );
+      await user.click(sw);
+      expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+    });
+
+    it('never writes enabled: false as a side effect — the row keeps its own value', () => {
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      // Greyed, but still reading ON, because it is still running.
+      expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('is live and ungreyed when email notifications are on', () => {
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-sync-reminder-enabled')).toBeEnabled();
+    expect(screen.getByTestId('config-sync-reminder-row')).not.toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
   });
 });

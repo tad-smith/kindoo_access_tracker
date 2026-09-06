@@ -54,8 +54,17 @@ type FakeDb = {
   writes: Record<string, StakeSchedule>;
   /** Ordered log of side effects, for proving enqueue-before-stamp. */
   events: string[];
+  /** The live store, so a test can write to it mid-dispatch. */
+  schedules: Record<string, StakeSchedule>;
 };
 
+/**
+ * A fake Firestore that is *stateful*: a `set` lands back in the store
+ * the next `get` reads, and `runTransaction` re-reads through it. That
+ * is what lets a test simulate a manager writing between the
+ * dispatcher's read and its commit — the whole point of the commit
+ * being a transaction.
+ */
 function makeDb(
   stakes: { id: string; timezone?: string }[],
   schedules: Record<string, StakeSchedule> = {},
@@ -63,6 +72,23 @@ function makeDb(
 ): FakeDb {
   const writes: Record<string, StakeSchedule> = {};
   const events: string[] = [];
+  const stakeIdOf = (path: string): string => path.replace('stakeSchedules/', '');
+  const read = (path: string) => {
+    const stakeId = stakeIdOf(path);
+    if (failReadsFor.includes(stakeId)) throw new Error(`boom reading ${path}`);
+    const data = schedules[stakeId];
+    return { exists: data !== undefined, data: () => data };
+  };
+  const write = (path: string, value: StakeSchedule): void => {
+    events.push(`set:${path}`);
+    writes[path] = value;
+    schedules[stakeIdOf(path)] = value;
+  };
+  const doc = (path: string) => ({
+    path,
+    get: async () => read(path),
+    set: async (value: StakeSchedule) => write(path, value),
+  });
   const db = {
     collection: (path: string) => {
       if (path !== 'stakes') throw new Error(`unexpected collection: ${path}`);
@@ -76,20 +102,14 @@ function makeDb(
         }),
       };
     },
-    doc: (path: string) => ({
-      get: async () => {
-        const stakeId = path.replace('stakeSchedules/', '');
-        if (failReadsFor.includes(stakeId)) throw new Error(`boom reading ${path}`);
-        const data = schedules[stakeId];
-        return { exists: data !== undefined, data: () => data };
-      },
-      set: async (value: StakeSchedule) => {
-        events.push(`set:${path}`);
-        writes[path] = value;
-      },
-    }),
+    doc,
+    runTransaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> =>
+      fn({
+        get: async (ref: { path: string }) => read(ref.path),
+        set: (ref: { path: string }, value: StakeSchedule) => write(ref.path, value),
+      }),
   } as unknown as Firestore;
-  return { db, writes, events };
+  return { db, writes, events, schedules };
 }
 
 /** Enqueuer that records calls (and optionally throws) against the shared event log. */
@@ -295,6 +315,111 @@ describe('dispatchDue — selection and stamping', () => {
     expect(
       writes['stakeSchedules/csnorth']?.tasks[0]?.next_trigger_time?.toDate().toISOString(),
     ).toBe('2026-09-05T15:00:00.000Z');
+  });
+});
+
+describe('dispatchDue — concurrent client writes', () => {
+  // The seam every test here uses: `enqueue` runs after the dispatcher
+  // has read the schedule doc and before it commits, so writing to the
+  // store from inside it lands exactly in the window a manager's toggle
+  // would land in. Against the old whole-array `set(..., {merge:true})`
+  // every one of these was silently reverted.
+
+  it("preserves a manager's `enabled: false` written mid-dispatch", async () => {
+    const due = task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') });
+    const { db, writes, schedules } = makeDb([{ id: 'csnorth' }], {
+      csnorth: { tasks: [due], lastActor: DISPATCHER_ACTOR },
+    });
+    const { enqueue, calls } = makeEnqueue([], () => {
+      // The manager's toggle: a whole-array rewrite, which is all a
+      // client can do to a Firestore list.
+      schedules['csnorth'] = {
+        tasks: [{ ...due, enabled: false }],
+        lastActor: { email: 'Mgr@gmail.com', canonical: 'mgr@gmail.com' },
+      };
+    });
+
+    await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
+
+    // The task was already enqueued — that is at-least-once and is not
+    // what this test is about. What must survive is the toggle.
+    expect(calls).toHaveLength(1);
+    const written = writes['stakeSchedules/csnorth'];
+    expect(written?.tasks[0]?.enabled).toBe(false);
+    // ...and the stamp still lands, so the row doesn't stay due forever
+    // if the manager turns it back on.
+    expect(written?.tasks[0]?.last_trigger_time?.toDate().toISOString()).toBe(NOW.toISOString());
+    expect(written?.tasks[0]?.next_trigger_time?.toDate().toISOString()).toBe(
+      '2026-09-06T12:00:00.000Z',
+    );
+  });
+
+  it('keeps a concurrently changed `schedule` rather than restoring the one it read', async () => {
+    const due = task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') });
+    const { db, writes, schedules } = makeDb([{ id: 'csnorth' }], {
+      csnorth: { tasks: [due], lastActor: DISPATCHER_ACTOR },
+    });
+    const { enqueue } = makeEnqueue([], () => {
+      schedules['csnorth'] = {
+        tasks: [{ ...due, schedule: { type: 'weekly', weekday: 2, hour: 9 } }],
+        lastActor: DISPATCHER_ACTOR,
+      };
+    });
+
+    await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
+
+    // The commit re-applies only the two timestamps it computed. The
+    // new shape governs the run after this one — this pass's
+    // `next_trigger_time` was already computed from the old one, which
+    // re-bases itself an hour later at worst.
+    expect(writes['stakeSchedules/csnorth']?.tasks[0]?.schedule).toEqual({
+      type: 'weekly',
+      weekday: 2,
+      hour: 9,
+    });
+  });
+
+  it('does not resurrect a row removed mid-dispatch just to carry its stamp', async () => {
+    const due = task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') });
+    const { db, writes, schedules } = makeDb([{ id: 'csnorth' }], {
+      csnorth: { tasks: [due], lastActor: DISPATCHER_ACTOR },
+    });
+    const { enqueue } = makeEnqueue([], () => {
+      schedules['csnorth'] = { tasks: [], lastActor: DISPATCHER_ACTOR };
+    });
+
+    await dispatchDue(db, { registry: registry(), enqueue, now: NOW });
+
+    // Its handler ran, but the row is gone. Re-adding it to hold a
+    // timestamp would undo a deliberate removal; the next pass re-seeds
+    // it disabled, which is the documented behaviour for a missing row.
+    expect(writes['stakeSchedules/csnorth']?.tasks).toEqual([]);
+  });
+
+  it('does not double-seed a row another writer added mid-dispatch', async () => {
+    const due = task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') });
+    const other = task({ job: 'other', enabled: false, schedule: { type: 'hourly' } });
+    const { db, writes, schedules } = makeDb([{ id: 'csnorth' }], {
+      csnorth: { tasks: [due], lastActor: DISPATCHER_ACTOR },
+    });
+    const { enqueue } = makeEnqueue([], () => {
+      // An overlapping dispatch (or a manager) seeds `other` first.
+      schedules['csnorth'] = { tasks: [due, other], lastActor: DISPATCHER_ACTOR };
+    });
+    const two = registry({
+      other: {
+        handler: async () => undefined,
+        defaultSchedule: { type: 'daily', hour: 6 },
+        defaultEnabled: false,
+      },
+    });
+
+    await dispatchDue(db, { registry: two, enqueue, now: NOW });
+
+    // Seeding is re-checked against the array as it stands at commit,
+    // not the one it ran against.
+    expect(writes['stakeSchedules/csnorth']?.tasks.map((t) => t.job)).toEqual(['demo', 'other']);
+    expect(writes['stakeSchedules/csnorth']?.tasks[1]?.schedule).toEqual({ type: 'hourly' });
   });
 });
 

@@ -46,6 +46,7 @@ import type {
   RemoteApplyPresence,
   Seat,
   Stake,
+  StakeSchedule,
   UserIndexEntry,
   Ward,
 } from '@kindoo/shared';
@@ -159,6 +160,16 @@ export function remoteApplyJobRef(
   return doc(db, 'remoteApply', canonicalEmail, 'jobs', jobId).withConverter(
     passthroughConverter<RemoteApplyJob>(),
   );
+}
+
+/**
+ * `stakeSchedules/{stakeId}` — the stake's scheduled-task rows (D38).
+ * Top-level despite being keyed by stake id: a per-stake home would put
+ * it inside the slice `auditTrigger` instruments, and the hourly
+ * dispatcher rewrites this doc every time it stamps a row.
+ */
+export function stakeScheduleRef(db: Firestore, stakeId: string): DocumentReference<StakeSchedule> {
+  return doc(db, 'stakeSchedules', stakeId).withConverter(passthroughConverter<StakeSchedule>());
 }
 
 // ---- Per-stake collections ------------------------------------------

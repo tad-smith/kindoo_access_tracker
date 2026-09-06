@@ -37,9 +37,11 @@ import type {
   RequestStatus,
   Seat,
   Stake,
+  StakeSchedule,
   Ward,
 } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
+import { SYNC_REMINDER_JOB } from './syncReminder';
 import { db, functions } from '../../../lib/firebase';
 import {
   buildingRef,
@@ -52,6 +54,7 @@ import {
   requestsCol,
   seatsCol,
   stakeRef,
+  stakeScheduleRef,
   wardRef,
   wardsCol,
 } from '../../../lib/docs';
@@ -746,12 +749,18 @@ export function useDeleteManagerMutation() {
 
 // ---- Stake-doc / Config-keys mutation -------------------------------
 
+/**
+ * The Save-backed fields of the Config tab's stake form.
+ *
+ * `notifications_enabled` and `eq_president_app_access` are deliberately
+ * NOT here: they are sliders that write on flip
+ * (`useSetStakeToggleMutation`), so folding them back into the form
+ * would put them under a Save button that no longer covers them.
+ */
 export interface ConfigInput {
   stake_name: string;
   stake_seat_cap: number;
   timezone: string;
-  notifications_enabled: boolean;
-  eq_president_app_access: boolean;
 }
 
 export function useUpdateStakeConfigMutation() {
@@ -766,8 +775,49 @@ export function useUpdateStakeConfigMutation() {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
         timezone: input.timezone,
-        notifications_enabled: input.notifications_enabled,
-        eq_president_app_access: input.eq_president_app_access,
+        last_modified_at: serverTimestamp(),
+        last_modified_by: actor,
+        lastActor: actor,
+      });
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/** Stake-doc Booleans the Config tab renders as write-on-flip sliders. */
+export type StakeToggleField = 'notifications_enabled' | 'eq_president_app_access';
+
+export interface StakeToggleInput {
+  field: StakeToggleField;
+  value: boolean;
+}
+
+/**
+ * Write one stake-level Boolean the moment its slider moves.
+ *
+ * One mutation rather than one per field: both writes are the same
+ * single-field `updateDoc` with the same `lastActor` stamp, and a
+ * second copy would be a second place for that stamp to drift from the
+ * rules' integrity check.
+ *
+ * Writes only the named field, so two sliders flipped in quick
+ * succession cannot clobber each other, and neither can clobber an
+ * unsaved edit sitting in the form above them.
+ */
+export function useSetStakeToggleMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation<void, Error, StakeToggleInput>({
+    mutationFn: async ({ field, value }) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      await updateDoc(stakeRef(db, sid), {
+        [field]: value,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,
@@ -804,6 +854,76 @@ export function useBackfillEqPresidentAccessMutation() {
       );
       const res = await fn({ stakeId: sid, direction });
       return res.data;
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+// ---- Scheduled tasks (sync reminder) --------------------------------
+//
+// `stakeSchedules/{stakeId}` is `{ tasks, lastActor }` — one row per
+// registry job the hourly dispatcher has seeded onto this stake (D38).
+// The only thing this client is allowed to change is a row's `enabled`
+// flag. Seeding, `next_trigger_time` and `last_trigger_time` belong to
+// the dispatcher; writing any of them from here would move a schedule
+// the server owns.
+//
+// The pure reads over the row — which job key, which row, what to
+// print — live in `./syncReminder` so the page and its component tests
+// can share them without pulling the Firestore SDK in.
+
+export function useStakeSchedule() {
+  const activeStakeId = useActiveStake();
+  const ref = useMemo(
+    () => (activeStakeId ? stakeScheduleRef(db, activeStakeId) : null),
+    [activeStakeId],
+  );
+  return useFirestoreDoc<StakeSchedule>(ref);
+}
+
+/**
+ * Flip `enabled` on the stake's `syncReminder` row.
+ *
+ * Read-modify-write of the whole `tasks` array, because Firestore
+ * cannot address one element of a list by path. The transaction is what
+ * keeps that from clobbering the dispatcher: an hourly run that stamps
+ * `next_trigger_time` between our read and our write aborts and retries
+ * us against its result, rather than our stale array overwriting its
+ * stamp. Every other row, and every other field of our own row, is
+ * carried through by spread.
+ *
+ * Never creates the doc and never appends a row — seeding is the
+ * dispatcher's (`seedMissingTasks`). An absent row throws, which is why
+ * the UI disables the control until one exists.
+ */
+export function useSetSyncReminderEnabledMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation<void, Error, boolean>({
+    mutationFn: async (enabled) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      const ref = stakeScheduleRef(db, sid);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const tasks = snap.exists() ? (snap.data()?.tasks ?? []) : [];
+        if (!tasks.some((t) => t.job === SYNC_REMINDER_JOB)) {
+          throw new Error(
+            'The scheduler has not added the sync reminder to this stake yet. Try again in an hour.',
+          );
+        }
+        const next = tasks.map((t) => (t.job === SYNC_REMINDER_JOB ? { ...t, enabled } : t));
+        // `update`, not `set`: it writes exactly these two fields and
+        // leaves the rest of the doc alone. The rules' `keysAreExactly`
+        // sees the merged document, so a doc that is already
+        // `{tasks, lastActor}` stays valid.
+        tx.update(ref, { tasks: next, lastActor: actor });
+      });
     },
     onSuccess: () => {
       // Fire-and-forget; live hooks have a never-resolving queryFn,
