@@ -39,7 +39,8 @@ const TODAY = '2026-08-18';
 const YESTERDAY = '2026-08-17';
 const TWO_DAYS_AGO = '2026-08-16';
 // Exactly `SYNC_STALE_DAYS` before TODAY, and one day inside it.
-const STALE_SYNC_DATE = '2026-08-11';
+const SEVEN_DAYS_AGO = '2026-08-11';
+const STALE_SYNC_DATE = '2026-08-10';
 const FRESH_SYNC_DATE = '2026-08-12';
 
 function buildSeat(overrides: Partial<Seat> = {}): Seat {
@@ -275,9 +276,17 @@ describe('staleSyncSites', () => {
     expect(staleSyncSites([home], new Map([['home', FRESH_SYNC_DATE]]), TODAY)).toEqual([]);
   });
 
-  it('fires on exactly SYNC_STALE_DAYS', () => {
+  // Deliberately NOT stale at exactly seven. Calendar-day spans round in
+  // the reminder's favour, so `=== 7` can be barely six and a half days of
+  // wall clock — which would mail the manager who syncs every Sunday, every
+  // Sunday. The mail says "in over a week"; this is what makes that true.
+  it('does not fire on exactly SYNC_STALE_DAYS', () => {
+    expect(staleSyncSites([home], new Map([['home', SEVEN_DAYS_AGO]]), TODAY)).toEqual([]);
+  });
+
+  it('fires on the day after SYNC_STALE_DAYS', () => {
     expect(staleSyncSites([home], new Map([['home', STALE_SYNC_DATE]]), TODAY)).toEqual([
-      { ...home, lastSyncDate: STALE_SYNC_DATE, daysSince: SYNC_STALE_DAYS },
+      { ...home, lastSyncDate: STALE_SYNC_DATE, daysSince: SYNC_STALE_DAYS + 1 },
     ]);
   });
 
@@ -874,7 +883,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
       '[Stake Building Access] One Kindoo site has not been synced in over a week',
     );
     expect(emails[0]!.text).toContain(
-      `CSNorth Stake — last synced ${STALE_SYNC_DATE} (7 days ago)`,
+      `CSNorth Stake — last synced ${STALE_SYNC_DATE} (${SYNC_STALE_DAYS + 1} days ago)`,
     );
     // The seat half is absent entirely — no empty table, no dangling copy.
     expect(emails[0]!.text).not.toContain('temporary seat');

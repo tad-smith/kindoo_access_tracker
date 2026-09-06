@@ -80,6 +80,11 @@ export const SYNC_REMINDER_BACKOFF_DAYS = 3;
  * that is right: seven days decides whether a site *is* stale, three
  * decides how often we may say so. A stake that stays stale hears about
  * it every third day, not every seventh.
+ *
+ * Compared strictly (`> 7`, not `>= 7`), so a site is stale on the
+ * eighth calendar day. Calendar-day spans round in the reminder's
+ * favour, and `>= 7` would chase a weekly-cadence manager after barely
+ * six and a half days.
  */
 export const SYNC_STALE_DAYS = 7;
 
@@ -462,7 +467,13 @@ export function staleSyncSites(
     const lastSyncDate = lastSyncByKey.get(site.siteKey);
     if (lastSyncDate === undefined) continue;
     const daysSince = isoDateSpanDays(lastSyncDate, today);
-    if (!Number.isFinite(daysSince) || daysSince < SYNC_STALE_DAYS) continue;
+    // Strictly greater, not `>=`. The span is in stake-local calendar
+    // days, so `=== 7` can be as little as ~6d7h of wall clock against a
+    // 06:00 dispatch — which would mail the manager who syncs reliably
+    // every Sunday, every Sunday. That is precisely the person this
+    // reminder exists to leave alone, and it is what makes the mail's
+    // "in over a week" true rather than approximately true.
+    if (!Number.isFinite(daysSince) || daysSince <= SYNC_STALE_DAYS) continue;
     rows.push({ ...site, lastSyncDate, daysSince });
   }
   return rows.sort((a, b) => b.daysSince - a.daysSince || a.siteName.localeCompare(b.siteName));
