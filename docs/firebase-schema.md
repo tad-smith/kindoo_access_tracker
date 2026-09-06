@@ -326,7 +326,7 @@ Both types live in `packages/shared/src/scheduledTasks.ts`, which also owns the 
 
 **Written by:** the dispatcher (seeding rows, and — since T-107 (`architecture.md` D39) — stamping `last_trigger_time` / `next_trigger_time` inside a transaction rather than a blind overwrite, so a concurrent manager write survives a dispatch pass) and that stake's Kindoo Managers. The rules still permit a manager to write any field in the two-key envelope, including `schedule`, and that remains a Firestore console edit — but the one client write path that exists, the Configuration page's Sync Reminder toggle, touches `enabled` alone (`useSetSyncReminderEnabledMutation`) and never creates a row.
 
-**Read by:** the Configuration page's Config tab, for the `syncReminder` row only (`useStakeSchedule`) — the **Sync reminders** slider (a sub-row nested under Email Notifications Enabled) renders the switch, "not yet seeded" / off / on states, and a "next check" time, all off this one read. Every other row a stake might carry, and every other page, still reads nothing here.
+**Read by:** the Configuration page's Config tab, for the `syncReminder` row only (`useStakeSchedule`) — the **Sync reminders** slider (a sub-row nested under Email Notifications Enabled) renders the switch and its loading / "not yet seeded" / off / on states off this one read; no scheduled time is displayed. Every other row a stake might carry, and every other page, still reads nothing here.
 
 **Rules:**
 
