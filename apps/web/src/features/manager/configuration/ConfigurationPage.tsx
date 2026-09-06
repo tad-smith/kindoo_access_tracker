@@ -26,7 +26,7 @@
 // The Config tab is single-document; it keeps its inline form, no
 // modal.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -62,6 +62,7 @@ import {
   useManagers,
   useRequests,
   useSeats,
+  useSetStakeToggleMutation,
   useSetSyncReminderEnabledMutation,
   useStakeDoc,
   useStakeSchedule,
@@ -75,14 +76,21 @@ import {
   useUpsertWardMutation,
   useWards,
 } from './hooks';
-import { syncReminderNextCheckLabel, syncReminderTask } from './syncReminder';
+import {
+  syncReminderDueAtOnce,
+  syncReminderNextCheckLabel,
+  syncReminderSlotLabel,
+  syncReminderTask,
+} from './syncReminder';
 import { useOrganizations, sortOrganizations } from '../../organizations/hooks';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
+import { InfoTip } from '../../../components/ui/InfoTip';
 import { Input } from '../../../components/ui/Input';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
+import { cn } from '../../../lib/cn';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -1615,13 +1623,31 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
 }
 
 // ---- Config keys tab ------------------------------------------------
+//
+// Two blocks, and the split is the point:
+//
+//   * a react-hook-form over the stake doc's typed fields, saved by an
+//     explicit `Save config`;
+//   * beneath it, a stack of sliders that each write the moment they
+//     move.
+//
+// A slider inside the form would look covered by a Save button that
+// does not cover it, and a slider that waited for Save would be the
+// only control on the page whose visible state was a lie until you
+// pressed something. So the Save button sits above the rule and covers
+// exactly what is above it.
+//
+// `Sync reminders` is nested under `Email Notifications Enabled` — an
+// indent, not a section — because the parent decides whether the child
+// can be changed, not whether it runs. See `SyncReminderToggle`.
 
 function ConfigKeysTab() {
   const stake = useStakeDoc();
   const update = useUpdateStakeConfigMutation();
+  const setToggle = useSetStakeToggleMutation();
   const backfill = useBackfillEqPresidentAccessMutation();
-  // Non-null while the post-save backfill offer is on screen; the value
-  // is the direction the flag just moved.
+  // Non-null while the backfill offer is on screen; the value is the
+  // direction the flag just moved.
   const [backfillPrompt, setBackfillPrompt] = useState<'grant' | 'revoke' | null>(null);
 
   const defaults = useMemo<ConfigForm>(() => {
@@ -1630,10 +1656,6 @@ function ConfigKeysTab() {
       stake_name: s?.stake_name ?? '',
       stake_seat_cap: s?.stake_seat_cap ?? 0,
       timezone: s?.timezone ?? 'America/Denver',
-      notifications_enabled: s?.notifications_enabled ?? true,
-      // Opt-in, so absent means off. Deliberately NOT `?? true` like
-      // `notifications_enabled` above.
-      eq_president_app_access: s?.eq_president_app_access === true,
     };
   }, [stake.data]);
 
@@ -1644,18 +1666,41 @@ function ConfigKeysTab() {
   const { control, register, handleSubmit, formState } = form;
 
   async function onSubmit(input: ConfigForm) {
+    try {
+      await update.mutateAsync(input);
+      toast('Config saved.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function onToggleNotifications(next: boolean) {
+    try {
+      await setToggle.mutateAsync({ field: 'notifications_enabled', value: next });
+      toast(next ? 'Email notifications turned on.' : 'Email notifications turned off.', 'success');
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  async function onToggleEqPresident(next: boolean) {
     // Read the persisted value before the write lands — the live stake
     // snapshot updates underneath us once the mutation resolves.
     const prev = stake.data?.eq_president_app_access === true;
     try {
-      await update.mutateAsync(input);
-      toast('Config saved.', 'success');
+      await setToggle.mutateAsync({ field: 'eq_president_app_access', value: next });
+      toast(
+        next
+          ? 'Elders Quorum Presidents will get app access.'
+          : 'Elders Quorum Presidents will no longer get app access.',
+        'success',
+      );
       // Offer the reconcile pass only on a real flip. The `setup_complete`
       // guard is defensive — routing keeps everyone on the bootstrap
       // wizard until setup completes — but it pins the requirement that
       // initial setup never raises a backfill dialog.
-      if (input.eq_president_app_access !== prev && stake.data?.setup_complete === true) {
-        setBackfillPrompt(input.eq_president_app_access ? 'grant' : 'revoke');
+      if (next !== prev && stake.data?.setup_complete === true) {
+        setBackfillPrompt(next ? 'grant' : 'revoke');
       }
     } catch (err) {
       toast(errorMessage(err), 'error');
@@ -1675,7 +1720,7 @@ function ConfigKeysTab() {
     } catch (err) {
       toast(errorMessage(err), 'error');
     } finally {
-      // Close either way: the config save already landed, and Sync
+      // Close either way: the setting write already landed, and Sync
       // self-heals the access docs on its next run, so a failed backfill
       // is a delay rather than a broken state.
       setBackfillPrompt(null);
@@ -1685,6 +1730,8 @@ function ConfigKeysTab() {
   if (stake.isLoading || stake.data === undefined) {
     return <LoadingSpinner />;
   }
+
+  const notificationsEnabled = stake.data.notifications_enabled !== false;
 
   return (
     <>
@@ -1713,36 +1760,6 @@ function ConfigKeysTab() {
             )}
           />
         </label>
-        <label className="kd-switch-label" htmlFor="config-notifications-enabled">
-          <Controller
-            name="notifications_enabled"
-            control={control}
-            render={({ field }) => (
-              <Switch
-                id="config-notifications-enabled"
-                checked={field.value === true}
-                onCheckedChange={field.onChange}
-                data-testid="config-notifications-enabled"
-              />
-            )}
-          />
-          <span>Email Notifications Enabled</span>
-        </label>
-        <label className="kd-switch-label" htmlFor="config-eq-president-access">
-          <Controller
-            name="eq_president_app_access"
-            control={control}
-            render={({ field }) => (
-              <Switch
-                id="config-eq-president-access"
-                checked={field.value === true}
-                onCheckedChange={field.onChange}
-                data-testid="config-eq-president-access"
-              />
-            )}
-          />
-          <span>Elders Quorum Presidents Get App Access</span>
-        </label>
         {formState.errors.stake_name ? (
           <p role="alert" className="kd-form-error">
             {formState.errors.stake_name.message}
@@ -1753,146 +1770,255 @@ function ConfigKeysTab() {
             {update.isPending ? 'Saving…' : 'Save config'}
           </Button>
         </div>
-        <Dialog
-          open={backfillPrompt !== null}
-          onOpenChange={(next) => {
-            if (!next) setBackfillPrompt(null);
-          }}
-          dismissable={!backfill.isPending}
-          title={
-            backfillPrompt === 'revoke'
-              ? 'Revoke access from Elders Quorum Presidents?'
-              : 'Grant access to current Elders Quorum Presidents?'
-          }
-          description={
-            backfillPrompt === 'revoke'
-              ? 'The setting is saved — Sync will no longer grant app access for the Elders Quorum President calling. Do you also want to revoke the access existing Elders Quorum Presidents were already granted? If you skip this, they keep access until their callings next change via Sync.'
-              : 'The setting is saved — new Elders Quorum Presidents will get app access as Sync picks up their callings. Do you also want to grant access now to members who currently hold the Elders Quorum President calling?'
-          }
-        >
-          <Dialog.Footer>
-            <Dialog.CancelButton data-testid="config-eq-backfill-cancel">
-              {backfillPrompt === 'revoke' ? 'Leave access in place' : 'Not now'}
-            </Dialog.CancelButton>
-            <Dialog.ConfirmButton
-              onClick={() => {
-                void onConfirmBackfill();
-              }}
-              disabled={backfill.isPending}
-              data-testid="config-eq-backfill-confirm"
-            >
-              {backfillPrompt === 'revoke' ? 'Revoke access now' : 'Grant access now'}
-            </Dialog.ConfirmButton>
-          </Dialog.Footer>
-        </Dialog>
       </form>
 
-      <SyncReminderSection
-        notificationsEnabled={stake.data.notifications_enabled !== false}
-        timezone={stake.data.timezone ?? 'America/Denver'}
-      />
+      <div className="kd-config-toggles" data-testid="config-toggles">
+        <SettingToggle
+          id="config-notifications-enabled"
+          testId="config-notifications-enabled"
+          label="Email Notifications Enabled"
+          checked={notificationsEnabled}
+          disabled={setToggle.isPending}
+          onChange={onToggleNotifications}
+        >
+          <p>
+            The stake-wide switch for email from Stake Building Access — new-request notices,
+            approvals, denials, and reminders. Turn it off and this stake sends no email at all.
+          </p>
+          <p>
+            It gates email only. Push notifications to managers who subscribed to them are
+            unaffected.
+          </p>
+        </SettingToggle>
+
+        <SyncReminderToggle
+          notificationsEnabled={notificationsEnabled}
+          timezone={stake.data.timezone ?? 'America/Denver'}
+        />
+
+        <SettingToggle
+          id="config-eq-president-access"
+          testId="config-eq-president-access"
+          label="Elders Quorum Presidents Get App Access"
+          checked={stake.data.eq_president_app_access === true}
+          disabled={setToggle.isPending}
+          onChange={onToggleEqPresident}
+        >
+          <p>
+            When on, Sync grants app access to whoever holds the Elders Quorum President calling in
+            each ward, and drops it again when the calling moves on.
+          </p>
+          <p>
+            Flipping it changes what future Sync runs derive. Members who already hold the calling
+            are offered a one-time pass right after the flip; decline it and Sync catches up as
+            callings change.
+          </p>
+        </SettingToggle>
+      </div>
+
+      <Dialog
+        open={backfillPrompt !== null}
+        onOpenChange={(next) => {
+          if (!next) setBackfillPrompt(null);
+        }}
+        dismissable={!backfill.isPending}
+        title={
+          backfillPrompt === 'revoke'
+            ? 'Revoke access from Elders Quorum Presidents?'
+            : 'Grant access to current Elders Quorum Presidents?'
+        }
+        description={
+          backfillPrompt === 'revoke'
+            ? 'The setting is saved — Sync will no longer grant app access for the Elders Quorum President calling. Do you also want to revoke the access existing Elders Quorum Presidents were already granted? If you skip this, they keep access until their callings next change via Sync.'
+            : 'The setting is saved — new Elders Quorum Presidents will get app access as Sync picks up their callings. Do you also want to grant access now to members who currently hold the Elders Quorum President calling?'
+        }
+      >
+        <Dialog.Footer>
+          <Dialog.CancelButton data-testid="config-eq-backfill-cancel">
+            {backfillPrompt === 'revoke' ? 'Leave access in place' : 'Not now'}
+          </Dialog.CancelButton>
+          <Dialog.ConfirmButton
+            onClick={() => {
+              void onConfirmBackfill();
+            }}
+            disabled={backfill.isPending}
+            data-testid="config-eq-backfill-confirm"
+          >
+            {backfillPrompt === 'revoke' ? 'Revoke access now' : 'Grant access now'}
+          </Dialog.ConfirmButton>
+        </Dialog.Footer>
+      </Dialog>
     </>
+  );
+}
+
+// ---- Setting slider -------------------------------------------------
+//
+// One row of the toggle stack: slider, the option's name, and an "i"
+// affordance carrying everything the name does not say. The body stays
+// at slider + name so the stack reads as a list of settings rather than
+// as prose; the explanation is one tap away, on a phone as much as on a
+// desktop (`InfoTip` is click/tap-triggered, not hover).
+//
+// `sub` indents the row to show it belongs to the option above it.
+// `disabled` greys the label with the slider, but never the InfoTip —
+// the tip is where a manager finds out WHY the row is inert, so it has
+// to stay reachable exactly when the control is not.
+
+interface SettingToggleProps {
+  id: string;
+  /** Prefix for the row's `-row` and `-info` test ids. */
+  testId: string;
+  /** Test id of the switch itself. Defaults to `testId`. */
+  switchTestId?: string;
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  sub?: boolean;
+  onChange: (next: boolean) => void | Promise<void>;
+  /** Tooltip body. Paragraphs, not a single run-on sentence. */
+  children: ReactNode;
+}
+
+function SettingToggle({
+  id,
+  testId,
+  switchTestId = testId,
+  label,
+  checked,
+  disabled = false,
+  sub = false,
+  onChange,
+  children,
+}: SettingToggleProps) {
+  return (
+    <div
+      className={cn(
+        'kd-setting-toggle',
+        sub && 'kd-setting-toggle--sub',
+        disabled && 'kd-setting-toggle--disabled',
+      )}
+      data-testid={`${testId}-row`}
+    >
+      <label className="kd-switch-label" htmlFor={id}>
+        <Switch
+          id={id}
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(next) => {
+            void onChange(next);
+          }}
+          data-testid={switchTestId}
+        />
+        <span>{label}</span>
+      </label>
+      <InfoTip label={label} data-testid={`${testId}-info`}>
+        {children}
+      </InfoTip>
+    </div>
   );
 }
 
 // ---- Sync reminder --------------------------------------------------
 //
-// Its own card rather than a field on the form above, because it writes
-// a different document: the form is a react-hook-form over the stake
-// doc with an explicit Save, and this flips one row of
-// `stakeSchedules/{stakeId}` the moment it is touched. Folded in, it
-// would look covered by a Save button that does not cover it.
+// A sub-option of Email Notifications Enabled in the UI and NOT in
+// behaviour, which is the whole subtlety of this row.
 //
-// Three states, and the first is the ordinary one for a new stake:
-// the hourly dispatcher seeds every registry job onto every stake, so
-// until it has run once there is no row to flip and the control is
-// inert. The client must never create the row itself — seeding is what
-// decides the default schedule, and a client-created row would pin one
-// the registry never chose.
+// The reminder honours its own `enabled` value, full stop: with the
+// stake's email kill-switch off, an enabled reminder still runs, still
+// pushes to managers who subscribed, and still consumes its
+// every-third-day backoff — `notifications_enabled` gates Resend and
+// nothing else. So greying the control means "you cannot change this
+// right now", never "this is not running", and the tip says so rather
+// than letting the grey imply dormancy. Nothing here ever writes
+// `enabled: false` as a side effect of the parent switch.
+//
+// The other disabled cause is the ordinary state of a new stake: the
+// hourly dispatcher seeds every registry job onto every stake, so until
+// it has run once there is no row to flip. The client must never create
+// the row itself — seeding is what decides the default schedule, and a
+// client-created row would pin one the registry never chose.
 
-interface SyncReminderSectionProps {
+interface SyncReminderToggleProps {
   /** `stake.notifications_enabled`, absent read as on (its default). */
   notificationsEnabled: boolean;
   timezone: string;
 }
 
-function SyncReminderSection({ notificationsEnabled, timezone }: SyncReminderSectionProps) {
+function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderToggleProps) {
   const schedule = useStakeSchedule();
   const setEnabled = useSetSyncReminderEnabledMutation();
 
   const task = useMemo(() => syncReminderTask(schedule.data), [schedule.data]);
   const seeded = task !== null;
   const enabled = task?.enabled === true;
-  const nextCheck = syncReminderNextCheckLabel(task, timezone, new Date());
+  const now = new Date();
+  const nextCheck = syncReminderNextCheckLabel(task, timezone, now);
+  const dueAtOnce = syncReminderDueAtOnce(task, now);
+  const slot = syncReminderSlotLabel(task, timezone);
 
   return (
-    <div className="kd-config-subsection kd-sync-reminder" data-testid="config-sync-reminder">
-      <h2>Sync Reminder</h2>
-      <p className="kd-form-hint">
+    <SettingToggle
+      id="config-sync-reminder-enabled"
+      testId="config-sync-reminder"
+      switchTestId="config-sync-reminder-enabled"
+      label="Sync reminders"
+      sub
+      checked={enabled}
+      disabled={!seeded || !notificationsEnabled || setEnabled.isPending}
+      onChange={async (next) => {
+        try {
+          await setEnabled.mutateAsync(next);
+          toast(next ? 'Sync reminder turned on.' : 'Sync reminder turned off.', 'success');
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      }}
+    >
+      <p>
         A daily check that emails your active Kindoo Managers when a temporary seat has expired in
-        Kindoo but is still on the SBA roster. Its one instruction is to run Sync in the extension,
-        which clears those seats. While seats stay expired it repeats at most every third day, and
-        it stops on its own once they are gone.
+        Kindoo but is still on the SBA roster. Its one instruction is to run Sync, which clears
+        those seats. While seats stay expired it repeats at most every third day, and it stops on
+        its own once they are gone.
       </p>
 
-      {/* Blocked-by-kill-switch. Rendered alongside a live switch rather
-          than in place of one: the email is suppressed but the push is
-          not — `notifications_enabled` gates Resend only — so the toggle
-          is not inert here, and the opt-in is worth recording before the
-          kill-switch goes back on. */}
-      {seeded && !notificationsEnabled ? (
-        <p className="kd-config-warning" data-testid="config-sync-reminder-blocked">
-          <strong>Email Notifications Enabled is off for this stake</strong>, so no reminder email
-          will be sent. Managers who turned on the sync-reminder push under Notifications still get
-          the push, and the every-third-day backoff is still consumed. Turn the switch above back on
-          to restore the email.
-        </p>
-      ) : null}
-
-      <label className="kd-switch-label" htmlFor="config-sync-reminder-enabled">
-        <Switch
-          id="config-sync-reminder-enabled"
-          checked={enabled}
-          disabled={!seeded || setEnabled.isPending}
-          onCheckedChange={(next) => {
-            setEnabled
-              .mutateAsync(next)
-              .then(() =>
-                toast(next ? 'Sync reminder turned on.' : 'Sync reminder turned off.', 'success'),
-              )
-              .catch((err) => toast(errorMessage(err), 'error'));
-          }}
-          data-testid="config-sync-reminder-enabled"
-        />
-        <span>Send sync reminders</span>
-      </label>
-
       {!seeded ? (
-        <p className="kd-form-hint" data-testid="config-sync-reminder-unseeded">
+        <p data-testid="config-sync-reminder-unseeded">
           {schedule.isLoading
             ? 'Loading…'
             : 'The scheduler adds this reminder to your stake within the hour. Check back then to turn it on.'}
         </p>
       ) : null}
 
-      {/* Said before the flip, not after: a row that has been sitting
-          off was never stamped, so its stored slot is stale and turning
-          it on makes it due at once rather than at the configured hour
-          (spec §17, "Turning a job on"). If seats are already expired,
-          the first mail goes out inside the hour. */}
+      {/* The parent switch locks this control without stopping it. Said
+          plainly, because the grey reads as "off" and it is not. */}
+      {seeded && !notificationsEnabled ? (
+        <p data-testid="config-sync-reminder-blocked">
+          <strong>Email Notifications Enabled is off</strong>, so this setting is locked — turn that
+          switch back on to change it. It is not paused: it keeps doing whatever it is set to. Left
+          on, managers who subscribed to the sync-reminder push still get the push and the
+          every-third-day backoff is still consumed; only the email is suppressed.
+        </p>
+      ) : null}
+
+      {/* When the first check lands, said before the flip rather than
+          after. A row sitting off is never stamped, so whether turning
+          it on makes it due at once depends on the slot it was seeded
+          with — on rollout that slot is tomorrow's 06:00, not the past. */}
       {seeded && !enabled ? (
-        <p className="kd-form-hint" data-testid="config-sync-reminder-first-run">
-          The first check runs within the hour of switching this on, not at the daily hour — so if
-          seats are already expired, that reminder goes out today.
+        <p data-testid="config-sync-reminder-first-run">
+          {dueAtOnce || !slot
+            ? 'Its scheduled slot has already passed, so the first check runs within the hour of switching this on — if seats are already expired, that reminder goes out today.'
+            : `Switching it on does not run it straight away: the first check is at its next scheduled slot, ${slot} (${timezone}).`}
         </p>
       ) : null}
 
       {nextCheck ? (
-        <p className="kd-form-hint" data-testid="config-sync-reminder-next">
+        <p data-testid="config-sync-reminder-next">
           Next check: {nextCheck}
           {nextCheck === 'within the hour' ? null : ` (${timezone})`}
         </p>
       ) : null}
-    </div>
+    </SettingToggle>
   );
 }

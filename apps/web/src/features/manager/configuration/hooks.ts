@@ -749,12 +749,18 @@ export function useDeleteManagerMutation() {
 
 // ---- Stake-doc / Config-keys mutation -------------------------------
 
+/**
+ * The Save-backed fields of the Config tab's stake form.
+ *
+ * `notifications_enabled` and `eq_president_app_access` are deliberately
+ * NOT here: they are sliders that write on flip
+ * (`useSetStakeToggleMutation`), so folding them back into the form
+ * would put them under a Save button that no longer covers them.
+ */
 export interface ConfigInput {
   stake_name: string;
   stake_seat_cap: number;
   timezone: string;
-  notifications_enabled: boolean;
-  eq_president_app_access: boolean;
 }
 
 export function useUpdateStakeConfigMutation() {
@@ -769,8 +775,49 @@ export function useUpdateStakeConfigMutation() {
         stake_name: input.stake_name,
         stake_seat_cap: input.stake_seat_cap,
         timezone: input.timezone,
-        notifications_enabled: input.notifications_enabled,
-        eq_president_app_access: input.eq_president_app_access,
+        last_modified_at: serverTimestamp(),
+        last_modified_by: actor,
+        lastActor: actor,
+      });
+    },
+    onSuccess: () => {
+      // Fire-and-forget; live hooks have a never-resolving queryFn,
+      // so awaiting invalidateQueries would hang the mutation.
+      void qc.invalidateQueries();
+    },
+  });
+}
+
+/** Stake-doc Booleans the Config tab renders as write-on-flip sliders. */
+export type StakeToggleField = 'notifications_enabled' | 'eq_president_app_access';
+
+export interface StakeToggleInput {
+  field: StakeToggleField;
+  value: boolean;
+}
+
+/**
+ * Write one stake-level Boolean the moment its slider moves.
+ *
+ * One mutation rather than one per field: both writes are the same
+ * single-field `updateDoc` with the same `lastActor` stamp, and a
+ * second copy would be a second place for that stamp to drift from the
+ * rules' integrity check.
+ *
+ * Writes only the named field, so two sliders flipped in quick
+ * succession cannot clobber each other, and neither can clobber an
+ * unsaved edit sitting in the form above them.
+ */
+export function useSetStakeToggleMutation() {
+  const principal = usePrincipal();
+  const activeStakeId = useActiveStake();
+  const qc = useQueryClient();
+  return useMutation<void, Error, StakeToggleInput>({
+    mutationFn: async ({ field, value }) => {
+      const sid = requireActiveStake(activeStakeId);
+      const actor = actorOf(principal);
+      await updateDoc(stakeRef(db, sid), {
+        [field]: value,
         last_modified_at: serverTimestamp(),
         last_modified_by: actor,
         lastActor: actor,

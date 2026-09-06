@@ -58,9 +58,42 @@ export function syncReminderNextCheckLabel(
   now: Date,
 ): string | null {
   if (!task || task.enabled !== true) return null;
+  if (syncReminderDueAtOnce(task, now)) return 'within the hour';
+  return syncReminderSlotLabel(task, timezone);
+}
+
+/**
+ * Whether flipping this row on would make it due at the very next
+ * hourly tick — i.e. its stored slot is absent or already past.
+ *
+ * The distinction matters on rollout and nowhere else, which is exactly
+ * when the copy is first read: the dispatcher seeds every existing
+ * stake with `next_trigger_time` set to the next local 06:00, so a
+ * manager switching the reminder on that afternoon gets the first check
+ * tomorrow morning, not within the hour. Only once that seeded slot has
+ * passed (or on a row that has been off long enough for its stamp to go
+ * stale) is "within the hour" true.
+ *
+ * `false` for a missing row: there is nothing to turn on.
+ */
+export function syncReminderDueAtOnce(task: ScheduledTask | null, now: Date): boolean {
+  if (!task) return false;
   const next = timestampToDate(task.next_trigger_time);
-  if (!next) return 'within the hour';
-  return next.getTime() <= now.getTime() ? 'within the hour' : formatDateTime(next, timezone);
+  if (!next) return true;
+  return next.getTime() <= now.getTime();
+}
+
+/**
+ * The row's stored slot as display text in the stake's timezone,
+ * regardless of `enabled` — `null` when there is no row or no stamp.
+ *
+ * Unlike `syncReminderNextCheckLabel` this makes no claim about
+ * staleness; callers pair it with `syncReminderDueAtOnce` and say the
+ * right thing for the row's actual state.
+ */
+export function syncReminderSlotLabel(task: ScheduledTask | null, timezone: string): string | null {
+  const next = timestampToDate(task?.next_trigger_time);
+  return next ? formatDateTime(next, timezone) : null;
 }
 
 /**
