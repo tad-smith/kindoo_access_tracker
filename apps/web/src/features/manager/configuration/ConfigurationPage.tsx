@@ -88,6 +88,7 @@ import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { InfoTip } from '../../../components/ui/InfoTip';
 import { Input } from '../../../components/ui/Input';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
 import { cn } from '../../../lib/cn';
@@ -1864,6 +1865,13 @@ function ConfigKeysTab() {
 // `disabled` greys the label with the slider, but never the InfoTip —
 // the tip is where a manager finds out WHY the row is inert, so it has
 // to stay reachable exactly when the control is not.
+//
+// `pending` is a THIRD state and must not be folded into `disabled`. A
+// row whose value has not arrived yet renders a placeholder where the
+// switch goes, never a switch: a disabled-and-off switch is a settled
+// value, and showing one for a setting that is actually on is simply
+// wrong. It reads as "not ready", which is what the tooltip says at the
+// same moment.
 
 interface SettingToggleProps {
   id: string;
@@ -1874,6 +1882,8 @@ interface SettingToggleProps {
   label: string;
   checked: boolean;
   disabled?: boolean;
+  /** The row's value has not loaded yet. Renders a placeholder, not a switch. */
+  pending?: boolean;
   sub?: boolean;
   onChange: (next: boolean) => void | Promise<void>;
   /** Tooltip body. Paragraphs, not a single run-on sentence. */
@@ -1887,6 +1897,7 @@ function SettingToggle({
   label,
   checked,
   disabled = false,
+  pending = false,
   sub = false,
   onChange,
   children,
@@ -1896,22 +1907,35 @@ function SettingToggle({
       className={cn(
         'kd-setting-toggle',
         sub && 'kd-setting-toggle--sub',
-        disabled && 'kd-setting-toggle--disabled',
+        (disabled || pending) && 'kd-setting-toggle--disabled',
       )}
       data-testid={`${testId}-row`}
+      aria-busy={pending || undefined}
     >
-      <label className="kd-switch-label" htmlFor={id}>
-        <Switch
-          id={id}
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(next) => {
-            void onChange(next);
-          }}
-          data-testid={switchTestId}
-        />
-        <span>{label}</span>
-      </label>
+      {pending ? (
+        <span className="kd-switch-label">
+          <Skeleton
+            className="h-6 w-11 rounded-full"
+            role="status"
+            aria-label={`Loading ${label}`}
+            data-testid={`${switchTestId}-pending`}
+          />
+          <span>{label}</span>
+        </span>
+      ) : (
+        <label className="kd-switch-label" htmlFor={id}>
+          <Switch
+            id={id}
+            checked={checked}
+            disabled={disabled}
+            onCheckedChange={(next) => {
+              void onChange(next);
+            }}
+            data-testid={switchTestId}
+          />
+          <span>{label}</span>
+        </label>
+      )}
       <InfoTip label={label} data-testid={`${testId}-info`}>
         {children}
       </InfoTip>
@@ -1932,6 +1956,16 @@ function SettingToggle({
 // right now", never "this is not running", and the tip says so rather
 // than letting the grey imply dormancy. Nothing here ever writes
 // `enabled: false` as a side effect of the parent switch.
+//
+// Its two disabled causes are distinct from a third state, "value not
+// loaded yet". `useStakeSchedule` is a second subscription — the stake
+// doc gates this whole tab's render, so the reminder row's snapshot
+// always lands strictly after the row becomes visible — and until it
+// does, `syncReminderTask` reads null. Rendering that as a
+// disabled-and-off switch would show every manager, on every load of
+// this tab, a settled "off and unavailable" for a reminder that is on.
+// So `pending` renders a placeholder instead, agreeing with the "Loading…"
+// the tooltip shows at the same moment.
 //
 // The other disabled cause is the ordinary state of a new stake: the
 // hourly dispatcher seeds every registry job onto every stake, so until
@@ -1965,6 +1999,7 @@ function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderTogg
       label="Sync reminders"
       sub
       checked={enabled}
+      pending={schedule.isPending}
       disabled={!seeded || !notificationsEnabled || setEnabled.isPending}
       onChange={async (next) => {
         try {
@@ -1982,11 +2017,12 @@ function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderTogg
         its own once they are gone.
       </p>
 
-      {!seeded ? (
+      {schedule.isPending ? <p data-testid="config-sync-reminder-loading">Loading…</p> : null}
+
+      {!seeded && !schedule.isPending ? (
         <p data-testid="config-sync-reminder-unseeded">
-          {schedule.isLoading
-            ? 'Loading…'
-            : 'The scheduler adds this reminder to your stake within the hour. Check back then to turn it on.'}
+          The scheduler adds this reminder to your stake within the hour. Check back then to turn it
+          on.
         </p>
       ) : null}
 

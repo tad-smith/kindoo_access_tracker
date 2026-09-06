@@ -182,6 +182,48 @@ test.describe('Config tab sliders (Configuration → Config)', () => {
     expect(child!.x).toBeGreaterThan(parent!.x);
   });
 
+  test('shows a placeholder, never an off switch, before its snapshot lands', async ({ page }) => {
+    // The stake doc gates this tab's render, so the reminder row is on
+    // screen before `stakeSchedules/{stakeId}` arrives — every manager
+    // hits this frame on every load. Rendering a disabled, unchecked
+    // switch there would show a settled "off" for a reminder that is on.
+    await seedReminderRow(true);
+    await signInAsManager(page, 'mgr-sr-pending@example.com');
+
+    // Sample from the first frame the row exists in, so the assertion
+    // lands on what was actually painted rather than on the settled state.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __FRAMES__: string[] };
+      w.__FRAMES__ = [];
+      const tick = () => {
+        const row = document.querySelector('[data-testid="config-sync-reminder-row"]');
+        if (row) {
+          const sw = row.querySelector('[role="switch"]');
+          const frame = sw
+            ? `switch:${sw.getAttribute('aria-checked')}:${sw.hasAttribute('disabled')}`
+            : 'placeholder';
+          if (w.__FRAMES__[w.__FRAMES__.length - 1] !== frame) w.__FRAMES__.push(frame);
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+
+    await page.goto(`/manager/configuration?tab=config`);
+    await expect(page.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    const frames = await page.evaluate(
+      () => (window as unknown as { __FRAMES__: string[] }).__FRAMES__,
+    );
+    // Whatever it painted first, it was never a switch reading off.
+    expect(frames).not.toContain('switch:false:true');
+    expect(frames).not.toContain('switch:false:false');
+    // And it settles on the row's real value.
+    expect(frames[frames.length - 1]).toBe('switch:true:false');
+  });
+
   test('is inert, with the explanation behind the affordance, before the row is seeded', async ({
     page,
   }) => {
@@ -196,6 +238,9 @@ test.describe('Config tab sliders (Configuration → Config)', () => {
     await expect(tip.getByTestId('config-sync-reminder-unseeded')).toContainText(
       /within the hour/i,
     );
+    // Settled, not loading — the two states are distinct now.
+    await expect(tip.getByTestId('config-sync-reminder-loading')).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     // Clicking a disabled control must not conjure the document.
     await page.getByTestId('config-sync-reminder-enabled').click({ force: true });

@@ -197,6 +197,24 @@ function scheduleDocResult(tasks: ScheduledTask[] | undefined) {
   };
 }
 
+// The frame before the `stakeSchedules/{stakeId}` snapshot lands. The
+// stake doc gates this tab's render, so this state is always reached
+// with the row already on screen — it is what every manager sees on
+// every load of the Config tab.
+function schedulePendingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
 function syncReminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     job: 'syncReminder',
@@ -2120,6 +2138,57 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
     expect(screen.getByTestId('config-notifications-enabled-row')).not.toHaveClass(
       'kd-setting-toggle--sub',
     );
+  });
+
+  describe('before its snapshot has landed', () => {
+    beforeEach(() => {
+      useStakeScheduleMock.mockReturnValue(schedulePendingResult());
+    });
+
+    it('renders no switch at all, so it cannot show a value it does not have', () => {
+      // The defect this replaces: `syncReminderTask(undefined)` is null
+      // while pending, so the row collapsed into "not seeded" and
+      // rendered a disabled, unchecked switch — indistinguishable from
+      // a settled off, on a stake whose reminder is on.
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.queryByTestId('config-sync-reminder-enabled')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      expect(screen.getByTestId('config-sync-reminder-row')).toHaveAttribute('aria-busy', 'true');
+    });
+
+    it('says loading, not that the scheduler has yet to add the reminder', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const tip = await openTip(user);
+      expect(within(tip).getByTestId('config-sync-reminder-loading')).toHaveTextContent('Loading…');
+      expect(within(tip).queryByTestId('config-sync-reminder-unseeded')).toBeNull();
+      // Nothing that names a settled state may appear yet.
+      expect(within(tip).queryByTestId('config-sync-reminder-first-run')).toBeNull();
+      expect(within(tip).queryByTestId('config-sync-reminder-next')).toBeNull();
+      expect(within(tip).queryByTestId('config-sync-reminder-blocked')).toBeNull();
+    });
+
+    it('leaves the two stake-doc sliders alone — they render from data the tab already has', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(screen.getByTestId('config-eq-president-access')).toBeInTheDocument();
+      expect(screen.queryByTestId('config-notifications-enabled-pending')).toBeNull();
+    });
+
+    it('settles onto the row’s real value once the snapshot arrives', () => {
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-sync-reminder-enabled-pending')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    });
   });
 
   it('greys and disables the slider until the dispatcher has seeded the row', async () => {
