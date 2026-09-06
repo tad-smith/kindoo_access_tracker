@@ -18,21 +18,22 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      # Required: the action exchanges an OIDC token for a GitHub App token
+      # in `setupGitHubToken`. Not cloud auth — removing it fails the job in
+      # ~24s with "Could not fetch an OIDC token".
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # full history so the reviewer can read spec.md, prior commits, changelogs
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@9c5ddab2e6d17b83ea679153b31f1d5f023cf636 # v1
         with:
           # Uses your Max subscription via OAuth — no API billing
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are an INDEPENDENT reviewer of PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.  You are a very skilled reviewer detecting the differences between the spec and actual code. You are very good at detecting edge cases, but you also have very good reasoning skills to determine which cases are a concern in practice in which cases are extremely rare and more theoretical in nature. You understand these extremely rare edge cases are nitpicks. You avoid focusing on and commenting on nitpick issues.
 
-
-            Title: ${{ github.event.pull_request.title }}
 
             The code in this PR was almost certainly written by another Claude instance. Assume its author had blind spots. Do not trust the PR description — verify everything against the actual diff.
 
@@ -56,5 +57,5 @@ jobs:
             --model claude-opus-5
             --effort max
             --max-turns 120
-            --allowedTools "Bash,Read,Grep,Glob"
-            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"
+            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(grep:*),Bash(sed:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(head:*),Bash(tail:*)"
+            --disallowedTools "Edit,Write,WebSearch"

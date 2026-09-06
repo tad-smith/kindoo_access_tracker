@@ -18,15 +18,18 @@ Thumbs.db
 # Logs
 *.log
 
-# Env
-.env
-.env.local
-.env.*.local
-.env.production
-.env.*.production
-.env.staging
-.env.*.staging
-functions/.env*
+# Env, keys, credentials.
+# Pattern-matched, not enumerated: a filename nobody predicted (a new
+# `.env.<mode>`, a downloaded service-account key) must be ignored by
+# default. This repo is public and a committed credential survives its
+# own deletion in the history.
+.env*
+!.env.example
+*.pem
+*.key
+*-key.json
+*service-account*.json
+*credentials*.json
 
 resume*.sh
 
