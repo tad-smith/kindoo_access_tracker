@@ -114,7 +114,7 @@ export type SyncReminderOutcome = {
    * rule later can't silently change what this number means.
    */
   grants: number;
-  /** Operated Kindoo sites whose last heartbeat is `SYNC_STALE_DAYS` old or older. */
+  /** Operated Kindoo sites whose last heartbeat is older than `SYNC_STALE_DAYS`. */
   staleSites: number;
   /** Tokens FCM accepted. Zero when nobody opted into the push category. */
   pushed: number;
@@ -442,7 +442,7 @@ function lastSyncDates(
 }
 
 /**
- * Every operated site whose last Sync is `SYNC_STALE_DAYS` days old or
+ * Every operated site whose last Sync is older than `SYNC_STALE_DAYS` days —
  * older, oldest first.
  *
  * **A site with no heartbeat is not stale.** A stake that has never
