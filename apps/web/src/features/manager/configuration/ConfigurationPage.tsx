@@ -76,18 +76,14 @@ import {
   useUpsertWardMutation,
   useWards,
 } from './hooks';
-import {
-  syncReminderDueAtOnce,
-  syncReminderNextCheckLabel,
-  syncReminderSlotLabel,
-  syncReminderTask,
-} from './syncReminder';
+import { syncReminderTask } from './syncReminder';
 import { useOrganizations, sortOrganizations } from '../../organizations/hooks';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
 import { Dialog } from '../../../components/ui/Dialog';
 import { InfoTip } from '../../../components/ui/InfoTip';
 import { Input } from '../../../components/ui/Input';
+import { Skeleton } from '../../../components/ui/Skeleton';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
 import { cn } from '../../../lib/cn';
@@ -1791,10 +1787,7 @@ function ConfigKeysTab() {
           </p>
         </SettingToggle>
 
-        <SyncReminderToggle
-          notificationsEnabled={notificationsEnabled}
-          timezone={stake.data.timezone ?? 'America/Denver'}
-        />
+        <SyncReminderToggle notificationsEnabled={notificationsEnabled} />
 
         <SettingToggle
           id="config-eq-president-access"
@@ -1807,11 +1800,6 @@ function ConfigKeysTab() {
           <p>
             When on, Sync grants app access to whoever holds the Elders Quorum President calling in
             each ward, and drops it again when the calling moves on.
-          </p>
-          <p>
-            Flipping it changes what future Sync runs derive. Members who already hold the calling
-            are offered a one-time pass right after the flip; decline it and Sync catches up as
-            callings change.
           </p>
         </SettingToggle>
       </div>
@@ -1862,8 +1850,15 @@ function ConfigKeysTab() {
 //
 // `sub` indents the row to show it belongs to the option above it.
 // `disabled` greys the label with the slider, but never the InfoTip —
-// the tip is where a manager finds out WHY the row is inert, so it has
-// to stay reachable exactly when the control is not.
+// the tip explains what the setting is, and that stays worth reading
+// when the control is inert.
+//
+// `pending` is a THIRD state and must not be folded into `disabled`. A
+// row whose value has not arrived yet renders a placeholder where the
+// switch goes, never a switch: a disabled-and-off switch is a settled
+// value, and showing one for a setting that is actually on is simply
+// wrong. It reads as "not ready", which is what the tooltip says at the
+// same moment.
 
 interface SettingToggleProps {
   id: string;
@@ -1874,6 +1869,8 @@ interface SettingToggleProps {
   label: string;
   checked: boolean;
   disabled?: boolean;
+  /** The row's value has not loaded yet. Renders a placeholder, not a switch. */
+  pending?: boolean;
   sub?: boolean;
   onChange: (next: boolean) => void | Promise<void>;
   /** Tooltip body. Paragraphs, not a single run-on sentence. */
@@ -1887,6 +1884,7 @@ function SettingToggle({
   label,
   checked,
   disabled = false,
+  pending = false,
   sub = false,
   onChange,
   children,
@@ -1896,22 +1894,35 @@ function SettingToggle({
       className={cn(
         'kd-setting-toggle',
         sub && 'kd-setting-toggle--sub',
-        disabled && 'kd-setting-toggle--disabled',
+        (disabled || pending) && 'kd-setting-toggle--disabled',
       )}
       data-testid={`${testId}-row`}
+      aria-busy={pending || undefined}
     >
-      <label className="kd-switch-label" htmlFor={id}>
-        <Switch
-          id={id}
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(next) => {
-            void onChange(next);
-          }}
-          data-testid={switchTestId}
-        />
-        <span>{label}</span>
-      </label>
+      {pending ? (
+        <span className="kd-switch-label">
+          <Skeleton
+            className="h-6 w-11 rounded-full"
+            role="status"
+            aria-label={`Loading ${label}`}
+            data-testid={`${switchTestId}-pending`}
+          />
+          <span>{label}</span>
+        </span>
+      ) : (
+        <label className="kd-switch-label" htmlFor={id}>
+          <Switch
+            id={id}
+            checked={checked}
+            disabled={disabled}
+            onCheckedChange={(next) => {
+              void onChange(next);
+            }}
+            data-testid={switchTestId}
+          />
+          <span>{label}</span>
+        </label>
+      )}
       <InfoTip label={label} data-testid={`${testId}-info`}>
         {children}
       </InfoTip>
@@ -1933,6 +1944,16 @@ function SettingToggle({
 // than letting the grey imply dormancy. Nothing here ever writes
 // `enabled: false` as a side effect of the parent switch.
 //
+// Its two disabled causes are distinct from a third state, "value not
+// loaded yet". `useStakeSchedule` is a second subscription — the stake
+// doc gates this whole tab's render, so the reminder row's snapshot
+// always lands strictly after the row becomes visible — and until it
+// does, `syncReminderTask` reads null. Rendering that as a
+// disabled-and-off switch would show every manager, on every load of
+// this tab, a settled "off and unavailable" for a reminder that is on.
+// So `pending` renders a placeholder instead: no value shown until
+// there is one.
+//
 // The other disabled cause is the ordinary state of a new stake: the
 // hourly dispatcher seeds every registry job onto every stake, so until
 // it has run once there is no row to flip. The client must never create
@@ -1942,20 +1963,15 @@ function SettingToggle({
 interface SyncReminderToggleProps {
   /** `stake.notifications_enabled`, absent read as on (its default). */
   notificationsEnabled: boolean;
-  timezone: string;
 }
 
-function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderToggleProps) {
+function SyncReminderToggle({ notificationsEnabled }: SyncReminderToggleProps) {
   const schedule = useStakeSchedule();
   const setEnabled = useSetSyncReminderEnabledMutation();
 
   const task = useMemo(() => syncReminderTask(schedule.data), [schedule.data]);
   const seeded = task !== null;
   const enabled = task?.enabled === true;
-  const now = new Date();
-  const nextCheck = syncReminderNextCheckLabel(task, timezone, now);
-  const dueAtOnce = syncReminderDueAtOnce(task, now);
-  const slot = syncReminderSlotLabel(task, timezone);
 
   return (
     <SettingToggle
@@ -1965,6 +1981,7 @@ function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderTogg
       label="Sync reminders"
       sub
       checked={enabled}
+      pending={schedule.isPending}
       disabled={!seeded || !notificationsEnabled || setEnabled.isPending}
       onChange={async (next) => {
         try {
@@ -1981,44 +1998,6 @@ function SyncReminderToggle({ notificationsEnabled, timezone }: SyncReminderTogg
         those seats. While seats stay expired it repeats at most every third day, and it stops on
         its own once they are gone.
       </p>
-
-      {!seeded ? (
-        <p data-testid="config-sync-reminder-unseeded">
-          {schedule.isLoading
-            ? 'Loading…'
-            : 'The scheduler adds this reminder to your stake within the hour. Check back then to turn it on.'}
-        </p>
-      ) : null}
-
-      {/* The parent switch locks this control without stopping it. Said
-          plainly, because the grey reads as "off" and it is not. */}
-      {seeded && !notificationsEnabled ? (
-        <p data-testid="config-sync-reminder-blocked">
-          <strong>Email Notifications Enabled is off</strong>, so this setting is locked — turn that
-          switch back on to change it. It is not paused: it keeps doing whatever it is set to. Left
-          on, managers who subscribed to the sync-reminder push still get the push and the
-          every-third-day backoff is still consumed; only the email is suppressed.
-        </p>
-      ) : null}
-
-      {/* When the first check lands, said before the flip rather than
-          after. A row sitting off is never stamped, so whether turning
-          it on makes it due at once depends on the slot it was seeded
-          with — on rollout that slot is tomorrow's 06:00, not the past. */}
-      {seeded && !enabled ? (
-        <p data-testid="config-sync-reminder-first-run">
-          {dueAtOnce || !slot
-            ? 'Its scheduled slot has already passed, so the first check runs within the hour of switching this on — if seats are already expired, that reminder goes out today.'
-            : `Switching it on does not run it straight away: the first check is at its next scheduled slot, ${slot} (${timezone}).`}
-        </p>
-      ) : null}
-
-      {nextCheck ? (
-        <p data-testid="config-sync-reminder-next">
-          Next check: {nextCheck}
-          {nextCheck === 'within the hour' ? null : ` (${timezone})`}
-        </p>
-      ) : null}
     </SettingToggle>
   );
 }

@@ -197,6 +197,24 @@ function scheduleDocResult(tasks: ScheduledTask[] | undefined) {
   };
 }
 
+// The frame before the `stakeSchedules/{stakeId}` snapshot lands. The
+// stake doc gates this tab's render, so this state is always reached
+// with the row already on screen — it is what every manager sees on
+// every load of the Config tab.
+function schedulePendingResult() {
+  return {
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    isLoading: true,
+    isSuccess: false,
+    isError: false,
+    isFetching: true,
+    fetchStatus: 'fetching',
+  };
+}
+
 function syncReminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
     job: 'syncReminder',
@@ -2079,13 +2097,15 @@ describe('<ConfigurationPage /> slider tooltips', () => {
     expect(await screen.findByTestId('config-notifications-enabled-info-panel')).toBeVisible();
   });
 
-  it('stays reachable on a row whose slider is disabled, since it carries the reason', async () => {
+  it('stays readable on a row whose slider is disabled — what the setting is still matters', async () => {
     useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
     const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
     await user.click(screen.getByTestId('config-sync-reminder-info'));
-    expect(await screen.findByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
+    expect(await screen.findByTestId('config-sync-reminder-info-panel')).toHaveTextContent(
+      /temporary seat has expired in Kindoo/i,
+    );
   });
 
   it('names the option it explains, so three identical icons are still distinguishable', () => {
@@ -2100,12 +2120,6 @@ describe('<ConfigurationPage /> slider tooltips', () => {
 // ---- Sync reminders slider -------------------------------------------
 
 describe('<ConfigurationPage /> sync reminders slider', () => {
-  /** Open the row's tooltip and hand back its panel. */
-  async function openTip(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(screen.getByTestId('config-sync-reminder-info'));
-    return screen.findByTestId('config-sync-reminder-info-panel');
-  }
-
   it('sits directly beneath Email Notifications Enabled, indented under it', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     const rows = Array.from(
@@ -2122,17 +2136,66 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
     );
   });
 
-  it('greys and disables the slider until the dispatcher has seeded the row', async () => {
+  describe('before its snapshot has landed', () => {
+    beforeEach(() => {
+      useStakeScheduleMock.mockReturnValue(schedulePendingResult());
+    });
+
+    it('renders no switch at all, so it cannot show a value it does not have', () => {
+      // The defect this replaces: `syncReminderTask(undefined)` is null
+      // while pending, so the row collapsed into "not seeded" and
+      // rendered a disabled, unchecked switch — indistinguishable from
+      // a settled off, on a stake whose reminder is on.
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.queryByTestId('config-sync-reminder-enabled')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      expect(screen.getByTestId('config-sync-reminder-row')).toHaveAttribute('aria-busy', 'true');
+    });
+
+    it('is the only thing that distinguishes loading from never-seeded', () => {
+      // The tooltip states what the setting is and nothing about its
+      // state, so the control itself carries the whole distinction: a
+      // placeholder while loading, a real (disabled, off) switch once we
+      // know the row was never seeded.
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-sync-reminder-enabled-pending')).toBeNull();
+      const sw = screen.getByTestId('config-sync-reminder-enabled');
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAttribute('aria-checked', 'false');
+    });
+
+    it('leaves the two stake-doc sliders alone — they render from data the tab already has', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-notifications-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(screen.getByTestId('config-eq-president-access')).toBeInTheDocument();
+      expect(screen.queryByTestId('config-notifications-enabled-pending')).toBeNull();
+    });
+
+    it('settles onto the row’s real value once the snapshot arrives', () => {
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-sync-reminder-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow({ enabled: true })]));
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-sync-reminder-enabled-pending')).toBeNull();
+      expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    });
+  });
+
+  it('greys and disables the slider until the dispatcher has seeded the row', () => {
     useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
-    const user = userEvent.setup();
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeDisabled();
     expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass(
       'kd-setting-toggle--disabled',
-    );
-    const tip = await openTip(user);
-    expect(within(tip).getByTestId('config-sync-reminder-unseeded')).toHaveTextContent(
-      /scheduler adds this reminder to your stake within the hour/i,
     );
   });
 
@@ -2174,83 +2237,6 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
     await waitFor(() => expect(setSyncReminderEnabledMock).toHaveBeenCalledWith(false));
   });
 
-  it('shows the next check for a seeded, enabled row', async () => {
-    useStakeScheduleMock.mockReturnValue(
-      scheduleDocResult([
-        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2099-01-02T13:00:00Z') }),
-      ]),
-    );
-    const user = userEvent.setup();
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    expect(screen.getByTestId('config-sync-reminder-enabled')).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
-    const tip = await openTip(user);
-    expect(within(tip).getByTestId('config-sync-reminder-next')).toHaveTextContent(
-      /Next check: 2099-01-02 06:00 \(America\/Denver\)/,
-    );
-    expect(within(tip).queryByTestId('config-sync-reminder-first-run')).toBeNull();
-  });
-
-  it('reports the next check as within the hour when the stored slot has gone stale', async () => {
-    useStakeScheduleMock.mockReturnValue(
-      scheduleDocResult([
-        syncReminderRow({ enabled: true, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
-      ]),
-    );
-    const user = userEvent.setup();
-    render(<ConfigurationPage />, { wrapper: Wrapper });
-    const tip = await openTip(user);
-    const next = within(tip).getByTestId('config-sync-reminder-next');
-    expect(next).toHaveTextContent(/Next check: within the hour/);
-    expect(next).not.toHaveTextContent(/America\/Denver/);
-  });
-
-  describe('when it is off and the manager is deciding whether to turn it on', () => {
-    it('promises a check within the hour only when the stored slot has already passed', async () => {
-      useStakeScheduleMock.mockReturnValue(
-        scheduleDocResult([
-          syncReminderRow({ enabled: false, next_trigger_time: timestamp('2020-01-02T13:00:00Z') }),
-        ]),
-      );
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      expect(within(tip).getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
-        /first check runs within the hour of switching this on/i,
-      );
-    });
-
-    it('names the seeded slot instead when it is still in the future', async () => {
-      // The rollout case, and the one the old copy got wrong: the
-      // dispatcher seeds every existing stake with the next local 06:00,
-      // so a manager enabling it that afternoon waits until tomorrow.
-      useStakeScheduleMock.mockReturnValue(
-        scheduleDocResult([
-          syncReminderRow({ enabled: false, next_trigger_time: timestamp('2099-01-02T13:00:00Z') }),
-        ]),
-      );
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      const firstRun = within(tip).getByTestId('config-sync-reminder-first-run');
-      expect(firstRun).toHaveTextContent(/does not run it straight away/i);
-      expect(firstRun).toHaveTextContent(/2099-01-02 06:00 \(America\/Denver\)/);
-      expect(firstRun).not.toHaveTextContent(/within the hour/i);
-    });
-
-    it('promises a check within the hour when the row was seeded with no slot at all', async () => {
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      expect(within(tip).getByTestId('config-sync-reminder-first-run')).toHaveTextContent(
-        /within the hour of switching this on/i,
-      );
-      expect(within(tip).queryByTestId('config-sync-reminder-next')).toBeNull();
-    });
-  });
-
   describe('when the stake-level email kill-switch is off', () => {
     beforeEach(() => {
       useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
@@ -2278,44 +2264,10 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
       );
       expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
     });
-
-    it('says the grey means locked, not paused, and names the switch that locks it', async () => {
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      const blocked = within(tip).getByTestId('config-sync-reminder-blocked');
-      expect(blocked).toHaveTextContent(/Email Notifications Enabled is off/i);
-      expect(blocked).toHaveTextContent(/this setting is locked/i);
-      expect(blocked).toHaveTextContent(/It is not paused/i);
-    });
-
-    it('says push still goes out and the backoff is still consumed, because the kill-switch gates email only', async () => {
-      // `EmailService.emailsEnabled` short-circuits Resend; the FCM
-      // fanout in `SyncReminderService` is untouched by the flag, and
-      // the every-third-day backoff is consumed either way.
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      const blocked = within(tip).getByTestId('config-sync-reminder-blocked');
-      expect(blocked).toHaveTextContent(/still get the push/i);
-      expect(blocked).toHaveTextContent(/backoff is still consumed/i);
-    });
-
-    it('does not claim to be locked while the row is still unseeded', async () => {
-      useStakeScheduleMock.mockReturnValue(scheduleDocResult(undefined));
-      const user = userEvent.setup();
-      render(<ConfigurationPage />, { wrapper: Wrapper });
-      const tip = await openTip(user);
-      expect(within(tip).queryByTestId('config-sync-reminder-blocked')).toBeNull();
-      expect(within(tip).getByTestId('config-sync-reminder-unseeded')).toBeInTheDocument();
-    });
   });
 
-  it('does not mention the kill-switch when email notifications are on', async () => {
-    const user = userEvent.setup();
+  it('is live and ungreyed when email notifications are on', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
-    const tip = await openTip(user);
-    expect(within(tip).queryByTestId('config-sync-reminder-blocked')).toBeNull();
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeEnabled();
     expect(screen.getByTestId('config-sync-reminder-row')).not.toHaveClass(
       'kd-setting-toggle--disabled',
