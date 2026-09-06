@@ -15,9 +15,15 @@
 // a local equivalent; both are first exercised on staging.
 
 import { onTaskDispatched } from 'firebase-functions/v2/tasks';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import { APP_SA } from '../lib/admin.js';
 import { SCHEDULED_JOBS, type JobRegistry } from '../lib/taskRegistry.js';
+
+// Registered jobs can send email (e.g. `sendSyncReminderIfDue`), so this
+// worker needs the same secret binding as the notify triggers even though
+// it has no email logic of its own.
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 
 export type RunScheduledTaskOutcome = 'ran' | 'invalid-payload' | 'unknown-job';
 
@@ -67,6 +73,7 @@ export const runScheduledTask = onTaskDispatched<{ stakeId: string; job: string 
   {
     retryConfig: { maxAttempts: 3 },
     serviceAccount: APP_SA,
+    secrets: [RESEND_API_KEY],
   },
   async (request) => {
     await runScheduledTaskHandler(request.data);

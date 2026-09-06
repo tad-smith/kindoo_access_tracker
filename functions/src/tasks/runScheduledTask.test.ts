@@ -85,11 +85,19 @@ describe('runScheduledTaskHandler', () => {
 });
 
 describe('runScheduledTask registration', () => {
-  type Endpoint = { taskQueueTrigger?: { retryConfig?: { maxAttempts?: number } } };
+  type Endpoint = {
+    taskQueueTrigger?: { retryConfig?: { maxAttempts?: number } };
+    secretEnvironmentVariables?: Array<{ key: string }>;
+  };
 
   it('is a task-queue function with a bounded retry budget', () => {
     const endpoint = (runScheduledTask as unknown as { __endpoint?: Endpoint }).__endpoint;
     expect(endpoint?.taskQueueTrigger).toBeDefined();
     expect(endpoint?.taskQueueTrigger?.retryConfig?.maxAttempts).toBe(3);
+  });
+
+  it('has RESEND_API_KEY mounted, since registered jobs (e.g. the sync reminder) can send email', () => {
+    const endpoint = (runScheduledTask as unknown as { __endpoint?: Endpoint }).__endpoint;
+    expect(endpoint?.secretEnvironmentVariables?.map((s) => s.key)).toContain('RESEND_API_KEY');
   });
 });
