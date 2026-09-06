@@ -515,7 +515,7 @@ firebase deploy --only functions:runScheduledTask --project staging
 **This is the step that fails silently.** Verified against the CLI and SDK versions this repo deploys with (`firebase-tools` 15.18.0, `firebase-functions` 7.3.2) by reading their source, because the published documentation does not state it either way:
 
 - `firebase-tools`' `upsertTaskQueue` (`lib/deploy/functions/release/fabricator.js`) always creates the queue, but calls `setEnqueuer` — the function that writes `roles/cloudtasks.enqueuer` onto the queue's IAM policy — **only when the endpoint declares an explicit `invoker`**.
-- `firebase-functions`' `onTaskDispatched` (`lib/v2/providers/tasks.js`) copies `invoker` onto the endpoint with `convertIfPresent`, i.e. only when the developer passes one.
+- `firebase-functions`' `onTaskDispatched` (`lib/v2/providers/tasks.js`) copies `invoker` onto the endpoint with `convertIfPresent`, i.e. only when the developer passes one. `convertIfPresent` (`lib/common/encoding.js`) returns early unless `src` carries the field as an **own** property, so an omitted `invoker` never reaches the endpoint at all. Re-read at 7.3.2 when the SDK was bumped; unchanged from 7.2.5.
 
 So with a plain `onTaskDispatched` and no `invoker` option, the queue is created and **no principal is granted permission to enqueue onto it**. Nothing fails at deploy; every hourly dispatch then fails at runtime with `PERMISSION_DENIED`.
 
