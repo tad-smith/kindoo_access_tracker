@@ -1495,3 +1495,88 @@ describe('remote apply — SW-side mailbox operations', () => {
     });
   });
 });
+
+describe('writeSyncHeartbeat — T-106', () => {
+  const CANONICAL = 'mgr.name@gmail.com';
+
+  function heartbeatActor(): User {
+    return {
+      email: 'Mgr.Name@Gmail.com',
+      getIdTokenResult: vi.fn().mockResolvedValue({ claims: { canonical: CANONICAL } }),
+    } as unknown as User;
+  }
+
+  beforeEach(() => {
+    setDocMock.mockReset();
+    setDocMock.mockResolvedValue(undefined);
+    docMock.mockClear();
+    serverTimestampMock.mockClear();
+  });
+  afterEach(() => {
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it('writes the exact key set the rules pin, as a whole-document set', async () => {
+    const { writeSyncHeartbeat } = await import('./data');
+    await writeSyncHeartbeat(
+      { stakeId: 'csnorth', kindooSiteId: 'east-stake', extVersion: '1.2.3' },
+      heartbeatActor(),
+    );
+
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'syncHeartbeats',
+      'csnorth',
+      'sites',
+      'east-stake',
+    );
+    const [, body, options] = setDocMock.mock.calls[0] as [
+      unknown,
+      Record<string, unknown>,
+      unknown,
+    ];
+    // `keysAreExactly` in the rules rejects a superset, and there is one
+    // document per site — so no merge, and no read-modify-write.
+    expect(body).toEqual({
+      stake_id: 'csnorth',
+      kindoo_site_id: 'east-stake',
+      last_sync_at: '__ts__',
+      ext_version: '1.2.3',
+      lastActor: { email: 'Mgr.Name@Gmail.com', canonical: CANONICAL },
+    });
+    expect(options).toBeUndefined();
+    expect(setDocMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys the home site under the reserved key with a null kindoo_site_id', async () => {
+    const { writeSyncHeartbeat } = await import('./data');
+    await writeSyncHeartbeat(
+      { stakeId: 'csnorth', kindooSiteId: null, extVersion: '1.2.3' },
+      heartbeatActor(),
+    );
+
+    expect(docMock).toHaveBeenCalledWith(
+      { __firestore: true },
+      'syncHeartbeats',
+      'csnorth',
+      'sites',
+      REMOTE_APPLY_HOME_SITE_KEY,
+    );
+    const [, body] = setDocMock.mock.calls[0] as [unknown, Record<string, unknown>, unknown];
+    expect(body.kindoo_site_id).toBeNull();
+  });
+
+  it('stamps lastActor from the token claim, which is what the rules compare', async () => {
+    // `lastActorMatchesAuth` compares `lastActor.email` against the raw
+    // token email and the canonical half against the `canonical` claim.
+    // Recomputing either locally can diverge and fail the write.
+    const { writeSyncHeartbeat } = await import('./data');
+    await writeSyncHeartbeat(
+      { stakeId: 'csnorth', kindooSiteId: null, extVersion: '1.2.3' },
+      heartbeatActor(),
+    );
+    const [, body] = setDocMock.mock.calls[0] as [unknown, Record<string, unknown>, unknown];
+    expect(body.lastActor).toEqual({ email: 'Mgr.Name@Gmail.com', canonical: CANONICAL });
+  });
+});
