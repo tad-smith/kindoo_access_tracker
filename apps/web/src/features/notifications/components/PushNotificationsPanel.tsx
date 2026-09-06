@@ -178,7 +178,7 @@ export function PushNotificationsPanel() {
             }}
             data-testid="push-syncreminder-toggle"
           />
-          <span>Sync reminders for expired temp seats</span>
+          <span>Sync reminders</span>
         </label>
       </div>
       <div className="form-actions">

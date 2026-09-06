@@ -453,39 +453,94 @@ export type ExpiredTempGrant = {
 /** An expired grant with its `scope` resolved to a display name. */
 export type LabelledExpiredTempGrant = ExpiredTempGrant & { label: string };
 
-export type SyncReminderEmailOpts = { grants: LabelledExpiredTempGrant[]; link: string };
+/**
+ * One Kindoo site the stake operates that nobody has synced lately.
+ *
+ * The reminder's second, independent condition. It shares the mail with
+ * the expired seats above because the two share one instruction — run
+ * Sync — and a manager who gets two separate mails saying the same thing
+ * learns to open neither.
+ */
+export type StaleSyncSite = {
+  /** `syncHeartbeats/{stakeId}/sites` doc id — `remoteApplySiteKey` form. */
+  siteKey: string;
+  /** What the manager sees in Kindoo's own site switcher. */
+  siteName: string;
+  /** Stake-local `YYYY-MM-DD` the last Sync completed on. */
+  lastSyncDate: string;
+  /** Whole stake-local days since `lastSyncDate`. */
+  daysSince: number;
+};
 
-export function buildSyncReminderSubject(grants: LabelledExpiredTempGrant[]): string {
-  return `[Stake Building Access] ${syncReminderLead(grants.length)}`;
+export type SyncReminderEmailOpts = {
+  grants: LabelledExpiredTempGrant[];
+  staleSites: StaleSyncSite[];
+  link: string;
+};
+
+/** Both conditions, minus the CTA the subject has no use for. */
+export type SyncReminderConditions = Omit<SyncReminderEmailOpts, 'link'>;
+
+export function buildSyncReminderSubject(o: SyncReminderConditions): string {
+  return `[Stake Building Access] ${syncReminderLead(o)}`;
 }
 
 export function buildSyncReminderTextBody(o: SyncReminderEmailOpts): string {
-  const lines: string[] = [`${syncReminderLead(o.grants.length)}.`, '', SYNC_REMINDER_ACTION, ''];
-  for (const g of o.grants) {
-    lines.push(`  ${memberText(g)} — ${g.label}, ended ${g.endDate}`);
+  const lines: string[] = [`${syncReminderLead(o)}.`];
+  if (o.grants.length > 0) {
+    lines.push('', SYNC_REMINDER_ACTION, '');
+    for (const g of o.grants) {
+      lines.push(`  ${memberText(g)} — ${g.label}, ended ${g.endDate}`);
+    }
+  }
+  if (o.staleSites.length > 0) {
+    lines.push('', SYNC_STALE_ACTION, '');
+    for (const s of o.staleSites) {
+      lines.push(`  ${s.siteName} — last synced ${s.lastSyncDate} (${daysAgo(s.daysSince)})`);
+    }
   }
   lines.push('', `View seats: ${o.link}`);
   return lines.join('\n');
 }
 
 export function buildSyncReminderHtmlBody(o: SyncReminderEmailOpts): string {
-  const rows = o.grants.map(
-    (g) =>
-      `<tr><td style="${TD}">${memberHtml(g)}</td>` +
-      `<td style="${TD}">${escapeHtml(g.label)}</td>` +
-      `<td style="${TD}"><span style="${FLAG}">${escapeHtml(g.endDate)}</span></td></tr>`,
-  );
-  return [
+  const parts: string[] = [
     `<div style="${WRAPPER}">`,
-    `<p style="${PARA}">${escapeHtml(`${syncReminderLead(o.grants.length)}.`)}</p>`,
-    `<p style="${PARA}">${escapeHtml(SYNC_REMINDER_ACTION)}</p>`,
-    `<table role="presentation" style="${TABLE}">`,
-    `<tr><th style="${TH}">Member</th><th style="${TH}">Scope</th><th style="${TH}">Ended</th></tr>`,
-    ...rows,
-    `</table>`,
+    `<p style="${PARA}">${escapeHtml(`${syncReminderLead(o)}.`)}</p>`,
+  ];
+  if (o.grants.length > 0) {
+    parts.push(
+      `<p style="${PARA}">${escapeHtml(SYNC_REMINDER_ACTION)}</p>`,
+      `<table role="presentation" style="${TABLE}">`,
+      `<tr><th style="${TH}">Member</th><th style="${TH}">Scope</th><th style="${TH}">Ended</th></tr>`,
+      ...o.grants.map(
+        (g) =>
+          `<tr><td style="${TD}">${memberHtml(g)}</td>` +
+          `<td style="${TD}">${escapeHtml(g.label)}</td>` +
+          `<td style="${TD}"><span style="${FLAG}">${escapeHtml(g.endDate)}</span></td></tr>`,
+      ),
+      `</table>`,
+    );
+  }
+  if (o.staleSites.length > 0) {
+    parts.push(
+      `<p style="${PARA}">${escapeHtml(SYNC_STALE_ACTION)}</p>`,
+      `<table role="presentation" style="${TABLE}">`,
+      `<tr><th style="${TH}">Kindoo site</th><th style="${TH}">Last synced</th></tr>`,
+      ...o.staleSites.map(
+        (s) =>
+          `<tr><td style="${TD}">${escapeHtml(s.siteName)}</td>` +
+          `<td style="${TD}"><span style="${FLAG}">${escapeHtml(s.lastSyncDate)}</span> ` +
+          `${escapeHtml(`(${daysAgo(s.daysSince)})`)}</td></tr>`,
+      ),
+      `</table>`,
+    );
+  }
+  parts.push(
     `<p style="${BUTTON_PARA}"><a href="${escapeHtml(o.link)}" style="${BUTTON}">View seats</a></p>`,
     `</div>`,
-  ].join('\n');
+  );
+  return parts.join('\n');
 }
 
 /**
@@ -497,10 +552,50 @@ const SYNC_REMINDER_ACTION =
   'Run Sync in the Stake Building Access extension to clear them. Until then the ward still ' +
   'sees a seat whose access has already ended, and may file a removal request for it.';
 
-/** Sentence-cased; subject drops the period, the lead paragraph keeps it. */
-function syncReminderLead(count: number): string {
+/**
+ * The stale-site half. Named per site rather than "run Sync" flat,
+ * because Sync is scoped to whichever Kindoo site the session is on
+ * (spec §15 Phase 4) — a manager who runs it on home has not covered a
+ * foreign site listed here.
+ */
+const SYNC_STALE_ACTION =
+  'Open each site listed below in Kindoo and run Sync in the Stake Building Access extension. ' +
+  'Until it runs, changes made in Kindoo are invisible in Stake Building Access.';
+
+/**
+ * The lead sentence, naming whichever conditions fired. Sentence-cased;
+ * subject drops the period, the lead paragraph keeps it.
+ *
+ * Both clauses appear when both fired, joined — one mail, one trip to
+ * the extension, and the manager can see the whole backlog at once.
+ */
+function syncReminderLead(o: SyncReminderConditions): string {
+  const clauses: string[] = [];
+  if (o.grants.length > 0) clauses.push(expiredSeatsClause(o.grants.length));
+  if (o.staleSites.length > 0) {
+    clauses.push(staleSitesClause(o.staleSites.length, clauses.length === 0));
+  }
+  // Never empty in practice — the service does not send with neither
+  // condition — but a lead is a sentence, so it gets a fallback rather
+  // than an empty string.
+  return clauses.join(', and ') || 'Sync has not run recently';
+}
+
+function expiredSeatsClause(count: number): string {
   if (count === 1) return 'One temporary seat has expired but is still on the roster';
   return `${COUNT_WORDS[count] ?? String(count)} temporary seats have expired but are still on the roster`;
+}
+
+function staleSitesClause(count: number, capitalised: boolean): string {
+  const word = COUNT_WORDS[count] ?? String(count);
+  const lead = capitalised ? word : word.toLowerCase();
+  return count === 1
+    ? `${lead} Kindoo site has not been synced in over a week`
+    : `${lead} Kindoo sites have not been synced in over a week`;
+}
+
+function daysAgo(days: number): string {
+  return days === 1 ? '1 day ago' : `${days} days ago`;
 }
 
 function memberText(g: ExpiredTempGrant): string {
@@ -822,35 +917,46 @@ export async function notifyManagersOverCap(
  * accelerant, not a condition on the email.
  */
 export async function notifyManagersSyncReminder(
-  deps: BaseDeps & { grants: ExpiredTempGrant[]; managerEmails: string[] },
+  deps: BaseDeps & {
+    grants: ExpiredTempGrant[];
+    staleSites: StaleSyncSite[];
+    managerEmails: string[];
+  },
 ): Promise<void> {
-  const { db, stakeId, stake, grants, managerEmails } = deps;
+  const { db, stakeId, stake, grants, staleSites, managerEmails } = deps;
   if (!emailsEnabled(stake, stakeId, 'syncReminder')) return;
   if (managerEmails.length === 0) {
     logger.info('email skipped — no active managers', { stakeId, type: 'syncReminder' });
     return;
   }
-  if (grants.length === 0) return;
+  if (grants.length === 0 && staleSites.length === 0) return;
   const link = safeBuildLink(deps, '/manager/seats');
   if (link === undefined) return;
-  // One wards read labels every grant.
-  const labelScope = await loadScopeLabeller(db, stakeId);
+  // One wards read labels every grant. Skipped when the stale-sync half
+  // is the only condition — site names come off the stake and its
+  // `kindooSites`, so there is nothing to label.
+  const labelScope = grants.length > 0 ? await loadScopeLabeller(db, stakeId) : () => '';
   const opts: SyncReminderEmailOpts = {
     grants: grants.map((g) => ({ ...g, label: labelScope(g.scope) })),
+    staleSites,
     link,
   };
   await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: managerEmails,
-      subject: buildSyncReminderSubject(opts.grants),
+      subject: buildSyncReminderSubject(opts),
       text: buildSyncReminderTextBody(opts),
       html: buildSyncReminderHtmlBody(opts),
     }),
     // The reminder has no request id to key the `email_send_failed`
-    // audit suffix on; the oldest expired grant's end date names what
-    // the run was about and keeps the row legible.
-    context: { type: 'syncReminder', source: grants[0]?.endDate ?? 'unknown' },
+    // audit suffix on. The oldest expired grant's end date names what
+    // the run was about; with no expired seats the oldest stale site's
+    // last-sync date plays the same role.
+    context: {
+      type: 'syncReminder',
+      source: grants[0]?.endDate ?? staleSites[0]?.lastSyncDate ?? 'unknown',
+    },
   });
 }
 

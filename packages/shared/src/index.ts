@@ -172,6 +172,7 @@ export type {
   StakeClaims,
   SyncApplyFixInput,
   SyncApplyFixResult,
+  SyncHeartbeat,
   TimestampLike,
   TypeMismatchPayload,
   UserIndexEntry,

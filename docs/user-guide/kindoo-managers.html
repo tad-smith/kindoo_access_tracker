@@ -263,7 +263,7 @@
   <p>A filterable history of every change. See <a href="#audit">Section 12</a>.</p>
 
   <h4>Notifications</h4>
-  <p>Turn on push, per device, for new requests and for sync reminders about expired temp seats — two independent switches. See <a href="#notifications">Section 11</a>.</p>
+  <p>Turn on push, per device, for new requests and for sync reminders (expired temp seats or a Kindoo site gone unsynced) — two independent switches. See <a href="#notifications">Section 11</a>.</p>
 
   <!-- 5 -->
   <h2 id="processing"><span class="num">5.</span> Processing requests (the daily workflow)</h2>
@@ -479,14 +479,16 @@
       <tr><td>A request is cancelled</td><td>Active Kindoo Managers</td></tr>
       <tr><td>A pool goes over cap</td><td>Active Kindoo Managers</td></tr>
       <tr><td>A temporary seat has expired but is still on the roster</td><td>Active Kindoo Managers</td></tr>
+      <tr><td>A Kindoo site hasn't been synced in over a week</td><td>Active Kindoo Managers</td></tr>
     </tbody>
   </table>
   <p>Emails come from <code>noreply@mail.stakebuildingaccess.org</code> with your stake's name in the sender. You can set a reply-to address and turn all email off with the <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span> switch in <span class="ui">Configuration&nbsp;→&nbsp;Config</span> — the same tab that carries the <span class="ui">EQ&nbsp;Presidents&nbsp;Have&nbsp;SBA&nbsp;Access</span> switch (<a href="#appaccess">Section 9</a>).</p>
   <h3>Sync reminders</h3>
-  <p>The last row in the table above is off by default and set per stake. Turn it on with the <span class="ui">Sync&nbsp;reminders</span> switch under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, nested beneath <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>. Once it's on, SBA checks daily for temporary seats that have expired in Kindoo but are still sitting on your roster, and mails your active Kindoo Managers — at most every third day while any stay expired. Its one instruction is to run <strong>Sync</strong>, which clears those seats; the reminder stops on its own once none are left.</p>
+  <p>The last two rows in the table above are one reminder, off by default and set per stake. Turn it on with the <span class="ui">Sync&nbsp;reminders</span> switch under <span class="ui">Configuration&nbsp;→&nbsp;Config</span>, nested beneath <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>. Once it's on, SBA checks daily for two separate things and mails your active Kindoo Managers if either is true — at most every third day while either stays true: temporary seats that have expired in Kindoo but are still sitting on your roster, and a Kindoo site your stake operates that hasn't had a Sync run against it in the last seven days. If both are true you get one email naming both, not two. Either way its one instruction is to run <strong>Sync</strong> — for expired seats, running it against the site where they live clears them; for a stale site, simply running Sync there at all resets its clock, even if Sync finds nothing wrong. The reminder stops on its own once neither condition holds.</p>
+  <div class="callout tip"><span class="lbl">Running Sync counts even when it finds nothing</span><p>The "hasn't been synced" half only knows that you opened <strong>Sync</strong> in the extension and let it finish — not what it found. A site with a totally clean scan still counts as synced. So the way to quiet that half of the reminder for a site is simply to run Sync there, whether or not the report shows any rows.</p></div>
   <div class="callout imp"><span class="lbl">Greyed out doesn't mean stopped</span><p><span class="ui">Sync&nbsp;reminders</span> is nested under <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span>, so turning that parent switch off greys the reminder row — but the reminder keeps running underneath it. Any manager subscribed to its push (below) still gets the push, and its every-third-day timer keeps ticking; only the email itself is suppressed. And because the row is greyed while the parent is off, you can't turn the reminder off from here without first turning <span class="ui">Email&nbsp;Notifications&nbsp;Enabled</span> back on.</p></div>
   <h3>Push notifications</h3>
-  <p>On the <span class="ui">Notifications</span> page you can enable push, per device, for two categories that work independently: <strong>new requests</strong> and <strong>sync reminders for expired temp seats</strong>. Subscribing to one doesn't subscribe you to the other, and enabling either on your phone doesn't affect your laptop, and vice versa.</p>
+  <p>On the <span class="ui">Notifications</span> page you can enable push, per device, for two categories that work independently: <strong>new requests</strong> and <strong>sync reminders</strong> (covering both the expired-seats and the stale-site conditions above — one push category for the whole reminder). Subscribing to one doesn't subscribe you to the other, and enabling either on your phone doesn't affect your laptop, and vice versa.</p>
 
   <!-- 12 -->
   <h2 id="audit"><span class="num">12.</span> The audit log</h2>

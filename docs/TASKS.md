@@ -6,30 +6,6 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 
 ---
 
-## [T-106] Sync reminders — case (1): no Sync in seven days
-Status: pending
-Owner: @extension-engineer (heartbeat) + @backend-engineer (reminder) + @docs-keeper
-Phase: cross-cutting
-
-The other half of the reminder pair. [T-103] shipped case (2) — expired temp seats — because it needed no new recorded state. This is case (1): tell the Kindoo Managers when nobody has run Sync in seven days. It was the condition the operator named first, and it is the one that catches the failure case (2) can only catch a symptom of.
-
-**The blocker, unchanged since it was first scoped: nothing records that a Sync ran.** The drift report is computed entirely in the extension (`extension/src/panel/SyncPanel.tsx`) and only *fixes* reach the server, through `syncApplyFix`. So a manager who syncs every morning and finds no drift writes nothing at all. Two shortcuts were considered and rejected:
-
-- **Derive it from `auditLog` rows stamped with the Sync actor.** Fails on the case that matters most — a clean Sync writes no rows, so the diligent manager is exactly who gets nagged.
-- **Infer it from seat staleness.** That is case (2) wearing a hat; it cannot see seven quiet days.
-
-**So the extension must write a heartbeat** when a scan completes — which puts this behind a Chrome Web Store release, and is the whole reason the two cases were split.
-
-**Key it by Kindoo site, not by stake.** Sync is scoped to the *active* Kindoo site (spec §15), so a stake operating a foreign site has two things to keep synced. One stake-level timestamp would mark the foreign site fresh whenever anyone synced home — silently, and in the direction that suppresses the reminder. `remoteApply/{canonical}/desktops/{siteKey}` is the shape to copy: whole-document `setDoc`, exact key set enforced in rules, written by the extension under manager auth.
-
-**Semantics to settle:** the heartbeat means *someone looked*, not *drift is clear* — a manager who scans, sees five rows, and applies none has still synced. That is the right meaning for "it has been seven days", and it is why case (2) has to stay an independent check rather than being folded in.
-
-**Rollout has a sharp edge.** A manager on an older extension build writes no heartbeat, so every stake reads as never-synced until everyone updates. Decide before shipping whether an absent heartbeat fires the reminder immediately (truthful, self-clearing, noisy during rollout) or stays silent until the first heartbeat ever appears (quiet, but a stake that genuinely never syncs is never chased).
-
-**Most of the delivery already exists.** [T-103] built the email/push machinery, the `syncReminder` push category, the manager recipient resolution, and the backoff. This adds a condition and a data source, not a new notification system. The trigger should come from the scheduled-task system ([T-104]) rather than a dedicated job — **and that path now exists**: [T-104] shipped 2026-09-05, so this reminder is a `taskRegistry` entry plus a handler of the shape `(stakeId, now) => Promise<unknown>`, with no Cloud Scheduler job and no new function of its own (`spec.md` §17). The handler must be idempotent within its own window; dispatch is at-least-once.
-
-**Bonus the heartbeat unlocks:** a "Last sync" line per site on the manager Configuration page, which is the same data and costs nothing extra.
-
 ## [T-105] Expired temp grants on multi-grant seats have no reaper and no reminder
 Status: pending
 Owner: unassigned
