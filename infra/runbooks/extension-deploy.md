@@ -134,6 +134,21 @@ The output must match the Item ID you pasted in step 4.
 
 Every rebuild after a code change.
 
+### 0. If `@crxjs/vite-plugin` moved, load the unpacked build before submitting
+
+`@crxjs/vite-plugin` is what emits `dist/<mode>/manifest.json`, rewrites HTML
+entries, injects content-script CSS and populates `web_accessible_resources`.
+Nothing in CI asserts any of that — the root `pnpm build` runs the extension
+build but only checks its exit code, and the vitest suite covers extension
+logic rather than the emitted artifact. So a plugin bump can silently reshape
+the MV3 output.
+
+Check `git log --oneline -- extension/package.json` for a `@crxjs/vite-plugin`
+change since the last submission. If there is one, before any Web Store
+upload: build, load the unpacked `dist/<mode>/` in `chrome://extensions`,
+confirm the panel mounts on a Kindoo tab and sign-in completes, and diff the
+emitted `manifest.json` against the previous release's.
+
 ### 1. Bump the manifest version
 
 Edit `extension/src/manifest.config.ts` and increment the `version` field (semver-ish: patch for fixes, minor for behavioural additions). The build bakes the version into the manifest; bumping it on every rebuild lets you verify in `chrome://extensions` that the reload picked up the new bytes.

@@ -44,12 +44,7 @@ import { notifyManagersSyncReminder, type ExpiredTempGrant } from './EmailServic
 export const SYNC_REMINDER_BACKOFF_DAYS = 3;
 
 export type SyncReminderStatus =
-  | 'sent'
-  | 'stake-missing'
-  | 'setup-incomplete'
-  | 'nothing-expired'
-  | 'backed-off'
-  | 'no-managers';
+  'sent' | 'stake-missing' | 'setup-incomplete' | 'nothing-expired' | 'backed-off' | 'no-managers';
 
 export type SyncReminderOutcome = {
   stakeId: string;

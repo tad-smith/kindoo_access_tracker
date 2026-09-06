@@ -18,9 +18,7 @@
 import type { KindooSite, Stake } from '@kindoo/shared';
 
 export type ActiveSite =
-  | { kind: 'home' }
-  | { kind: 'foreign'; siteId: string }
-  | { kind: 'unknown' };
+  { kind: 'home' } | { kind: 'foreign'; siteId: string } | { kind: 'unknown' };
 
 /**
  * Resolve the active Kindoo site for the given Kindoo session.

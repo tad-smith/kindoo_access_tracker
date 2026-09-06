@@ -87,12 +87,7 @@ export type GateStakeRead = {
 };
 
 export type GateDecision =
-  | 'sign-in'
-  | 'pending'
-  | 'wizard'
-  | 'setup-in-progress'
-  | 'not-authorized'
-  | 'authed';
+  'sign-in' | 'pending' | 'wizard' | 'setup-in-progress' | 'not-authorized' | 'authed';
 
 /**
  * Pure decision: where does this user belong? Idempotent — call as
