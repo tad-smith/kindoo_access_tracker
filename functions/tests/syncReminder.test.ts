@@ -1,4 +1,5 @@
-// Tests for the expired-temp-seat reminder (T-103).
+// Tests for the sync reminder (T-103 expired temp seats, T-106 stale
+// Kindoo sites).
 //
 // `expiredTempGrants` and `backoffElapsed` are pure and run everywhere.
 // `sendSyncReminderIfDue` reads the stake + seats + managers and
@@ -14,9 +15,12 @@ import { Timestamp } from 'firebase-admin/firestore';
 import type { BatchResponse, MulticastMessage } from 'firebase-admin/messaging';
 import type { DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import {
+  SYNC_STALE_DAYS,
   backoffElapsed,
   expiredTempGrants,
+  operatedSites,
   sendSyncReminderIfDue,
+  staleSyncSites,
 } from '../src/services/SyncReminderService.js';
 import {
   _setResendSender,
@@ -34,6 +38,9 @@ const NOW = new Date('2026-08-18T12:00:00Z');
 const TODAY = '2026-08-18';
 const YESTERDAY = '2026-08-17';
 const TWO_DAYS_AGO = '2026-08-16';
+// Exactly `SYNC_STALE_DAYS` before TODAY, and one day inside it.
+const STALE_SYNC_DATE = '2026-08-11';
+const FRESH_SYNC_DATE = '2026-08-12';
 
 function buildSeat(overrides: Partial<Seat> = {}): Seat {
   const canonical = overrides.member_canonical ?? 'jane@gmail.com';
@@ -204,6 +211,109 @@ describe('backoffElapsed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Pure: which Kindoo sites the stake operates, and which have gone stale.
+// ---------------------------------------------------------------------------
+
+describe('operatedSites', () => {
+  const stake = { stake_name: 'CSNorth Stake' };
+
+  it('always counts the home site, under the reserved home key', () => {
+    expect(operatedSites(stake, [])).toEqual([{ siteKey: 'home', siteName: 'CSNorth Stake' }]);
+  });
+
+  it("prefers Kindoo's own captured site name for home", () => {
+    const configured = {
+      ...stake,
+      kindoo_expected_site_name: 'Override',
+      kindoo_config: {
+        site_id: 7,
+        site_name: 'CS North (Kindoo)',
+        configured_at: Timestamp.now(),
+        configured_by: { email: 'a@b.c', canonical: 'a@b.c' },
+      },
+    };
+    expect(operatedSites(configured, [])[0]?.siteName).toBe('CS North (Kindoo)');
+  });
+
+  it('falls back to the expected-name override, then to the stake name', () => {
+    expect(
+      operatedSites({ ...stake, kindoo_expected_site_name: 'Override' }, [])[0]?.siteName,
+    ).toBe('Override');
+    expect(operatedSites(stake, [])[0]?.siteName).toBe('CSNorth Stake');
+  });
+
+  it('counts every configured foreign site, labelled by display name', () => {
+    const sites = operatedSites(stake, [
+      { id: 'east', display_name: 'East Stake (Pine)' },
+      { id: 'west', display_name: '  ' },
+    ]);
+    expect(sites.map((s) => [s.siteKey, s.siteName])).toEqual([
+      ['home', 'CSNorth Stake'],
+      ['east', 'East Stake (Pine)'],
+      // Blank display name falls back to the slug rather than an empty row.
+      ['west', 'west'],
+    ]);
+  });
+
+  it('does not let a foreign slug of `home` shadow the home site', () => {
+    const sites = operatedSites(stake, [{ id: 'home', display_name: 'Someone Else' }]);
+    expect(sites).toEqual([{ siteKey: 'home', siteName: 'CSNorth Stake' }]);
+  });
+});
+
+describe('staleSyncSites', () => {
+  const home = { siteKey: 'home', siteName: 'CSNorth Stake' };
+  const east = { siteKey: 'east', siteName: 'East Stake' };
+
+  it('is silent for a site that has never heartbeated', () => {
+    // The load-bearing case: absence is never staleness. A stake that has
+    // not rolled the extension out yet must never be chased.
+    expect(staleSyncSites([home, east], new Map(), TODAY)).toEqual([]);
+  });
+
+  it('is silent one day inside the window', () => {
+    expect(staleSyncSites([home], new Map([['home', FRESH_SYNC_DATE]]), TODAY)).toEqual([]);
+  });
+
+  it('fires on exactly SYNC_STALE_DAYS', () => {
+    expect(staleSyncSites([home], new Map([['home', STALE_SYNC_DATE]]), TODAY)).toEqual([
+      { ...home, lastSyncDate: STALE_SYNC_DATE, daysSince: SYNC_STALE_DAYS },
+    ]);
+  });
+
+  it('ignores a heartbeat for a site the stake does not operate', () => {
+    // A foreign site un-configured after it was synced leaves its
+    // heartbeat behind — rules deny the delete — and it would otherwise
+    // age forever into a nag nobody can clear.
+    expect(staleSyncSites([home], new Map([['gone', '2020-01-01']]), TODAY)).toEqual([]);
+  });
+
+  it('lists only the stale sites when some are fresh', () => {
+    const map = new Map([
+      ['home', FRESH_SYNC_DATE],
+      ['east', STALE_SYNC_DATE],
+    ]);
+    expect(staleSyncSites([home, east], map, TODAY).map((s) => s.siteKey)).toEqual(['east']);
+  });
+
+  it('sorts oldest first', () => {
+    const map = new Map([
+      ['home', STALE_SYNC_DATE],
+      ['east', '2026-07-01'],
+    ]);
+    expect(staleSyncSites([home, east], map, TODAY).map((s) => s.siteKey)).toEqual([
+      'east',
+      'home',
+    ]);
+  });
+
+  it('never fires on a future-dated or unreadable heartbeat', () => {
+    expect(staleSyncSites([home], new Map([['home', '2099-01-01']]), TODAY)).toEqual([]);
+    expect(staleSyncSites([home], new Map([['home', 'not-a-date']]), TODAY)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Integration: the whole unit of work for one stake.
 // ---------------------------------------------------------------------------
 
@@ -299,6 +409,40 @@ async function seedUserIndex(
     typedEmail: canonical,
     lastSignIn: Timestamp.now(),
     ...data,
+  });
+}
+
+async function seedKindooSite(id: string, displayName: string): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`stakes/${STAKE_ID}/kindooSites/${id}`).set({
+    id,
+    display_name: displayName,
+    kindoo_expected_site_name: displayName,
+    created_at: Timestamp.now(),
+    last_modified_at: Timestamp.now(),
+    lastActor: { email: 'admin@example.com', canonical: 'admin@example.com' },
+  });
+}
+
+/** `isoDate` at noon Denver, so the stake-local calendar day is unambiguous. */
+async function seedHeartbeat(siteKey: string, isoDate: string): Promise<void> {
+  const { db } = requireEmulators();
+  await db.doc(`syncHeartbeats/${STAKE_ID}/sites/${siteKey}`).set({
+    stake_id: STAKE_ID,
+    kindoo_site_id: siteKey === 'home' ? null : siteKey,
+    last_sync_at: Timestamp.fromDate(new Date(`${isoDate}T18:00:00Z`)),
+    ext_version: '1.4.0',
+    lastActor: { email: 'alice@gmail.com', canonical: 'alice@gmail.com' },
+  });
+}
+
+/** One active, push-subscribed manager and nothing else worth reminding about. */
+async function seedQuietStake(overrides: Partial<Stake> = {}): Promise<void> {
+  await seedStake(overrides);
+  await seedManager('alice@gmail.com', true);
+  await seedUserIndex('alice@gmail.com', {
+    fcmTokens: { d1: 'tok-alice' },
+    notificationPrefs: { push: { syncReminder: true } },
   });
 }
 
@@ -398,7 +542,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
 
     const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
-    expect(outcome).toMatchObject({ status: 'nothing-expired', grants: 0 });
+    expect(outcome).toMatchObject({ status: 'nothing-due', grants: 0 });
     expect(emails).toHaveLength(0);
   });
 
@@ -411,7 +555,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
 
     const outcome = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-18T05:30:00Z'));
 
-    expect(outcome.status).toBe('nothing-expired');
+    expect(outcome.status).toBe('nothing-due');
     expect(emails).toHaveLength(0);
   });
 
@@ -452,7 +596,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
 
     const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
-    expect(outcome.status).toBe('nothing-expired');
+    expect(outcome.status).toBe('nothing-due');
     expect(emails).toHaveLength(0);
   });
 
@@ -638,7 +782,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
     // Manager runs Sync; the stale seat goes away.
     await db.doc(`stakes/${STAKE_ID}/seats/jane@gmail.com`).delete();
     const cleared = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-19T12:00:00Z'));
-    expect(cleared.status).toBe('nothing-expired');
+    expect(cleared.status).toBe('nothing-due');
     const stake = (await db.doc(`stakes/${STAKE_ID}`).get()).data() as Stake;
     expect(stake.last_sync_reminder_date).toBeUndefined();
 
@@ -671,7 +815,7 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
 
     const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
-    expect(outcome.status).toBe('nothing-expired');
+    expect(outcome.status).toBe('nothing-due');
     const after = (await requireEmulators().db.doc(`stakes/${STAKE_ID}`).get()).updateTime;
     expect(after?.isEqual(before!)).toBe(true);
   });
@@ -684,6 +828,164 @@ describe.skipIf(!hasEmulators())('sendSyncReminderIfDue', () => {
     const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
 
     expect(outcome.emailSuppressed).toBe(true);
+  });
+
+  // ---- condition two: a Kindoo site nobody has synced ---------------------
+
+  it('says nothing about a stake that has never written a heartbeat', async () => {
+    // Configured sites alone prove nothing. Absence is silent — firing
+    // here would mail every stake for the whole extension rollout.
+    await seedQuietStake();
+    await seedKindooSite('east', 'East Stake (Pine)');
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'nothing-due', staleSites: 0 });
+    expect(emails).toHaveLength(0);
+  });
+
+  it('says nothing about a site synced inside the window', async () => {
+    await seedQuietStake();
+    await seedHeartbeat('home', FRESH_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'nothing-due', staleSites: 0 });
+    expect(emails).toHaveLength(0);
+  });
+
+  it('mails on a stale site with no expired seats at all', async () => {
+    await seedQuietStake();
+    await seedHeartbeat('home', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    const { sender: fcm, calls: pushes } = mockFcm([{ success: true }]);
+    restoreResend = _setResendSender(resend);
+    restoreFcm = _setSender(fcm);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', grants: 0, staleSites: 1, pushed: 1 });
+    expect(emails).toHaveLength(1);
+    expect(emails[0]!.subject).toBe(
+      '[Stake Building Access] One Kindoo site has not been synced in over a week',
+    );
+    expect(emails[0]!.text).toContain(
+      `CSNorth Stake — last synced ${STALE_SYNC_DATE} (7 days ago)`,
+    );
+    // The seat half is absent entirely — no empty table, no dangling copy.
+    expect(emails[0]!.text).not.toContain('temporary seat');
+    expect(emails[0]!.html).not.toContain('>Ended</th>');
+    expect(emails[0]!.html).toContain('>Kindoo site</th>');
+    expect(pushes[0]!.data?.['title']).toBe('Sync is overdue');
+  });
+
+  it('names a foreign site by its display name', async () => {
+    await seedQuietStake();
+    await seedKindooSite('east', 'East Stake (Pine)');
+    await seedHeartbeat('east', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', staleSites: 1 });
+    expect(emails[0]!.text).toContain('East Stake (Pine) — last synced');
+  });
+
+  it('lists only the stale site when another is fresh', async () => {
+    await seedQuietStake();
+    await seedKindooSite('east', 'East Stake (Pine)');
+    await seedHeartbeat('home', FRESH_SYNC_DATE);
+    await seedHeartbeat('east', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', staleSites: 1 });
+    expect(emails[0]!.text).toContain('East Stake (Pine)');
+    expect(emails[0]!.text).not.toContain('CSNorth Stake — last synced');
+  });
+
+  it('ignores a heartbeat for a site the stake no longer operates', async () => {
+    // The foreign `kindooSites` doc is gone; its heartbeat cannot be
+    // deleted (rules deny it), so the intersection is what keeps it quiet.
+    await seedQuietStake();
+    await seedHeartbeat('east', '2026-01-01');
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'nothing-due', staleSites: 0 });
+    expect(emails).toHaveLength(0);
+  });
+
+  it('sends ONE email naming both conditions when both fire', async () => {
+    await seedReminderWorthyStake();
+    await seedKindooSite('east', 'East Stake (Pine)');
+    await seedHeartbeat('east', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    const { sender: fcm, calls: pushes } = mockFcm([{ success: true }]);
+    restoreResend = _setResendSender(resend);
+    restoreFcm = _setSender(fcm);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', grants: 1, staleSites: 1 });
+    expect(emails).toHaveLength(1);
+    expect(pushes).toHaveLength(1);
+    expect(emails[0]!.subject).toBe(
+      '[Stake Building Access] One temporary seat has expired but is still on the roster, ' +
+        'and one Kindoo site has not been synced in over a week',
+    );
+    // Both tables, one message.
+    expect(emails[0]!.html).toContain('>Ended</th>');
+    expect(emails[0]!.html).toContain('>Kindoo site</th>');
+    expect(emails[0]!.text).toContain('Jane Doe (jane@gmail.com) — Greenwood Ward');
+    expect(emails[0]!.text).toContain('East Stake (Pine) — last synced');
+    expect(pushes[0]!.data?.['body']).toBe(
+      '1 expired temporary seat still on the roster, 1 Kindoo site not synced in over a week — run Sync.',
+    );
+  });
+
+  it('suppresses only the email under the kill-switch on a stale-sync send', async () => {
+    await seedQuietStake({ notifications_enabled: false });
+    await seedHeartbeat('home', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([]);
+    const { sender: fcm, calls: pushes } = mockFcm([{ success: true }]);
+    restoreResend = _setResendSender(resend);
+    restoreFcm = _setSender(fcm);
+
+    const outcome = await sendSyncReminderIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', staleSites: 1, emailSuppressed: true });
+    expect(emails).toHaveLength(0);
+    expect(pushes).toHaveLength(1);
+  });
+
+  it('keeps the backoff stamp while only the stale-sync condition holds', async () => {
+    // The stamp covers the reminder, not one condition: seats clearing
+    // while the sync stays stale must not reset the three-day gap.
+    await seedReminderWorthyStake();
+    await seedHeartbeat('home', STALE_SYNC_DATE);
+    const { sender: resend, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(resend);
+    const { db } = requireEmulators();
+
+    await sendSyncReminderIfDue(STAKE_ID, NOW);
+    await db.doc(`stakes/${STAKE_ID}/seats/jane@gmail.com`).delete();
+    const next = await sendSyncReminderIfDue(STAKE_ID, new Date('2026-08-19T12:00:00Z'));
+
+    expect(next).toMatchObject({ status: 'backed-off', grants: 0, staleSites: 1 });
+    expect(emails).toHaveLength(1);
+    expect((await db.doc(`stakes/${STAKE_ID}`).get()).data()?.['last_sync_reminder_date']).toBe(
+      TODAY,
+    );
   });
 
   it('prunes an invalid token, same as the request push path', async () => {
