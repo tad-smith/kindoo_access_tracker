@@ -512,7 +512,14 @@ function Step1Form() {
           />
           <span>{EQ_PRESIDENT_ACCESS_LABEL}</span>
         </label>
-        <InfoTip label={EQ_PRESIDENT_ACCESS_LABEL} data-testid="bootstrap-eq-president-access-info">
+        {/* Opens upward: the wizard card is narrow and the default
+            downward panel covered Save, which is the control a
+            first-time admin needs immediately after reading this. */}
+        <InfoTip
+          label={EQ_PRESIDENT_ACCESS_LABEL}
+          side="top"
+          data-testid="bootstrap-eq-president-access-info"
+        >
           <p>{EQ_PRESIDENT_ACCESS_TIP}</p>
         </InfoTip>
       </div>

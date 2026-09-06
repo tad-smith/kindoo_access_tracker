@@ -258,6 +258,18 @@ describe('<BootstrapWizardPage />', () => {
     );
   });
 
+  it('step 1 opens the explanation upward, clear of the Save button below it', async () => {
+    // The wizard card is narrow; the default downward panel covered
+    // Save, which is the control a first-time admin needs next.
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('bootstrap-eq-president-access-info'));
+    expect(await screen.findByTestId('bootstrap-eq-president-access-info-panel')).toHaveAttribute(
+      'data-side',
+      'top',
+    );
+  });
+
   it('step 1 reads its label and explanation from the shared copy, as the Config tab does', () => {
     render(<BootstrapWizardPage />, { wrapper: Wrapper });
     expect(

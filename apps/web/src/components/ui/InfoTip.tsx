@@ -15,17 +15,29 @@
 // to it.
 
 import { Info } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from './Popover';
+
+type PopoverContentProps = ComponentPropsWithoutRef<typeof PopoverContent>;
 
 export interface InfoTipProps {
   /** Name of the setting this explains. Used for the accessible name. */
   label: string;
   children: ReactNode;
+  /**
+   * Where the panel opens, when the default would land it over something
+   * the reader needs next. Radix still flips on a collision, so this is
+   * a preference rather than a guarantee — measure the result.
+   *
+   * Optional on purpose: every caller that does not pass it keeps the
+   * default placement exactly.
+   */
+  side?: PopoverContentProps['side'];
+  align?: PopoverContentProps['align'];
   'data-testid'?: string;
 }
 
-export function InfoTip({ label, children, 'data-testid': testId }: InfoTipProps) {
+export function InfoTip({ label, children, side, align, 'data-testid': testId }: InfoTipProps) {
   return (
     <Popover>
       <PopoverTrigger
@@ -41,6 +53,11 @@ export function InfoTip({ label, children, 'data-testid': testId }: InfoTipProps
         <Info className="h-4 w-4" aria-hidden="true" focusable="false" />
       </PopoverTrigger>
       <PopoverContent
+        // Spread-conditional, not `side={side}`: `exactOptionalPropertyTypes`
+        // rejects an explicit `undefined`, and passing one would also
+        // override `PopoverContent`'s own `align` default.
+        {...(side ? { side } : {})}
+        {...(align ? { align } : {})}
         className="max-w-[19rem] p-3 text-[0.85rem] leading-relaxed text-kd-fg-2 [&>p+p]:mt-2 [&>p]:m-0"
         data-testid={testId ? `${testId}-panel` : undefined}
       >
