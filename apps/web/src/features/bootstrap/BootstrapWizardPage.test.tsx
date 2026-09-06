@@ -108,6 +108,10 @@ vi.mock('../auth/signOut', () => ({
 }));
 
 import { BootstrapWizardPage, nextBlocker } from './BootstrapWizardPage';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../lib/eqPresidentAccessCopy';
 import { WARD_NAME_BRANCH_WARNING, WARD_NAME_HINT } from '../../lib/wardCopy';
 
 function liveResult<T>(data: T[] | undefined) {
@@ -228,7 +232,56 @@ describe('<BootstrapWizardPage />', () => {
     // Opt-in: the persisted field is absent on a fresh stake, so the
     // switch must render off (not on, as `notifications_enabled` would).
     expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(within(step).getByLabelText(/EQ Presidents Have SBA Access/i)).toBe(sw);
+    // Scoped to the switch: the InfoTip beside it is also labelled with
+    // the option's name ("More about …").
+    expect(
+      within(step).getByLabelText(EQ_PRESIDENT_ACCESS_LABEL, { selector: '[role="switch"]' }),
+    ).toBe(sw);
+  });
+
+  it('step 1 explains the opt-in behind a tappable information affordance', async () => {
+    // The wizard is where a first-time admin meets this setting; the
+    // Config tab's copy of the row is behind a page they have not
+    // reached. Click-triggered, not hover — they may be on an iPad.
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    const tip = screen.getByTestId('bootstrap-eq-president-access-info');
+    expect(tip).toHaveAttribute('aria-label', `More about ${EQ_PRESIDENT_ACCESS_LABEL}`);
+    expect(screen.queryByTestId('bootstrap-eq-president-access-info-panel')).toBeNull();
+
+    await user.hover(tip);
+    expect(screen.queryByTestId('bootstrap-eq-president-access-info-panel')).toBeNull();
+
+    await user.click(tip);
+    expect(await screen.findByTestId('bootstrap-eq-president-access-info-panel')).toHaveTextContent(
+      EQ_PRESIDENT_ACCESS_TIP,
+    );
+  });
+
+  it('step 1 opens the explanation upward, clear of the Save button below it', async () => {
+    // The wizard card is narrow; the default downward panel covered
+    // Save, which is the control a first-time admin needs next.
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('bootstrap-eq-president-access-info'));
+    expect(await screen.findByTestId('bootstrap-eq-president-access-info-panel')).toHaveAttribute(
+      'data-side',
+      'top',
+    );
+  });
+
+  it('step 1 reads its label and explanation from the shared copy, as the Config tab does', () => {
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    expect(
+      screen.getByLabelText(EQ_PRESIDENT_ACCESS_LABEL, { selector: '[role="switch"]' }),
+    ).toBeInTheDocument();
+  });
+
+  it('step 1 raises no backfill offer — a stake in setup has no seats to reconcile', async () => {
+    const user = userEvent.setup();
+    render(<BootstrapWizardPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('bootstrap-eq-president-access'));
+    expect(screen.queryByTestId('config-eq-backfill-confirm')).toBeNull();
   });
 
   it('step 1 shows the opt-in switch on when the stake already has it set', () => {

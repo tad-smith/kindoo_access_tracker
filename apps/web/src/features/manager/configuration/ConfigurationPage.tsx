@@ -87,6 +87,10 @@ import { Skeleton } from '../../../components/ui/Skeleton';
 import { Select } from '../../../components/ui/Select';
 import { Switch } from '../../../components/ui/Switch';
 import { cn } from '../../../lib/cn';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../../lib/eqPresidentAccessCopy';
 import { LoadingSpinner } from '../../../lib/render/LoadingSpinner';
 import { usePrincipal } from '../../../lib/principal';
 import { useActiveStake } from '../../../lib/useActiveStake';
@@ -1792,15 +1796,12 @@ function ConfigKeysTab() {
         <SettingToggle
           id="config-eq-president-access"
           testId="config-eq-president-access"
-          label="EQ Presidents Have SBA Access"
+          label={EQ_PRESIDENT_ACCESS_LABEL}
           checked={stake.data.eq_president_app_access === true}
           disabled={setToggle.isPending}
           onChange={onToggleEqPresident}
         >
-          <p>
-            When on, Sync grants app access to whoever holds the Elders Quorum President calling in
-            each ward, and drops it again when the calling moves on.
-          </p>
+          <p>{EQ_PRESIDENT_ACCESS_TIP}</p>
         </SettingToggle>
       </div>
 

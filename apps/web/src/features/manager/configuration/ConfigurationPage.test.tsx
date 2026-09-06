@@ -20,6 +20,10 @@ import type {
   Ward,
 } from '@kindoo/shared';
 import { unitNameCollisionMessage } from '@kindoo/shared';
+import {
+  EQ_PRESIDENT_ACCESS_LABEL,
+  EQ_PRESIDENT_ACCESS_TIP,
+} from '../../../lib/eqPresidentAccessCopy';
 
 const useStakeDocMock = vi.fn();
 const useWardsMock = vi.fn();
@@ -334,11 +338,9 @@ describe('<ConfigurationPage />', () => {
     const sw = screen.getByTestId('config-eq-president-access');
     expect(sw).toHaveAttribute('role', 'switch');
     expect(sw).toHaveAttribute('aria-checked', 'false');
-    expect(
-      screen.getByLabelText(/EQ Presidents Have SBA Access/i, {
-        selector: '[role="switch"]',
-      }),
-    ).toBe(sw);
+    expect(screen.getByLabelText(EQ_PRESIDENT_ACCESS_LABEL, { selector: '[role="switch"]' })).toBe(
+      sw,
+    );
   });
 
   it('shows the Elders Quorum President switch checked when the stake has opted in', () => {
@@ -2071,7 +2073,7 @@ describe('<ConfigurationPage /> slider tooltips', () => {
   const TIPS: Array<[string, RegExp]> = [
     ['config-notifications-enabled', /stake-wide switch for email/i],
     ['config-sync-reminder', /temporary seat has expired in Kindoo/i],
-    ['config-eq-president-access', /Sync grants app access/i],
+    ['config-eq-president-access', new RegExp(EQ_PRESIDENT_ACCESS_TIP.slice(0, 40), 'i')],
   ];
 
   it.each(TIPS)('%s keeps its explanation behind the information affordance', (testId) => {

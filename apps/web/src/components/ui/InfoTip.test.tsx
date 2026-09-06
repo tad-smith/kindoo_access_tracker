@@ -47,6 +47,25 @@ describe('<InfoTip />', () => {
     expect(screen.queryByText('What the setting does.')).toBeNull();
   });
 
+  it('opens on the side a caller asks for, when the default would land on something', async () => {
+    const user = userEvent.setup();
+    render(
+      <InfoTip label="Sync reminders" side="top" data-testid="tip">
+        <p>What the setting does.</p>
+      </InfoTip>,
+    );
+    await user.click(screen.getByTestId('tip'));
+    expect(await screen.findByTestId('tip-panel')).toHaveAttribute('data-side', 'top');
+  });
+
+  it('leaves placement alone for the callers that do not ask, so adding the prop moved nothing', async () => {
+    const user = userEvent.setup();
+    setup();
+    await user.click(screen.getByTestId('tip'));
+    // Radix's own default, not one this component imposes.
+    expect(await screen.findByTestId('tip-panel')).toHaveAttribute('data-side', 'bottom');
+  });
+
   it('names the setting it explains, so several on one page stay distinguishable', () => {
     setup();
     expect(screen.getByTestId('tip')).toHaveAttribute('aria-label', 'More about Sync reminders');
