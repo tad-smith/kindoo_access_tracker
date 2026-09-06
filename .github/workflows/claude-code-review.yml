@@ -57,5 +57,13 @@ jobs:
             --model claude-opus-5
             --effort max
             --max-turns 120
-            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(grep:*),Bash(sed:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(head:*),Bash(tail:*)"
-            --disallowedTools "Edit,Write,WebSearch"
+            # Bash is broad on purpose. A read-only verb allowlist was tried in
+            # #291 and denied 19 calls in one review (run 34054827925) — the
+            # reviewer still posted, but the job failed and the review was
+            # degraded. Narrowing this needs an allowlist derived from a real
+            # run's tool log, not guessed; until then the compensating controls
+            # are the action's own workflow-validation guard (a PR that edits
+            # this file cannot make the reviewer run under its version), no
+            # secrets on fork PRs, and the PR title no longer reaching the prompt.
+            --allowedTools "Bash,Read,Grep,Glob"
+            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"
