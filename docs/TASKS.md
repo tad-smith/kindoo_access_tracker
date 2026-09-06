@@ -7,7 +7,7 @@ Format per task: `## [T-NN]` header with `Status:`, `Owner:`, optional `Phase:` 
 ---
 
 ## [T-106] Sync reminders — case (1): no Sync in seven days
-Status: pending
+Status: in progress
 Owner: @extension-engineer (heartbeat) + @backend-engineer (reminder) + @docs-keeper
 Phase: cross-cutting
 
@@ -23,6 +23,8 @@ The other half of the reminder pair. [T-103] shipped case (2) — expired temp s
 **Key it by Kindoo site, not by stake.** Sync is scoped to the *active* Kindoo site (spec §15), so a stake operating a foreign site has two things to keep synced. One stake-level timestamp would mark the foreign site fresh whenever anyone synced home — silently, and in the direction that suppresses the reminder. `remoteApply/{canonical}/desktops/{siteKey}` is the shape to copy: whole-document `setDoc`, exact key set enforced in rules, written by the extension under manager auth.
 
 **Semantics to settle:** the heartbeat means *someone looked*, not *drift is clear* — a manager who scans, sees five rows, and applies none has still synced. That is the right meaning for "it has been seven days", and it is why case (2) has to stay an independent check rather than being folded in.
+
+**Settled 2026-09-06.** An absent heartbeat is **silent**: a stake that has never written one is never chased, and only a stake that has heartbeated and then gone quiet for seven days is mailed. Firing on absence is more literally truthful, but it would mail every stake during the extension rollout and teach managers to ignore the reminder — the one thing it cannot afford. And **one job, not two**: the existing `syncReminder` registry entry grows a second condition rather than gaining a sibling, so there is one toggle, one backoff and one email naming whichever condition fired. The two checks stay independent internally — a heartbeat means someone looked, not that drift is clear. There is **no** "last sync" display; the heartbeat is read by the handler only.
 
 **Rollout has a sharp edge.** A manager on an older extension build writes no heartbeat, so every stake reads as never-synced until everyone updates. Decide before shipping whether an absent heartbeat fires the reminder immediately (truthful, self-clearing, noisy during rollout) or stays silent until the first heartbeat ever appears (quiet, but a stake that genuinely never syncs is never chased).
 
