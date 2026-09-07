@@ -1,7 +1,7 @@
 # Quarterly manual-seat review
 
 **Shipped:** 2026-09-06
-**Commits:** PR #298 (`feat/manual-seat-review-backend`) — server half `e7dcfd4` (T-108), web half `0b72fd8` (`feat/manual-seat-review-web`), fold `2325b2a`
+**Commits:** PR #298 (`feat/manual-seat-review-backend`) — server half `e7dcfd4` (T-108), web half `0b72fd8` (`feat/manual-seat-review-web`), send-failure durability fixes `0f4774b` and `6ae9b46` (review rounds 1–2), fold `2325b2a`
 
 ## What shipped
 
@@ -17,7 +17,9 @@ Auto seats follow a calling and drop away when it ends; temp seats end on a date
 
 **Every manual grant, grouped by its own scope.** `manualGrantsByScope` walks each seat's primary grant and its `duplicate_grants[]`, and groups by the *grant's* scope rather than the seat's — a stake-scope manual duplicate riding a ward-scope auto seat is the ordinary shape, and a bishopric's mail should list exactly the manual access on their own roster.
 
-**Nudge only.** No acknowledgement, no per-recipient tracking, no new collection. The one new field, `Stake.last_manual_seat_review_date`, is stamped last — after every scope's send has been attempted — and lives in `BOOKKEEPING_FIELDS`, so it fans no audit row. Unlike the sync reminder's backoff stamp, **it is never deleted**: that stamp tracks a condition that can clear; this one tracks a cadence, so a quarter with zero manual seats must still count, or the following month would read as a fresh first send.
+**Nudge only.** No acknowledgement, no per-recipient tracking, no new collection. The one new field, `Stake.last_manual_seat_review_date`, is stamped last — only once at least one scope's mail actually sends or is suppressed by the kill-switch — and lives in `BOOKKEEPING_FIELDS`, so it fans no audit row. Unlike the sync reminder's backoff stamp, **it is never deleted**: that stamp tracks a condition that can clear; this one tracks a cadence, so a quarter with zero manual seats must still count, or the following month would read as a fresh first send.
+
+**A run where every send fails withholds the stamp; a run where only some fail still stamps.** `sendOne` reports `'sent' | 'failed'`, and `notifyScopeManualSeatReview` widens that to `EmailSendResult` (`'sent' | 'suppressed' | 'failed'`), separating a send the kill-switch deliberately suppressed (a decision — counts toward `mailsSent`, still consumes the quarter, per D37(d)) from one that was attempted and failed (a fault). If every attempted send fails, the handler returns `status: 'send-failed'`, withholds the stamp, and logs at WARN — a Resend outage on the firing day used to buy three months of silence with no retry; now it retries next month. If at least one scope sends but others fail, the stamp still advances, logged at WARN naming the failed scopes — that scope's own bishopric waits a full quarter for its next chance, with an `email_send_failed` audit row nothing alerts on as its only trace. That is the deliberate trade, not an oversight: withholding the stamp for a partial failure would re-mail every scope that already succeeded, since the stamp is the only progress marker a retry has to go on.
 
 **Email only, gated the same as everything else, with no push counterpart.** `notifications_enabled` suppresses the send but not the interval — a stake with the kill-switch off still consumes its quarter (`emailSuppressed: true` on the outcome, stamp still written), matching the sync reminder's "kill-switch is email-only" rule. Unlike the sync reminder, there's no push to fall back on, so a suppressed quarter is invisible to everyone until the next one.
 
