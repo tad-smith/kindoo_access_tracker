@@ -614,13 +614,31 @@ function daysAgo(days: number): string {
   return days === 1 ? '1 day ago' : `${days} days ago`;
 }
 
+/**
+ * A display name, or `undefined` when there isn't a usable one.
+ *
+ * `member_name` is frequently the member's own email address — SBA takes
+ * the name from Kindoo, and a Kindoo user created without one carries the
+ * address in its place. Treating that as a name prints the address twice,
+ * once per line, in every table that shows name-over-address; and it makes
+ * the welcome email open "Hi justin@example.com,".
+ *
+ * Compared case-insensitively but not canonically: this is a display
+ * decision, not an identity one, so gmail dot-stripping would be reaching.
+ */
+function usableName(name: string | undefined, email: string): string | undefined {
+  const trimmed = name?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.toLowerCase() === email.trim().toLowerCase() ? undefined : trimmed;
+}
+
 function memberText(g: ExpiredTempGrant): string {
-  const name = g.memberName?.trim();
+  const name = usableName(g.memberName, g.memberEmail);
   return name ? `${name} (${g.memberEmail})` : g.memberEmail;
 }
 
 function memberHtml(g: ExpiredTempGrant): string {
-  const name = g.memberName?.trim();
+  const name = usableName(g.memberName, g.memberEmail);
   const address = escapeHtml(g.memberEmail);
   const mailto = `<a href="mailto:${address}" style="${LINK}">${address}</a>`;
   return name ? `${escapeHtml(name)}<br />${mailto}` : mailto;
@@ -671,12 +689,12 @@ function personName(req: AccessRequest): string {
 
 /** Member cell: name on its own line, address beneath it. */
 function memberLines(req: AccessRequest): string[] {
-  const name = req.member_name?.trim();
+  const name = usableName(req.member_name, req.member_email);
   return name ? [name, req.member_email] : [req.member_email];
 }
 
 function memberCell(req: AccessRequest): string {
-  const name = req.member_name?.trim();
+  const name = usableName(req.member_name, req.member_email);
   const address = escapeHtml(req.member_email);
   const mailto = `<a href="mailto:${address}" style="${LINK}">${address}</a>`;
   return name ? `${escapeHtml(name)}<br />${mailto}` : mailto;
@@ -733,7 +751,7 @@ export function buildWelcomeSubject(scopeList: string, isLimited: boolean): stri
 
 export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
   return [
-    welcomeGreeting(opts.memberName),
+    welcomeGreeting(opts.memberName, opts.memberEmail),
     '',
     `You've been given access to Stake Building Access, the app ${opts.stakeName} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for ${opts.scopeList}.`,
     '',
@@ -748,7 +766,7 @@ export function buildWelcomeTextBody(opts: WelcomeEmailOpts): string {
 export function buildWelcomeHtmlBody(opts: WelcomeEmailOpts): string {
   return [
     `<div style="${WRAPPER}">`,
-    `<p style="${PARA}">${escapeHtml(welcomeGreeting(opts.memberName))}</p>`,
+    `<p style="${PARA}">${escapeHtml(welcomeGreeting(opts.memberName, opts.memberEmail))}</p>`,
     `<p style="${PARA}">You&#39;ve been given access to Stake Building Access, the app ${escapeHtml(opts.stakeName)} uses to manage access to its buildings. You can now sign in and request ${accessNoun(opts.isLimited)} for <strong>${escapeHtml(opts.scopeList)}</strong>.</p>`,
     `<p style="margin:0 0 24px;text-align:center"><a href="${escapeHtml(opts.appLink)}" style="${BUTTON}">Open Stake Building Access</a></p>`,
     `<p style="${PARA}"><strong>Signing in:</strong> ${escapeHtml(welcomeSignInSentence(opts.memberEmail, opts.isGmail))}</p>`,
@@ -762,8 +780,8 @@ function accessNoun(isLimited: boolean): string {
   return isLimited ? 'temporary building access' : 'building access';
 }
 
-function welcomeGreeting(memberName?: string): string {
-  const name = memberName?.trim();
+function welcomeGreeting(memberName: string | undefined, memberEmail: string): string {
+  const name = usableName(memberName, memberEmail);
   return name ? `Hi ${name},` : 'Hello,';
 }
 

@@ -765,6 +765,34 @@ describe('EmailService — pure builders', () => {
   // The instruction used to be a flat singular while the lead branched on
   // count, so a 14-seat reminder read "...the ward still sees a seat ... for
   // it". Shipped and sent before anyone noticed.
+  // SBA takes member_name from Kindoo, and a Kindoo user created without
+  // one carries its own address there. Rendering that as a name printed the
+  // address twice — once per line — in every name-over-address table, and
+  // opened the welcome email "Hi someone@example.com,".
+  it('a member_name that is just the address renders as no name at all', () => {
+    const selfNamed: LabelledExpiredTempGrant = {
+      memberName: 'Justin.Tullis@example.com',
+      memberEmail: 'justin.tullis@example.com',
+      scope: 'gleneagle',
+      label: 'Gleneagle Ward',
+      endDate: '2026-08-10',
+    };
+    const text = buildSyncReminderTextBody({
+      grants: [selfNamed],
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    // Once, not twice, and without the " (addr)" suffix a real name gets.
+    expect(text.match(/justin\.tullis@example\.com/gi)?.length).toBe(1);
+
+    const html = buildSyncReminderHtmlBody({
+      grants: [selfNamed],
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    expect(html).not.toContain('<br />');
+  });
+
   it('sync-reminder instruction agrees with the lead on number', () => {
     const one = buildSyncReminderTextBody({
       grants: [labelledGrants[0]!],
