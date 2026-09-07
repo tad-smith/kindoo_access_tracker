@@ -39,6 +39,12 @@ const HOST_ELEMENT_ID = 'sba-extension-root';
 
 export interface PanelHandles {
   host: HTMLElement;
+  /**
+   * The panel's closed shadow root. The only reference that exists — the
+   * host page cannot reach it via `host.shadowRoot`, which is the point.
+   * Internal callers and tests query the panel through this.
+   */
+  shadow: ShadowRoot;
   setOpen: (next: boolean) => void;
   isOpen: () => boolean;
   /**
@@ -72,7 +78,20 @@ export function mountPanel(): PanelHandles | null {
   host.id = HOST_ELEMENT_ID;
   document.body.appendChild(host);
 
-  const shadow = host.attachShadow({ mode: 'open' });
+  // Closed, not open. The panel renders inside a page the project does not
+  // control (`web.kindoo.tech`), and an open root is reachable from that page
+  // as `document.getElementById(HOST_ELEMENT_ID).shadowRoot` — enough to read
+  // every queued member's name, email and reason, and to synthesise clicks on
+  // Provision & Complete, Reject, both sign-in buttons and the remote-apply
+  // opt-in. React's delegated listener cannot tell a synthetic click from a
+  // real one, and `provision()` has no confirmation step.
+  //
+  // Closed removes both. Isolated worlds carry their own DOM wrapper
+  // prototypes, so a main-world patch of `Element.prototype.attachShadow`
+  // cannot capture this root either. The only reference is the one returned
+  // here, which is why `PanelHandles` carries it: internal callers and tests
+  // reach the tree through the handle, the host page has no path at all.
+  const shadow = host.attachShadow({ mode: 'closed' });
 
   const styleContainer = document.createElement('style');
   styleContainer.textContent = containerCss;
@@ -142,6 +161,7 @@ export function mountPanel(): PanelHandles | null {
 
   const handles: PanelHandles = {
     host,
+    shadow,
     setOpen(next) {
       applyOpenState(next);
       chrome.storage?.local?.set({ [STORAGE_KEYS.panelOpen]: next }).catch(() => undefined);

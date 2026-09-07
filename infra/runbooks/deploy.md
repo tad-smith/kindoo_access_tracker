@@ -266,6 +266,18 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
      - `/`, `/dashboard`, `/sw.js`, `/firebase-messaging-sw.js` → `cache-control: no-cache, max-age=0, must-revalidate`
      - the `/assets/…` file → `cache-control: public, max-age=31536000, immutable`
 
+   - **Verify the security headers.** Nothing in CI covers these — e2e runs against `vite preview`, which ignores `firebase.json` — so this is the only check:
+
+     ```bash
+     curl -sSI "https://$host/" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
+     # Reserved Firebase namespace — MUST come back relaxed, or popup sign-in breaks:
+     curl -sSI "https://$host/__/auth/iframe" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
+     ```
+
+     `/` → `frame-ancestors 'none'` + `same-origin-allow-popups`. `/__/auth/iframe` → `frame-ancestors 'self' https:` + `unsafe-none`.
+
+     **Then sign in with the Google button.** curl cannot tell you this: if the `/__/**` override stopped applying, `signInWithPopup` fails with `auth/popup-closed-by-user` and nothing else surfaces it. Do this on staging **before** deploying prod, never in parallel.
+
      If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
 ### Deploying a PR branch to staging (`--from-pr`)
@@ -366,6 +378,7 @@ and nothing is fetched or checked out — `git branch --show-current` is unchang
 
    - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
    - **Verify the Hosting cache headers** with the curl block from the staging step, substituting `host=stakebuildingaccess.org`. Same expected output: `no-cache, max-age=0, must-revalidate` for the shell + SW scripts, `public, max-age=31536000, immutable` for `/assets/…`.
+   - **Verify the security headers and sign in**, same as the staging step. Not redundant with it: whether Hosting applies these headers to the reserved `/__/` namespace is the one assumption behind shipping them enforcing, and a regression breaks sign-in for every user.
 
 ## One-time fixup: backfill the `bootstrap` claim after PR #258
 

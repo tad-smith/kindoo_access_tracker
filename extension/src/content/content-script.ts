@@ -4,8 +4,11 @@
 //
 // Wiring:
 //   - On load: create a `<div id="sba-extension-root">` on
-//     document.body, attachShadow({ mode: 'open' }), inject the
-//     panel CSS, mount React.
+//     document.body, attachShadow({ mode: 'closed' }), inject the
+//     panel CSS, mount React. Closed is a security boundary, not a
+//     style choice — see the comment at the `attachShadow` call in
+//     `mount.tsx`. The host page is Kindoo, which this project does
+//     not control.
 //   - Listen for `panel.togglePushedFromSw` to flip the slide-over
 //     open / closed.
 //   - Persist the open / closed state in chrome.storage.local so it
