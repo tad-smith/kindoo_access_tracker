@@ -65,6 +65,7 @@ export {
 } from './requesterDisplay.js';
 export { buildingNameById, resolveWardBuilding, resolveWardSite } from './resolveWardSite.js';
 export {
+  MANUAL_SEAT_REVIEW_JOB,
   MAX_SCHEDULE_ADVANCES,
   SYNC_REMINDER_JOB,
   advanceTriggerTime,

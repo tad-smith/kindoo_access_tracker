@@ -86,6 +86,19 @@ export const MAX_SCHEDULE_ADVANCES = 10_000;
  */
 export const SYNC_REMINDER_JOB = 'syncReminder';
 
+/**
+ * The `job` key of the quarterly manual-seat review's row (`spec.md`
+ * §17).
+ *
+ * Lives here rather than in the functions-side registry because both
+ * halves need the literal: the registry keys the handler by it, and the
+ * manager toggle finds the row to flip by it. A string duplicated
+ * across two workspaces drifts silently — a rename on one side leaves
+ * the other reading a row that is no longer there, and nothing fails
+ * loudly.
+ */
+export const MANUAL_SEAT_REVIEW_JOB = 'manualSeatReview';
+
 const MS_PER_HOUR = 3_600_000;
 
 /**

@@ -30,7 +30,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { resolveWardBuilding, unitType } from '@kindoo/shared';
+import {
+  MANUAL_SEAT_REVIEW_JOB,
+  SYNC_REMINDER_JOB,
+  resolveWardBuilding,
+  unitType,
+} from '@kindoo/shared';
 import type { Building, KindooSite, Organization, Ward } from '@kindoo/shared';
 import {
   buildingSchema,
@@ -62,8 +67,8 @@ import {
   useManagers,
   useRequests,
   useSeats,
+  useSetScheduledJobEnabledMutation,
   useSetStakeToggleMutation,
-  useSetSyncReminderEnabledMutation,
   useStakeDoc,
   useStakeSchedule,
   useUpdateHomeKindooSiteMutation,
@@ -76,7 +81,7 @@ import {
   useUpsertWardMutation,
   useWards,
 } from './hooks';
-import { syncReminderTask } from './syncReminder';
+import { scheduledTask } from './syncReminder';
 import { useOrganizations, sortOrganizations } from '../../organizations/hooks';
 import { TimezoneCombobox } from '../../../components/TimezoneCombobox';
 import { Button } from '../../../components/ui/Button';
@@ -1632,9 +1637,10 @@ function ManagerFormDialog({ open, isPending, onSubmit, onClose }: ManagerFormDi
 // pressed something. So the Save button sits above the rule and covers
 // exactly what is above it.
 //
-// `Sync reminders` is nested under `Email Notifications Enabled` — an
-// indent, not a section — because the parent decides whether the child
-// can be changed, not whether it runs. See `SyncReminderToggle`.
+// `Sync reminders` and `Quarterly access reviews` are both nested under
+// `Email Notifications Enabled` — an indent, not a section — because the
+// parent decides whether a child can be changed, not whether it runs.
+// See `ScheduledJobToggle`.
 
 function ConfigKeysTab() {
   const stake = useStakeDoc();
@@ -1786,7 +1792,38 @@ function ConfigKeysTab() {
           </p>
         </SettingToggle>
 
-        <SyncReminderToggle notificationsEnabled={notificationsEnabled} />
+        <ScheduledJobToggle
+          job={SYNC_REMINDER_JOB}
+          testId="config-sync-reminder"
+          label="Sync reminders"
+          notificationsEnabled={notificationsEnabled}
+          onToggleMessage={(next) =>
+            next ? 'Sync reminder turned on.' : 'Sync reminder turned off.'
+          }
+        >
+          <p>
+            A daily check that emails your active Kindoo Managers when a temporary seat has expired
+            in Kindoo but is still on the SBA roster, or when a Kindoo site has not been synced in a
+            week. Its one instruction is to run Sync. While either is true it repeats at most every
+            third day, and it stops on its own once both are clear.
+          </p>
+        </ScheduledJobToggle>
+
+        <ScheduledJobToggle
+          job={MANUAL_SEAT_REVIEW_JOB}
+          testId="config-manual-seat-review"
+          label="Quarterly access reviews"
+          notificationsEnabled={notificationsEnabled}
+          onToggleMessage={(next) =>
+            next ? 'Quarterly access review turned on.' : 'Quarterly access review turned off.'
+          }
+        >
+          <p>
+            Once a quarter, emails each ward’s bishopric the list of manual seats in their ward, and
+            the Kindoo Managers the stake-scope ones, asking them to remove anyone who no longer
+            needs access.
+          </p>
+        </ScheduledJobToggle>
 
         <SettingToggle
           id="config-eq-president-access"
@@ -1926,55 +1963,73 @@ function SettingToggle({
   );
 }
 
-// ---- Sync reminder --------------------------------------------------
+// ---- Scheduled-job toggle ---------------------------------------------
 //
-// A sub-option of Email Notifications Enabled in the UI and NOT in
+// One row per registry job the Config tab exposes as a slider (currently
+// the sync reminder and the quarterly manual-seat review). Both are
+// sub-options of Email Notifications Enabled in the UI and NOT in
 // behaviour, which is the whole subtlety of this row.
 //
-// The reminder honours its own `enabled` value, full stop: with the
-// stake's email kill-switch off, an enabled reminder still runs, still
-// pushes to managers who subscribed, and still consumes its
-// every-third-day backoff — `notifications_enabled` gates Resend and
-// nothing else. So greying the control means "you cannot change this
-// right now", never "this is not running", and the tip says so rather
-// than letting the grey imply dormancy. Nothing here ever writes
+// A job honours its own `enabled` value, full stop: with the stake's
+// email kill-switch off, an enabled job still runs and still consumes
+// its own backoff — `notifications_enabled` gates Resend and nothing
+// else. So greying the control means "you cannot change this right
+// now", never "this is not running", and each tip says so rather than
+// letting the grey imply dormancy. Nothing here ever writes
 // `enabled: false` as a side effect of the parent switch.
 //
 // Its two disabled causes are distinct from a third state, "value not
 // loaded yet". `useStakeSchedule` is a second subscription — the stake
-// doc gates this whole tab's render, so the reminder row's snapshot
-// always lands strictly after the row becomes visible — and until it
-// does, `syncReminderTask` reads null. Rendering that as a
-// disabled-and-off switch would show every manager, on every load of
-// this tab, a settled "off and unavailable" for a reminder that is on.
-// So `pending` renders a placeholder instead: no value shown until
-// there is one.
+// doc gates this whole tab's render, so a row's snapshot always lands
+// strictly after the row becomes visible — and until it does,
+// `scheduledTask` reads null. Rendering that as a disabled-and-off
+// switch would show every manager, on every load of this tab, a settled
+// "off and unavailable" for a job that is on. So `pending` renders a
+// placeholder instead: no value shown until there is one.
 //
-// The other disabled cause is the ordinary state of a new stake: the
-// hourly dispatcher seeds every registry job onto every stake, so until
-// it has run once there is no row to flip. The client must never create
-// the row itself — seeding is what decides the default schedule, and a
-// client-created row would pin one the registry never chose.
+// The other disabled cause is the ordinary state of a new stake, or a
+// job just added to the registry: the hourly dispatcher seeds every
+// registry job onto every stake, so until it has run once there is no
+// row to flip. The client must never create the row itself — seeding is
+// what decides the default schedule, and a client-created row would pin
+// one the registry never chose.
 
-interface SyncReminderToggleProps {
+interface ScheduledJobToggleProps {
+  /** Registry key of the job this row flips — see `@kindoo/shared`'s `scheduledTasks.ts`. */
+  job: string;
+  /** Prefix for the row's test ids; the switch itself is `${testId}-enabled`. */
+  testId: string;
+  label: string;
   /** `stake.notifications_enabled`, absent read as on (its default). */
   notificationsEnabled: boolean;
+  /** Success toast for a flip, given the value it just moved to. */
+  onToggleMessage: (next: boolean) => string;
+  /** Tooltip body. Paragraphs, not a single run-on sentence. */
+  children: ReactNode;
 }
 
-function SyncReminderToggle({ notificationsEnabled }: SyncReminderToggleProps) {
+function ScheduledJobToggle({
+  job,
+  testId,
+  label,
+  notificationsEnabled,
+  onToggleMessage,
+  children,
+}: ScheduledJobToggleProps) {
   const schedule = useStakeSchedule();
-  const setEnabled = useSetSyncReminderEnabledMutation();
+  const setEnabled = useSetScheduledJobEnabledMutation(job);
 
-  const task = useMemo(() => syncReminderTask(schedule.data), [schedule.data]);
+  const task = useMemo(() => scheduledTask(schedule.data, job), [schedule.data, job]);
   const seeded = task !== null;
   const enabled = task?.enabled === true;
+  const switchTestId = `${testId}-enabled`;
 
   return (
     <SettingToggle
-      id="config-sync-reminder-enabled"
-      testId="config-sync-reminder"
-      switchTestId="config-sync-reminder-enabled"
-      label="Sync reminders"
+      id={switchTestId}
+      testId={testId}
+      switchTestId={switchTestId}
+      label={label}
       sub
       checked={enabled}
       pending={schedule.isPending}
@@ -1982,18 +2037,13 @@ function SyncReminderToggle({ notificationsEnabled }: SyncReminderToggleProps) {
       onChange={async (next) => {
         try {
           await setEnabled.mutateAsync(next);
-          toast(next ? 'Sync reminder turned on.' : 'Sync reminder turned off.', 'success');
+          toast(onToggleMessage(next), 'success');
         } catch (err) {
           toast(errorMessage(err), 'error');
         }
       }}
     >
-      <p>
-        A daily check that emails your active Kindoo Managers when a temporary seat has expired in
-        Kindoo but is still on the SBA roster, or when a Kindoo site has not been synced in a week.
-        Its one instruction is to run Sync. While either is true it repeats at most every third day,
-        and it stops on its own once both are clear.
-      </p>
+      {children}
     </SettingToggle>
   );
 }
