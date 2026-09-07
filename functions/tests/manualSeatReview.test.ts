@@ -99,8 +99,10 @@ describe('intervalElapsed', () => {
 
   it('lands on every third month for every month of the year', () => {
     // The whole reason 75 is safe: the longest two-month gap is 62 days
-    // and the shortest three-month gap is 90, so a threshold in that
-    // band rejects the second month and admits the third, always.
+    // and the shortest three-month gap is 89 (Feb 1 → May 1, non-leap),
+    // so a threshold in that band rejects the second month and admits
+    // the third, always. The walk below crosses that exact Feb → May
+    // gap at i=1 (2026 is not a leap year).
     const firsts = [
       '2026-01-01',
       '2026-02-01',

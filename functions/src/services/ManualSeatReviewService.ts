@@ -38,11 +38,11 @@ import {
  * Seventy-five, and the arithmetic is the whole reason it is safe. The
  * job checks monthly, so the interval decides which checks send. The
  * longest two-month gap is 62 days (Jul 1 → Sep 1) and the shortest
- * three-month gap is 90 (Jan 1 → Apr 1), so any threshold in 63..90
- * rejects every second month and admits every third one, forever, in
- * every calendar year. 75 is the middle of that band — as far from
- * either edge as it can be, so no leap year, DST shift or clamped
- * monthly day can walk it over a boundary.
+ * three-month gap is 89 (Feb 1 → May 1, non-leap), so any threshold in
+ * 63..89 rejects every second month and admits every third one,
+ * forever, in every calendar year. 75 is the middle of that band — as
+ * far from either edge as it can be, so no leap year, DST shift or
+ * clamped monthly day can walk it over a boundary.
  *
  * Deliberately not in `@kindoo/shared`: this handler is the only thing
  * anywhere that asks the question.
@@ -214,8 +214,10 @@ export async function sendManualSeatReviewIfDue(
 
   if (attempted === 0) {
     // Nothing was said, so nothing is being deferred: no stamp, and the
-    // next month's check tries again.
-    logger.info('manualSeatReview: nobody to notify on any scope', {
+    // next month's check tries again. Recurs silently forever if nobody
+    // fixes it, so WARN — same reasoning as the send-failed branches
+    // below: nothing else surfaces this.
+    logger.warn('manualSeatReview: nobody to notify on any scope', {
       stakeId,
       scopes: byScope.size,
       grants: totalGrants,
