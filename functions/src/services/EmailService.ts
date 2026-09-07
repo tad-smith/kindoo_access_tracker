@@ -488,7 +488,7 @@ export function buildSyncReminderSubject(o: SyncReminderConditions): string {
 export function buildSyncReminderTextBody(o: SyncReminderEmailOpts): string {
   const lines: string[] = [`${syncReminderLead(o)}.`];
   if (o.grants.length > 0) {
-    lines.push('', SYNC_REMINDER_ACTION, '');
+    lines.push('', syncReminderAction(o.grants.length), '');
     for (const g of o.grants) {
       lines.push(`  ${memberText(g)} — ${g.label}, ended ${g.endDate}`);
     }
@@ -510,7 +510,7 @@ export function buildSyncReminderHtmlBody(o: SyncReminderEmailOpts): string {
   ];
   if (o.grants.length > 0) {
     parts.push(
-      `<p style="${PARA}">${escapeHtml(SYNC_REMINDER_ACTION)}</p>`,
+      `<p style="${PARA}">${escapeHtml(syncReminderAction(o.grants.length))}</p>`,
       `<table role="presentation" style="${TABLE}">`,
       `<tr><th style="${TH}">Member</th><th style="${TH}">Scope</th><th style="${TH}">Ended</th></tr>`,
       ...o.grants.map(
@@ -547,10 +547,27 @@ export function buildSyncReminderHtmlBody(o: SyncReminderEmailOpts): string {
  * What the manager is being asked to do. The CTA can only link a page —
  * Sync itself runs in the extension — so the instruction is spelled out
  * in the body rather than carried by the button.
+ *
+ * Count-aware because the lead sentence is. A flat singular here read
+ * "14 temporary seats have expired ... the ward still sees a seat".
+ *
+ * **It does not say the ward may file a removal request, and must not.**
+ * D34 withholds Remove on exactly the shape this reminder selects —
+ * `syncWillClearSeat` is the predicate on both sides — so that path does
+ * not exist (`spec.md` §7). What the ward can actually do is nothing, and
+ * saying so is the stronger motivator anyway: the lingering row also trips
+ * `NewRequestForm`'s duplicate gate, so a fresh request for the same
+ * member in that scope is blocked until Sync clears it.
  */
-const SYNC_REMINDER_ACTION =
-  'Run Sync in the Stake Building Access extension to clear them. Until then the ward still ' +
-  'sees a seat whose access has already ended, and may file a removal request for it.';
+function syncReminderAction(count: number): string {
+  return count === 1
+    ? 'Run Sync in the Stake Building Access extension to clear it. Until then the ward sees a ' +
+        'seat whose access has already ended and can do nothing about it — the expired row also ' +
+        'blocks a new request for that member, and only Sync clears it.'
+    : 'Run Sync in the Stake Building Access extension to clear them. Until then the ward sees ' +
+        'seats whose access has already ended and can do nothing about them — an expired row also ' +
+        'blocks a new request for that member, and only Sync clears it.';
+}
 
 /**
  * The stale-site half. Named per site rather than "run Sync" flat,
