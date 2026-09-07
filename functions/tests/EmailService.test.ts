@@ -740,7 +740,8 @@ describe('EmailService — pure builders', () => {
         'Two temporary seats have expired but are still on the roster.',
         '',
         'Run Sync in the Stake Building Access extension to clear them. Until then the ward ' +
-          'still sees a seat whose access has already ended, and may file a removal request for it.',
+          'sees seats whose access has already ended — an expired row also blocks a new request ' +
+          'for that member, and only Sync clears it.',
         '',
         '  Jane Doe (Jane@example.com) — Greenwood Ward, ended 2026-08-10',
         '  nameless@example.com — Stake, ended 2026-08-14',
@@ -759,6 +760,42 @@ describe('EmailService — pure builders', () => {
     expect(body.startsWith('One temporary seat has expired but is still on the roster.\n')).toBe(
       true,
     );
+  });
+
+  // The instruction used to be a flat singular while the lead branched on
+  // count, so a 14-seat reminder read "...the ward still sees a seat ... for
+  // it". Shipped and sent before anyone noticed.
+  it('sync-reminder instruction agrees with the lead on number', () => {
+    const one = buildSyncReminderTextBody({
+      grants: [labelledGrants[0]!],
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    expect(one).toContain('to clear it.');
+    expect(one).toContain('the ward sees a seat whose access has already ended');
+
+    const many = buildSyncReminderTextBody({
+      grants: labelledGrants,
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    expect(many).toContain('to clear them.');
+    expect(many).toContain('the ward sees seats whose access has already ended');
+  });
+
+  // D34 withholds Remove on exactly the shape this reminder selects
+  // (`syncWillClearSeat` on both sides), so the ward cannot file a removal
+  // request for these seats. The copy claimed they could — describing the
+  // world before D34 — until it was corrected. spec.md §7.
+  it('sync-reminder never tells the manager the ward can request removal', () => {
+    for (const grants of [[labelledGrants[0]!], labelledGrants]) {
+      const text = buildSyncReminderTextBody({ grants, staleSites: [], link: SEATS_LINK });
+      const html = buildSyncReminderHtmlBody({ grants, staleSites: [], link: SEATS_LINK });
+      for (const body of [text, html]) {
+        expect(body).not.toContain('removal request');
+        expect(body).not.toContain('may file');
+      }
+    }
   });
 
   it('sync-reminder html body renders a seat table with the end date chipped', () => {
