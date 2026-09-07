@@ -57,7 +57,7 @@ cheap step, and those pages are static, in-repo, and fetch nothing —
 `**` only while both use the same key. Rename just the `**` one and the help
 pages fall under both policies at once, intersected, losing the
 `'unsafe-inline'` their inline script needs. The procedure is in
-`infra/runbooks/deploy.md`.
+`infra/runbooks/deploy.md`, and the flip itself is tracked as **T-108**.
 
 ## Closed shadow root
 
