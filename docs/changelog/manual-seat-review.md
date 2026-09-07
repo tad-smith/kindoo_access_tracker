@@ -1,0 +1,57 @@
+# Quarterly manual-seat review
+
+**Shipped:** 2026-09-06
+**Commits:** PR #298 (`feat/manual-seat-review-backend`) — server half `e7dcfd4` (T-108), web half `0b72fd8` (`feat/manual-seat-review-web`), fold `2325b2a`
+
+## What shipped
+
+A second scheduled job, alongside the sync reminder: once a quarter, every scope in a stake that carries a manual seat gets a mail listing that scope's manual grants and asking the people responsible for it to remove anyone who no longer needs access.
+
+Auto seats follow a calling and drop away when it ends; temp seats end on a date. A manual seat does neither — it is granted for a reason a person typed and lasts until a person takes it away — so nothing in the system had ever asked whether that reason still held. `sendManualSeatReviewIfDue(stakeId, now)` (`functions/src/services/ManualSeatReviewService.ts`) is the answer: a per-stake unit of work with no trigger of its own, registered in `SCHEDULED_JOBS` as `manualSeatReview` and called by `runScheduledTask` the same way the sync reminder is.
+
+**The registry entry is `{type:'monthly', day:1, hour:2}` — a CHECK cadence, not a `quarterly` mail cadence.** `MANUAL_SEAT_REVIEW_INTERVAL_DAYS = 75` in the handler is what decides whether anything actually sends. The arithmetic is what makes 75 safe: the longest two-month gap is 62 days (1 Jul → 1 Sep) and the shortest three-month gap is 90 (1 Jan → 1 Apr), so any threshold from 63 through 90 rejects every second month's check and admits every third, forever — regardless of leap years, DST, or a clamped monthly day. 75 sits in the middle of that band. There is deliberately no `quarterly` schedule shape: adding one would put "how often" in two places that could disagree, and checking monthly lets a stake whose review slipped a month (created mid-quarter, or a month of dispatch failures) catch up at the next month instead of waiting a whole quarter.
+
+**The job is jittered — `jitterSeconds: 72_000` (20 hours) — because one run fans out to roughly a dozen mails, not one.** `ScheduledJob.jitterSeconds` is a new registry field; `jitterDelaySeconds(stakeId, job, jitterSeconds)` (`functions/src/scheduled/dispatchScheduledTasks.ts`) hashes `` `${stakeId}--${job}` `` with FNV-1a-32 and reduces it into the window, giving each stake a fixed offset for that job, passed to Cloud Tasks as `scheduleDelaySeconds`. Deterministic, not random — the same stake fires at the same second every time, which is what makes "when does stake X's review go out" answerable rather than a coin flip, and hashing the job key alongside the stake means a stake holding two jittered jobs can't have them collide. Enqueue still stamps `next_trigger_time` immediately, so a delayed task can't be re-enqueued behind itself; and a 20-hour window added to a 02:00 stake-local slot never crosses into the next stake-local day, so the date stamp can still measure from the slot rather than from wherever the jitter landed.
+
+**Recipients are operator-specified, and there is no fallback.** A ward or branch scope goes to whoever holds at least one importer-sourced, non-limited calling for that scope (`importer_callings[scope]` minus `importer_limited_callings[scope]`) — in practice the Bishop, both counselors, the Ward Clerk, and the Ward Executive Secretary, or the branch equivalents. Manual grants confer nothing: being handed the app through `manual_grants[scope]` isn't evidence of being answerable for the roster. The stake scope goes to active Kindoo Managers, not stake-scope access holders. Limited-tier callings are excluded — the only one is Elders Quorum President (D26), and `canRemoveSeat` refuses a limited user any non-temp grant, so an EQ President would receive a list with no Remove control on a single row. A scope with nobody qualifying sends nothing and logs; it never falls back to the Kindoo Managers, who can't answer "does this person still need it?" for a ward they don't serve.
+
+**Every manual grant, grouped by its own scope.** `manualGrantsByScope` walks each seat's primary grant and its `duplicate_grants[]`, and groups by the *grant's* scope rather than the seat's — a stake-scope manual duplicate riding a ward-scope auto seat is the ordinary shape, and a bishopric's mail should list exactly the manual access on their own roster.
+
+**Nudge only.** No acknowledgement, no per-recipient tracking, no new collection. The one new field, `Stake.last_manual_seat_review_date`, is stamped last — after every scope's send has been attempted — and lives in `BOOKKEEPING_FIELDS`, so it fans no audit row. Unlike the sync reminder's backoff stamp, **it is never deleted**: that stamp tracks a condition that can clear; this one tracks a cadence, so a quarter with zero manual seats must still count, or the following month would read as a fresh first send.
+
+**Email only, gated the same as everything else, with no push counterpart.** `notifications_enabled` suppresses the send but not the interval — a stake with the kill-switch off still consumes its quarter (`emailSuppressed: true` on the outcome, stamp still written), matching the sync reminder's "kill-switch is email-only" rule. Unlike the sync reminder, there's no push to fall back on, so a suppressed quarter is invisible to everyone until the next one.
+
+**Web.** A second Config-tab slider, **Quarterly access reviews**, beside **Sync reminders**, both nested under **Email Notifications Enabled**. `SyncReminderToggle` was generalized into `ScheduledJobToggle`, parameterized by registry key (`SYNC_REMINDER_JOB` / `MANUAL_SEAT_REVIEW_JOB`) and its tooltip copy, so a third job is a row, not a new component. `useSetSyncReminderEnabledMutation` became `useSetScheduledJobEnabledMutation(job)`; `syncReminderTask` became `scheduledTask(schedule, job)`. Both changes are pure renames plus a `job` parameter — the transaction, the disabled states, and the never-creates-a-row guarantee are untouched.
+
+## Why
+
+The design question that took the longest was the schedule shape, precisely because a `quarterly` shape looks like the obvious right answer. It was rejected because "how often" would then live in two places — the shape and whatever interval a `quarterly` check still needs to decide *when in* the quarter to fire relative to when the stake was created or last reviewed — and two places that can disagree eventually will. Checking monthly and gating on a rolling interval keeps one number in charge, and it has a second benefit: a stake whose review is overdue by a month catches up at the next month's check rather than sitting inert until the calendar quarter turns over.
+
+Per-scope recipients, not a stake-wide digest to the Kindoo Managers, for the same reason the handler's "no fallback" rule exists at all: only the bishopric knows whether a specific person in their ward still needs their calling's access. A digest to the managers would be noise its recipients can't act on. The limited-tier exclusion follows directly from `canRemoveSeat` (D26) — sending the mail to someone with no Remove control on any of its rows would be worse than not sending it, because it would look like the ask is theirs to fulfill and isn't.
+
+Nudge-only, no acknowledgement, was a deliberate scope cut, not an oversight. Tracking whether a manager actually acted on a reviewed scope would need a new collection, a new read path, and a definition of "acted on" (did they remove someone? did they mean to keep everyone?) that the feature doesn't need to answer. The mail's job is to prompt a human to look at their own roster; whether they do anything about it is exactly as visible after this feature as before it — through the roster itself.
+
+Jitter exists because the manual-seat review is not the sync reminder's shape: the sync reminder sends at most one mail per stake, so bursting every enabled stake's send at 06:00 was never a real cost. The manual-seat review fans out to as many scopes as a stake has wards with manual seats — a dozen or so at target scale — so the same burst at one slot would be a dozen times worse per stake, multiplied across every stake that enables it. A jitter window wide enough to matter (20 hours) but narrow enough to stay inside one stake-local calendar day was the constraint that shaped the number: any wider and the date stamp would need to measure from delivery instead of from the slot, which would have meant reworking the enqueue-then-stamp ordering D38 established.
+
+## What didn't change that you'd expect to
+
+- **The dispatcher's mechanics.** Seed / select / enqueue / stamp (D38) are untouched; jitter is a new, optional delay applied inside the existing Enqueue step, not a new step.
+- **`commitScheduleChanges` and the transactional stamp (D39(f)).** The manual-seat review's row is seeded and stamped through the same transaction as every other job's; no per-job special-casing.
+- **The sync reminder itself.** `SyncReminderService.ts`, its five/six-status return, its own backoff, and its push category are all untouched. The two jobs share the dispatcher and the Config tab's layout, nothing more.
+- **`notifications_enabled`'s scope.** Still email-only, still gates Resend and nothing else — the interval, like the sync reminder's backoff, is consumed regardless.
+- **No new Cloud Function, no new queue, no new Cloud Scheduler job.** This is entirely a `SCHEDULED_JOBS` entry and a handler module, inside the shape D38 built.
+- **`defaultEnabled: false`.** A stake gets the row on its next hourly dispatch pass; nothing sends until a manager flips it.
+
+## Spec / doc edits
+
+- `docs/spec.md` — §9: "Seven notification types" → "Eight"; new table row and a new subsection for the review, in the sync reminder's style; "All seven emails" → "All eight" (two places); the body-shape and lead-naming paragraphs each gained a clause for the new email's shape. §17: "One job is registered" → "Two jobs are registered", the no-`quarterly`-shape rationale, `jitterSeconds` documented under the Enqueue step, "Turning a job on" rewritten for the four-row slider stack and the generalized `ScheduledJobToggle` / `useSetScheduledJobEnabledMutation` names.
+- `docs/architecture.md` — new **D41**, citing D37 / D38 / D39; a `[Amended 2026-09-06, D41]` note added to D39 where it claimed the registry "carries one entry."
+- `docs/firebase-schema.md` — `Stake.last_manual_seat_review_date` field, its `Written by` line, the `dispatchScheduledTasks` / `runScheduledTask` Cloud Functions rows, a new paragraph parallel to the sync reminder's, and the `stakeSchedules` Written-by/Read-by prose generalized to both jobs.
+- `docs/user-guide/creating-requests.html` — a callout in "Removing someone's access" and an FAQ entry, since this is the guide bishoprics and stake presidencies read and they are now a recipient of a recurring email the requester guide didn't previously mention.
+- `CLAUDE.md` — a new "Open follow-ups" bullet, and the two adjacent bullets (scheduled tasks, sync reminder wiring) corrected where they said "one job" / "first entry" in a way a second registered job now contradicts.
+
+## Known issues / deferred
+
+- **No manager UI for `schedule` or the timestamps**, same as the sync reminder — moving the check day/hour is still a Firestore console edit.
+- **No "which scopes were mailed last quarter" display.** The outcome's `scopes` / `grants` / `mailsSent` / `scopesSkipped` counts are logged, not surfaced to a manager.
+- **T-105** (expired grants on multi-grant seats) is unrelated and unaffected.

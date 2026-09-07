@@ -8,6 +8,23 @@ Format is unchanged — see the header of `TASKS.md`.
 
 ---
 
+## [T-108] Quarterly manual-seat review
+Status: done (2026-09-06 — PR #298)
+Owner: @backend-engineer + @web-engineer + @docs-keeper
+Phase: cross-cutting
+
+Auto seats follow a calling and temp seats end on a date; a manual seat does neither. Nothing has ever asked whether a manual grant's reason still holds, and bishoprics forget to give one up when a calling changes. This adds a second scheduled job — the sync reminder's sibling, not a rewrite of it — that mails the people responsible for each scope, once a quarter, the manual seats sitting on it.
+
+**Backend.** `sendManualSeatReviewIfDue(stakeId, now)` (`functions/src/services/ManualSeatReviewService.ts`) follows D37's shape: a per-stake unit of work with no trigger, registered in `SCHEDULED_JOBS` as `manualSeatReview`, `{type:'monthly', day:1, hour:2}`, `jitterSeconds: 72_000`, `defaultEnabled: false`. **Deliberately no `quarterly` schedule shape** — `MANUAL_SEAT_REVIEW_INTERVAL_DAYS = 75` in the handler is what decides whether anything sends, and 75 sits in the middle of the 63–90 day band that rejects every second month and admits every third, forever. Jitter (20 hours) is a deterministic per-stake offset (`jitterDelaySeconds`, FNV-1a over `${stakeId}--${job}`), not random, so a stake's send time is reproducible and two jittered jobs on one stake can't collide.
+
+**Recipients, operator-specified, no fallback.** Ward/branch scope → holders of at least one importer-sourced, non-limited calling for that scope; manual grants confer nothing. Stake scope → active Kindoo Managers. Limited-tier callings (Elders Quorum President, D26) are excluded because `canRemoveSeat` gives them no Remove control on a non-temp grant. A scope with nobody qualifying sends nothing and logs.
+
+**Nudge only.** No acknowledgement, no per-recipient tracking, no new collection — one stake-level stamp, `last_manual_seat_review_date`, in `BOOKKEEPING_FIELDS`. Unlike the sync reminder's backoff stamp, **this one is never deleted**: it tracks a cadence, not a condition, so an empty quarter must still count.
+
+**Web.** A second slider, **Quarterly access reviews**, beside **Sync reminders** on the Config tab, both instances of one `ScheduledJobToggle` component (renamed from the sync-reminder-only `SyncReminderToggle`) parameterized by registry key. Same disabled/loading/seeded states, same "greying isn't pausing" behavior under `notifications_enabled`. No push counterpart — email-only by design, not a Phase 10.6 deferral, since the mail was designed nudge-only from the start.
+
+**Done.** Shipped as scoped on `feat/manual-seat-review-backend` (PR #298), folding both the backend (`feat/manual-seat-review-backend`, T-108) and web (`feat/manual-seat-review-web`) halves. Recorded as `architecture.md` D41, amending D39's "carries one entry" in place. See `docs/changelog/manual-seat-review.md`.
+
 ## [T-106] Sync reminders — case (1): no Sync in seven days
 Status: done (2026-09-06 — PR #293)
 Owner: @extension-engineer (heartbeat) + @backend-engineer (reminder) + @docs-keeper
