@@ -266,6 +266,23 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
      - `/`, `/dashboard`, `/sw.js`, `/firebase-messaging-sw.js` → `cache-control: no-cache, max-age=0, must-revalidate`
      - the `/assets/…` file → `cache-control: public, max-age=31536000, immutable`
 
+   - **Verify the security headers** (see the changelog entry). Nothing in CI covers these — e2e runs against `vite preview`, which ignores `firebase.json` — so this curl block is the only check that the globs still match:
+
+     ```bash
+     host=staging.stakebuildingaccess.org
+     curl -sSI "https://$host/" | grep -iE '^(content-security-policy|x-content-type-options|referrer-policy|permissions-policy|cross-origin-opener-policy)'
+     # Reserved Firebase namespace — MUST be relaxed, or popup sign-in breaks:
+     curl -sSI "https://$host/__/auth/iframe" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
+     ```
+
+     Expected on `/`: `content-security-policy: frame-ancestors 'none'`, `nosniff`, `strict-origin-when-cross-origin`, the `Permissions-Policy` list, and `cross-origin-opener-policy: same-origin-allow-popups`. Expected on `/__/auth/iframe`: `frame-ancestors 'self' https:` and `cross-origin-opener-policy: unsafe-none`.
+
+     **Then sign in on staging with the Google button.** That is the one thing curl cannot tell you: if `/__/**` stopped overriding, `signInWithPopup` fails with `auth/popup-closed-by-user` and nothing else surfaces it.
+
+   - **Read the CSP report-only violations** before considering the flip to enforcing. Open the deployed staging app, exercise sign-in, the Requests Queue, a roster, and the Push Notifications panel, and read the browser console for `Content-Security-Policy-Report-Only` reports. There is no `report-uri`, so the console is the only sink — and **service-worker violations do not appear in the page console**, so check the SW's own console (`chrome://inspect` → the `firebase-messaging-sw.js` worker) for the gstatic `script-src` entry specifically.
+
+     **Flipping to enforcing renames TWO headers, not one.** `firebase.json` carries `Content-Security-Policy-Report-Only` on both `**` and `/help/**`. Hosting is last-match-wins *per header key*, so `/help/**` overrides `**` only while the keys match. Rename only the `**` one and the help guides fall under both policies at once, intersected — losing the `'unsafe-inline'` their inline `<script>` and `onclick` need, which stops those pages working. Rename both in the same commit.
+
      If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
 ### Deploying a PR branch to staging (`--from-pr`)

@@ -17,8 +17,8 @@
             "value": "no-cache, max-age=0, must-revalidate"
           },
           {
-            "key": "X-Frame-Options",
-            "value": "DENY"
+            "key": "Content-Security-Policy",
+            "value": "frame-ancestors 'none'"
           },
           {
             "key": "X-Content-Type-Options",
@@ -84,6 +84,19 @@
           {
             "key": "Content-Security-Policy-Report-Only",
             "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+          }
+        ]
+      },
+      {
+        "source": "/__/**",
+        "headers": [
+          {
+            "key": "Content-Security-Policy",
+            "value": "frame-ancestors 'self' https:"
+          },
+          {
+            "key": "Cross-Origin-Opener-Policy",
+            "value": "unsafe-none"
           }
         ]
       }
