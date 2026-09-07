@@ -270,13 +270,17 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
 
      ```bash
      curl -sSI "https://$host/" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
-     # Reserved Firebase namespace — MUST come back relaxed, or popup sign-in breaks:
+     # Reserved auth namespace — must come back with NEITHER header:
      curl -sSI "https://$host/__/auth/iframe" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
      ```
 
-     `/` → `frame-ancestors 'none'` + `same-origin-allow-popups`. `/__/auth/iframe` → `frame-ancestors 'self' https:` + `unsafe-none`.
+     `/` → `frame-ancestors 'none'` + `same-origin-allow-popups`.
 
-     **Then sign in with the Google button.** curl cannot tell you this: if the `/__/**` override stopped applying, `signInWithPopup` fails with `auth/popup-closed-by-user` and nothing else surfaces it. Do this on staging **before** deploying prod, never in parallel.
+     **`/__/auth/iframe` → no output at all.** That is the pass condition, verified on staging 2026-09-07. Firebase serves the auth widget from its own backend rather than from this Hosting site (the response carries a Fastly `x-served-by` and its own `cache-control`), so no `firebase.json` header reaches it — which is exactly why `frame-ancestors 'none'` on `**` cannot break the sign-in iframe. **If either header DOES appear there, stop and do not deploy prod**: `**` would be reaching the auth namespace, and `frame-ancestors 'none'` on that iframe breaks sign-in for every user.
+
+     The `/__/**` block in `firebase.json` is belt-and-braces for this, and it is not inert — it applies to other reserved paths (`/__/firebase/init.json` returns `frame-ancestors 'self' https:`). Keep it: if Firebase ever moves the auth widget onto Hosting, it is what prevents the outage above.
+
+     **Then sign in with the Google button.** curl cannot tell you this, and it is the real gate. Do it on staging **before** deploying prod, never in parallel.
 
      If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
