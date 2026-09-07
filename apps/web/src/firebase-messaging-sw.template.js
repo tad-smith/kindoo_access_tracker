@@ -24,8 +24,16 @@
 // Firebase compat SDK — the modular SDK does not currently support
 // background-message handlers in service workers cleanly; FCM docs
 // canonicalise the compat path here.
-importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js');
+//
+// The version is substituted from the installed `firebase` package, not
+// written literally. These two URLs are a runtime dependency of production
+// that no lockfile pins and `pnpm audit` cannot see, so a literal drifts
+// silently — it sat at 10.13.2 while the page SDK reached 12.x. Deriving it
+// means the SW and the page always load the same major.
+importScripts('https://www.gstatic.com/firebasejs/__FIREBASE_SDK_VERSION__/firebase-app-compat.js');
+importScripts(
+  'https://www.gstatic.com/firebasejs/__FIREBASE_SDK_VERSION__/firebase-messaging-compat.js',
+);
 
 firebase.initializeApp({
   apiKey: '__VITE_FIREBASE_API_KEY__',

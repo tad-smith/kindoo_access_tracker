@@ -26,6 +26,7 @@
 // Dev server on 5173, preview on 4173 (Playwright targets preview).
 
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -81,9 +82,16 @@ function firebaseMessagingSwPlugin(env: Record<string, string>): Plugin {
   const templatePath = resolve(__dirname, 'src/firebase-messaging-sw.template.js');
   const swPath = '/firebase-messaging-sw.js';
 
+  // Pinned to whatever `firebase` the lockfile resolved, so the compat SDK
+  // the SW pulls from gstatic never skews from the page's modular SDK.
+  const firebaseVersion = (
+    createRequire(import.meta.url)('firebase/package.json') as { version: string }
+  ).version;
+
   function render(): string {
     const template = readFileSync(templatePath, 'utf8');
     return template
+      .replaceAll('__FIREBASE_SDK_VERSION__', firebaseVersion)
       .replace('__VITE_FIREBASE_API_KEY__', env.VITE_FIREBASE_API_KEY ?? '')
       .replace('__VITE_FIREBASE_AUTH_DOMAIN__', env.VITE_FIREBASE_AUTH_DOMAIN ?? '')
       .replace('__VITE_FIREBASE_PROJECT_ID__', env.VITE_FIREBASE_PROJECT_ID ?? 'kindoo-staging')
