@@ -53,6 +53,19 @@ import { SCHEDULED_JOBS, type JobRegistry } from '../lib/taskRegistry.js';
 export const TASK_RUNNER_NAME = 'runScheduledTask';
 
 /**
+ * Cloud Tasks' patience for one attempt, pinned rather than left to the
+ * 10-minute default.
+ *
+ * It must stay ABOVE `runScheduledTask`'s own `timeoutSeconds` (300).
+ * Below it, Cloud Tasks would cancel a run that is still mailing and
+ * retry it — and since the handler's date stamp is written last, the
+ * retry re-mails every scope that already succeeded. Above it, the
+ * function's own timeout fires first and returns a 504 that names the
+ * stake in the logs. The 30s of slack covers cold start and dispatch.
+ */
+const DISPATCH_DEADLINE_SECONDS = 330;
+
+/**
  * Logged once per completed run. **Load-bearing outside this repo:** the
  * `scheduled-dispatch-completed` log-based metric
  * (`infra/monitoring/`) matches this text and alerts on its ABSENCE,
@@ -498,6 +511,7 @@ function enqueueViaCloudTasks(
     .taskQueue<ScheduledTaskPayload>(TASK_RUNNER_NAME)
     .enqueue(payload, {
       id,
+      dispatchDeadlineSeconds: DISPATCH_DEADLINE_SECONDS,
       ...(delaySeconds > 0 ? { scheduleDelaySeconds: delaySeconds } : {}),
     });
 }

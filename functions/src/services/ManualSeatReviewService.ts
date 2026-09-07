@@ -54,7 +54,13 @@ const SEND_GAP_MS = 1000;
 
 /** How a run ended. */
 export type ManualSeatReviewStatus =
-  'sent' | 'stake-missing' | 'setup-incomplete' | 'nothing-due' | 'backed-off' | 'no-recipients';
+  | 'sent'
+  | 'stake-missing'
+  | 'setup-incomplete'
+  | 'nothing-due'
+  | 'backed-off'
+  | 'no-recipients'
+  | 'send-failed';
 
 export type ManualSeatReviewOutcome = {
   stakeId: string;
@@ -64,11 +70,17 @@ export type ManualSeatReviewOutcome = {
   /** Manual grants across every scope. */
   grants: number;
   /**
-   * Per-scope mails handed to the email layer. Counts a send the
-   * stake-level kill-switch suppressed — see `emailSuppressed`, and the
-   * stamp, which follows the same "was a send attempted" rule.
+   * Per-scope mails that landed, plus any the stake-level kill-switch
+   * deliberately suppressed — see `emailSuppressed`. This is the count
+   * the stamp follows: a suppressed send is a decision and consumes the
+   * quarter, a failed one is a fault and does not.
    */
   mailsSent: number;
+  /**
+   * Per-scope mails attempted that did not land — a Resend error, or a
+   * link that could not be built. Excluded from `mailsSent` on purpose.
+   */
+  mailsFailed: number;
   /** Scopes with manual grants but nobody to send them to. */
   scopesSkipped: number;
   /** Stake-local date stamped on the stake doc, when this run sent. */
@@ -99,6 +111,7 @@ export async function sendManualSeatReviewIfDue(
     scopes: 0,
     grants: 0,
     mailsSent: 0,
+    mailsFailed: 0,
     scopesSkipped: 0,
   });
 
@@ -146,8 +159,16 @@ export async function sendManualSeatReviewIfDue(
   }));
   const managerEmails = managers.map((m) => m.email);
 
+  // The gap below exists solely to stay under Resend's request rate. With
+  // the stake kill-switch on, the wrapper short-circuits before Resend is
+  // ever called, so a 13-scope stake would otherwise sleep ~12s to send
+  // nothing.
+  const callsResend = stake.notifications_enabled !== false;
+
   let mailsSent = 0;
+  let mailsFailed = 0;
   let scopesSkipped = 0;
+  let attempted = 0;
   for (const scope of sortScopes([...byScope.keys()])) {
     const recipients = scope === 'stake' ? managerEmails : bishopricRecipients(accessDocs, scope);
     if (recipients.length === 0) {
@@ -161,8 +182,9 @@ export async function sendManualSeatReviewIfDue(
 
     // Sequential, with a gap between sends: Resend's default rate is 2
     // requests per second and a large stake fans out to ~13 scopes.
-    if (mailsSent > 0) await wait(SEND_GAP_MS);
-    await notifyScopeManualSeatReview({
+    if (callsResend && attempted > 0) await wait(SEND_GAP_MS);
+    attempted += 1;
+    const result = await notifyScopeManualSeatReview({
       db,
       stakeId,
       stake,
@@ -171,7 +193,8 @@ export async function sendManualSeatReviewIfDue(
       grants: byScope.get(scope) ?? [],
       recipients,
     });
-    mailsSent += 1;
+    if (result === 'failed') mailsFailed += 1;
+    else mailsSent += 1;
   }
 
   const partial = {
@@ -179,10 +202,11 @@ export async function sendManualSeatReviewIfDue(
     scopes: byScope.size,
     grants: totalGrants,
     mailsSent,
+    mailsFailed,
     scopesSkipped,
   };
 
-  if (mailsSent === 0) {
+  if (attempted === 0) {
     // Nothing was said, so nothing is being deferred: no stamp, and the
     // next month's check tries again.
     logger.info('manualSeatReview: nobody to notify on any scope', {
@@ -193,21 +217,40 @@ export async function sendManualSeatReviewIfDue(
     return { ...partial, status: 'no-recipients' };
   }
 
+  if (mailsSent === 0) {
+    // Every attempt failed — a Resend outage, an unset key, an
+    // unbuildable link. Consuming the quarter here would turn a bad
+    // afternoon into three months of silence with no retry, so the
+    // stamp is withheld and next month's check tries again. WARN
+    // because nothing else surfaces this: `email_send_failed` audit
+    // rows are written but no alert is routed to them.
+    logger.warn('manualSeatReview: every send failed — quarter not consumed', {
+      stakeId,
+      scopes: byScope.size,
+      grants: totalGrants,
+      mailsFailed,
+      scopesSkipped,
+    });
+    return { ...partial, status: 'send-failed' };
+  }
+
   logger.info('manualSeatReview: sent', {
     stakeId,
     scopes: byScope.size,
     grants: totalGrants,
     mailsSent,
+    mailsFailed,
     scopesSkipped,
   });
 
-  // Stamp last, and only because a send was attempted. A fault before
-  // this point leaves the review due rather than silently consumed — a
-  // duplicate review email is a far better failure than a quarter of
-  // silence about seats nobody is watching. Bookkeeping-only: the field
-  // is in `BOOKKEEPING_FIELDS`, so the write fans no audit row, and
-  // `lastActor` is left alone so the stake doc keeps naming whoever last
-  // really edited it.
+  // Stamp last, and only because at least one scope's mail landed or was
+  // deliberately suppressed by the kill-switch. A fault before this point
+  // leaves the review due rather than silently consumed — a duplicate
+  // review email is a far better failure than a quarter of silence about
+  // seats nobody is watching. Bookkeeping-only: the field is in
+  // `BOOKKEEPING_FIELDS`, so the write fans no audit row, and `lastActor`
+  // is left alone so the stake doc keeps naming whoever last really
+  // edited it.
   await stakeRef.update({ last_manual_seat_review_date: today });
 
   return {

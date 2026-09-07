@@ -1107,6 +1107,10 @@ export async function notifyManagersSyncReminder(
  * is resolved by the caller from a single `loadScopeLabeller` resolver,
  * because a run mails up to ~13 scopes and each doing its own wards read
  * would be ~13 reads of the same collection.
+ *
+ * Alone among the wrappers, this one **reports its outcome**. Its caller
+ * consumes a quarter on a send, so it has to tell a suppressed send
+ * (a decision) from a failed one (a fault) — see `EmailSendResult`.
  */
 export async function notifyScopeManualSeatReview(
   deps: BaseDeps & {
@@ -1116,10 +1120,12 @@ export async function notifyScopeManualSeatReview(
     grants: ManualSeatReviewGrant[];
     recipients: string[];
   },
-): Promise<void> {
+): Promise<EmailSendResult> {
   const { stakeId, stake, scope, scopeLabel, grants, recipients } = deps;
-  if (!emailsEnabled(stake, stakeId, 'manualSeatReview')) return;
-  if (recipients.length === 0 || grants.length === 0) return;
+  if (!emailsEnabled(stake, stakeId, 'manualSeatReview')) return 'suppressed';
+  // Caller-guarded, so this is belt-and-braces: nothing to say is not a
+  // fault, so it must not read as one.
+  if (recipients.length === 0 || grants.length === 0) return 'suppressed';
 
   // A Kindoo Manager passes `/stake/roster`'s role gate through the
   // manager superset, so the stake-scope link resolves for them.
@@ -1128,10 +1134,12 @@ export async function notifyScopeManualSeatReview(
       ? `/stake/roster?stake=${encodeURIComponent(stakeId)}`
       : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
   const link = safeBuildLink(deps, route);
-  if (link === undefined) return;
+  // A misconfigured base URL already wrote its own audit row. It is a
+  // fault, not a decision, so it must not consume the caller's quarter.
+  if (link === undefined) return 'failed';
 
   const opts: ManualSeatReviewEmailOpts = { scope, scopeLabel, grants, link };
-  await sendOne(deps, {
+  return await sendOne(deps, {
     payload: buildPayload({
       stake,
       to: recipients,
@@ -1288,13 +1296,27 @@ function safeBuildLink(
   }
 }
 
+/**
+ * How one wrapper's send ended.
+ *
+ * The distinction that matters is `suppressed` vs `failed`: the first is
+ * the operator kill-switch (or nothing to say), which is a decision; the
+ * second is a send that was attempted and did not land. A caller that
+ * consumes a scheduling window on send must not consume it on a fault —
+ * see `sendManualSeatReviewIfDue`.
+ *
+ * Only `notifyScopeManualSeatReview` surfaces this today; the other
+ * wrappers stay `Promise<void>` because nothing acts on their outcome.
+ */
+export type EmailSendResult = 'sent' | 'suppressed' | 'failed';
+
 async function sendOne(
   deps: { db: Firestore; stakeId: string },
   opts: {
     payload: EmailPayload;
     context: { type: string; requestId?: string; source?: string };
   },
-): Promise<void> {
+): Promise<'sent' | 'failed'> {
   const result = await getResendSender().send(opts.payload);
   if (result.ok) {
     logger.info('email sent', {
@@ -1303,7 +1325,7 @@ async function sendOne(
       to: opts.payload.to,
       messageId: result.id,
     });
-    return;
+    return 'sent';
   }
   logger.warn('email send failed', {
     stakeId: deps.stakeId,
@@ -1325,6 +1347,7 @@ async function sendOne(
   if (opts.context.requestId) audit.requestId = opts.context.requestId;
   if (opts.context.source) audit.source = opts.context.source;
   await writeEmailFailedAudit(deps.db, deps.stakeId, audit);
+  return 'failed';
 }
 
 async function writeEmailFailedAudit(

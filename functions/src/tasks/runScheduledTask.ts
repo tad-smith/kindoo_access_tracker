@@ -69,9 +69,29 @@ export async function runScheduledTaskHandler(
   return 'ran';
 }
 
+/**
+ * Wall-clock budget for the slowest registered job, well above the 60s
+ * default.
+ *
+ * `manualSeatReview` is the one that sets it: a 13-ward stake reads four
+ * whole collections, then fans out one mail per scope — ~13 Resend
+ * round-trips separated by a deliberate 1s rate-limit gap, so ~12s of
+ * pacing before any network time. That is comfortably under 60s today,
+ * but only just, and a timeout is the expensive failure here: the
+ * date stamp is the sole progress marker and it is written last, so a
+ * retry re-mails every scope that already succeeded.
+ *
+ * 300s is ~5x the worst case measured that way, which leaves room for a
+ * Resend slow-down or a larger stake without inviting a job that sits
+ * for minutes. A new registry entry that needs more than this budget
+ * should raise the number here rather than shard itself.
+ */
+const TIMEOUT_SECONDS = 300;
+
 export const runScheduledTask = onTaskDispatched<{ stakeId: string; job: string }>(
   {
     retryConfig: { maxAttempts: 3 },
+    timeoutSeconds: TIMEOUT_SECONDS,
     serviceAccount: APP_SA,
     secrets: [RESEND_API_KEY],
   },

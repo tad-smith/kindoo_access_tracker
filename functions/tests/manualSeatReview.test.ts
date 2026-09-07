@@ -644,12 +644,40 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
 
     const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
 
-    expect(outcome).toMatchObject({ status: 'sent', mailsSent: 1, emailSuppressed: true });
+    expect(outcome).toMatchObject({
+      status: 'sent',
+      mailsSent: 1,
+      mailsFailed: 0,
+      emailSuppressed: true,
+    });
     expect(emails).toHaveLength(0);
     expect((await readStake()).last_manual_seat_review_date).toBe(TODAY);
   });
 
-  it('keys an email_send_failed audit row on the scope, one row per failed scope', async () => {
+  it('does not pace scopes it is not mailing, with the kill-switch on', async () => {
+    // Three scopes: pacing would sleep 2 × SEND_GAP_MS before the run
+    // could return, and no Resend call is made to pace.
+    await seedReviewWorthyStake({ notifications_enabled: false });
+    await seedWard('BR', 'Brookside Ward');
+    await seedSeat({ member_canonical: 'ed@gmail.com', scope: 'BR' });
+    await seedAccess('br-bishop@gmail.com', { importer_callings: { BR: ['Bishop'] } });
+    await seedSeat({ member_canonical: 'karl@gmail.com', scope: 'stake' });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const started = Date.now();
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+    const elapsed = Date.now() - started;
+
+    expect(outcome).toMatchObject({ status: 'sent', mailsSent: 3, emailSuppressed: true });
+    expect(emails).toHaveLength(0);
+    // Generous, so emulator latency can't flake it — but far below the
+    // 2s of pacing the old unconditional gap would have spent.
+    expect(elapsed).toBeLessThan(1_500);
+  }, 15_000);
+
+  it('leaves the quarter unconsumed when every send failed', async () => {
     await seedReviewWorthyStake();
     await seedSeat({ member_canonical: 'karl@gmail.com', scope: 'stake' });
     await seedManager('alice@gmail.com', true);
@@ -661,9 +689,55 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
 
     const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
 
-    // Best-effort: a Resend failure is an audit row, never a throw,
-    // and the quarter is still consumed.
-    expect(outcome.status).toBe('sent');
+    // Best-effort per send — an audit row, never a throw — but a run
+    // that said nothing must not burn the quarter: a Resend outage on
+    // the firing day would otherwise buy three months of silence.
+    expect(outcome).toMatchObject({
+      status: 'send-failed',
+      mailsSent: 0,
+      mailsFailed: 2,
+    });
+    expect(outcome.sentOn).toBeUndefined();
+    expect((await readStake()).last_manual_seat_review_date).toBeUndefined();
+  }, 15_000);
+
+  it('consumes the quarter when one scope failed and another landed', async () => {
+    await seedReviewWorthyStake();
+    await seedSeat({ member_canonical: 'karl@gmail.com', scope: 'stake' });
+    await seedManager('alice@gmail.com', true);
+    // Stake sends first, then the ward.
+    const { sender, calls: emails } = mockResend([
+      { ok: false, error: { message: 'boom', code: 'rate_limit' } },
+      { ok: true, id: 'mid-2' },
+    ]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    // One bishopric heard about its seats; re-mailing them next month
+    // is worse than the stake scope waiting a quarter.
+    expect(outcome).toMatchObject({
+      status: 'sent',
+      mailsSent: 1,
+      mailsFailed: 1,
+      sentOn: TODAY,
+    });
+    expect(emails).toHaveLength(2);
+    expect((await readStake()).last_manual_seat_review_date).toBe(TODAY);
+  }, 15_000);
+
+  it('keys an email_send_failed audit row on the scope, one row per failed scope', async () => {
+    await seedReviewWorthyStake();
+    await seedSeat({ member_canonical: 'karl@gmail.com', scope: 'stake' });
+    await seedManager('alice@gmail.com', true);
+    const { sender } = mockResend([
+      { ok: false, error: { message: 'boom', code: 'rate_limit' } },
+      { ok: false, error: { message: 'boom', code: 'rate_limit' } },
+    ]);
+    restoreResend = _setResendSender(sender);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
     const { db } = requireEmulators();
     const rows = await db
       .collection(`stakes/${STAKE_ID}/auditLog`)
