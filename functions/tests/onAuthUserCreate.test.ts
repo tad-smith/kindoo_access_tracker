@@ -98,9 +98,43 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
     resetStakeIdsCache();
   });
 
+  // The reason every other spec in this file now passes `emailVerified: true`.
+  // `seedClaimsFromRoleData` resolves roles by email alone, the Web API key is
+  // public, and the Identity Toolkit `signUp` endpoint accepts it — so without
+  // this gate, creating an account for a role-holding address that had never
+  // signed in would hand over that role. Verified against the Auth emulator:
+  // password `signUp` creates the record `emailVerified: false`, email-link
+  // sign-in creates it `true`.
+  it(
+    'mints nothing for an unverified account, even when role data exists',
+    { timeout: 50_000 },
+    async () => {
+      const { auth, db } = requireEmulators();
+      // A manager row already waiting for someone who has never signed in.
+      await db
+        .doc('stakes/csnorth/kindooManagers/victim@gmail.com')
+        .set({ active: true, member_email: 'victim@gmail.com' });
+      const attacker = await auth.createUser({
+        email: 'victim@gmail.com',
+        emailVerified: false,
+      });
+
+      await runOnAuthUserCreate(attacker);
+
+      // No claims: the role row is not reachable by an unproven address.
+      const refreshed = await auth.getUser(attacker.uid);
+      expect(refreshed.customClaims ?? {}).toEqual({});
+
+      // And no userIndex entry, so `uidForCanonical` stays null and the sync
+      // triggers cannot mint onto this uid later either.
+      const idx = await db.doc('userIndex/victim@gmail.com').get();
+      expect(idx.exists).toBe(false);
+    },
+  );
+
   it('writes userIndex and stamps an empty-roles claim block', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
-    const user = await auth.createUser({ email: 'plain@example.org' });
+    const user = await auth.createUser({ email: 'plain@example.org', emailVerified: true });
 
     await runOnAuthUserCreate(user);
 
@@ -125,7 +159,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         .doc('stakes/csnorth/kindooManagers/mgron@gmail.com')
         .set({ active: true, member_email: 'MgrOn@gmail.com' });
 
-      const user = await auth.createUser({ email: 'MgrOn@gmail.com' });
+      const user = await auth.createUser({ email: 'MgrOn@gmail.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -143,7 +177,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       const { auth, db } = requireEmulators();
       await db.doc('stakes/csnorth/kindooManagers/mgroff@gmail.com').set({ active: false });
 
-      const user = await auth.createUser({ email: 'mgroff@gmail.com' });
+      const user = await auth.createUser({ email: 'mgroff@gmail.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -161,7 +195,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         importer_callings: { stake: ['Stake President'] },
         manual_grants: {},
       });
-      const user = await auth.createUser({ email: 'stk@gmail.com' });
+      const user = await auth.createUser({ email: 'stk@gmail.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -181,7 +215,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         importer_callings: { GE: ['Bishop'] },
         manual_grants: { CO: [{ grant_id: 'g1', reason: 'covering for X' }] },
       });
-      const user = await auth.createUser({ email: 'bish@gmail.com' });
+      const user = await auth.createUser({ email: 'bish@gmail.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -208,7 +242,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
 
       // User signs up with the typed form `First.Last@Gmail.com`. The
       // canonicaliser folds both spellings to `firstlast@gmail.com`.
-      const user = await auth.createUser({ email: 'First.Last@Gmail.com' });
+      const user = await auth.createUser({ email: 'First.Last@Gmail.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -247,7 +281,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
       importer_callings: { stake: ['Stake President'] },
     });
 
-    const user = await auth.createUser({ email: 'multistake@gmail.com' });
+    const user = await auth.createUser({ email: 'multistake@gmail.com', emailVerified: true });
     await runOnAuthUserCreate(user);
 
     const refreshed = await auth.getUser(user.uid);
@@ -264,7 +298,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
   it('revokes refresh tokens after stamping non-empty claims', { timeout: 50_000 }, async () => {
     const { auth, db } = requireEmulators();
     await db.doc('stakes/csnorth/kindooManagers/mgrrev@gmail.com').set({ active: true });
-    const user = await auth.createUser({ email: 'mgrrev@gmail.com' });
+    const user = await auth.createUser({ email: 'mgrrev@gmail.com', emailVerified: true });
     const beforeRevoke = user.tokensValidAfterTime;
     await runOnAuthUserCreate(user);
     const refreshed = await auth.getUser(user.uid);
@@ -292,7 +326,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         setup_complete: false,
       });
 
-      const user = await auth.createUser({ email: 'bootstrap@example.com' });
+      const user = await auth.createUser({ email: 'bootstrap@example.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
@@ -314,7 +348,7 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         setup_complete: true,
       });
 
-      const user = await auth.createUser({ email: 'doneadmin@example.com' });
+      const user = await auth.createUser({ email: 'doneadmin@example.com', emailVerified: true });
       await runOnAuthUserCreate(user);
 
       const refreshed = await auth.getUser(user.uid);
