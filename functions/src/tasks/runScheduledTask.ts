@@ -86,7 +86,7 @@ export async function runScheduledTaskHandler(
  * for minutes. A new registry entry that needs more than this budget
  * should raise the number here rather than shard itself.
  */
-const TIMEOUT_SECONDS = 300;
+export const TIMEOUT_SECONDS = 300;
 
 export const runScheduledTask = onTaskDispatched<{ stakeId: string; job: string }>(
   {

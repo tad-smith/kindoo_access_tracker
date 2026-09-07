@@ -63,7 +63,7 @@ export const TASK_RUNNER_NAME = 'runScheduledTask';
  * function's own timeout fires first and returns a 504 that names the
  * stake in the logs. The 30s of slack covers cold start and dispatch.
  */
-const DISPATCH_DEADLINE_SECONDS = 330;
+export const DISPATCH_DEADLINE_SECONDS = 330;
 
 /**
  * Logged once per completed run. **Load-bearing outside this repo:** the

@@ -10,7 +10,8 @@
 // so `now` is a plain argument and every interval case below is a second
 // call with a later `now` — no clock mocking anywhere.
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from 'firebase-functions';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { Access, DuplicateGrant, Seat, Stake, Ward } from '@kindoo/shared';
 import {
@@ -592,11 +593,17 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     expect(emails).toHaveLength(0);
   });
 
-  it('never deletes the stamp on an empty quarter', async () => {
-    // The cadence is "once a quarter", not "when a condition trips".
-    // Dropping the stamp here — as the sync reminder does with its
-    // backoff — would make next month a fresh first send and turn the
-    // review into a monthly one the moment a manual seat came back.
+  it('stamps — never deletes — the quarter on an empty run', async () => {
+    // The cadence is "once a quarter", not "when a condition trips": an
+    // empty quarter still consumes it. The old assertion here only
+    // checked that the prior value survived, which cannot tell "deleted"
+    // apart from "left alone" apart from "rewritten" at a date this old
+    // — all three read back as `'2026-07-01'` if the run does nothing.
+    // Reaching this branch means the stamp is already due (that is why
+    // `intervalElapsed` let the run past `backed-off`), so leaving it
+    // alone would make the very next monthly check fire again and
+    // review the first manual seat to appear within a month instead of
+    // at the next quarter.
     await seedStake({ last_manual_seat_review_date: '2026-07-01' });
     await seedSeat({ type: 'auto', callings: ['Bishop'] });
     const { sender } = mockResend([]);
@@ -605,7 +612,29 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
 
     expect(outcome.status).toBe('nothing-due');
-    expect((await readStake()).last_manual_seat_review_date).toBe('2026-07-01');
+    // Rewritten, to today — not left at the old value.
+    expect((await readStake()).last_manual_seat_review_date).toBe(TODAY);
+  });
+
+  it('defers the next send by a full interval after an empty quarter', async () => {
+    // Proves the rewrite actually moves the goalposts: a check the very
+    // next month must still hold off, and the quarter after that must
+    // fire — exactly the cadence a manual seat landing right after the
+    // empty run should get, not an early review a month later.
+    await seedStake({ last_manual_seat_review_date: '2026-07-01' });
+    const { sender } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const empty = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+    expect(empty.status).toBe('nothing-due');
+
+    // A manual seat shows up the day after the empty run.
+    await seedSeat();
+    const month1 = await sendManualSeatReviewIfDue(STAKE_ID, new Date('2026-11-01T09:00:00Z'));
+    const month2 = await sendManualSeatReviewIfDue(STAKE_ID, new Date('2026-12-01T09:00:00Z'));
+
+    expect(month1.status).toBe('backed-off');
+    expect(month2.status).toBe('backed-off');
   });
 
   it('stamps the stake-local send date, last', async () => {
@@ -701,7 +730,7 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     expect((await readStake()).last_manual_seat_review_date).toBeUndefined();
   }, 15_000);
 
-  it('consumes the quarter when one scope failed and another landed', async () => {
+  it('consumes the quarter when one scope failed and another landed, and warns naming it', async () => {
     await seedReviewWorthyStake();
     await seedSeat({ member_canonical: 'karl@gmail.com', scope: 'stake' });
     await seedManager('alice@gmail.com', true);
@@ -711,6 +740,7 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
       { ok: true, id: 'mid-2' },
     ]);
     restoreResend = _setResendSender(sender);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
     const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
 
@@ -724,6 +754,14 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     });
     expect(emails).toHaveLength(2);
     expect((await readStake()).last_manual_seat_review_date).toBe(TODAY);
+    // The case most likely to go unnoticed — some scopes sent, so the
+    // quarter is gone for the ones that didn't — logs at WARN, same as
+    // the all-failed case, and names the scope that lost its quarter.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('some scopes failed'),
+      expect.objectContaining({ mailsFailed: 1, failedScopes: ['stake'] }),
+    );
+    warn.mockRestore();
   }, 15_000);
 
   it('keys an email_send_failed audit row on the scope, one row per failed scope', async () => {

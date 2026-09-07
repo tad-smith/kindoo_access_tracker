@@ -145,11 +145,14 @@ export async function sendManualSeatReviewIfDue(
   const byScope = manualGrantsByScope(seatsSnap.docs.map((d) => d.data() as Seat));
   const totalGrants = [...byScope.values()].reduce((sum, rows) => sum + rows.length, 0);
   if (byScope.size === 0) {
-    // **The stamp stays.** This is a cadence, not a condition: an empty
-    // quarter is a quarter that happened, and deleting the stamp (as the
-    // sync reminder does with its backoff) would make next month a fresh
-    // first send and turn "quarterly" into "monthly, once the manual
-    // seats come back".
+    // **The stamp advances, never deletes.** This is a cadence, not a
+    // condition: an empty quarter is a quarter that happened. Not
+    // stamping would leave `last_manual_seat_review_date` at its old
+    // value — already ≥ the interval, since that is why this line was
+    // reached — so the very next monthly check would fire again and the
+    // first manual seat to appear would be reviewed within a month
+    // instead of at the next quarter.
+    await stakeRef.update({ last_manual_seat_review_date: today });
     return nothing('nothing-due');
   }
 
@@ -169,6 +172,7 @@ export async function sendManualSeatReviewIfDue(
   let mailsFailed = 0;
   let scopesSkipped = 0;
   let attempted = 0;
+  const failedScopes: string[] = [];
   for (const scope of sortScopes([...byScope.keys()])) {
     const recipients = scope === 'stake' ? managerEmails : bishopricRecipients(accessDocs, scope);
     if (recipients.length === 0) {
@@ -193,8 +197,10 @@ export async function sendManualSeatReviewIfDue(
       grants: byScope.get(scope) ?? [],
       recipients,
     });
-    if (result === 'failed') mailsFailed += 1;
-    else mailsSent += 1;
+    if (result === 'failed') {
+      mailsFailed += 1;
+      failedScopes.push(scope);
+    } else mailsSent += 1;
   }
 
   const partial = {
@@ -234,14 +240,32 @@ export async function sendManualSeatReviewIfDue(
     return { ...partial, status: 'send-failed' };
   }
 
-  logger.info('manualSeatReview: sent', {
-    stakeId,
-    scopes: byScope.size,
-    grants: totalGrants,
-    mailsSent,
-    mailsFailed,
-    scopesSkipped,
-  });
+  if (mailsFailed > 0) {
+    // Some scopes sent, so the quarter is consumed below and this is the
+    // case most likely to go unnoticed: a failed bishopric's only other
+    // trace is an `email_send_failed` audit row nothing alerts on, and
+    // it now waits a full quarter for the next attempt. WARN, same as
+    // the all-failed case, and name the scopes so the line says whose
+    // quarter was lost.
+    logger.warn('manualSeatReview: some scopes failed — quarter consumed for the rest', {
+      stakeId,
+      scopes: byScope.size,
+      grants: totalGrants,
+      mailsSent,
+      mailsFailed,
+      scopesSkipped,
+      failedScopes,
+    });
+  } else {
+    logger.info('manualSeatReview: sent', {
+      stakeId,
+      scopes: byScope.size,
+      grants: totalGrants,
+      mailsSent,
+      mailsFailed,
+      scopesSkipped,
+    });
+  }
 
   // Stamp last, and only because at least one scope's mail landed or was
   // deliberately suppressed by the kill-switch. A fault before this point
