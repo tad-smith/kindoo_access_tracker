@@ -33,7 +33,7 @@ Any time `functions/package.json` `dependencies` change — added, removed, or v
 pnpm deps:relock
 ```
 
-Direct dependencies are pinned to the versions `pnpm-lock.yaml` resolves, so the deployed tree's direct versions are the ones CI exercises. Transitives are resolved fresh by npm; npm and pnpm resolve differently, so transitive parity with `pnpm-lock.yaml` is not expected (today `@firebase/database-compat` is 2.1.5 here and 2.1.3 under pnpm). The divergence is visible in this committed file rather than invented at deploy time.
+Direct dependencies are pinned to the versions `pnpm-lock.yaml` resolves, so the deployed tree's direct versions are the ones CI exercises. Transitives are resolved fresh by npm; npm and pnpm resolve differently, so transitive parity with `pnpm-lock.yaml` is not expected. A given transitive may happen to match on any particular day — that is coincidence, not a guarantee, and `deps:check` deliberately does not assert it. The divergence is visible in this committed file rather than invented at deploy time.
 
 The regeneration verifies itself: it runs a real `npm ci` against the new lockfile plus the three module loads that failed in the outage this file exists to prevent (`firebase-functions`, `firebase-functions/v1`, `firebase-admin/database`).
 

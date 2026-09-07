@@ -23,8 +23,8 @@
     "prepare": "node infra/scripts/ensure-version-gen.js"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "prettier": "^3.8.3",
+    "concurrently": "^9.2.4",
+    "prettier": "^3.9.6",
     "typescript": "^6.0.3"
   },
   "engines": {

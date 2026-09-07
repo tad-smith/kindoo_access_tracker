@@ -7,12 +7,7 @@ import type { ActorRef } from './actor.js';
 import type { TimestampLike } from './userIndex.js';
 
 export type RequestType =
-  | 'add_manual'
-  | 'add_temp'
-  | 'remove'
-  | 'edit_auto'
-  | 'edit_manual'
-  | 'edit_temp';
+  'add_manual' | 'add_temp' | 'remove' | 'edit_auto' | 'edit_manual' | 'edit_temp';
 export type RequestStatus = 'pending' | 'complete' | 'rejected' | 'cancelled';
 
 /**
