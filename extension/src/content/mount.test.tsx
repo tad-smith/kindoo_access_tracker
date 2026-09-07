@@ -44,18 +44,22 @@ function lastMessageListener(): (msg: unknown) => void {
   return last?.[0] as (msg: unknown) => void;
 }
 
-function shadowQuery<T extends Element>(host: HTMLElement, selector: string): T | null {
-  return host.shadowRoot?.querySelector<T>(selector) ?? null;
-}
-
-function handleButton(host: HTMLElement): HTMLButtonElement {
-  const btn = shadowQuery<HTMLButtonElement>(host, '.sba-handle');
-  if (!btn) throw new Error('handle button not found in shadow root');
-  return btn;
-}
-
 describe('mountPanel', () => {
   let active: PanelHandles | null = null;
+
+  // The root is closed, so `host.shadowRoot` is null by design — that is the
+  // property protecting the panel from the host page. These reach the tree the
+  // same way production code does: through the handle `mountPanel` returned.
+  // They live inside the describe because they close over `active`.
+  function shadowQuery<T extends Element>(selector: string): T | null {
+    return active?.shadow.querySelector<T>(selector) ?? null;
+  }
+
+  function handleButton(): HTMLButtonElement {
+    const btn = shadowQuery<HTMLButtonElement>('.sba-handle');
+    if (!btn) throw new Error('handle button not found in shadow root');
+    return btn;
+  }
 
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -86,8 +90,23 @@ describe('mountPanel', () => {
     expect(active).not.toBeNull();
     const host = document.getElementById('sba-extension-root');
     expect(host).not.toBeNull();
-    expect(host?.shadowRoot).not.toBeNull();
+    expect(active!.shadow).not.toBeNull();
     expect(host?.getAttribute('data-sba-open')).toBe('false');
+  });
+
+  // Security boundary, not a detail. The panel renders inside a third-party
+  // origin; an open root would let that page read every queued member's PII
+  // off `.textContent` and synthesise clicks on Provision & Complete, which
+  // runs with no confirmation. `host.shadowRoot` returning null is the whole
+  // protection, so it is asserted directly rather than left implied.
+  it('attaches the shadow root closed, so the host page cannot reach it', async () => {
+    const { mountPanel } = await import('./mount');
+    active = mountPanel();
+    const host = document.getElementById('sba-extension-root');
+    expect(host).not.toBeNull();
+    expect(host!.shadowRoot).toBeNull();
+    // The handle still has it — that is the only reference in existence.
+    expect(active!.shadow.querySelector('.sba-slideover')).not.toBeNull();
   });
 
   it('does not double-mount if a host element already exists', async () => {
@@ -140,7 +159,7 @@ describe('mountPanel', () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
       const host = active!.host;
-      const btn = handleButton(host);
+      const btn = handleButton();
 
       btn.click();
       expect(active?.isOpen()).toBe(true);
@@ -158,7 +177,7 @@ describe('mountPanel', () => {
     it('flips aria-expanded and the aria-label with the open state', async () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
-      const btn = handleButton(active!.host);
+      const btn = handleButton();
 
       expect(btn.getAttribute('aria-expanded')).toBe('false');
       expect(btn.getAttribute('aria-label')).toBe('Open Stake Building Access panel');
@@ -175,7 +194,7 @@ describe('mountPanel', () => {
     it('is a real, keyboard-reachable button', async () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
-      const btn = handleButton(active!.host);
+      const btn = handleButton();
       expect(btn.tagName).toBe('BUTTON');
       expect(btn.type).toBe('button');
       // No negative tabindex — native buttons are focusable by default.
@@ -186,7 +205,7 @@ describe('mountPanel', () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
       const host = active!.host;
-      const badge = shadowQuery(host, '.sba-handle-badge');
+      const badge = shadowQuery('.sba-handle-badge');
 
       // Absent until reported — the count is unknown, not zero.
       expect(host.hasAttribute('data-sba-count')).toBe(false);
@@ -211,15 +230,16 @@ describe('mountPanel', () => {
     it('replaces the old × close button', async () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
-      const host = active!.host;
-      expect(shadowQuery(host, '.sba-slideover-close')).toBeNull();
-      expect(host.shadowRoot?.textContent).not.toContain('×');
+      expect(shadowQuery('.sba-slideover-close')).toBeNull();
+      // Through the handle: `host.shadowRoot` is null now, so asserting on it
+      // would pass vacuously and stop testing anything.
+      expect(active!.shadow.textContent).not.toContain('×');
     });
 
     it('lives inside .sba-slideover so the panel transform carries it', async () => {
       const { mountPanel } = await import('./mount');
       active = mountPanel();
-      const btn = handleButton(active!.host);
+      const btn = handleButton();
       expect(btn.parentElement?.className).toBe('sba-slideover');
     });
   });
