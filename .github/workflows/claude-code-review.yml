@@ -57,5 +57,17 @@ jobs:
             --model claude-opus-5
             --effort max
             --max-turns 120
-            --allowedTools "Read,Grep,Glob,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(grep:*),Bash(sed:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(head:*),Bash(tail:*)"
-            --disallowedTools "Edit,Write,WebSearch"
+            # Bash stays broad. A read-only verb allowlist was tried in #291 and
+            # its first real run (34054827925) denied 19 calls and failed the
+            # job — the reviewer still posted a full verdict, so the failure was
+            # loud rather than silent, but the review was degraded and every PR
+            # showed a red check. The run log does not name the denied commands,
+            # so narrowing this needs an allowlist derived from a real run's tool
+            # log; guessing costs one Opus review run per attempt.
+            #
+            # What still constrains an injected prompt: the PR title no longer
+            # reaches it, fork PRs get no secrets, and the action refuses to run
+            # when a PR edits this file (so a PR cannot rewrite these flags and
+            # have the reviewer honour its version).
+            --allowedTools "Bash,Read,Grep,Glob"
+            --disallowedTools "Edit,Write,Bash(git push:*),Bash(gh pr merge:*),Bash(gh pr close:*),Bash(gh pr edit:*),WebSearch"

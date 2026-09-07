@@ -724,21 +724,24 @@ describe('EmailService — pure builders', () => {
   ];
 
   it('sync-reminder subject counts the seats in words', () => {
-    expect(buildSyncReminderSubject(labelledGrants)).toBe(
+    expect(buildSyncReminderSubject({ grants: labelledGrants, staleSites: [] })).toBe(
       '[Stake Building Access] Two temporary seats have expired but are still on the roster',
     );
-    expect(buildSyncReminderSubject([labelledGrants[0]!])).toBe(
+    expect(buildSyncReminderSubject({ grants: [labelledGrants[0]!], staleSites: [] })).toBe(
       '[Stake Building Access] One temporary seat has expired but is still on the roster',
     );
   });
 
   it('sync-reminder text body names every seat, its scope, and its end date', () => {
-    expect(buildSyncReminderTextBody({ grants: labelledGrants, link: SEATS_LINK })).toBe(
+    expect(
+      buildSyncReminderTextBody({ grants: labelledGrants, staleSites: [], link: SEATS_LINK }),
+    ).toBe(
       [
         'Two temporary seats have expired but are still on the roster.',
         '',
         'Run Sync in the Stake Building Access extension to clear them. Until then the ward ' +
-          'still sees a seat whose access has already ended, and may file a removal request for it.',
+          'sees seats whose access has already ended — an expired row also blocks a new request ' +
+          'for that member, and only Sync clears it.',
         '',
         '  Jane Doe (Jane@example.com) — Greenwood Ward, ended 2026-08-10',
         '  nameless@example.com — Stake, ended 2026-08-14',
@@ -749,14 +752,58 @@ describe('EmailService — pure builders', () => {
   });
 
   it('sync-reminder text body reads singular for one seat', () => {
-    const body = buildSyncReminderTextBody({ grants: [labelledGrants[0]!], link: SEATS_LINK });
+    const body = buildSyncReminderTextBody({
+      grants: [labelledGrants[0]!],
+      staleSites: [],
+      link: SEATS_LINK,
+    });
     expect(body.startsWith('One temporary seat has expired but is still on the roster.\n')).toBe(
       true,
     );
   });
 
+  // The instruction used to be a flat singular while the lead branched on
+  // count, so a 14-seat reminder read "...the ward still sees a seat ... for
+  // it". Shipped and sent before anyone noticed.
+  it('sync-reminder instruction agrees with the lead on number', () => {
+    const one = buildSyncReminderTextBody({
+      grants: [labelledGrants[0]!],
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    expect(one).toContain('to clear it.');
+    expect(one).toContain('the ward sees a seat whose access has already ended');
+
+    const many = buildSyncReminderTextBody({
+      grants: labelledGrants,
+      staleSites: [],
+      link: SEATS_LINK,
+    });
+    expect(many).toContain('to clear them.');
+    expect(many).toContain('the ward sees seats whose access has already ended');
+  });
+
+  // D34 withholds Remove on exactly the shape this reminder selects
+  // (`syncWillClearSeat` on both sides), so the ward cannot file a removal
+  // request for these seats. The copy claimed they could — describing the
+  // world before D34 — until it was corrected. spec.md §7.
+  it('sync-reminder never tells the manager the ward can request removal', () => {
+    for (const grants of [[labelledGrants[0]!], labelledGrants]) {
+      const text = buildSyncReminderTextBody({ grants, staleSites: [], link: SEATS_LINK });
+      const html = buildSyncReminderHtmlBody({ grants, staleSites: [], link: SEATS_LINK });
+      for (const body of [text, html]) {
+        expect(body).not.toContain('removal request');
+        expect(body).not.toContain('may file');
+      }
+    }
+  });
+
   it('sync-reminder html body renders a seat table with the end date chipped', () => {
-    const html = buildSyncReminderHtmlBody({ grants: labelledGrants, link: SEATS_LINK });
+    const html = buildSyncReminderHtmlBody({
+      grants: labelledGrants,
+      staleSites: [],
+      link: SEATS_LINK,
+    });
     expect(html).toContain(
       '<p style="margin:0 0 16px">Two temporary seats have expired but are still on the roster.</p>',
     );
@@ -771,16 +818,83 @@ describe('EmailService — pure builders', () => {
   });
 
   it('sync-reminder html and text carry the same instruction', () => {
-    const opts = { grants: labelledGrants, link: SEATS_LINK };
+    const opts = { grants: labelledGrants, staleSites: [], link: SEATS_LINK };
     const instruction = 'Run Sync in the Stake Building Access extension to clear them.';
     expect(buildSyncReminderTextBody(opts)).toContain(instruction);
     expect(buildSyncReminderHtmlBody(opts)).toContain(instruction);
   });
 
   it('sync-reminder falls back to the address when a seat carries no name', () => {
-    const opts = { grants: [labelledGrants[1]!], link: SEATS_LINK };
+    const opts = { grants: [labelledGrants[1]!], staleSites: [], link: SEATS_LINK };
     expect(buildSyncReminderTextBody(opts)).toContain('  nameless@example.com — Stake');
     expect(buildSyncReminderHtmlBody(opts)).not.toContain('<br />');
+  });
+
+  // ---- sync reminder (stale Kindoo sites) ----------------------------------
+
+  const staleSites = [
+    { siteKey: 'east', siteName: 'East Stake (Pine)', lastSyncDate: '2026-08-01', daysSince: 17 },
+    { siteKey: 'home', siteName: 'CSNorth Stake', lastSyncDate: '2026-08-11', daysSince: 7 },
+  ];
+
+  it('sync-reminder subject counts stale sites in words when no seat expired', () => {
+    expect(buildSyncReminderSubject({ grants: [], staleSites })).toBe(
+      '[Stake Building Access] Two Kindoo sites have not been synced in over a week',
+    );
+    expect(buildSyncReminderSubject({ grants: [], staleSites: [staleSites[0]!] })).toBe(
+      '[Stake Building Access] One Kindoo site has not been synced in over a week',
+    );
+  });
+
+  it('sync-reminder lead names both conditions when both fired', () => {
+    // One message, both clauses — the second count lower-cased so the
+    // joined sentence reads as one sentence.
+    expect(
+      buildSyncReminderSubject({ grants: [labelledGrants[0]!], staleSites: [staleSites[0]!] }),
+    ).toBe(
+      '[Stake Building Access] One temporary seat has expired but is still on the roster, ' +
+        'and one Kindoo site has not been synced in over a week',
+    );
+  });
+
+  it('sync-reminder stale-only body carries the site table and no seat copy', () => {
+    const opts = { grants: [], staleSites, link: SEATS_LINK };
+    expect(buildSyncReminderTextBody(opts)).toBe(
+      [
+        'Two Kindoo sites have not been synced in over a week.',
+        '',
+        'Open each site listed below in Kindoo and run Sync in the Stake Building Access ' +
+          'extension. Until it runs, changes made in Kindoo are invisible in Stake Building Access.',
+        '',
+        '  East Stake (Pine) — last synced 2026-08-01 (17 days ago)',
+        '  CSNorth Stake — last synced 2026-08-11 (7 days ago)',
+        '',
+        'View seats: https://stakebuildingaccess.org/manager/seats',
+      ].join('\n'),
+    );
+    const html = buildSyncReminderHtmlBody(opts);
+    expect(html).toContain('>Kindoo site</th>');
+    expect(html).toContain('>Last synced</th>');
+    expect(html).toContain('>2026-08-01</span>');
+    expect(html).not.toContain('>Member</th>');
+    expect(html).toContain('>View seats</a>');
+  });
+
+  it('sync-reminder renders both tables when both conditions fired', () => {
+    const opts = { grants: labelledGrants, staleSites, link: SEATS_LINK };
+    const html = buildSyncReminderHtmlBody(opts);
+    expect(html).toContain('>Member</th>');
+    expect(html).toContain('>Kindoo site</th>');
+    const text = buildSyncReminderTextBody(opts);
+    expect(text).toContain('Jane Doe (Jane@example.com) — Greenwood Ward, ended 2026-08-10');
+    expect(text).toContain('  East Stake (Pine) — last synced 2026-08-01 (17 days ago)');
+  });
+
+  it('sync-reminder says "1 day ago" rather than "1 days ago"', () => {
+    const one = [{ ...staleSites[0]!, daysSince: 1 }];
+    expect(buildSyncReminderTextBody({ grants: [], staleSites: one, link: SEATS_LINK })).toContain(
+      '(1 day ago)',
+    );
   });
 
   // ---- quote safety across every html builder -------------------------------
@@ -828,6 +942,14 @@ describe('EmailService — pure builders', () => {
             scope: 'GE',
             label: 'Green"wood" & <Ward>',
             endDate: '2026-05-15',
+          },
+        ],
+        staleSites: [
+          {
+            siteKey: 'foreign-1',
+            siteName: 'East "Stake" & <Pine>',
+            lastSyncDate: '2026-05-01',
+            daysSince: 14,
           },
         ],
         link: SEATS_LINK,
