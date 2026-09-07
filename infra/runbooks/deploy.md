@@ -266,24 +266,17 @@ Direct dependency versions are pinned to what `pnpm-lock.yaml` resolves, so the 
      - `/`, `/dashboard`, `/sw.js`, `/firebase-messaging-sw.js` → `cache-control: no-cache, max-age=0, must-revalidate`
      - the `/assets/…` file → `cache-control: public, max-age=31536000, immutable`
 
-   - **Verify the security headers** (see the changelog entry). Nothing in CI covers these — e2e runs against `vite preview`, which ignores `firebase.json` — so this curl block is the only check that the globs still match:
+   - **Verify the security headers.** Nothing in CI covers these — e2e runs against `vite preview`, which ignores `firebase.json` — so this is the only check:
 
      ```bash
-     host=staging.stakebuildingaccess.org
-     curl -sSI "https://$host/" | grep -iE '^(content-security-policy|x-content-type-options|referrer-policy|permissions-policy|cross-origin-opener-policy)'
-     # Reserved Firebase namespace — MUST be relaxed, or popup sign-in breaks:
+     curl -sSI "https://$host/" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
+     # Reserved Firebase namespace — MUST come back relaxed, or popup sign-in breaks:
      curl -sSI "https://$host/__/auth/iframe" | grep -iE '^(content-security-policy|cross-origin-opener-policy)'
      ```
 
-     Expected on `/`: `content-security-policy: frame-ancestors 'none'`, `nosniff`, `strict-origin-when-cross-origin`, the `Permissions-Policy` list, and `cross-origin-opener-policy: same-origin-allow-popups`. Expected on `/__/auth/iframe`: `frame-ancestors 'self' https:` and `cross-origin-opener-policy: unsafe-none`.
+     `/` → `frame-ancestors 'none'` + `same-origin-allow-popups`. `/__/auth/iframe` → `frame-ancestors 'self' https:` + `unsafe-none`.
 
-     **Then sign in on staging with the Google button.** That is the one thing curl cannot tell you: if `/__/**` stopped overriding, `signInWithPopup` fails with `auth/popup-closed-by-user` and nothing else surfaces it.
-
-   - **Read the CSP report-only violations** before considering the flip to enforcing. Open the deployed staging app, exercise sign-in, the Requests Queue, a roster, and the Push Notifications panel, and read the browser console for `Content-Security-Policy-Report-Only` reports. There is no `report-uri`, so the console is the only sink — and **service-worker violations do not appear in the page console**, so check the SW's own console (`chrome://inspect` → the `firebase-messaging-sw.js` worker) for the gstatic `script-src` entry specifically.
-
-     **This evidence is incomplete by construction, so treat the flip as a soak, not a checkpoint.** With no `report-to` collector, reports come from one operator in one browser exercising the flows listed above — production users generate none. Anything under-exercised (the superadmin Stake List, `/auth/extension`, the Push panel on iOS) contributes nothing and would flip blind, and a missing `connect-src` entry surfaces as the *app loads but never shows data* failure this staging pass exists to prevent. Leave report-only on staging for several days of ordinary use before flipping, or point `report-to` at a collector first.
-
-     **Flipping to enforcing renames TWO headers, not one.** `firebase.json` carries `Content-Security-Policy-Report-Only` on both `**` and `/help/**`. Hosting is last-match-wins *per header key*, so `/help/**` overrides `**` only while the keys match. Rename only the `**` one and the help guides fall under both policies at once, intersected — losing the `'unsafe-inline'` their inline `<script>` needs, which stops those pages working. Rename both in the same commit — and **delete the standalone `Content-Security-Policy: frame-ancestors 'none'` entry on `**` at the same time**, since the renamed full policy already carries `frame-ancestors 'none'`. Leaving it behind gives that block two entries under one key; harmless in any resolution order, but it is a duplicate nobody reading the file later can explain.
+     **Then sign in with the Google button.** curl cannot tell you this: if the `/__/**` override stopped applying, `signInWithPopup` fails with `auth/popup-closed-by-user` and nothing else surfaces it. Do this on staging **before** deploying prod, never in parallel.
 
      If the shell or `sw.js` comes back `immutable` (or with a long `max-age`), the header globs in `firebase.json` regressed — see the "shows the old version" troubleshooting entry below.
 
@@ -385,7 +378,7 @@ and nothing is fetched or checked out — `git branch --show-current` is unchang
 
    - Open `https://stakebuildingaccess.org` (or `https://kindoo-prod.web.app`) in a browser; sign in; smoke-test the pages relevant to this deploy.
    - **Verify the Hosting cache headers** with the curl block from the staging step, substituting `host=stakebuildingaccess.org`. Same expected output: `no-cache, max-age=0, must-revalidate` for the shell + SW scripts, `public, max-age=31536000, immutable` for `/assets/…`.
-   - **Verify the security headers** with the security-header curl block from the staging step, same substitution. Same expected output, including `/__/auth/iframe` coming back relaxed. **Then sign in on production with the Google button.** This is not redundant with the staging check: whether Firebase applies `firebase.json` headers to the reserved `/__/` namespace is the one assumption behind shipping `frame-ancestors` and COOP enforcing, nothing in CI or `vite preview` can see it, and a regression here breaks sign-in for every user. Staging must be deployed and signed into **before** prod, never in parallel.
+   - **Verify the security headers and sign in**, same as the staging step. Not redundant with it: whether Hosting applies these headers to the reserved `/__/` namespace is the one assumption behind shipping them enforcing, and a regression breaks sign-in for every user.
 
 ## One-time fixup: backfill the `bootstrap` claim after PR #258
 

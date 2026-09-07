@@ -17,19 +17,6 @@ A temp grant that expires on a seat carrying **other** grants is stranded. Sync 
 
 Worth deciding what, if anything, should chase it: a distinct reminder naming the remove-request remedy, a manager-facing list, or nothing at all on the grounds that the badge plus a leader's own request flow is sufficient. `syncWillClearSeat` (`packages/shared/src/tempExpiry.ts`) already isolates the shape, so whichever way it goes the predicate exists.
 
-## [T-108] Flip the Hosting CSP from report-only to enforcing
-Status: pending
-Owner: @infra-engineer
-Phase: cross-cutting
-
-PR #297 shipped the full Content-Security-Policy as `Content-Security-Policy-Report-Only` on `**` and `/help/**`, with only `frame-ancestors 'none'` enforcing. A report-only policy nobody flips is a header that does nothing while reading in the file as protection, which is why this is tracked rather than left to the changelog.
-
-The procedure is in `infra/runbooks/deploy.md` under the staging verification step. Two parts of it are easy to get wrong: the rename covers **both** report-only keys (`/help/**` overrides `**` only while the keys match, so renaming one leaves the guides under both policies intersected, without the `'unsafe-inline'` their inline `<script>` needs), and the standalone `Content-Security-Policy: frame-ancestors 'none'` entry on `**` must be deleted in the same commit, since the renamed full policy already carries it.
-
-Blocked on evidence, not on effort. There is no `report-to` collector, so violations reach one operator's console in one browser — production users generate no signal at all. Under-exercised surfaces (`/auth/extension`, the superadmin Stake List, the Push panel on iOS) contribute nothing, and a missing `connect-src` entry surfaces as the *app loads but never shows data* failure the report-only pass exists to prevent. Either soak on staging through several days of ordinary use, or point `report-to` at a collector first — the collector is the better answer if this is going to be flipped with confidence rather than hope.
-
-Worth doing at the same time: a static test over `firebase.json`'s `hosting.headers`, mirroring `apps/web/test/vite-config-pwa-denylist.test.ts`. The two-header rename, the `/__/**`-must-come-last ordering, and the leftover standalone entry are all assertable from the JSON, and none of them have any coverage today — `vite preview` ignores `firebase.json`, so E2E cannot see them either.
-
 ## [T-89] E2E coverage for Complete Setup against real emulators + rules
 Status: pending
 Owner: @web-engineer
