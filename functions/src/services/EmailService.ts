@@ -554,19 +554,18 @@ export function buildSyncReminderHtmlBody(o: SyncReminderEmailOpts): string {
  * **It does not say the ward may file a removal request, and must not.**
  * D34 withholds Remove on exactly the shape this reminder selects —
  * `syncWillClearSeat` is the predicate on both sides — so that path does
- * not exist (`spec.md` §7). What the ward can actually do is nothing, and
- * saying so is the stronger motivator anyway: the lingering row also trips
+ * not exist (`spec.md` §7). The lingering row also trips
  * `NewRequestForm`'s duplicate gate, so a fresh request for the same
  * member in that scope is blocked until Sync clears it.
  */
 function syncReminderAction(count: number): string {
   return count === 1
     ? 'Run Sync in the Stake Building Access extension to clear it. Until then the ward sees a ' +
-        'seat whose access has already ended and can do nothing about it — the expired row also ' +
-        'blocks a new request for that member, and only Sync clears it.'
+        'seat whose access has already ended — the expired row also blocks a new request for ' +
+        'that member, and only Sync clears it.'
     : 'Run Sync in the Stake Building Access extension to clear them. Until then the ward sees ' +
-        'seats whose access has already ended and can do nothing about them — an expired row also ' +
-        'blocks a new request for that member, and only Sync clears it.';
+        'seats whose access has already ended — an expired row also blocks a new request for ' +
+        'that member, and only Sync clears it.';
 }
 
 /**

@@ -740,8 +740,8 @@ describe('EmailService — pure builders', () => {
         'Two temporary seats have expired but are still on the roster.',
         '',
         'Run Sync in the Stake Building Access extension to clear them. Until then the ward ' +
-          'sees seats whose access has already ended and can do nothing about them — an expired ' +
-          'row also blocks a new request for that member, and only Sync clears it.',
+          'sees seats whose access has already ended — an expired row also blocks a new request ' +
+          'for that member, and only Sync clears it.',
         '',
         '  Jane Doe (Jane@example.com) — Greenwood Ward, ended 2026-08-10',
         '  nameless@example.com — Stake, ended 2026-08-14',
