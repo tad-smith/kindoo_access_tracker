@@ -19,7 +19,11 @@ import type {
   TimestampLike,
   Ward,
 } from '@kindoo/shared';
-import { unitNameCollisionMessage } from '@kindoo/shared';
+import {
+  MANUAL_SEAT_REVIEW_JOB,
+  SYNC_REMINDER_JOB,
+  unitNameCollisionMessage,
+} from '@kindoo/shared';
 import {
   EQ_PRESIDENT_ACCESS_LABEL,
   EQ_PRESIDENT_ACCESS_TIP,
@@ -48,6 +52,7 @@ const usePrincipalMock = vi.fn();
 const backfillEqPresidentAccessMock = vi.fn();
 const useStakeScheduleMock = vi.fn();
 const setSyncReminderEnabledMock = vi.fn();
+const setManualSeatReviewEnabledMock = vi.fn();
 const setStakeToggleMock = vi.fn();
 
 vi.mock('./hooks', () => ({
@@ -83,8 +88,12 @@ vi.mock('./hooks', () => ({
     isPending: false,
   }),
   useStakeSchedule: () => useStakeScheduleMock(),
-  useSetSyncReminderEnabledMutation: () => ({
-    mutateAsync: setSyncReminderEnabledMock,
+  // `job` distinguishes which row's mock to route to. The literal below
+  // mirrors `MANUAL_SEAT_REVIEW_JOB` — a vi.mock factory can't reference
+  // an imported binding, since it runs before this file's own imports do.
+  useSetScheduledJobEnabledMutation: (job: string) => ({
+    mutateAsync:
+      job === 'manualSeatReview' ? setManualSeatReviewEnabledMock : setSyncReminderEnabledMock,
     isPending: false,
   }),
 }));
@@ -221,9 +230,18 @@ function schedulePendingResult() {
 
 function syncReminderRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
-    job: 'syncReminder',
+    job: SYNC_REMINDER_JOB,
     enabled: false,
     schedule: { type: 'daily', hour: 6 },
+    ...overrides,
+  };
+}
+
+function manualSeatReviewRow(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
+  return {
+    job: MANUAL_SEAT_REVIEW_JOB,
+    enabled: false,
+    schedule: { type: 'monthly', day: 1, hour: 6 },
     ...overrides,
   };
 }
@@ -264,9 +282,11 @@ beforeEach(() => {
     docs_deleted: 0,
   });
   setSyncReminderEnabledMock.mockResolvedValue(undefined);
-  // Default: the hourly dispatcher has seeded the reminder row and it
-  // is off, which is the steady state for every stake until a manager
-  // turns it on.
+  setManualSeatReviewEnabledMock.mockResolvedValue(undefined);
+  // Default: the hourly dispatcher has seeded the sync-reminder row and
+  // it is off, which is the steady state for every stake until a manager
+  // turns it on. The quarterly review row is deliberately absent here —
+  // its own describe block seeds it explicitly per test.
   useStakeScheduleMock.mockReturnValue(scheduleDocResult([syncReminderRow()]));
   useStakeDocMock.mockReturnValue(stakeDocResult());
   useWardsMock.mockReturnValue(liveResult<Ward>([]));
@@ -1880,13 +1900,15 @@ describe('<ConfigurationPage /> Config tab save boundary', () => {
     ]);
     expect(setStakeToggleMock).not.toHaveBeenCalled();
     expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+    expect(setManualSeatReviewEnabledMock).not.toHaveBeenCalled();
   });
 
-  it('renders the three sliders below the form, not inside it', () => {
+  it('renders the four sliders below the form, not inside it', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     for (const id of [
       'config-notifications-enabled',
       'config-sync-reminder-enabled',
+      'config-manual-seat-review-enabled',
       'config-eq-president-access',
     ]) {
       expect(screen.getByTestId(id).closest('form')).toBeNull();
@@ -2073,6 +2095,7 @@ describe('<ConfigurationPage /> slider tooltips', () => {
   const TIPS: Array<[string, RegExp]> = [
     ['config-notifications-enabled', /stake-wide switch for email/i],
     ['config-sync-reminder', /temporary seat has expired in Kindoo/i],
+    ['config-manual-seat-review', /once a quarter/i],
     ['config-eq-president-access', new RegExp(EQ_PRESIDENT_ACCESS_TIP.slice(0, 40), 'i')],
   ];
 
@@ -2130,9 +2153,13 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
     expect(rows.map((r) => r.getAttribute('data-testid'))).toEqual([
       'config-notifications-enabled-row',
       'config-sync-reminder-row',
+      'config-manual-seat-review-row',
       'config-eq-president-access-row',
     ]);
     expect(screen.getByTestId('config-sync-reminder-row')).toHaveClass('kd-setting-toggle--sub');
+    expect(screen.getByTestId('config-manual-seat-review-row')).toHaveClass(
+      'kd-setting-toggle--sub',
+    );
     expect(screen.getByTestId('config-notifications-enabled-row')).not.toHaveClass(
       'kd-setting-toggle--sub',
     );
@@ -2272,6 +2299,125 @@ describe('<ConfigurationPage /> sync reminders slider', () => {
     render(<ConfigurationPage />, { wrapper: Wrapper });
     expect(screen.getByTestId('config-sync-reminder-enabled')).toBeEnabled();
     expect(screen.getByTestId('config-sync-reminder-row')).not.toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
+  });
+});
+
+// ---- Quarterly access reviews slider ---------------------------------
+//
+// Mirrors the sync reminders slider above — same four render states,
+// same parent kill-switch, same write-on-flip mutation, generalised to
+// a second registry job.
+
+describe('<ConfigurationPage /> quarterly access reviews slider', () => {
+  describe('before its snapshot has landed', () => {
+    beforeEach(() => {
+      useStakeScheduleMock.mockReturnValue(schedulePendingResult());
+    });
+
+    it('renders no switch at all, so it cannot show a value it does not have', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.queryByTestId('config-manual-seat-review-enabled')).toBeNull();
+      expect(screen.getByTestId('config-manual-seat-review-enabled-pending')).toBeInTheDocument();
+      expect(screen.getByTestId('config-manual-seat-review-row')).toHaveAttribute(
+        'aria-busy',
+        'true',
+      );
+    });
+
+    it('settles onto the row’s real value once the snapshot arrives', () => {
+      const { rerender } = render(<ConfigurationPage />, { wrapper: Wrapper });
+      expect(screen.getByTestId('config-manual-seat-review-enabled-pending')).toBeInTheDocument();
+      useStakeScheduleMock.mockReturnValue(
+        scheduleDocResult([syncReminderRow(), manualSeatReviewRow({ enabled: true })]),
+      );
+      rerender(<ConfigurationPage />);
+      expect(screen.queryByTestId('config-manual-seat-review-enabled-pending')).toBeNull();
+      expect(screen.getByTestId('config-manual-seat-review-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+    });
+  });
+
+  it('greys and disables the slider until the dispatcher has seeded the row', () => {
+    // Default schedule carries only the sync-reminder row — the
+    // quarterly review row is not yet seeded.
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-manual-seat-review-enabled')).toBeDisabled();
+    expect(screen.getByTestId('config-manual-seat-review-row')).toHaveClass(
+      'kd-setting-toggle--disabled',
+    );
+  });
+
+  it('never offers to create the row itself', async () => {
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-manual-seat-review-enabled'));
+    expect(setManualSeatReviewEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('flips the row on when the slider is turned on', async () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([syncReminderRow(), manualSeatReviewRow()]),
+    );
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-manual-seat-review-enabled'));
+    await waitFor(() => expect(setManualSeatReviewEnabledMock).toHaveBeenCalledWith(true));
+    // The sibling row's mutation is untouched.
+    expect(setSyncReminderEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('flips the row off when the slider is turned off', async () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([syncReminderRow(), manualSeatReviewRow({ enabled: true })]),
+    );
+    const user = userEvent.setup();
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    await user.click(screen.getByTestId('config-manual-seat-review-enabled'));
+    await waitFor(() => expect(setManualSeatReviewEnabledMock).toHaveBeenCalledWith(false));
+  });
+
+  describe('when the stake-level email kill-switch is off', () => {
+    beforeEach(() => {
+      useStakeDocMock.mockReturnValue(stakeDocResult({ notifications_enabled: false }));
+      useStakeScheduleMock.mockReturnValue(
+        scheduleDocResult([syncReminderRow(), manualSeatReviewRow({ enabled: true })]),
+      );
+    });
+
+    it('greys and disables the slider — the parent decides whether it can be changed', async () => {
+      const user = userEvent.setup();
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      const sw = screen.getByTestId('config-manual-seat-review-enabled');
+      expect(sw).toBeDisabled();
+      expect(screen.getByTestId('config-manual-seat-review-row')).toHaveClass(
+        'kd-setting-toggle--disabled',
+      );
+      await user.click(sw);
+      expect(setManualSeatReviewEnabledMock).not.toHaveBeenCalled();
+    });
+
+    it('never writes enabled: false as a side effect — the row keeps its own value', () => {
+      render(<ConfigurationPage />, { wrapper: Wrapper });
+      // Greyed, but still reading ON, because it is still running.
+      expect(screen.getByTestId('config-manual-seat-review-enabled')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
+      expect(setManualSeatReviewEnabledMock).not.toHaveBeenCalled();
+    });
+  });
+
+  it('is live and ungreyed when email notifications are on and the row is seeded', () => {
+    useStakeScheduleMock.mockReturnValue(
+      scheduleDocResult([syncReminderRow(), manualSeatReviewRow()]),
+    );
+    render(<ConfigurationPage />, { wrapper: Wrapper });
+    expect(screen.getByTestId('config-manual-seat-review-enabled')).toBeEnabled();
+    expect(screen.getByTestId('config-manual-seat-review-row')).not.toHaveClass(
       'kd-setting-toggle--disabled',
     );
   });

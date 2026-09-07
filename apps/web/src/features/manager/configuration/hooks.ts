@@ -41,7 +41,6 @@ import type {
   Ward,
 } from '@kindoo/shared';
 import { useFirestoreCollection, useFirestoreDoc } from '../../../lib/data';
-import { SYNC_REMINDER_JOB } from './syncReminder';
 import { db, functions } from '../../../lib/firebase';
 import {
   buildingRef,
@@ -863,7 +862,7 @@ export function useBackfillEqPresidentAccessMutation() {
   });
 }
 
-// ---- Scheduled tasks (sync reminder) --------------------------------
+// ---- Scheduled tasks --------------------------------------------------
 //
 // `stakeSchedules/{stakeId}` is `{ tasks, lastActor }` — one row per
 // registry job the hourly dispatcher has seeded onto this stake (D38).
@@ -872,9 +871,9 @@ export function useBackfillEqPresidentAccessMutation() {
 // the dispatcher; writing any of them from here would move a schedule
 // the server owns.
 //
-// The pure reads over the row — which job key, which row, what to
-// print — live in `./syncReminder` so the page and its component tests
-// can share them without pulling the Firestore SDK in.
+// The pure reads over a row — which job key, which row, what to print
+// — live in `./syncReminder` so the page and its component tests can
+// share them without pulling the Firestore SDK in.
 
 export function useStakeSchedule() {
   const activeStakeId = useActiveStake();
@@ -886,7 +885,7 @@ export function useStakeSchedule() {
 }
 
 /**
- * Flip `enabled` on the stake's `syncReminder` row.
+ * Flip `enabled` on the stake's `job` row.
  *
  * Read-modify-write of the whole `tasks` array, because Firestore
  * cannot address one element of a list by path. The transaction is what
@@ -900,7 +899,7 @@ export function useStakeSchedule() {
  * dispatcher's (`seedMissingTasks`). An absent row throws, which is why
  * the UI disables the control until one exists.
  */
-export function useSetSyncReminderEnabledMutation() {
+export function useSetScheduledJobEnabledMutation(job: string) {
   const principal = usePrincipal();
   const activeStakeId = useActiveStake();
   const qc = useQueryClient();
@@ -912,12 +911,12 @@ export function useSetSyncReminderEnabledMutation() {
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const tasks = snap.exists() ? (snap.data()?.tasks ?? []) : [];
-        if (!tasks.some((t) => t.job === SYNC_REMINDER_JOB)) {
+        if (!tasks.some((t) => t.job === job)) {
           throw new Error(
-            'The scheduler has not added the sync reminder to this stake yet. Try again in an hour.',
+            'The scheduler has not added this feature to this stake yet. Try again in an hour.',
           );
         }
-        const next = tasks.map((t) => (t.job === SYNC_REMINDER_JOB ? { ...t, enabled } : t));
+        const next = tasks.map((t) => (t.job === job ? { ...t, enabled } : t));
         // `update`, not `set`: it writes exactly these two fields and
         // leaves the rest of the doc alone. The rules' `keysAreExactly`
         // sees the merged document, so a doc that is already

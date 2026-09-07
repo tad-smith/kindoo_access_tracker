@@ -729,13 +729,13 @@ vi.mock('../../../lib/useActiveStake', () => ({
   useMemberDataStake: () => 'csnorth',
 }));
 
-import { SYNC_REMINDER_JOB } from './syncReminder';
+import { MANUAL_SEAT_REVIEW_JOB, SYNC_REMINDER_JOB } from '@kindoo/shared';
 import {
   useDeleteBuildingMutation,
   useDeleteKindooSiteMutation,
   useDeleteOrganizationMutation,
+  useSetScheduledJobEnabledMutation,
   useSetStakeToggleMutation,
-  useSetSyncReminderEnabledMutation,
   useUpdateHomeKindooSiteMutation,
   useUpdateStakeConfigMutation,
   useUpsertBuildingMutation,
@@ -1836,13 +1836,13 @@ function otherRow(): ScheduledTask {
   };
 }
 
-describe('useSetSyncReminderEnabledMutation', () => {
+describe('useSetScheduledJobEnabledMutation', () => {
   const scheduleSnap = (data: Record<string, unknown> | undefined) => ({
     exists: () => data !== undefined,
     data: () => data,
   });
 
-  it('flips enabled on the syncReminder row and leaves every other row alone', async () => {
+  it('flips enabled on the named job’s row and leaves every other row alone', async () => {
     const other = otherRow();
     getDocMock.mockResolvedValue(
       scheduleSnap({
@@ -1853,7 +1853,9 @@ describe('useSetSyncReminderEnabledMutation', () => {
         lastActor: { email: 'someone@else.com', canonical: 'someone@else.com' },
       }),
     );
-    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(SYNC_REMINDER_JOB), {
+      wrapper,
+    });
     await result.current.mutateAsync(true);
 
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
@@ -1877,14 +1879,16 @@ describe('useSetSyncReminderEnabledMutation', () => {
     });
   });
 
-  it('turns the reminder back off without disturbing the rest of the row', async () => {
+  it('turns a job back off without disturbing the rest of its row', async () => {
     getDocMock.mockResolvedValue(
       scheduleSnap({
         tasks: [reminderRow({ enabled: true, last_trigger_time: ts('2026-09-05T12:00:00Z') })],
         lastActor: actor,
       }),
     );
-    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(SYNC_REMINDER_JOB), {
+      wrapper,
+    });
     await result.current.mutateAsync(false);
 
     await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
@@ -1895,7 +1899,9 @@ describe('useSetSyncReminderEnabledMutation', () => {
 
   it('runs inside a transaction so a concurrent dispatch stamp is not clobbered', async () => {
     getDocMock.mockResolvedValue(scheduleSnap({ tasks: [reminderRow()], lastActor: actor }));
-    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(SYNC_REMINDER_JOB), {
+      wrapper,
+    });
     await result.current.mutateAsync(true);
     expect(runTransactionMock).toHaveBeenCalledTimes(1);
   });
@@ -1904,18 +1910,45 @@ describe('useSetSyncReminderEnabledMutation', () => {
     // Seeding belongs to the dispatcher: creating the doc here would
     // pin a schedule the registry never chose.
     getDocMock.mockResolvedValue(scheduleSnap(undefined));
-    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
-    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added the sync reminder/i);
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(SYNC_REMINDER_JOB), {
+      wrapper,
+    });
+    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added this feature/i);
     expect(updateDocMock).not.toHaveBeenCalled();
     expect(setDocMock).not.toHaveBeenCalled();
   });
 
   it('refuses to append the row when the document exists without it', async () => {
     getDocMock.mockResolvedValue(scheduleSnap({ tasks: [otherRow()], lastActor: actor }));
-    const { result } = renderHook(() => useSetSyncReminderEnabledMutation(), { wrapper });
-    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added the sync reminder/i);
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(SYNC_REMINDER_JOB), {
+      wrapper,
+    });
+    await expect(result.current.mutateAsync(true)).rejects.toThrow(/not added this feature/i);
     expect(updateDocMock).not.toHaveBeenCalled();
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it('serves a second registry job identically, keyed off the same tasks array', async () => {
+    const reviewRow: ScheduledTask = {
+      job: MANUAL_SEAT_REVIEW_JOB,
+      enabled: false,
+      schedule: { type: 'monthly', day: 1, hour: 6 },
+    };
+    getDocMock.mockResolvedValue(
+      scheduleSnap({ tasks: [reminderRow({ enabled: true }), reviewRow], lastActor: actor }),
+    );
+    const { result } = renderHook(() => useSetScheduledJobEnabledMutation(MANUAL_SEAT_REVIEW_JOB), {
+      wrapper,
+    });
+    await result.current.mutateAsync(true);
+
+    await waitFor(() => expect(updateDocMock).toHaveBeenCalled());
+    const tasks = (updateDocMock.mock.calls[0]![1] as { tasks: ScheduledTask[] }).tasks;
+    // The sync-reminder row is untouched; only the manual-seat-review
+    // row's `enabled` moved.
+    expect(tasks[0]!.job).toBe(SYNC_REMINDER_JOB);
+    expect(tasks[0]!.enabled).toBe(true);
+    expect(tasks[1]).toEqual({ ...reviewRow, enabled: true });
   });
 });
 
