@@ -46,7 +46,12 @@ comments, so they are recorded here:
   is what is wanted.
 
 `/help/**` has its own looser policy: two hand-authored guides carry an inline
-`<script>`, an inline `<style>` and an `onclick`, which no nonce or hash covers.
+`<script>` and an inline `<style>`. (An earlier draft of this entry also claimed
+an inline `onclick`; there is none — the grep behind that claim matched the
+`on="` inside `content="`.) A nonce or hash per build would let one strict
+policy cover everything and is the better end state; the looser block is the
+cheap step, and those pages are static, in-repo, and fetch nothing —
+`connect-src 'none'`.
 
 **Flipping to enforcing renames two headers, not one.** `/help/**` overrides
 `**` only while both use the same key. Rename just the `**` one and the help
