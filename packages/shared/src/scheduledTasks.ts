@@ -86,6 +86,15 @@ export const MAX_SCHEDULE_ADVANCES = 10_000;
  */
 export const SYNC_REMINDER_JOB = 'syncReminder';
 
+/**
+ * The `job` key of the quarterly manual-seat review's row (spec §9).
+ *
+ * Here for the same reason as {@link SYNC_REMINDER_JOB}: the registry
+ * keys the handler by this literal and the manager toggle finds the row
+ * to flip by it, so a copy on each side would drift silently.
+ */
+export const MANUAL_SEAT_REVIEW_JOB = 'manualSeatReview';
+
 const MS_PER_HOUR = 3_600_000;
 
 /**

@@ -1,0 +1,401 @@
+// The quarterly manual-seat review, as one unit of work for one stake.
+//
+// Auto seats follow the callings Sync reads out of Kindoo, and temp
+// seats end on a date. Manual seats do neither: they are granted for a
+// reason a person typed, and they last until a person takes them away.
+// Nothing in the system has ever asked whether that reason still holds,
+// so a manual seat granted for a calling outlives the calling — quietly,
+// and for years.
+//
+// Once a quarter, this mails the people responsible for each scope the
+// list of manual seats on it and asks them to remove anyone who no
+// longer needs access. Per scope, not per stake: the bishopric knows
+// who in their own ward still has the calling, and the Kindoo Managers
+// do not.
+//
+// The split with whatever schedules this is the same one
+// `SyncReminderService` draws: the caller says "consider this stake
+// now", and everything after that word is here. Nothing in this file
+// knows about cron, dispatch, or jitter — the one timezone it reads is
+// the stake's own calendar day.
+
+import { logger } from 'firebase-functions';
+import type { Firestore } from 'firebase-admin/firestore';
+import { isoDateSpanDays, todayInStakeTz } from '@kindoo/shared';
+import type { Access, Seat, Stake } from '@kindoo/shared';
+import { getDb } from '../lib/admin.js';
+import { activeManagers } from '../lib/managers.js';
+import {
+  loadScopeLabeller,
+  notifyScopeManualSeatReview,
+  type ManualSeatReviewGrant,
+} from './EmailService.js';
+
+/**
+ * Whole stake-local days that must pass before the review comes round
+ * again.
+ *
+ * Seventy-five, and the arithmetic is the whole reason it is safe. The
+ * job checks monthly, so the interval decides which checks send. The
+ * longest two-month gap is 62 days (Jul 1 → Sep 1) and the shortest
+ * three-month gap is 90 (Jan 1 → Apr 1), so any threshold in 63..90
+ * rejects every second month and admits every third one, forever, in
+ * every calendar year. 75 is the middle of that band — as far from
+ * either edge as it can be, so no leap year, DST shift or clamped
+ * monthly day can walk it over a boundary.
+ *
+ * Deliberately not in `@kindoo/shared`: this handler is the only thing
+ * anywhere that asks the question.
+ */
+export const MANUAL_SEAT_REVIEW_INTERVAL_DAYS = 75;
+
+/** Whole milliseconds to wait between two per-scope sends. */
+const SEND_GAP_MS = 1000;
+
+/** How a run ended. */
+export type ManualSeatReviewStatus =
+  'sent' | 'stake-missing' | 'setup-incomplete' | 'nothing-due' | 'backed-off' | 'no-recipients';
+
+export type ManualSeatReviewOutcome = {
+  stakeId: string;
+  status: ManualSeatReviewStatus;
+  /** Scopes carrying at least one manual grant. */
+  scopes: number;
+  /** Manual grants across every scope. */
+  grants: number;
+  /**
+   * Per-scope mails handed to the email layer. Counts a send the
+   * stake-level kill-switch suppressed — see `emailSuppressed`, and the
+   * stamp, which follows the same "was a send attempted" rule.
+   */
+  mailsSent: number;
+  /** Scopes with manual grants but nobody to send them to. */
+  scopesSkipped: number;
+  /** Stake-local date stamped on the stake doc, when this run sent. */
+  sentOn?: string;
+  /** True when `notifications_enabled === false` suppressed every send. */
+  emailSuppressed?: boolean;
+};
+
+/**
+ * Consider one stake, and send its review if one is due.
+ *
+ * `now` is explicit rather than read from the clock so the interval is
+ * testable without clock games; `db` defaults to the shared Admin
+ * handle.
+ *
+ * Never throws for an ordinary "nothing to do" — those are statuses. A
+ * genuine fault (Firestore unreachable) still propagates.
+ */
+export async function sendManualSeatReviewIfDue(
+  stakeId: string,
+  now: Date,
+  deps: { db?: Firestore } = {},
+): Promise<ManualSeatReviewOutcome> {
+  const db = deps.db ?? getDb();
+  const nothing = (status: ManualSeatReviewStatus): ManualSeatReviewOutcome => ({
+    stakeId,
+    status,
+    scopes: 0,
+    grants: 0,
+    mailsSent: 0,
+    scopesSkipped: 0,
+  });
+
+  const stakeRef = db.doc(`stakes/${stakeId}`);
+  const stakeSnap = await stakeRef.get();
+  if (!stakeSnap.exists) return nothing('stake-missing');
+  const stake = stakeSnap.data() as Stake;
+  // A stake still in the bootstrap wizard has no bishoprics to write to
+  // and no roster worth reviewing.
+  if (stake.setup_complete !== true) return nothing('setup-incomplete');
+
+  const today = todayInStakeTz(stake.timezone, now);
+  // Interval first: it is one field off a document already read, and
+  // rejecting here saves four collection reads on eleven months out of
+  // twelve.
+  if (!intervalElapsed(stake.last_manual_seat_review_date, today)) {
+    return nothing('backed-off');
+  }
+
+  // ~250 seats, ~250 access docs, a dozen wards and a handful of
+  // managers at target scale: read the collections whole and filter in
+  // memory rather than earning composite indexes. One wards read backs
+  // the labeller for every scope this run mails.
+  const [seatsSnap, accessSnap, labelScope, managers] = await Promise.all([
+    db.collection(`stakes/${stakeId}/seats`).get(),
+    db.collection(`stakes/${stakeId}/access`).get(),
+    loadScopeLabeller(db, stakeId),
+    activeManagers(db, stakeId),
+  ]);
+
+  const byScope = manualGrantsByScope(seatsSnap.docs.map((d) => d.data() as Seat));
+  const totalGrants = [...byScope.values()].reduce((sum, rows) => sum + rows.length, 0);
+  if (byScope.size === 0) {
+    // **The stamp stays.** This is a cadence, not a condition: an empty
+    // quarter is a quarter that happened, and deleting the stamp (as the
+    // sync reminder does with its backoff) would make next month a fresh
+    // first send and turn "quarterly" into "monthly, once the manual
+    // seats come back".
+    return nothing('nothing-due');
+  }
+
+  const accessDocs = accessSnap.docs.map((d) => ({
+    id: d.id,
+    data: d.data() as Partial<Access>,
+  }));
+  const managerEmails = managers.map((m) => m.email);
+
+  let mailsSent = 0;
+  let scopesSkipped = 0;
+  for (const scope of sortScopes([...byScope.keys()])) {
+    const recipients = scope === 'stake' ? managerEmails : bishopricRecipients(accessDocs, scope);
+    if (recipients.length === 0) {
+      // No fallback, deliberately: a ward with no qualifying access
+      // sends nothing rather than falling back to the managers, who
+      // cannot answer "does this person still need it?" for a ward.
+      scopesSkipped += 1;
+      logger.info('manualSeatReview: no recipient for scope', { stakeId, scope });
+      continue;
+    }
+
+    // Sequential, with a gap between sends: Resend's default rate is 2
+    // requests per second and a large stake fans out to ~13 scopes.
+    if (mailsSent > 0) await wait(SEND_GAP_MS);
+    await notifyScopeManualSeatReview({
+      db,
+      stakeId,
+      stake,
+      scope,
+      scopeLabel: labelScope(scope),
+      grants: byScope.get(scope) ?? [],
+      recipients,
+    });
+    mailsSent += 1;
+  }
+
+  const partial = {
+    stakeId,
+    scopes: byScope.size,
+    grants: totalGrants,
+    mailsSent,
+    scopesSkipped,
+  };
+
+  if (mailsSent === 0) {
+    // Nothing was said, so nothing is being deferred: no stamp, and the
+    // next month's check tries again.
+    logger.info('manualSeatReview: nobody to notify on any scope', {
+      stakeId,
+      scopes: byScope.size,
+      grants: totalGrants,
+    });
+    return { ...partial, status: 'no-recipients' };
+  }
+
+  logger.info('manualSeatReview: sent', {
+    stakeId,
+    scopes: byScope.size,
+    grants: totalGrants,
+    mailsSent,
+    scopesSkipped,
+  });
+
+  // Stamp last, and only because a send was attempted. A fault before
+  // this point leaves the review due rather than silently consumed — a
+  // duplicate review email is a far better failure than a quarter of
+  // silence about seats nobody is watching. Bookkeeping-only: the field
+  // is in `BOOKKEEPING_FIELDS`, so the write fans no audit row, and
+  // `lastActor` is left alone so the stake doc keeps naming whoever last
+  // really edited it.
+  await stakeRef.update({ last_manual_seat_review_date: today });
+
+  return {
+    ...partial,
+    status: 'sent',
+    sentOn: today,
+    ...(stake.notifications_enabled === false ? { emailSuppressed: true } : {}),
+  };
+}
+
+/**
+ * True when enough days have passed since `lastSent` to review again.
+ *
+ * No stamp means the stake has never been reviewed, which always sends.
+ * An unparseable or future-dated stamp also sends — same failure
+ * direction as the sync reminder's `backoffElapsed`: refusing to review
+ * on the strength of a stamp we cannot read is the worse of the two
+ * failures, and `isoDateSpanDays` answers `NaN` rather than throwing.
+ *
+ * Pure; exported for unit tests.
+ */
+export function intervalElapsed(
+  lastSent: string | undefined,
+  today: string,
+  intervalDays: number = MANUAL_SEAT_REVIEW_INTERVAL_DAYS,
+): boolean {
+  if (!lastSent) return true;
+  const days = isoDateSpanDays(lastSent, today);
+  if (Number.isNaN(days)) return true;
+  return days >= intervalDays || days < 0;
+}
+
+/**
+ * Every manual grant on every seat, grouped by **the grant's own
+ * scope**.
+ *
+ * A seat carries a primary grant plus zero or more `duplicate_grants[]`,
+ * and a duplicate's scope can differ from the primary's — a stake-scope
+ * manual duplicate on a ward-scope auto seat is the ordinary shape. The
+ * row belongs to the scope that earns it, which is the grant's, so a
+ * bishopric's mail lists exactly the manual access on their own roster.
+ *
+ * `apps/web/src/lib/grants.ts`'s `grantsForDisplay` is the web-side
+ * equivalent; it lives in the SPA, so this is the small flattening this
+ * side needs rather than a shared abstraction neither side asked for.
+ *
+ * Rows are sorted by name then address, so a mail's table is stable
+ * across quarters and a diff between two of them reads.
+ *
+ * Pure; exported for unit tests.
+ */
+export function manualGrantsByScope(seats: readonly Seat[]): Map<string, ManualSeatReviewGrant[]> {
+  const byScope = new Map<string, ManualSeatReviewGrant[]>();
+  const push = (scope: string, row: ManualSeatReviewGrant): void => {
+    const rows = byScope.get(scope);
+    if (rows) rows.push(row);
+    else byScope.set(scope, [row]);
+  };
+
+  for (const seat of seats) {
+    const memberName = seat.member_name ?? '';
+    const memberEmail = seat.member_email ?? seat.member_canonical;
+    const primarySite = normaliseSite(seat.kindoo_site_id);
+
+    if (seat.type === 'manual') {
+      push(seat.scope, {
+        memberName,
+        memberEmail,
+        reason: seat.reason ?? '',
+        buildingNames: [...(seat.building_names ?? [])],
+      });
+    }
+    for (const dup of seat.duplicate_grants ?? []) {
+      if (dup?.type !== 'manual') continue;
+      // A within-site duplicate may leave `building_names` unset and
+      // inherit the primary's ward buildings. A parallel-site duplicate
+      // must not: the primary's buildings are on a different Kindoo
+      // site, so rendering them here would be wrong data rather than
+      // missing data. Same rule the web's `grantsForDisplay` applies.
+      const sameSite = normaliseSite(dup.kindoo_site_id) === primarySite;
+      const inherited = sameSite ? (seat.building_names ?? []) : [];
+      push(dup.scope, {
+        memberName,
+        memberEmail,
+        reason: dup.reason ?? '',
+        buildingNames: [...(dup.building_names ?? inherited)],
+      });
+    }
+  }
+
+  for (const rows of byScope.values()) {
+    rows.sort(
+      (a, b) =>
+        a.memberName.localeCompare(b.memberName) || a.memberEmail.localeCompare(b.memberEmail),
+    );
+  }
+  return byScope;
+}
+
+/**
+ * Who gets a ward's or branch's review: everyone whose access doc
+ * carries at least one **importer-sourced, non-limited** calling for
+ * that scope.
+ *
+ * In practice that is the Bishop, both counselors, the Ward Clerk and
+ * the Ward Executive Secretary — or the branch equivalents. Those are
+ * the people who know whether a manual seat's reason still holds.
+ *
+ * Three exclusions, each deliberate:
+ *
+ *   - **Manual grants confer nothing here.** `manual_grants[scope]` is
+ *     how a manager hands someone the app; it is not evidence that they
+ *     are answerable for the ward's roster.
+ *   - **Limited-tier callings are excluded**, and this one is
+ *     load-bearing rather than tidy. The only limited unit calling is
+ *     Elders Quorum President (D26), and `canRemoveSeat` refuses a
+ *     limited user any non-temp grant — so an EQ President receiving
+ *     this mail would open a list of manual seats with no Remove
+ *     control on a single row.
+ *   - **No fallback.** A scope with nobody qualifying sends nothing.
+ *
+ * Malformed maps are tolerated the way `scopesFromAccessDoc` tolerates
+ * them: garbage never reads as a restriction, so an unreadable
+ * `importer_limited_callings` leaves every calling full rather than
+ * silencing the scope.
+ *
+ * Pure; exported for unit tests.
+ */
+export function bishopricRecipients(
+  docs: ReadonlyArray<{ id: string; data: Partial<Access> }>,
+  scope: string,
+): string[] {
+  const recipients: string[] = [];
+  for (const doc of docs) {
+    const importer = asRecord(doc.data.importer_callings)[scope];
+    if (!Array.isArray(importer)) continue;
+    const limited = limitedKeys(asRecord(doc.data.importer_limited_callings)[scope]);
+    const hasFull = importer.some(
+      (calling) => typeof calling === 'string' && !limited.has(normaliseCalling(calling)),
+    );
+    if (!hasFull) continue;
+    recipients.push(doc.data.member_email?.trim() || doc.id);
+  }
+  return recipients;
+}
+
+/**
+ * Send order: the stake first, then ward codes alphabetically. Purely
+ * for determinism — a run's mails and its logs come out in the same
+ * order every time, which is what makes "did the fourth scope send?"
+ * answerable.
+ */
+function sortScopes(scopes: string[]): string[] {
+  return scopes.sort((a, b) => {
+    if (a === b) return 0;
+    if (a === 'stake') return -1;
+    if (b === 'stake') return 1;
+    return a.localeCompare(b);
+  });
+}
+
+/** Legacy seats carry the site as absent or empty; both mean home. */
+function normaliseSite(value: string | null | undefined): string | null {
+  return value === undefined || value === null || value === '' ? null : value;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** Trim + lowercase, matching the key scheme the tier stamp is written in. */
+function normaliseCalling(calling: string): string {
+  return calling.trim().toLowerCase();
+}
+
+function limitedKeys(value: unknown): ReadonlySet<string> {
+  const keys = new Set<string>();
+  if (!Array.isArray(value)) return keys;
+  for (const entry of value) {
+    if (typeof entry === 'string') keys.add(normaliseCalling(entry));
+  }
+  return keys;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}

@@ -13,6 +13,9 @@ import {
   buildCompletedTextBody,
   buildFromAddress,
   buildLink,
+  buildManualSeatReviewHtmlBody,
+  buildManualSeatReviewSubject,
+  buildManualSeatReviewTextBody,
   buildNewRequestHtmlBody,
   buildNewRequestSubject,
   buildNewRequestTextBody,
@@ -31,6 +34,7 @@ import {
   formatScopeList,
   type LabelledExpiredTempGrant,
   type LabelledPool,
+  type ManualSeatReviewGrant,
   type RequestEmailOpts,
   type RequesterNamedEmailOpts,
   type WelcomeEmailOpts,
@@ -65,6 +69,7 @@ const WARD = 'Greenwood Ward';
 const QUEUE_LINK = 'https://stakebuildingaccess.org/manager/queue';
 const MY_LINK = 'https://stakebuildingaccess.org/my-requests';
 const SEATS_LINK = 'https://stakebuildingaccess.org/manager/seats';
+const ROSTER_LINK = 'https://stakebuildingaccess.org/bishopric/roster?ward=GE&stake=csnorth';
 
 function requestOpts(over: Partial<RequestEmailOpts> = {}): RequestEmailOpts {
   return { req: baseRequest, scope: WARD, link: MY_LINK, ...over };
@@ -897,6 +902,121 @@ describe('EmailService — pure builders', () => {
     );
   });
 
+  // ---- quarterly manual-seat review (per scope) -----------------------------
+
+  const reviewGrants: ManualSeatReviewGrant[] = [
+    {
+      memberName: 'Ann Adams',
+      memberEmail: 'Ann@example.com',
+      reason: 'Ward music chair',
+      buildingNames: ['Greenwood', 'Pine'],
+    },
+    {
+      memberName: 'Bob Brown',
+      memberEmail: 'bob@example.com',
+      reason: '',
+      buildingNames: [],
+    },
+  ];
+
+  it('manual-seat-review subject names the scope, not the count', () => {
+    // A mailbox with thirteen of these in it sorts by scope; a count in
+    // the subject would make every one of them look the same.
+    expect(
+      buildManualSeatReviewSubject({
+        scope: 'GE',
+        scopeLabel: 'Greenwood Ward',
+        grants: reviewGrants,
+      }),
+    ).toBe('[Stake Building Access] Quarterly access review — Greenwood Ward');
+    expect(
+      buildManualSeatReviewSubject({ scope: 'stake', scopeLabel: 'Stake', grants: reviewGrants }),
+    ).toBe('[Stake Building Access] Quarterly access review — Stake');
+  });
+
+  it('manual-seat-review text body spells the count and lists every grant', () => {
+    const text = buildManualSeatReviewTextBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    expect(text).toContain(
+      'Two manual seats on Greenwood Ward are due for their quarterly review.',
+    );
+    expect(text).toContain('Ann Adams (Ann@example.com) — Ward music chair — Greenwood, Pine');
+    // A grant with neither recorded still gets a row — a silent omission
+    // reads as a bug.
+    expect(text).toContain('Bob Brown (bob@example.com) — (not recorded) — (none recorded)');
+    expect(text).toContain(`Review the roster: ${ROSTER_LINK}`);
+  });
+
+  it('manual-seat-review says one seat in the singular', () => {
+    const text = buildManualSeatReviewTextBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: [reviewGrants[0]!],
+      link: ROSTER_LINK,
+    });
+    expect(text).toContain('One manual seat on Greenwood Ward is due for its quarterly review.');
+  });
+
+  it('manual-seat-review takes the unit noun from the resolved name', () => {
+    const ward = buildManualSeatReviewTextBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    const branch = buildManualSeatReviewTextBody({
+      scope: 'PB',
+      scopeLabel: 'Peterson Branch',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    const stake = buildManualSeatReviewTextBody({
+      scope: 'stake',
+      scopeLabel: 'Stake',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    expect(ward).toContain('stay on the ward roster');
+    expect(branch).toContain('stay on the branch roster');
+    expect(stake).toContain('stay on the stake roster');
+    // The stake's lead reads as a roster, not as a unit name.
+    expect(stake).toContain('on the stake roster are due');
+  });
+
+  it('manual-seat-review is accurate about what Remove does', () => {
+    // On a roster page Remove submits a REQUEST. Telling a bishopric the
+    // access ends when they tap it would have them assume a seat was
+    // gone when it was queued.
+    const text = buildManualSeatReviewTextBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    expect(text).toContain('Remove submits a removal request');
+    expect(text).toContain('a Kindoo Manager completes it');
+  });
+
+  it('manual-seat-review html carries the three columns and one button', () => {
+    const html = buildManualSeatReviewHtmlBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    expect(html).toContain('>Member</th>');
+    expect(html).toContain('>Reason</th>');
+    expect(html).toContain('>Buildings</th>');
+    expect(html).toContain('mailto:Ann@example.com');
+    expect(html).toContain('>Greenwood, Pine</td>');
+    expect(html).toContain('>Review the roster</a>');
+    expect(html.match(/Review the roster/g)).toHaveLength(1);
+  });
+
   // ---- quote safety across every html builder -------------------------------
 
   // Regression: a raw `"` inside an inline style or an interpolated value
@@ -953,6 +1073,19 @@ describe('EmailService — pure builders', () => {
           },
         ],
         link: SEATS_LINK,
+      }),
+      buildManualSeatReviewHtmlBody({
+        scope: 'GE',
+        scopeLabel: 'Green"wood" & <Ward>',
+        grants: [
+          {
+            memberName: 'Ann "Q" <b>Smith</b> & Co',
+            memberEmail: 'ann+"q"@example.com',
+            reason: 'Ward "Clerk" & <helper>',
+            buildingNames: ['Green"wood" & <Hall>'],
+          },
+        ],
+        link: ROSTER_LINK,
       }),
     ];
     for (const html of bodies) {

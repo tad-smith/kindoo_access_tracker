@@ -614,16 +614,140 @@ function daysAgo(days: number): string {
   return days === 1 ? '1 day ago' : `${days} days ago`;
 }
 
-function memberText(g: ExpiredTempGrant): string {
+/** Structural, so every multi-row table's row type satisfies it. */
+type MemberNamed = { memberName: string; memberEmail: string };
+
+function memberText(g: MemberNamed): string {
   const name = g.memberName?.trim();
   return name ? `${name} (${g.memberEmail})` : g.memberEmail;
 }
 
-function memberHtml(g: ExpiredTempGrant): string {
+function memberHtml(g: MemberNamed): string {
   const name = g.memberName?.trim();
   const address = escapeHtml(g.memberEmail);
   const mailto = `<a href="mailto:${address}" style="${LINK}">${address}</a>`;
   return name ? `${escapeHtml(name)}<br />${mailto}` : mailto;
+}
+
+// ---- quarterly manual-seat review (per scope) ------------------------------
+
+/**
+ * One manual grant on one scope's roster, flattened out of the seat
+ * carrying it. A seat contributes one row per manual grant it holds,
+ * and a duplicate's scope can differ from its seat's primary — so a row
+ * belongs to the grant's scope, not the seat's.
+ */
+export type ManualSeatReviewGrant = {
+  memberName: string;
+  memberEmail: string;
+  /** The grant's own free-text justification. Empty when none was recorded. */
+  reason: string;
+  /** The grant's own buildings, already resolved past the duplicate-inherits-primary rule. */
+  buildingNames: string[];
+};
+
+export type ManualSeatReviewEmailOpts = {
+  /** Raw scope — `'stake'` or a ward_code. Decides the CTA route and the noun. */
+  scope: string;
+  /** `scope` resolved through the shared `scopeLabel`. */
+  scopeLabel: string;
+  grants: ManualSeatReviewGrant[];
+  link: string;
+};
+
+/** Everything the subject and lead need, minus the CTA. */
+export type ManualSeatReviewConditions = Omit<ManualSeatReviewEmailOpts, 'link'>;
+
+export function buildManualSeatReviewSubject(o: ManualSeatReviewConditions): string {
+  return `[Stake Building Access] Quarterly access review — ${o.scopeLabel}`;
+}
+
+export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): string {
+  const lines: string[] = [
+    `${manualSeatReviewLead(o)}.`,
+    '',
+    manualSeatReviewAction(o.scope, o.scopeLabel),
+    '',
+  ];
+  for (const g of o.grants) {
+    lines.push(`  ${memberText(g)} — ${manualSeatReason(g)} — ${manualSeatBuildings(g)}`);
+  }
+  lines.push('', `${MANUAL_SEAT_REVIEW_CTA}: ${o.link}`);
+  return lines.join('\n');
+}
+
+export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): string {
+  return [
+    `<div style="${WRAPPER}">`,
+    `<p style="${PARA}">${escapeHtml(`${manualSeatReviewLead(o)}.`)}</p>`,
+    `<p style="${PARA}">${escapeHtml(manualSeatReviewAction(o.scope, o.scopeLabel))}</p>`,
+    `<table role="presentation" style="${TABLE}">`,
+    `<tr><th style="${TH}">Member</th><th style="${TH}">Reason</th><th style="${TH}">Buildings</th></tr>`,
+    ...o.grants.map(
+      (g) =>
+        `<tr><td style="${TD}">${memberHtml(g)}</td>` +
+        `<td style="${TD}">${escapeHtml(manualSeatReason(g))}</td>` +
+        `<td style="${TD}">${escapeHtml(manualSeatBuildings(g))}</td></tr>`,
+    ),
+    `</table>`,
+    `<p style="${BUTTON_PARA}"><a href="${escapeHtml(o.link)}" style="${BUTTON}">` +
+      `${MANUAL_SEAT_REVIEW_CTA}</a></p>`,
+    `</div>`,
+  ].join('\n');
+}
+
+const MANUAL_SEAT_REVIEW_CTA = 'Review the roster';
+
+/**
+ * The lead sentence. Spells the count off `COUNT_WORDS`, the way the
+ * over-cap and sync-reminder leads do; sentence-cased, and the subject
+ * does not reuse it (a subject naming the scope is more useful in a
+ * mailbox than one naming a count).
+ */
+function manualSeatReviewLead(o: ManualSeatReviewConditions): string {
+  const where = o.scope === 'stake' ? 'the stake roster' : o.scopeLabel;
+  const count = o.grants.length;
+  if (count === 1) return `One manual seat on ${where} is due for its quarterly review`;
+  const word = COUNT_WORDS[count] ?? String(count);
+  return `${word} manual seats on ${where} are due for their quarterly review`;
+}
+
+/**
+ * What the recipient is being asked to do.
+ *
+ * Accurate about what Remove actually does: on a roster page it submits
+ * a removal REQUEST, which a Kindoo Manager then completes. Telling a
+ * bishopric that tapping Remove ends the access would have them assume
+ * a seat was gone when it was queued.
+ */
+function manualSeatReviewAction(scope: string, scopeLabel: string): string {
+  const noun = manualSeatReviewScopeNoun(scope, scopeLabel);
+  return (
+    `Review the list and remove anyone who no longer needs building access — a calling change ` +
+    `is the usual reason. Manual seats never expire and no Sync clears them, so they stay on the ` +
+    `${noun} roster until someone takes them off. Remove submits a removal request; a Kindoo ` +
+    `Manager completes it, and the access ends then.`
+  );
+}
+
+/**
+ * The unit's own kind, since the resolved name is the only
+ * discriminator — same rule `scopeRowLabel` applies, lower-cased for
+ * mid-sentence use.
+ */
+function manualSeatReviewScopeNoun(scope: string, scopeLabel: string): string {
+  if (scope === 'stake') return 'stake';
+  return unitType(scopeLabel) === 'branch' ? 'branch' : 'ward';
+}
+
+/** A manual grant with no recorded reason still gets a cell — silence reads as a bug. */
+function manualSeatReason(g: ManualSeatReviewGrant): string {
+  return g.reason?.trim() || '(not recorded)';
+}
+
+function manualSeatBuildings(g: ManualSeatReviewGrant): string {
+  const names = g.buildingNames.filter((n) => n.trim().length > 0);
+  return names.length > 0 ? names.join(', ') : '(none recorded)';
 }
 
 // ---- copy fragments shared by both parts -----------------------------------
@@ -976,6 +1100,52 @@ export async function notifyManagersSyncReminder(
   });
 }
 
+/**
+ * Scope-bound: the quarterly review of that scope's manual seats.
+ *
+ * One scope, one mail — the caller loops and paces the sends. `scopeLabel`
+ * is resolved by the caller from a single `loadScopeLabeller` resolver,
+ * because a run mails up to ~13 scopes and each doing its own wards read
+ * would be ~13 reads of the same collection.
+ */
+export async function notifyScopeManualSeatReview(
+  deps: BaseDeps & {
+    /** `'stake'` or a ward_code. */
+    scope: string;
+    scopeLabel: string;
+    grants: ManualSeatReviewGrant[];
+    recipients: string[];
+  },
+): Promise<void> {
+  const { stakeId, stake, scope, scopeLabel, grants, recipients } = deps;
+  if (!emailsEnabled(stake, stakeId, 'manualSeatReview')) return;
+  if (recipients.length === 0 || grants.length === 0) return;
+
+  // A Kindoo Manager passes `/stake/roster`'s role gate through the
+  // manager superset, so the stake-scope link resolves for them.
+  const route =
+    scope === 'stake'
+      ? `/stake/roster?stake=${encodeURIComponent(stakeId)}`
+      : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
+  const link = safeBuildLink(deps, route);
+  if (link === undefined) return;
+
+  const opts: ManualSeatReviewEmailOpts = { scope, scopeLabel, grants, link };
+  await sendOne(deps, {
+    payload: buildPayload({
+      stake,
+      to: recipients,
+      subject: buildManualSeatReviewSubject(opts),
+      text: buildManualSeatReviewTextBody(opts),
+      html: buildManualSeatReviewHtmlBody(opts),
+    }),
+    // The scope MUST be in `source`: it keys `writeEmailFailedAudit`'s
+    // deterministic suffix, and without it a run's thirteen distinct
+    // per-scope failures collapse onto one audit row.
+    context: { type: 'manualSeatReview', source: scope },
+  });
+}
+
 /** Member-bound: their access doc just gained its first scope. */
 export async function notifyMemberAccessGranted(
   deps: BaseDeps & {
@@ -1039,7 +1209,7 @@ export async function notifyMemberAccessGranted(
  * caller can label any number of scopes from it (over-cap labels every
  * flagged pool). Unresolved codes fall back to the raw code.
  */
-async function loadScopeLabeller(
+export async function loadScopeLabeller(
   db: Firestore,
   stakeId: string,
 ): Promise<(scope: string) => string> {

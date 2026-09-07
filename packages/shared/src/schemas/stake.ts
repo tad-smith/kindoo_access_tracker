@@ -38,6 +38,8 @@ export const stakeSchema = z.object({
   last_over_caps_json: z.array(overCapEntrySchema),
   // Stake-local `YYYY-MM-DD`; absent until the sync reminder first sends.
   last_sync_reminder_date: z.string().optional(),
+  // Stake-local `YYYY-MM-DD`; absent until the manual-seat review first sends.
+  last_manual_seat_review_date: z.string().optional(),
 
   last_modified_at: timestampLikeSchema,
   last_modified_by: actorRefSchema,

@@ -16,6 +16,7 @@ import {
   DISPATCH_DONE_MESSAGE,
   dispatchDue,
   dispatchScheduledTasks,
+  jitterDelaySeconds,
   scheduledTaskId,
   type EnqueueTask,
   type ScheduledTaskPayload,
@@ -116,11 +117,14 @@ function makeDb(
 function makeEnqueue(
   events: string[],
   behaviour: (payload: ScheduledTaskPayload) => void = () => {},
-): { enqueue: EnqueueTask; calls: { payload: ScheduledTaskPayload; id: string }[] } {
-  const calls: { payload: ScheduledTaskPayload; id: string }[] = [];
-  const enqueue: EnqueueTask = async (payload, id) => {
+): {
+  enqueue: EnqueueTask;
+  calls: { payload: ScheduledTaskPayload; id: string; delaySeconds: number }[];
+} {
+  const calls: { payload: ScheduledTaskPayload; id: string; delaySeconds: number }[] = [];
+  const enqueue: EnqueueTask = async (payload, id, delaySeconds) => {
     events.push(`enqueue:${payload.stakeId}/${payload.job}`);
-    calls.push({ payload, id });
+    calls.push({ payload, id, delaySeconds });
     behaviour(payload);
   };
   return { enqueue, calls };
@@ -143,6 +147,50 @@ describe('scheduledTaskId', () => {
     expect(scheduledTaskId('stake.with/odd chars', 'a job', NOW)).toBe(
       'stake_with_odd_chars--a_job--20260905T14',
     );
+  });
+});
+
+describe('jitterDelaySeconds', () => {
+  it('is deterministic — the same stake and job always get the same offset', () => {
+    const first = jitterDelaySeconds('csnorth', 'manualSeatReview', 72_000);
+    for (let i = 0; i < 5; i += 1) {
+      expect(jitterDelaySeconds('csnorth', 'manualSeatReview', 72_000)).toBe(first);
+    }
+  });
+
+  it('stays inside the window', () => {
+    for (const stakeId of ['csnorth', 'a', 'zzz-stake-9', 'stake.with/odd chars', '']) {
+      const delay = jitterDelaySeconds(stakeId, 'manualSeatReview', 72_000);
+      expect(delay).toBeGreaterThanOrEqual(0);
+      expect(delay).toBeLessThan(72_000);
+      expect(Number.isInteger(delay)).toBe(true);
+    }
+  });
+
+  it('gives one stake a different offset per job', () => {
+    // Hashing the job alongside the stake is what keeps two jittered
+    // jobs from landing the same stake on the same second.
+    expect(jitterDelaySeconds('csnorth', 'manualSeatReview', 72_000)).not.toBe(
+      jitterDelaySeconds('csnorth', 'syncReminder', 72_000),
+    );
+  });
+
+  it('spreads stakes across the window rather than clustering', () => {
+    const offsets = Array.from({ length: 24 }, (_, i) =>
+      jitterDelaySeconds(`stake-${i}`, 'manualSeatReview', 72_000),
+    );
+    // Distinct, and not all in one corner: a sum-of-chars hash would
+    // put consecutive slugs a few seconds apart.
+    expect(new Set(offsets).size).toBe(offsets.length);
+    expect(Math.max(...offsets) - Math.min(...offsets)).toBeGreaterThan(36_000);
+  });
+
+  it('fires at the slot for an absent, zero, or nonsense window', () => {
+    expect(jitterDelaySeconds('csnorth', 'demo', undefined)).toBe(0);
+    expect(jitterDelaySeconds('csnorth', 'demo', 0)).toBe(0);
+    expect(jitterDelaySeconds('csnorth', 'demo', -5)).toBe(0);
+    expect(jitterDelaySeconds('csnorth', 'demo', Number.NaN)).toBe(0);
+    expect(jitterDelaySeconds('csnorth', 'demo', Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
 
@@ -240,13 +288,55 @@ describe('dispatchDue — selection and stamping', () => {
 
     expect(summary).toMatchObject({ enqueued: 1, deduped: 0, failures: 0 });
     expect(calls).toEqual([
-      { payload: { stakeId: 'csnorth', job: 'demo' }, id: 'csnorth--demo--20260905T14' },
+      {
+        payload: { stakeId: 'csnorth', job: 'demo' },
+        id: 'csnorth--demo--20260905T14',
+        // Unjittered registry entry: delivered as soon as the queue picks it up.
+        delaySeconds: 0,
+      },
     ]);
     const stamped = writes['stakeSchedules/csnorth']?.tasks[0];
     expect(stamped?.last_trigger_time?.toDate().toISOString()).toBe(NOW.toISOString());
     // Advanced from the STORED slot, not from `now` — 06:00 Denver the
     // following day.
     expect(stamped?.next_trigger_time?.toDate().toISOString()).toBe('2026-09-06T12:00:00.000Z');
+  });
+
+  it('passes a jittered job’s per-stake delay to the enqueuer', async () => {
+    const jittered = registry({
+      demo: {
+        handler: async () => undefined,
+        defaultSchedule: { type: 'daily', hour: 6 },
+        jitterSeconds: 72_000,
+        defaultEnabled: false,
+      },
+    });
+    const { db, writes } = makeDb([{ id: 'csnorth' }, { id: 'westside' }], {
+      csnorth: {
+        tasks: [task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') })],
+        lastActor: DISPATCHER_ACTOR,
+      },
+      westside: {
+        tasks: [task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') })],
+        lastActor: DISPATCHER_ACTOR,
+      },
+    });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    await dispatchDue(db, { registry: jittered, enqueue, now: NOW });
+
+    expect(calls.map((c) => c.delaySeconds)).toEqual([
+      jitterDelaySeconds('csnorth', 'demo', 72_000),
+      jitterDelaySeconds('westside', 'demo', 72_000),
+    ]);
+    // Two stakes sharing one slot do not land on the same second.
+    expect(calls[0]?.delaySeconds).not.toBe(calls[1]?.delaySeconds);
+    // The stamp still happens at enqueue time, not at delivery: the row
+    // advances now, so a task waiting in the queue cannot be enqueued
+    // behind itself on the next hourly pass.
+    expect(
+      writes['stakeSchedules/csnorth']?.tasks[0]?.next_trigger_time?.toDate().toISOString(),
+    ).toBe('2026-09-06T12:00:00.000Z');
   });
 
   it('leaves a task alone when its slot is still ahead', async () => {
