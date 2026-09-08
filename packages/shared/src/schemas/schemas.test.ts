@@ -253,7 +253,7 @@ describe('stakeSchema', () => {
     expect(stakeSchema.parse(seed)).toEqual(seed);
   });
 
-  it('parses a doc with web_base_url_override set', () => {
+  it('parses a doc with the operator-only escape hatches set', () => {
     const seed = {
       stake_name: 'CS North Stake',
       created_at: T,
@@ -264,6 +264,7 @@ describe('stakeSchema', () => {
       timezone: 'America/Denver',
       notifications_enabled: true,
       web_base_url_override: 'https://legacy.example.org',
+      manual_seat_review_dry_run: true,
       last_over_caps_json: [],
       last_modified_at: T,
       last_modified_by: ACTOR,
@@ -272,6 +273,7 @@ describe('stakeSchema', () => {
     const parsed = stakeSchema.parse(seed);
     expect(parsed).toEqual(seed);
     expect(parsed.web_base_url_override).toBe('https://legacy.example.org');
+    expect(parsed.manual_seat_review_dry_run).toBe(true);
   });
 
   it('parses with the operational over-cap field populated', () => {

@@ -646,6 +646,19 @@ export type ManualSeatReviewGrant = {
   buildingNames: string[];
 };
 
+/**
+ * Present ⇒ this mail is an operator dry run (`Stake.manual_seat_review_dry_run`).
+ *
+ * It went to the Kindoo Managers rather than to the scope's real
+ * recipients, and carries who those would have been — an empty list
+ * being the interesting case, since in production that scope sends
+ * nothing at all.
+ */
+export type ManualSeatReviewDryRun = {
+  /** What the real recipient rule answered for this scope. May be empty. */
+  intendedRecipients: string[];
+};
+
 export type ManualSeatReviewEmailOpts = {
   /** Raw scope — `'stake'` or a ward_code. Decides the CTA route and the noun. */
   scope: string;
@@ -653,17 +666,22 @@ export type ManualSeatReviewEmailOpts = {
   scopeLabel: string;
   grants: ManualSeatReviewGrant[];
   link: string;
+  dryRun?: ManualSeatReviewDryRun;
 };
 
 /** Everything the subject and lead need, minus the CTA. */
 export type ManualSeatReviewConditions = Omit<ManualSeatReviewEmailOpts, 'link'>;
 
 export function buildManualSeatReviewSubject(o: ManualSeatReviewConditions): string {
-  return `[Stake Building Access] Quarterly access review — ${o.scopeLabel}`;
+  // The mark leads the subject, ahead of the scope: someone finding this
+  // in their inbox a week later must not read it as a real review.
+  const mark = o.dryRun ? `[${DRY_RUN_MARK}] ` : '';
+  return `[Stake Building Access] ${mark}Quarterly access review — ${o.scopeLabel}`;
 }
 
 export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): string {
   const lines: string[] = [
+    ...(o.dryRun ? [...dryRunBannerLines(o), ''] : []),
     `${manualSeatReviewLead(o)}.`,
     '',
     manualSeatReviewAction(o.scope, o.scopeLabel),
@@ -679,6 +697,15 @@ export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): str
 export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): string {
   return [
     `<div style="${WRAPPER}">`,
+    ...(o.dryRun
+      ? [
+          `<div style="${DRY_RUN_BANNER}">`,
+          ...dryRunBannerLines(o).map(
+            (line) => `<p style="${DRY_RUN_BANNER_PARA}">${escapeHtml(line)}</p>`,
+          ),
+          `</div>`,
+        ]
+      : []),
     `<p style="${PARA}">${escapeHtml(`${manualSeatReviewLead(o)}.`)}</p>`,
     `<p style="${PARA}">${escapeHtml(manualSeatReviewAction(o.scope, o.scopeLabel))}</p>`,
     `<table role="presentation" style="${TABLE}">`,
@@ -697,6 +724,37 @@ export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): str
 }
 
 const MANUAL_SEAT_REVIEW_CTA = 'Review the roster';
+
+/** One string, so subject and banner can never drift apart. */
+const DRY_RUN_MARK = 'DRY RUN';
+
+const DRY_RUN_BANNER =
+  'border:2px solid #b7791f;background:#fffaf0;border-radius:6px;padding:12px 16px;margin:0 0 20px';
+const DRY_RUN_BANNER_PARA = 'margin:0 0 8px;color:#744210';
+
+/**
+ * The banner, as plain sentences — the HTML part boxes them and the
+ * text part prints them, so the two can't say different things.
+ *
+ * Two jobs, in order. First, be unmistakable: a manager finding this in
+ * their inbox next week must not act on it as a real review. Second,
+ * name who the mail would really have gone to — that recipient rule is
+ * the part most likely to be wrong, and a dry run over every ward is
+ * the only place to check it without mailing a dozen bishoprics.
+ */
+function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
+  const intended = o.dryRun?.intendedRecipients ?? [];
+  const noun = manualSeatReviewScopeNoun(o.scope, o.scopeLabel);
+  return [
+    `${DRY_RUN_MARK} — this is a test of the quarterly access review, sent only to the Kindoo ` +
+      `Managers. Nobody on the ${noun} received it, and nothing below has been asked of anyone.`,
+    intended.length > 0
+      ? `A real run would have sent this to: ${intended.join(', ')}.`
+      : `A real run would have sent this to NOBODY: no one qualifies as a recipient for ` +
+        `${o.scopeLabel}, so in a real run this scope would have been skipped silently and its ` +
+        `manual seats would have gone unreviewed.`,
+  ];
+}
 
 /**
  * The lead sentence. Spells the count off `COUNT_WORDS`, the way the
@@ -1118,13 +1176,18 @@ export async function notifyScopeManualSeatReview(
     scope: string;
     scopeLabel: string;
     grants: ManualSeatReviewGrant[];
+    /** Who this mail actually goes to — the Kindoo Managers under a dry run. */
     recipients: string[];
+    /** Present ⇒ operator dry run; carries the real rule's answer. */
+    dryRun?: ManualSeatReviewDryRun;
   },
 ): Promise<EmailSendResult> {
-  const { stakeId, stake, scope, scopeLabel, grants, recipients } = deps;
+  const { stakeId, stake, scope, scopeLabel, grants, recipients, dryRun } = deps;
   if (!emailsEnabled(stake, stakeId, 'manualSeatReview')) return 'suppressed';
   // Caller-guarded, so this is belt-and-braces: nothing to say is not a
-  // fault, so it must not read as one.
+  // fault, so it must not read as one. Note this tests the ACTUAL
+  // recipients — under a dry run an empty `dryRun.intendedRecipients` is
+  // the point of the mail, not a reason to withhold it.
   if (recipients.length === 0 || grants.length === 0) return 'suppressed';
 
   // A Kindoo Manager passes `/stake/roster`'s role gate through the
@@ -1138,7 +1201,13 @@ export async function notifyScopeManualSeatReview(
   // fault, not a decision, so it must not consume the caller's quarter.
   if (link === undefined) return 'failed';
 
-  const opts: ManualSeatReviewEmailOpts = { scope, scopeLabel, grants, link };
+  const opts: ManualSeatReviewEmailOpts = {
+    scope,
+    scopeLabel,
+    grants,
+    link,
+    ...(dryRun ? { dryRun } : {}),
+  };
   return await sendOne(deps, {
     payload: buildPayload({
       stake,

@@ -81,12 +81,20 @@ export type ManualSeatReviewOutcome = {
    * link that could not be built. Excluded from `mailsSent` on purpose.
    */
   mailsFailed: number;
-  /** Scopes with manual grants but nobody to send them to. */
+  /**
+   * Scopes with manual grants that the REAL recipient rule answers
+   * nobody for. In a production run that is also the count of scopes
+   * that sent nothing. Under a dry run it is the finding rather than the
+   * consequence — those scopes are mailed to the managers anyway, and
+   * this number is what the operator is looking for.
+   */
   scopesSkipped: number;
   /** Stake-local date stamped on the stake doc, when this run sent. */
   sentOn?: string;
   /** True when `notifications_enabled === false` suppressed every send. */
   emailSuppressed?: boolean;
+  /** True when `stake.manual_seat_review_dry_run` redirected this run. */
+  dryRun?: true;
 };
 
 /**
@@ -105,6 +113,9 @@ export async function sendManualSeatReviewIfDue(
   deps: { db?: Firestore } = {},
 ): Promise<ManualSeatReviewOutcome> {
   const db = deps.db ?? getDb();
+  // Set once the stake doc is read; every return before that reports
+  // false because nothing yet knows otherwise.
+  let dryRun = false;
   const nothing = (status: ManualSeatReviewStatus): ManualSeatReviewOutcome => ({
     stakeId,
     status,
@@ -113,12 +124,14 @@ export async function sendManualSeatReviewIfDue(
     mailsSent: 0,
     mailsFailed: 0,
     scopesSkipped: 0,
+    ...(dryRun ? { dryRun: true as const } : {}),
   });
 
   const stakeRef = db.doc(`stakes/${stakeId}`);
   const stakeSnap = await stakeRef.get();
   if (!stakeSnap.exists) return nothing('stake-missing');
   const stake = stakeSnap.data() as Stake;
+  dryRun = stake.manual_seat_review_dry_run === true;
   // A stake still in the bootstrap wizard has no bishoprics to write to
   // and no roster worth reviewing.
   if (stake.setup_complete !== true) return nothing('setup-incomplete');
@@ -167,6 +180,15 @@ export async function sendManualSeatReviewIfDue(
   // ever called, so a 13-scope stake would otherwise sleep ~12s to send
   // nothing.
   const callsResend = stake.notifications_enabled !== false;
+  if (dryRun && !callsResend) {
+    // The kill-switch is the kill-switch — a dry run must not bypass it
+    // — but an operator who set the flag and then watched an empty
+    // inbox would have no way to tell this from a broken feature.
+    logger.warn('manualSeatReview: DRY RUN suppressed by notifications_enabled=false — no mail', {
+      stakeId,
+      dryRun: true,
+    });
+  }
 
   let mailsSent = 0;
   let mailsFailed = 0;
@@ -174,13 +196,40 @@ export async function sendManualSeatReviewIfDue(
   let attempted = 0;
   const failedScopes: string[] = [];
   for (const scope of sortScopes([...byScope.keys()])) {
-    const recipients = scope === 'stake' ? managerEmails : bishopricRecipients(accessDocs, scope);
-    if (recipients.length === 0) {
+    // The real rule runs either way. Under a dry run its answer is
+    // reported — in the outcome, in the log, and in the mail's own body
+    // — rather than obeyed.
+    const intendedRecipients =
+      scope === 'stake' ? managerEmails : bishopricRecipients(accessDocs, scope);
+    const recipients = dryRun ? managerEmails : intendedRecipients;
+    if (intendedRecipients.length === 0) {
       // No fallback, deliberately: a ward with no qualifying access
       // sends nothing rather than falling back to the managers, who
       // cannot answer "does this person still need it?" for a ward.
+      //
+      // **A dry run deliberately diverges here and sends anyway.** In
+      // production this branch is silent from the operator's side — the
+      // scope's manual seats go unreviewed and only a log line says so —
+      // which is exactly the failure a dry run exists to surface. Don't
+      // "tidy" this back into an unconditional skip.
       scopesSkipped += 1;
-      logger.info('manualSeatReview: no recipient for scope', { stakeId, scope });
+      logger.info(
+        dryRun
+          ? 'manualSeatReview: dry run — no real recipient for scope; mailing the managers instead'
+          : 'manualSeatReview: no recipient for scope',
+        { stakeId, scope, ...(dryRun ? { dryRun: true } : {}) },
+      );
+      if (!dryRun) continue;
+    }
+    if (recipients.length === 0) {
+      // Dry run on a stake with no active Kindoo Managers: nobody to
+      // show the run to at all. Unreachable in a production run, which
+      // already continued above.
+      logger.info('manualSeatReview: dry run has no Kindoo Manager to mail', {
+        stakeId,
+        scope,
+        dryRun: true,
+      });
       continue;
     }
 
@@ -196,6 +245,7 @@ export async function sendManualSeatReviewIfDue(
       scopeLabel: labelScope(scope),
       grants: byScope.get(scope) ?? [],
       recipients,
+      ...(dryRun ? { dryRun: { intendedRecipients } } : {}),
     });
     if (result === 'failed') {
       mailsFailed += 1;
@@ -210,6 +260,7 @@ export async function sendManualSeatReviewIfDue(
     mailsSent,
     mailsFailed,
     scopesSkipped,
+    ...(dryRun ? { dryRun: true as const } : {}),
   };
 
   if (attempted === 0) {
@@ -217,10 +268,17 @@ export async function sendManualSeatReviewIfDue(
     // next month's check tries again. Recurs silently forever if nobody
     // fixes it, so WARN — same reasoning as the send-failed branches
     // below: nothing else surfaces this.
+    //
+    // The status keeps its meaning under a dry run, but not its cause:
+    // "no real recipient" no longer reaches here (that scope mails the
+    // managers and is reported in `scopesSkipped`), so the only way to
+    // land here is a stake with no active Kindoo Manager to show the run
+    // to — still nobody notified, still no quarter consumed.
     logger.warn('manualSeatReview: nobody to notify on any scope', {
       stakeId,
       scopes: byScope.size,
       grants: totalGrants,
+      ...(dryRun ? { dryRun: true } : {}),
     });
     return { ...partial, status: 'no-recipients' };
   }
@@ -238,6 +296,7 @@ export async function sendManualSeatReviewIfDue(
       grants: totalGrants,
       mailsFailed,
       scopesSkipped,
+      ...(dryRun ? { dryRun: true } : {}),
     });
     return { ...partial, status: 'send-failed' };
   }
@@ -257,6 +316,7 @@ export async function sendManualSeatReviewIfDue(
       mailsFailed,
       scopesSkipped,
       failedScopes,
+      ...(dryRun ? { dryRun: true } : {}),
     });
   } else {
     logger.info('manualSeatReview: sent', {
@@ -266,6 +326,7 @@ export async function sendManualSeatReviewIfDue(
       mailsSent,
       mailsFailed,
       scopesSkipped,
+      ...(dryRun ? { dryRun: true } : {}),
     });
   }
 

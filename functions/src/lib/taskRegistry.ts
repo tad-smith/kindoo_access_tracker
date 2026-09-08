@@ -12,7 +12,12 @@
 // unit of work for one stake at one instant. `SyncReminderService`'s
 // `sendSyncReminderIfDue` is the shape to copy.
 
-import { MANUAL_SEAT_REVIEW_JOB, SYNC_REMINDER_JOB, type TaskSchedule } from '@kindoo/shared';
+import {
+  MANUAL_SEAT_REVIEW_JOB,
+  SYNC_REMINDER_JOB,
+  type Stake,
+  type TaskSchedule,
+} from '@kindoo/shared';
 import { sendManualSeatReviewIfDue } from '../services/ManualSeatReviewService.js';
 import { sendSyncReminderIfDue } from '../services/SyncReminderService.js';
 
@@ -29,6 +34,21 @@ export type ScheduledJob = {
    * handful.
    */
   jitterSeconds?: number;
+  /**
+   * When set and true for a stake, that stake's task is enqueued at its
+   * slot with no jitter.
+   *
+   * The job owns the knowledge of its own flag; the dispatcher stays
+   * generic and never names a job's field. Jitter exists to stop dozens
+   * of stakes bursting the estate's mail into one minute, which is
+   * irrelevant to a single deliberate run on one stake — and a window
+   * hours wide makes such a run impractical to sit through.
+   *
+   * Given the whole stake doc, which the dispatcher already holds. It
+   * runs against a hand-edited document, so a throw is treated as "no
+   * skip" and logged rather than stranding the stake's other jobs.
+   */
+  skipJitter?: (stake: Partial<Stake>) => boolean;
   /**
    * Seeded `enabled` value. **`false` for everything.** A job that
    * appears on a stake by seeding must not start mailing that stake's
@@ -92,11 +112,16 @@ export const SCHEDULED_JOBS: JobRegistry = {
    * Jittered because one run fans out to one mail per scope — up to
    * ~13 on a large stake — and dozens of stakes firing at the same slot
    * would burst the whole estate's mail into one minute.
+   *
+   * A dry run skips the jitter: it is one deliberate run on one stake,
+   * so there is no estate to spread, and an offset up to 20h wide would
+   * make it impractical to sit through.
    */
   [MANUAL_SEAT_REVIEW_JOB]: {
     handler: sendManualSeatReviewIfDue,
     defaultSchedule: { type: 'monthly', day: 1, hour: 2 },
     jitterSeconds: 72_000,
+    skipJitter: (stake) => stake.manual_seat_review_dry_run === true,
     defaultEnabled: false,
   },
 };

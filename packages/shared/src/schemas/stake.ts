@@ -34,6 +34,9 @@ export const stakeSchema = z.object({
   // enforced where it's consumed (EmailService.buildLink), not here —
   // a stored value that fails it is ignored, not a parse error.
   web_base_url_override: z.string().optional(),
+  // Operator-only, console-set, and expected to be removed again after
+  // the run. Absent ⇒ off.
+  manual_seat_review_dry_run: z.boolean().optional(),
 
   last_over_caps_json: z.array(overCapEntrySchema),
   // Stake-local `YYYY-MM-DD`; absent until the sync reminder first sends.

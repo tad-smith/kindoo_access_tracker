@@ -67,7 +67,7 @@ type FakeDb = {
  * being a transaction.
  */
 function makeDb(
-  stakes: { id: string; timezone?: string }[],
+  stakes: { id: string; timezone?: string; data?: Record<string, unknown> }[],
   schedules: Record<string, StakeSchedule> = {},
   failReadsFor: string[] = [],
 ): FakeDb {
@@ -98,7 +98,9 @@ function makeDb(
           size: stakes.length,
           docs: stakes.map((s) => ({
             id: s.id,
-            data: () => ({ timezone: s.timezone ?? TZ }),
+            // The whole doc: a job's `skipJitter` predicate reads its
+            // own field off it.
+            data: () => ({ timezone: s.timezone ?? TZ, ...s.data }),
           })),
         }),
       };
@@ -337,6 +339,108 @@ describe('dispatchDue — selection and stamping', () => {
     expect(
       writes['stakeSchedules/csnorth']?.tasks[0]?.next_trigger_time?.toDate().toISOString(),
     ).toBe('2026-09-06T12:00:00.000Z');
+  });
+
+  /**
+   * A jittered job whose `skipJitter` reads one hand-set stake field.
+   * The dispatcher never names that field: the predicate belongs to the
+   * job, and the two stakes below differ only in whether it is set.
+   */
+  function jitteredWithSkip(skipJitter: JobRegistry[string]['skipJitter']): JobRegistry {
+    return registry({
+      demo: {
+        handler: async () => undefined,
+        defaultSchedule: { type: 'daily', hour: 6 },
+        jitterSeconds: 72_000,
+        ...(skipJitter ? { skipJitter } : {}),
+        defaultEnabled: false,
+      },
+    });
+  }
+
+  function twoStakes(csnorthData: Record<string, unknown>): FakeDb {
+    return makeDb([{ id: 'csnorth', data: csnorthData }, { id: 'westside' }], {
+      csnorth: {
+        tasks: [task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') })],
+        lastActor: DISPATCHER_ACTOR,
+      },
+      westside: {
+        tasks: [task({ next_trigger_time: at('2026-09-05T12:00:00.000Z') })],
+        lastActor: DISPATCHER_ACTOR,
+      },
+    });
+  }
+
+  it('fires at the slot with no jitter when a job’s skipJitter says so', async () => {
+    // The dry-run case: one deliberate run on one stake, where a window
+    // up to 20h wide is a wait nobody can sit through and there is no
+    // estate to spread out.
+    const { db } = twoStakes({ manual_seat_review_dry_run: true });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    await dispatchDue(db, {
+      registry: jitteredWithSkip((stake) => stake.manual_seat_review_dry_run === true),
+      enqueue,
+      now: NOW,
+    });
+
+    expect(calls[0]?.delaySeconds).toBe(0);
+    // The stake that did not opt out keeps its deterministic offset —
+    // the skip is per stake, not a mode the job switches into.
+    expect(calls[1]?.delaySeconds).toBe(jitterDelaySeconds('westside', 'demo', 72_000));
+  });
+
+  it('keeps the jitter for a stake whose predicate answers false', async () => {
+    const { db } = twoStakes({ manual_seat_review_dry_run: false });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    await dispatchDue(db, {
+      registry: jitteredWithSkip((stake) => stake.manual_seat_review_dry_run === true),
+      enqueue,
+      now: NOW,
+    });
+
+    expect(calls.map((c) => c.delaySeconds)).toEqual([
+      jitterDelaySeconds('csnorth', 'demo', 72_000),
+      jitterDelaySeconds('westside', 'demo', 72_000),
+    ]);
+  });
+
+  it('leaves a job with no skipJitter entirely alone', async () => {
+    const { db } = twoStakes({ manual_seat_review_dry_run: true });
+    const { enqueue, calls } = makeEnqueue([]);
+
+    // Same flag on the doc, no predicate on the job: the dispatcher has
+    // no opinion about a field it cannot see.
+    await dispatchDue(db, { registry: jitteredWithSkip(undefined), enqueue, now: NOW });
+
+    expect(calls[0]?.delaySeconds).toBe(jitterDelaySeconds('csnorth', 'demo', 72_000));
+  });
+
+  it('treats a throwing predicate as “no skip” rather than failing the stake', async () => {
+    // It runs against a hand-edited document inside the per-stake loop.
+    // Letting the throw reach the per-stake catch would strand every
+    // sibling job's enqueue and stamp over a delivery-timing question.
+    const { db, writes } = twoStakes({});
+    const { enqueue, calls } = makeEnqueue([]);
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+    const summary = await dispatchDue(db, {
+      registry: jitteredWithSkip(() => {
+        throw new Error('boom');
+      }),
+      enqueue,
+      now: NOW,
+    });
+
+    expect(summary).toMatchObject({ enqueued: 2, failures: 0 });
+    expect(calls[0]?.delaySeconds).toBe(jitterDelaySeconds('csnorth', 'demo', 72_000));
+    expect(writes['stakeSchedules/csnorth']?.tasks[0]?.last_trigger_time).toBeDefined();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('skipJitter predicate threw'),
+      expect.objectContaining({ stakeId: 'csnorth', job: 'demo' }),
+    );
+    errorSpy.mockRestore();
   });
 
   it('leaves a task alone when its slot is still ahead', async () => {
