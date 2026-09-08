@@ -103,7 +103,7 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
       // closes the lost-update window: it proves `onAuthUserCreate`'s
       // own `setCustomUserClaims` already landed, so it can't clobber
       // the superadmin flag `syncSuperadminClaims` is about to add.
-      const user = await auth.createUser({ email: typedEmail });
+      const user = await auth.createUser({ email: typedEmail, emailVerified: true });
 
       const wasAbandoned = deliveryWaitsAbandoned();
       const seeded = await waitForDelivery(async () => {
@@ -147,7 +147,7 @@ describe.skipIf(!functionsEmulatorReachable)('syncSuperadminClaims (e2e)', () =>
     // `syncSuperadminClaims` the deterministic, retry-backed claim
     // author instead of leaving `onAuthUserCreate` as a sole
     // single-delivery author that flakes under CI load.
-    const user = await auth.createUser({ email: typedEmail });
+    const user = await auth.createUser({ email: typedEmail, emailVerified: true });
 
     const wasAbandoned = deliveryWaitsAbandoned();
     const seeded = await waitForDelivery(async () => {

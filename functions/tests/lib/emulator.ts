@@ -597,7 +597,12 @@ export async function makeSettledUser(
   functionsEmulatorReachable: boolean,
 ): Promise<string> {
   const { auth } = requireEmulators();
-  const user = await auth.createUser({ email });
+  // `emailVerified: true` because every sign-in path this helper stands in
+  // for produces a verified record — Google via the provider, email link by
+  // receiving the link. Admin `createUser` defaults to false, and
+  // `onAuthUserCreate` now returns early on an unverified record, so without
+  // this the baseline claim never lands and every caller's wait times out.
+  const user = await auth.createUser({ email, emailVerified: true });
   if (functionsEmulatorReachable) {
     // `onAuthUserCreate` stamps `canonical` via `canonicalize()`
     // (lowercase + Gmail-alias folding), not the typed email verbatim —
