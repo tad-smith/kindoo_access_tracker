@@ -119,7 +119,15 @@ describe.skipIf(!hasEmulators())('onAuthUserCreate', () => {
         emailVerified: false,
       });
 
-      await runOnAuthUserCreate(attacker);
+      // NOT `runOnAuthUserCreate`: that helper waits for the deployed trigger
+      // to stamp a `canonical` claim before running in-process, so the two do
+      // not race. Here the deployed trigger correctly stamps nothing, so there
+      // is no race to wait out — and the wait would time out, fail, and latch
+      // every later test in this file as skipped. Run the handler directly.
+      await (onAuthUserCreate as unknown as V1Runnable).run(attacker, {
+        eventId: 't',
+        timestamp: '',
+      });
 
       // No claims: the role row is not reachable by an unproven address.
       const refreshed = await auth.getUser(attacker.uid);
