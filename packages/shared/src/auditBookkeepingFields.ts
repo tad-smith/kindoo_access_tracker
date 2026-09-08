@@ -41,4 +41,7 @@ export const BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set<string>([
   // changed. Without it, every third day's stamp would fan a stake
   // audit row whose whole content is that stamp.
   'last_sync_reminder_date',
+  // Interval stamp for the quarterly manual-seat review. Same reason as
+  // the line above: a review went out, nothing about the stake changed.
+  'last_manual_seat_review_date',
 ]);

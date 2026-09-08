@@ -12,7 +12,8 @@
 // unit of work for one stake at one instant. `SyncReminderService`'s
 // `sendSyncReminderIfDue` is the shape to copy.
 
-import { SYNC_REMINDER_JOB, type TaskSchedule } from '@kindoo/shared';
+import { MANUAL_SEAT_REVIEW_JOB, SYNC_REMINDER_JOB, type TaskSchedule } from '@kindoo/shared';
+import { sendManualSeatReviewIfDue } from '../services/ManualSeatReviewService.js';
 import { sendSyncReminderIfDue } from '../services/SyncReminderService.js';
 
 export type ScheduledJob = {
@@ -20,6 +21,14 @@ export type ScheduledJob = {
   handler: (stakeId: string, now: Date) => Promise<unknown>;
   /** Schedule stamped onto a stake the first time the dispatcher sees the job. */
   defaultSchedule: TaskSchedule;
+  /**
+   * Spread this job's stakes across a window this many seconds wide,
+   * by a per-stake deterministic offset (`jitterDelaySeconds`). Absent
+   * or 0 ⇒ every stake fires at the slot. Set it on a job that fans out
+   * to many recipients per stake; leave it off for one that mails a
+   * handful.
+   */
+  jitterSeconds?: number;
   /**
    * Seeded `enabled` value. **`false` for everything.** A job that
    * appears on a stake by seeding must not start mailing that stake's
@@ -57,6 +66,37 @@ export const SCHEDULED_JOBS: JobRegistry = {
   [SYNC_REMINDER_JOB]: {
     handler: sendSyncReminderIfDue,
     defaultSchedule: { type: 'daily', hour: 6 },
+    defaultEnabled: false,
+  },
+
+  /**
+   * The quarterly manual-seat review (spec §9).
+   *
+   * **`monthly` is a CHECK cadence, not a mail cadence — there is
+   * deliberately no `quarterly` shape.** The handler's own
+   * `MANUAL_SEAT_REVIEW_INTERVAL_DAYS = 75` is what decides whether
+   * anything sends, exactly as `daily` + a three-day backoff works for
+   * the sync reminder above. Adding a fourth schedule shape to express
+   * this would put the interval in two places and let them disagree;
+   * checking monthly also means a stake whose review slipped (a stake
+   * created mid-quarter, a month of failures) catches up at the next
+   * month rather than waiting a whole quarter.
+   *
+   * 02:00 stake-local plus up to 20h of jitter never crosses midnight,
+   * so delivery always lands on the same stake-local calendar date the
+   * slot fired on — which is what lets the date stamp measure from the
+   * slot rather than from wherever jitter happened to land. A wider
+   * window would break that; widen the window and you must move the
+   * stamp to delivery time.
+   *
+   * Jittered because one run fans out to one mail per scope — up to
+   * ~13 on a large stake — and dozens of stakes firing at the same slot
+   * would burst the whole estate's mail into one minute.
+   */
+  [MANUAL_SEAT_REVIEW_JOB]: {
+    handler: sendManualSeatReviewIfDue,
+    defaultSchedule: { type: 'monthly', day: 1, hour: 2 },
+    jitterSeconds: 72_000,
     defaultEnabled: false,
   },
 };

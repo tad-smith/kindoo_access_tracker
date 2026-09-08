@@ -53,6 +53,19 @@ import { SCHEDULED_JOBS, type JobRegistry } from '../lib/taskRegistry.js';
 export const TASK_RUNNER_NAME = 'runScheduledTask';
 
 /**
+ * Cloud Tasks' patience for one attempt, pinned rather than left to the
+ * 10-minute default.
+ *
+ * It must stay ABOVE `runScheduledTask`'s own `timeoutSeconds` (300).
+ * Below it, Cloud Tasks would cancel a run that is still mailing and
+ * retry it — and since the handler's date stamp is written last, the
+ * retry re-mails every scope that already succeeded. Above it, the
+ * function's own timeout fires first and returns a 504 that names the
+ * stake in the logs. The 30s of slack covers cold start and dispatch.
+ */
+export const DISPATCH_DEADLINE_SECONDS = 330;
+
+/**
  * Logged once per completed run. **Load-bearing outside this repo:** the
  * `scheduled-dispatch-completed` log-based metric
  * (`infra/monitoring/`) matches this text and alerts on its ABSENCE,
@@ -78,8 +91,16 @@ export const DISPATCHER_ACTOR = {
 /** Payload `runScheduledTask` receives. */
 export type ScheduledTaskPayload = { stakeId: string; job: string };
 
-/** Enqueue one task. `id` is the Cloud Tasks dedupe key. */
-export type EnqueueTask = (payload: ScheduledTaskPayload, id: string) => Promise<void>;
+/**
+ * Enqueue one task. `id` is the Cloud Tasks dedupe key;
+ * `delaySeconds` holds the task in the queue that long before delivery
+ * (0 = deliver now).
+ */
+export type EnqueueTask = (
+  payload: ScheduledTaskPayload,
+  id: string,
+  delaySeconds: number,
+) => Promise<void>;
 
 export type DispatchOptions = {
   registry: JobRegistry;
@@ -140,6 +161,45 @@ export function scheduledTaskId(stakeId: string, job: string, now: Date): string
   // `2026-09-05T14:03:00.000Z` → `20260905T14`.
   const bucket = now.toISOString().slice(0, 13).replace(/[-:]/g, '');
   return `${stakeId}--${job}--${bucket}`.replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+/**
+ * This stake's offset into a job's jitter window, in whole seconds.
+ *
+ * **Deterministic, never random.** A stake gets the same offset for the
+ * same job forever, so "when does stake X run its review?" has an answer
+ * in an incident review and a test can assert it. Random would spread
+ * the load equally well and be unreproducible.
+ *
+ * The job key is hashed alongside the stake id so two jittered jobs
+ * never land one stake on the same second — hashing the stake alone
+ * would give it one offset that every job it holds shares.
+ *
+ * FNV-1a 32-bit: a few lines, no dependency, and far better spread over
+ * short slug-shaped keys than a sum-of-chars would give. Nothing here is
+ * a security boundary.
+ *
+ * Absent, zero or non-finite `jitterSeconds` ⇒ 0, i.e. fire at the slot.
+ */
+export function jitterDelaySeconds(
+  stakeId: string,
+  job: string,
+  jitterSeconds: number | undefined,
+): number {
+  if (jitterSeconds === undefined || !Number.isFinite(jitterSeconds)) return 0;
+  const window = Math.floor(jitterSeconds);
+  if (window <= 0) return 0;
+  return fnv1a32(`${stakeId}--${job}`) % window;
+}
+
+/** FNV-1a, 32-bit. `Math.imul` keeps the product inside 32 bits. */
+function fnv1a32(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
 }
 
 /**
@@ -225,8 +285,20 @@ export async function dispatchDue(
         if (!isTaskDue(task, now)) continue;
 
         const id = scheduledTaskId(stakeId, task.job, now);
+        // A jittered job is held in the queue for a per-stake offset so
+        // dozens of stakes sharing a slot don't burst their sends at
+        // once. It changes delivery only — the stamp below still happens
+        // at ENQUEUE time, so `next_trigger_time` advances immediately
+        // and a task waiting in the queue can't be re-enqueued behind
+        // itself; and the Cloud Tasks id keeps its reservation for the
+        // whole wait, so same-hour dedupe is unaffected.
+        const delaySeconds = jitterDelaySeconds(
+          stakeId,
+          task.job,
+          registry[task.job]?.jitterSeconds,
+        );
         try {
-          await enqueue({ stakeId, job: task.job }, id);
+          await enqueue({ stakeId, job: task.job }, id, delaySeconds);
           summary.enqueued += 1;
         } catch (err) {
           if (errorCode(err) === TASK_ALREADY_EXISTS) {
@@ -430,8 +502,18 @@ function messageOf(err: unknown): string {
 }
 
 /** Production enqueuer — the Cloud Tasks queue the Firebase CLI provisions for `runScheduledTask`. */
-function enqueueViaCloudTasks(payload: ScheduledTaskPayload, id: string): Promise<void> {
-  return getFunctions().taskQueue<ScheduledTaskPayload>(TASK_RUNNER_NAME).enqueue(payload, { id });
+function enqueueViaCloudTasks(
+  payload: ScheduledTaskPayload,
+  id: string,
+  delaySeconds: number,
+): Promise<void> {
+  return getFunctions()
+    .taskQueue<ScheduledTaskPayload>(TASK_RUNNER_NAME)
+    .enqueue(payload, {
+      id,
+      dispatchDeadlineSeconds: DISPATCH_DEADLINE_SECONDS,
+      ...(delaySeconds > 0 ? { scheduleDelaySeconds: delaySeconds } : {}),
+    });
 }
 
 /**

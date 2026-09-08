@@ -139,6 +139,19 @@ export type Stake = {
    * no audit row.
    */
   last_sync_reminder_date?: string;
+  /**
+   * Stake-local `YYYY-MM-DD` on which the quarterly manual-seat review
+   * last went out. Absent ⇒ never sent, so the next run sends.
+   *
+   * Unlike `last_sync_reminder_date` this is never deleted: the review
+   * is a cadence ("once a quarter"), not a response to a condition, so
+   * a quarter with no manual seats must not make the following month a
+   * fresh first send.
+   *
+   * Bookkeeping — listed in `BOOKKEEPING_FIELDS`, so stamping it fans
+   * no audit row.
+   */
+  last_manual_seat_review_date?: string;
 
   // ----- Bookkeeping -----
   last_modified_at: TimestampLike;

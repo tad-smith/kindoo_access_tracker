@@ -88,12 +88,20 @@ describe('runScheduledTask registration', () => {
   type Endpoint = {
     taskQueueTrigger?: { retryConfig?: { maxAttempts?: number } };
     secretEnvironmentVariables?: Array<{ key: string }>;
+    timeoutSeconds?: number;
   };
 
   it('is a task-queue function with a bounded retry budget', () => {
     const endpoint = (runScheduledTask as unknown as { __endpoint?: Endpoint }).__endpoint;
     expect(endpoint?.taskQueueTrigger).toBeDefined();
     expect(endpoint?.taskQueueTrigger?.retryConfig?.maxAttempts).toBe(3);
+  });
+
+  it('carries an explicit timeout well above the 60s default, since a job fans out mail', () => {
+    // A timeout retries the whole fan-out and re-mails every scope that
+    // already succeeded — the handler's date stamp is written last.
+    const endpoint = (runScheduledTask as unknown as { __endpoint?: Endpoint }).__endpoint;
+    expect(endpoint?.timeoutSeconds).toBe(300);
   });
 
   it('has RESEND_API_KEY mounted, since registered jobs (e.g. the sync reminder) can send email', () => {

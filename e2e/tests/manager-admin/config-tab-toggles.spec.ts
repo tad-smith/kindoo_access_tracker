@@ -5,9 +5,9 @@
 // (`apps/web/src/features/manager/configuration/ConfigurationPage.test.tsx`).
 // What only this layer can prove is the writes themselves: that the
 // rules admit a manager flipping each one, that a slider writes its own
-// field and nothing else, that the sync-reminder transaction rewrites
-// the tasks array without disturbing the dispatcher's
-// `next_trigger_time`, and that no schedule document is created when
+// field and nothing else, that a scheduled-job transaction rewrites the
+// tasks array without disturbing the dispatcher's `next_trigger_time`
+// or another job's row, and that no schedule document is created when
 // the dispatcher has not seeded one.
 
 import { expect, test, type Page } from '@playwright/test';
@@ -26,6 +26,27 @@ const STAKE_ID = 'csnorth';
 // A slot far enough out that the card prints it rather than "within the
 // hour", and stable across whenever the suite happens to run.
 const NEXT_SLOT = '2099-01-02T13:00:00.000Z';
+
+type TaskFixture = {
+  job: string;
+  enabled: boolean;
+  schedule: Record<string, unknown>;
+  next_trigger_time: Date;
+};
+
+const reminderTask = (enabled: boolean): TaskFixture => ({
+  job: 'syncReminder',
+  enabled,
+  schedule: { type: 'daily', hour: 6 },
+  next_trigger_time: new Date(NEXT_SLOT),
+});
+
+const manualSeatReviewTask = (enabled: boolean): TaskFixture => ({
+  job: 'manualSeatReview',
+  enabled,
+  schedule: { type: 'monthly', day: 1, hour: 2 },
+  next_trigger_time: new Date(NEXT_SLOT),
+});
 
 async function signInViaTestHatch(page: Page, email: string): Promise<void> {
   await page.waitForFunction(() =>
@@ -68,26 +89,28 @@ async function signInAsManager(
   await signInViaTestHatch(page, email);
 }
 
-/** Seed the row the hourly dispatcher would have seeded. */
-async function seedReminderRow(enabled: boolean): Promise<void> {
+/** Seed the rows the hourly dispatcher would have seeded. */
+async function seedScheduleTasks(tasks: TaskFixture[]): Promise<void> {
   await writeDoc(`stakeSchedules/${STAKE_ID}`, {
-    tasks: [
-      {
-        job: 'syncReminder',
-        enabled,
-        schedule: { type: 'daily', hour: 6 },
-        next_trigger_time: new Date(NEXT_SLOT),
-      },
-    ],
+    tasks,
     lastActor: { email: 'dispatcher@example.com', canonical: 'dispatcher@example.com' },
   });
 }
 
-async function readReminderRow(): Promise<Record<string, unknown> | undefined> {
+/** Seed only the sync-reminder row, as most tests here only care about it. */
+async function seedReminderRow(enabled: boolean): Promise<void> {
+  await seedScheduleTasks([reminderTask(enabled)]);
+}
+
+async function readScheduledTask(job: string): Promise<Record<string, unknown> | undefined> {
   const docs = await listDocs('stakeSchedules');
   const doc = docs.find((d) => d.__id__ === STAKE_ID);
   const tasks = doc?.['tasks'] as Array<Record<string, unknown>> | undefined;
-  return tasks?.find((t) => t['job'] === 'syncReminder');
+  return tasks?.find((t) => t['job'] === job);
+}
+
+async function readReminderRow(): Promise<Record<string, unknown> | undefined> {
+  return readScheduledTask('syncReminder');
 }
 
 async function readStake(): Promise<Record<string, unknown> | undefined> {
@@ -151,22 +174,28 @@ test.describe('Config tab sliders (Configuration → Config)', () => {
     expect((await readReminderRow())?.['enabled']).toBe(true);
   });
 
-  test('the sync reminder sits under Email Notifications Enabled, indented', async ({ page }) => {
+  test('the sync reminder and the quarterly review sit under Email Notifications Enabled, indented', async ({
+    page,
+  }) => {
     await seedReminderRow(false);
     await signInAsManager(page, 'mgr-order@example.com');
     await page.goto(`/manager/configuration?tab=config`);
 
     const rows = page.getByTestId('config-toggles').locator('.kd-setting-toggle');
-    await expect(rows).toHaveCount(3);
+    await expect(rows).toHaveCount(4);
     await expect(rows.nth(0)).toHaveAttribute('data-testid', 'config-notifications-enabled-row');
     await expect(rows.nth(1)).toHaveAttribute('data-testid', 'config-sync-reminder-row');
-    await expect(rows.nth(2)).toHaveAttribute('data-testid', 'config-eq-president-access-row');
+    await expect(rows.nth(2)).toHaveAttribute('data-testid', 'config-manual-seat-review-row');
+    await expect(rows.nth(3)).toHaveAttribute('data-testid', 'config-eq-president-access-row');
     await expect(rows.nth(1)).toHaveClass(/kd-setting-toggle--sub/);
+    await expect(rows.nth(2)).toHaveClass(/kd-setting-toggle--sub/);
 
     // The indent is real geometry, not just a class.
     const parent = await rows.nth(0).boundingBox();
-    const child = await rows.nth(1).boundingBox();
-    expect(child!.x).toBeGreaterThan(parent!.x);
+    const reminderChild = await rows.nth(1).boundingBox();
+    const reviewChild = await rows.nth(2).boundingBox();
+    expect(reminderChild!.x).toBeGreaterThan(parent!.x);
+    expect(reviewChild!.x).toBeGreaterThan(parent!.x);
   });
 
   test('shows a placeholder, never an off switch, before its snapshot lands', async ({ page }) => {
@@ -311,6 +340,67 @@ test.describe('Config tab sliders (Configuration → Config)', () => {
     // Nothing wrote `enabled: false` on the way past.
     expect((await readReminderRow())?.['enabled']).toBe(true);
   });
+
+  // ---- Quarterly access reviews (D41) --------------------------------
+  //
+  // Same `ScheduledJobToggle` component as the sync reminder above, so
+  // the pending-placeholder and unseeded-disabled states are already
+  // proven generically by that job's tests; re-running them here would
+  // just swap the testId. What's specific to a second row in the same
+  // array is that flipping one job's `enabled` must not disturb the
+  // other's, which the write test below checks directly.
+
+  test('is also greyed and locked, but still shows its own state, when the email switch is off', async ({
+    page,
+  }) => {
+    await seedScheduleTasks([reminderTask(false), manualSeatReviewTask(true)]);
+    await signInAsManager(page, 'mgr-msr-blocked@example.com', { notifications_enabled: false });
+    await page.goto(`/manager/configuration?tab=config`);
+
+    const toggle = page.getByTestId('config-manual-seat-review-enabled');
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('config-manual-seat-review-row')).toHaveClass(
+      /kd-setting-toggle--disabled/,
+    );
+
+    // Nothing wrote `enabled: false` on the way past.
+    expect((await readScheduledTask('manualSeatReview'))?.['enabled']).toBe(true);
+  });
+
+  test('a manager turning the quarterly review on writes only its own enabled, leaving the reminder row untouched', async ({
+    page,
+  }) => {
+    await seedScheduleTasks([reminderTask(false), manualSeatReviewTask(false)]);
+    await signInAsManager(page, 'mgr-msr-on@example.com');
+    await page.goto(`/manager/configuration?tab=config`);
+
+    const toggle = page.getByTestId('config-manual-seat-review-enabled');
+    await expect(toggle).toBeEnabled();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+    await expect(async () => {
+      const row = await readScheduledTask('manualSeatReview');
+      expect(row?.['enabled']).toBe(true);
+    }).toPass();
+
+    const row = await readScheduledTask('manualSeatReview');
+    expect(new Date(String(row?.['next_trigger_time'])).toISOString()).toBe(
+      new Date(NEXT_SLOT).toISOString(),
+    );
+    expect(row?.['schedule']).toEqual({ type: 'monthly', day: 1, hour: 2 });
+
+    const docs = await listDocs('stakeSchedules');
+    expect(docs[0]?.['lastActor']).toEqual({
+      email: 'mgr-msr-on@example.com',
+      canonical: 'mgr-msr-on@example.com',
+    });
+    expect(Object.keys(docs[0] ?? {}).sort()).toEqual(['__id__', 'lastActor', 'tasks']);
+    // The reminder row, seeded alongside it, is untouched by the flip.
+    expect((await readReminderRow())?.['enabled']).toBe(false);
+  });
 });
 
 // A real touch context: `devices['Desktop Chrome']` has no touch, and
@@ -332,6 +422,7 @@ test.describe('Config tab sliders on a touch phone', () => {
     for (const testId of [
       'config-notifications-enabled',
       'config-sync-reminder',
+      'config-manual-seat-review',
       'config-eq-president-access',
     ]) {
       await page.getByTestId(`${testId}-info`).tap();
