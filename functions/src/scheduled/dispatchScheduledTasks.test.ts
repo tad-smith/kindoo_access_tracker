@@ -390,6 +390,40 @@ describe('dispatchDue — selection and stamping', () => {
     expect(calls[1]?.delaySeconds).toBe(jitterDelaySeconds('westside', 'demo', 72_000));
   });
 
+  it('logs the delay it actually used, which is how a dry run is proved', async () => {
+    // A successful enqueue is otherwise silent, so nothing outside this
+    // process could tell 0 from a 6½-hour offset. On a staging stake
+    // whose sends are all suppressed, this line is one of the two
+    // independent confirmations that the flag was read at all.
+    const { db } = twoStakes({ manual_seat_review_dry_run: true });
+    const { enqueue } = makeEnqueue([]);
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+
+    await dispatchDue(db, {
+      registry: jitteredWithSkip((stake) => stake.manual_seat_review_dry_run === true),
+      enqueue,
+      now: NOW,
+    });
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('enqueued'),
+      expect.objectContaining({
+        stakeId: 'csnorth',
+        job: 'demo',
+        taskId: 'csnorth--demo--20260905T14',
+        delaySeconds: 0,
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.stringContaining('enqueued'),
+      expect.objectContaining({
+        stakeId: 'westside',
+        delaySeconds: jitterDelaySeconds('westside', 'demo', 72_000),
+      }),
+    );
+    infoSpy.mockRestore();
+  });
+
   it('keeps the jitter for a stake whose predicate answers false', async () => {
     const { db } = twoStakes({ manual_seat_review_dry_run: false });
     const { enqueue, calls } = makeEnqueue([]);

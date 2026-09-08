@@ -335,6 +335,17 @@ export async function dispatchDue(
         try {
           await enqueue({ stakeId, job: task.job }, id, delaySeconds);
           summary.enqueued += 1;
+          // One line per enqueue. `delaySeconds` is the observable
+          // proof of what the dispatcher decided: 0 where a job's
+          // `skipJitter` fired, the stake's deterministic offset
+          // otherwise. At target scale this is a couple of lines an
+          // hour, not a firehose.
+          logger.info('dispatchScheduledTasks: enqueued', {
+            stakeId,
+            job: task.job,
+            taskId: id,
+            delaySeconds,
+          });
         } catch (err) {
           if (errorCode(err) === TASK_ALREADY_EXISTS) {
             // Already enqueued for this hour by an earlier attempt.

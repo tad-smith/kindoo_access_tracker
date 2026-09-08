@@ -1005,6 +1005,69 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
     expect((await readStake()).last_manual_seat_review_date).toBeUndefined();
   });
 
+  it('reports both recipient sets per scope, so a run that mails nothing still says what it decided', async () => {
+    // The comparison is the dry run's whole output, and it has to
+    // survive a run that produces no mail to read it off — which is the
+    // rehearsal scenario below.
+    await seedDryRunStake();
+    await seedWard('BR', 'Brookside Ward');
+    await seedSeat({ member_canonical: 'ed@gmail.com', scope: 'BR' });
+    const { sender } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'BR', mailedTo: ['alice@gmail.com'], wouldHaveMailed: [] },
+      { scope: 'GE', mailedTo: ['alice@gmail.com'], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
+  }, 15_000);
+
+  it('logs every scope’s decision before the send, so the kill-switch cannot hide it', async () => {
+    // Recipient resolution and the redirect both happen before the
+    // email wrapper's `emailsEnabled` gate, which is what lets a
+    // suppressed run leave a complete record. Pinned because the
+    // operator's staging environment runs kill-switched, so these lines
+    // are the only evidence the rehearsal produces.
+    await seedDryRunStake({ notifications_enabled: false });
+    const { sender } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('mailing scope'),
+      expect.objectContaining({
+        stakeId: STAKE_ID,
+        scope: 'GE',
+        dryRun: true,
+        recipients: ['alice@gmail.com'],
+        intendedRecipients: ['bishop@gmail.com'],
+        emailSuppressed: true,
+      }),
+    );
+    info.mockRestore();
+  });
+
+  it('rehearses on a kill-switched stake: no mail, suppressed, both sets still reported', async () => {
+    // The exact run the operator will make on staging.
+    await seedDryRunStake({ notifications_enabled: false });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails).toHaveLength(0);
+    // `emailSuppressed` is the suppression signal; the status stays
+    // `sent` because a suppressed send is a decision that consumes the
+    // quarter, and that classification predates the dry run.
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, emailSuppressed: true });
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'GE', mailedTo: ['alice@gmail.com'], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
+  });
+
   it('still honours the email kill-switch, and says plainly that it did', async () => {
     // The kill-switch is the kill-switch. But an operator who set the
     // flag and then watched an empty inbox has no other way to tell this

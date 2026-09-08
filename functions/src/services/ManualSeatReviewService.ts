@@ -95,6 +95,17 @@ export type ManualSeatReviewOutcome = {
   emailSuppressed?: boolean;
   /** True when `stake.manual_seat_review_dry_run` redirected this run. */
   dryRun?: true;
+  /**
+   * Per-scope recipient report — **dry run only**, since a production
+   * run's recipients are the ones it mailed and there is nothing to
+   * compare them against.
+   *
+   * The comparison IS the dry run's output, and an operator rehearsing
+   * on a stake with `notifications_enabled: false` has no mail to read
+   * it off. Ordered as the run sent, and it includes a scope whose
+   * `wouldHaveMailed` is empty — that is the finding.
+   */
+  dryRunRecipients?: { scope: string; mailedTo: string[]; wouldHaveMailed: string[] }[];
 };
 
 /**
@@ -195,6 +206,7 @@ export async function sendManualSeatReviewIfDue(
   let scopesSkipped = 0;
   let attempted = 0;
   const failedScopes: string[] = [];
+  const dryRunRecipients: NonNullable<ManualSeatReviewOutcome['dryRunRecipients']> = [];
   for (const scope of sortScopes([...byScope.keys()])) {
     // The real rule runs either way. Under a dry run its answer is
     // reported — in the outcome, in the log, and in the mail's own body
@@ -233,6 +245,32 @@ export async function sendManualSeatReviewIfDue(
       continue;
     }
 
+    // One line per scope, BEFORE the send — and therefore before
+    // `notifyScopeManualSeatReview`'s kill-switch gate. Recipient
+    // resolution and the dry-run redirect both happen out here, so a
+    // stake with `notifications_enabled: false` still leaves a complete
+    // and truthful record of the decision this run made. That ordering
+    // is what makes a suppressed rehearsal legible at all; don't move
+    // the resolution behind the gate.
+    //
+    // Addresses in the payload follow `sendOne`, which logs `to:` on
+    // every send — established practice here, not a new disclosure.
+    logger.info('manualSeatReview: mailing scope', {
+      stakeId,
+      scope,
+      dryRun,
+      recipients,
+      ...(dryRun ? { intendedRecipients } : {}),
+      emailSuppressed: !callsResend,
+    });
+    if (dryRun) {
+      dryRunRecipients.push({
+        scope,
+        mailedTo: [...recipients],
+        wouldHaveMailed: [...intendedRecipients],
+      });
+    }
+
     // Sequential, with a gap between sends: Resend's default rate is 2
     // requests per second and a large stake fans out to ~13 scopes.
     if (callsResend && attempted > 0) await wait(SEND_GAP_MS);
@@ -260,7 +298,7 @@ export async function sendManualSeatReviewIfDue(
     mailsSent,
     mailsFailed,
     scopesSkipped,
-    ...(dryRun ? { dryRun: true as const } : {}),
+    ...(dryRun ? { dryRun: true as const, dryRunRecipients } : {}),
   };
 
   if (attempted === 0) {
