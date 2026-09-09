@@ -646,6 +646,26 @@ export type ManualSeatReviewGrant = {
   buildingNames: string[];
 };
 
+/**
+ * Present ⇒ this mail is an operator dry run (`Stake.manual_seat_review_dry_run`).
+ *
+ * It went to the Kindoo Managers rather than to the scope's real
+ * recipients, and carries who those would have been — an empty list
+ * being the interesting case, since in production that scope sends
+ * nothing at all.
+ */
+export type ManualSeatReviewDryRun = {
+  /** What the real recipient rule answered for this scope. May be empty. */
+  intendedRecipients: string[];
+  /**
+   * Who this mail actually went to (the Kindoo Managers). Optional only
+   * for callers that don't have it to hand — absent reads as "assume no
+   * overlap" in the banner, which is the safe direction: it never turns
+   * a true "nobody received it" into a false one.
+   */
+  mailedTo?: string[];
+};
+
 export type ManualSeatReviewEmailOpts = {
   /** Raw scope — `'stake'` or a ward_code. Decides the CTA route and the noun. */
   scope: string;
@@ -653,17 +673,22 @@ export type ManualSeatReviewEmailOpts = {
   scopeLabel: string;
   grants: ManualSeatReviewGrant[];
   link: string;
+  dryRun?: ManualSeatReviewDryRun;
 };
 
 /** Everything the subject and lead need, minus the CTA. */
 export type ManualSeatReviewConditions = Omit<ManualSeatReviewEmailOpts, 'link'>;
 
 export function buildManualSeatReviewSubject(o: ManualSeatReviewConditions): string {
-  return `[Stake Building Access] Quarterly access review — ${o.scopeLabel}`;
+  // The mark leads the subject, ahead of the scope: someone finding this
+  // in their inbox a week later must not read it as a real review.
+  const mark = o.dryRun ? `[${DRY_RUN_MARK}] ` : '';
+  return `[Stake Building Access] ${mark}Quarterly access review — ${o.scopeLabel}`;
 }
 
 export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): string {
   const lines: string[] = [
+    ...(o.dryRun ? [...dryRunBannerLines(o), ''] : []),
     `${manualSeatReviewLead(o)}.`,
     '',
     manualSeatReviewAction(o.scope, o.scopeLabel),
@@ -679,6 +704,15 @@ export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): str
 export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): string {
   return [
     `<div style="${WRAPPER}">`,
+    ...(o.dryRun
+      ? [
+          `<div style="${DRY_RUN_BANNER}">`,
+          ...dryRunBannerLines(o).map(
+            (line) => `<p style="${DRY_RUN_BANNER_PARA}">${escapeHtml(line)}</p>`,
+          ),
+          `</div>`,
+        ]
+      : []),
     `<p style="${PARA}">${escapeHtml(`${manualSeatReviewLead(o)}.`)}</p>`,
     `<p style="${PARA}">${escapeHtml(manualSeatReviewAction(o.scope, o.scopeLabel))}</p>`,
     `<table role="presentation" style="${TABLE}">`,
@@ -697,6 +731,78 @@ export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): str
 }
 
 const MANUAL_SEAT_REVIEW_CTA = 'Review the roster';
+
+/** One string, so subject and banner can never drift apart. */
+const DRY_RUN_MARK = 'DRY RUN';
+
+const DRY_RUN_BANNER =
+  'border:2px solid #b7791f;background:#fffaf0;border-radius:6px;padding:12px 16px;margin:0 0 20px';
+const DRY_RUN_BANNER_PARA = 'margin:0 0 8px;color:#744210';
+
+/**
+ * The banner, as plain sentences — the HTML part boxes them and the
+ * text part prints them, so the two can't say different things.
+ *
+ * Four jobs, in order. First, be unmistakable: a manager finding this in
+ * their inbox next week must not act on it as a real review. Second,
+ * name who the mail would really have gone to — that recipient rule is
+ * the part most likely to be wrong, and a dry run over every ward is
+ * the only place to check it without mailing a dozen bishoprics. Third,
+ * on a ward/branch scope, explain the CTA swap — otherwise the manager
+ * reading this reads the manager-seats link as the one bishoprics get,
+ * which is a wrong answer presented as a right one. Fourth, remind
+ * whoever is reading this — the one audience who can act on it — to
+ * clear the flag, since nothing else ever will.
+ */
+function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
+  const intended = o.dryRun?.intendedRecipients ?? [];
+  const mailedTo = o.dryRun?.mailedTo ?? [];
+  const noun = manualSeatReviewScopeNoun(o.scope, o.scopeLabel);
+  return [
+    `${DRY_RUN_MARK} — this is a test of the quarterly access review, sent only to the Kindoo ` +
+      `Managers. ${audienceReceivedClause(intended, mailedTo, noun)}`,
+    intended.length > 0
+      ? `A real run would have sent this to: ${intended.join(', ')}.`
+      : `A real run would have sent this to NOBODY: no one qualifies as a recipient for ` +
+        `${o.scopeLabel}, so in a real run this scope would have been skipped silently and its ` +
+        `manual seats would have gone unreviewed.`,
+    ...(o.scope === 'stake'
+      ? []
+      : [
+          `Because this is a rehearsal, the button below opens the manager seats view, not the ` +
+            `/bishopric/roster page a real run would send.`,
+        ]),
+    `Rehearsal done? Delete manual_seat_review_dry_run from the stake document — left set, the ` +
+      `next real quarterly review redirects here too.`,
+  ];
+}
+
+/**
+ * Whether this scope's real audience actually received the rehearsal —
+ * true only when it did NOT, since that is the claim the banner makes.
+ *
+ * On a stake-scope mail the real recipients ARE the Kindoo Managers, so
+ * "nobody received it" would be false; a ward/branch scope's bishopric
+ * can also overlap the managers in part (someone holding both roles).
+ * Compares by exact string, matching the canonicalised addresses both
+ * lists already carry.
+ */
+function audienceReceivedClause(intended: string[], mailedTo: string[], noun: string): string {
+  const overlap = intended.filter((address) => mailedTo.includes(address));
+  if (overlap.length === 0) {
+    return `Nobody on the ${noun} received it, and nothing below has been asked of anyone.`;
+  }
+  if (overlap.length === intended.length) {
+    return (
+      `Everyone this scope would really notify is also a Kindoo Manager, so this rehearsal did ` +
+      `reach them — but nothing below has been asked of anyone.`
+    );
+  }
+  return (
+    `${overlap.join(', ')} sit on both the ${noun} and the Kindoo Managers, so this rehearsal did ` +
+    `reach them — but nothing below has been asked of anyone.`
+  );
+}
 
 /**
  * The lead sentence. Spells the count off `COUNT_WORDS`, the way the
@@ -1118,27 +1224,47 @@ export async function notifyScopeManualSeatReview(
     scope: string;
     scopeLabel: string;
     grants: ManualSeatReviewGrant[];
+    /** Who this mail actually goes to — the Kindoo Managers under a dry run. */
     recipients: string[];
+    /** Present ⇒ operator dry run; carries the real rule's answer. */
+    dryRun?: ManualSeatReviewDryRun;
   },
 ): Promise<EmailSendResult> {
-  const { stakeId, stake, scope, scopeLabel, grants, recipients } = deps;
+  const { stakeId, stake, scope, scopeLabel, grants, recipients, dryRun } = deps;
   if (!emailsEnabled(stake, stakeId, 'manualSeatReview')) return 'suppressed';
   // Caller-guarded, so this is belt-and-braces: nothing to say is not a
-  // fault, so it must not read as one.
+  // fault, so it must not read as one. Note this tests the ACTUAL
+  // recipients — under a dry run an empty `dryRun.intendedRecipients` is
+  // the point of the mail, not a reason to withhold it.
   if (recipients.length === 0 || grants.length === 0) return 'suppressed';
 
   // A Kindoo Manager passes `/stake/roster`'s role gate through the
-  // manager superset, so the stake-scope link resolves for them.
+  // manager superset, so the stake-scope link resolves for them in every
+  // mode. A ward/branch scope's real CTA is `/bishopric/roster`, gated on
+  // the bishopric claim — under a dry run the audience is Kindoo Managers,
+  // who may hold no bishopric claim at all, or hold a different ward's, so
+  // that page either turns them away or (worse) silently shows the wrong
+  // ward. The dry-run CTA moves instead to `/manager/seats`, which the
+  // manager superset passes and which filters to this ward's manual
+  // grants — the same content the bishopric roster would show.
   const route =
     scope === 'stake'
       ? `/stake/roster?stake=${encodeURIComponent(stakeId)}`
-      : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
+      : dryRun
+        ? `/manager/seats?ward=${encodeURIComponent(scope)}&type=manual&stake=${encodeURIComponent(stakeId)}`
+        : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
   const link = safeBuildLink(deps, route);
   // A misconfigured base URL already wrote its own audit row. It is a
   // fault, not a decision, so it must not consume the caller's quarter.
   if (link === undefined) return 'failed';
 
-  const opts: ManualSeatReviewEmailOpts = { scope, scopeLabel, grants, link };
+  const opts: ManualSeatReviewEmailOpts = {
+    scope,
+    scopeLabel,
+    grants,
+    link,
+    ...(dryRun ? { dryRun } : {}),
+  };
   return await sendOne(deps, {
     payload: buildPayload({
       stake,

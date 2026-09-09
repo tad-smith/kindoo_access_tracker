@@ -1017,6 +1017,88 @@ describe('EmailService — pure builders', () => {
     expect(html.match(/Review the roster/g)).toHaveLength(1);
   });
 
+  it('dry-run banner explains the CTA swap on a ward/branch scope, in both parts', () => {
+    const opts = {
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['bishop@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: SEATS_LINK });
+    for (const part of [text, html]) {
+      expect(part).toContain('the button below opens the manager seats view');
+      expect(part).toContain('/bishopric/roster');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
+  it('dry-run banner says nobody received it when the real audience is disjoint from the managers', () => {
+    const opts = {
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['bishop@gmail.com'], mailedTo: ['alice@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    expect(text).toContain('Nobody on the ward received it, and nothing below has been asked');
+  });
+
+  it('dry-run banner does not claim nobody received it when the audience IS the real recipients', () => {
+    // The stake scope's real recipients are the Kindoo Managers — the
+    // same people the rehearsal mails — so "nobody received it" would
+    // be false on this scope specifically.
+    const opts = {
+      scope: 'stake',
+      scopeLabel: 'Stake',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['alice@gmail.com'], mailedTo: ['alice@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK });
+    for (const part of [text, html]) {
+      expect(part).not.toContain('Nobody on the stake received it');
+      expect(part).toContain('Everyone this scope would really notify is also a Kindoo Manager');
+      expect(part).toContain('nothing below has been asked of anyone');
+    }
+  });
+
+  it('dry-run banner names a partial overlap rather than claiming nobody received it', () => {
+    // A Kindoo Manager who also sits in the ward's bishopric legitimately
+    // shows up in both sets on a ward-scope mail.
+    const opts = {
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      dryRun: {
+        intendedRecipients: ['bishop@gmail.com', 'alice@gmail.com'],
+        mailedTo: ['alice@gmail.com', 'sleepy@gmail.com'],
+      },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    expect(text).not.toContain('Nobody on the ward received it');
+    expect(text).toContain('alice@gmail.com sit on both the ward and the Kindoo Managers');
+    expect(text).toContain('nothing below has been asked of anyone');
+  });
+
+  it('dry-run banner omits the CTA-swap line on the stake scope, but keeps the flag reminder', () => {
+    // The stake scope's CTA never changes under a dry run — its real
+    // recipients are already the managers — so the banner must not claim
+    // a swap that didn't happen.
+    const opts = {
+      scope: 'stake',
+      scopeLabel: 'Stake',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['alice@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK });
+    for (const part of [text, html]) {
+      expect(part).not.toContain('the button below opens the manager seats view');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
   // ---- quote safety across every html builder -------------------------------
 
   // Regression: a raw `"` inside an inline style or an interpolated value

@@ -819,3 +819,383 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     expect(stakeMail.text).toContain('Greenwood');
   }, 15_000);
 });
+
+// ---------------------------------------------------------------------------
+// Integration: the operator-only dry run.
+//
+// `stake.manual_seat_review_dry_run` is a hidden console-set flag that
+// redirects every scope's mail to the Kindoo Managers, so the real
+// templates, the real recipient rule and the real links can be exercised
+// against real data without mailing a dozen bishoprics. Everything else —
+// grouping, pacing, failure classification, the stamp — is the production
+// path unchanged.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => {
+  let restoreResend: (() => void) | undefined;
+
+  beforeAll(async () => {
+    await clearEmulators();
+    process.env['WEB_BASE_URL'] = 'https://stakebuildingaccess.org';
+  });
+  beforeEach(() => {
+    restoreResend = undefined;
+  });
+  afterEach(async () => {
+    if (restoreResend) restoreResend();
+    await clearEmulators();
+  });
+  afterAll(async () => {
+    await clearEmulators();
+    delete process.env['WEB_BASE_URL'];
+  });
+
+  /** The review-worthy stake plus the managers a dry run redirects to. */
+  async function seedDryRunStake(overrides: Partial<Stake> = {}): Promise<void> {
+    await seedReviewWorthyStake({ manual_seat_review_dry_run: true, ...overrides });
+    await seedManager('alice@gmail.com', true);
+    await seedManager('sleepy@gmail.com', false);
+  }
+
+  it('sends a ward’s mail to the managers and names who it would really have reached', async () => {
+    await seedDryRunStake();
+    await seedAccess('counselor@gmail.com', {
+      importer_callings: { GE: ['Bishopric First Counselor'] },
+    });
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, mailsSent: 1, scopes: 1 });
+    // Active managers only — an inactive one is no more a recipient here
+    // than anywhere else.
+    expect(emails[0]!.to).toEqual(['alice@gmail.com']);
+    // The recipient rule is the part most likely to be wrong, so the run
+    // still computes it and puts the answer where the operator reads it.
+    for (const part of [emails[0]!.text, emails[0]!.html!]) {
+      expect(part).toContain('A real run would have sent this to');
+      expect(part).toContain('bishop@gmail.com, counselor@gmail.com');
+    }
+  });
+
+  it('redirects the stake scope too, naming the managers as its intended recipients', async () => {
+    await seedStake({ manual_seat_review_dry_run: true });
+    await seedSeat({ scope: 'stake', reason: 'Stake activities' });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    // The stake scope's real recipients ARE the managers, so the redirect
+    // is a no-op on the address list — but the marking and the reported
+    // rule still have to be there, or a whole-stake dry run would leave
+    // one scope looking exactly like a real review.
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, mailsSent: 1 });
+    expect(emails[0]!.to).toEqual(['alice@gmail.com']);
+    expect(emails[0]!.subject).toContain('[DRY RUN]');
+    expect(emails[0]!.text).toContain('A real run would have sent this to: alice@gmail.com.');
+    // The stake scope's real recipients ARE the managers this rehearsal
+    // mails, so the banner must not claim nobody on the stake received
+    // it — that would be false on this scope specifically.
+    expect(emails[0]!.text).not.toContain('Nobody on the stake received it');
+    expect(emails[0]!.text).toContain(
+      'Everyone this scope would really notify is also a Kindoo Manager',
+    );
+  });
+
+  it('marks the mail in the subject and in both body parts', async () => {
+    await seedDryRunStake();
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    const email = emails[0]!;
+    // Ahead of the scope, so a mailbox list shows it without opening.
+    expect(email.subject).toBe(
+      '[Stake Building Access] [DRY RUN] Quarterly access review — Greenwood Ward',
+    );
+    for (const part of [email.text, email.html!]) {
+      expect(part).toContain('DRY RUN');
+      expect(part).toContain('sent only to the Kindoo Managers');
+      // `seedDryRunStake` seeds alice/sleepy as managers and the ward's
+      // bishopric is bishop@gmail.com — disjoint sets, so this claim is
+      // still true on this scope and must still be made.
+      expect(part).toContain('Nobody on the ward received it');
+    }
+    // The banner leads the body — nobody should have to scroll to find
+    // out this was a test.
+    expect(email.text.indexOf('DRY RUN')).toBe(0);
+    expect(email.html!.indexOf('DRY RUN')).toBeLessThan(email.html!.indexOf('Greenwood Ward'));
+    // Everything else is the real review: same table. The CTA is NOT the
+    // real one, though — a manager reading this may hold no bishopric
+    // claim (or the wrong ward's), so `/bishopric/roster` is not
+    // reachable, and even where it resolves it would show the wrong
+    // ward. The dry run points instead at the manager-reachable
+    // equivalent.
+    expect(email.text).toContain('Jane Doe (jane@gmail.com) — Ward music chair — Greenwood');
+    expect(email.text).toContain(
+      'https://stakebuildingaccess.org/manager/seats?ward=GE&type=manual&stake=manual-review-suite',
+    );
+    // The banner names /bishopric/roster (it says what the real mail
+    // would use), but that path is not the CTA — the button itself is
+    // the manager/seats link asserted above, and the banner says so, in
+    // both parts.
+    for (const part of [email.text, email.html!]) {
+      expect(part).toContain('the button below opens the manager seats view');
+      expect(part).toContain('/bishopric/roster');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
+  it('leaves the stake-scope CTA unchanged under a dry run', async () => {
+    // The stake scope's real recipients are already the managers, so
+    // there is no wrong-audience problem for `/stake/roster` to cause —
+    // it stays the CTA in both modes.
+    await seedStake({ manual_seat_review_dry_run: true });
+    await seedSeat({ scope: 'stake', reason: 'Stake activities' });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails[0]!.text).toContain(
+      'https://stakebuildingaccess.org/stake/roster?stake=manual-review-suite',
+    );
+    // The stake scope's own CTA never changes, so the banner does not
+    // claim it did.
+    expect(emails[0]!.text).not.toContain('the button below opens the manager seats view');
+    // The flag-removal reminder still applies to every scope's mail.
+    expect(emails[0]!.text).toContain('Delete manual_seat_review_dry_run from the stake document');
+  });
+
+  it('still mails a scope whose real recipient set is empty, saying so', async () => {
+    await seedDryRunStake();
+    // A second ward with a manual seat and only a limited-tier holder:
+    // in production this scope sends nothing and only logs.
+    await seedWard('BR', 'Brookside Ward');
+    await seedSeat({ member_canonical: 'ed@gmail.com', scope: 'BR' });
+    await seedAccess('eq@gmail.com', {
+      importer_callings: { BR: ['Elders Quorum President'] },
+      importer_limited_callings: { BR: ['Elders Quorum President'] },
+    });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    // Deliberate divergence from production: a scope that reaches nobody
+    // is the failure an operator would never notice, and this is the one
+    // run that can surface it. `scopesSkipped` still reports the real
+    // rule's answer — here it is the finding, not the consequence.
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, mailsSent: 2, scopesSkipped: 1 });
+    const brookside = emails.find((e) => e.subject.endsWith('Brookside Ward'))!;
+    expect(brookside.to).toEqual(['alice@gmail.com']);
+    for (const part of [brookside.text, brookside.html!]) {
+      expect(part).toContain('A real run would have sent this to NOBODY');
+      expect(part).toContain('skipped silently');
+    }
+  }, 15_000);
+
+  it('sends nothing for that same empty scope in a production run', async () => {
+    // The paired half of the case above, on identical data minus the
+    // flag: the divergence has to be the flag's doing and nothing else.
+    await seedReviewWorthyStake();
+    await seedManager('alice@gmail.com', true);
+    await seedWard('BR', 'Brookside Ward');
+    await seedSeat({ member_canonical: 'ed@gmail.com', scope: 'BR' });
+    await seedAccess('eq@gmail.com', {
+      importer_callings: { BR: ['Elders Quorum President'] },
+      importer_limited_callings: { BR: ['Elders Quorum President'] },
+    });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', mailsSent: 1, scopesSkipped: 1 });
+    expect(outcome.dryRun).toBeUndefined();
+    expect(emails.map((e) => e.subject)).toEqual([
+      '[Stake Building Access] Quarterly access review — Greenwood Ward',
+    ]);
+  });
+
+  it('consumes the quarter, exactly as a real run does', async () => {
+    // The operator chose a run that spends the quarter over one that is
+    // repeatable: a dry run is a real run with the addresses swapped.
+    await seedDryRunStake();
+    const { sender } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, sentOn: TODAY });
+    expect((await readStake()).last_manual_seat_review_date).toBe(TODAY);
+  });
+
+  it('reports no-recipients, and stamps nothing, when the stake has no active manager', async () => {
+    // Under a dry run "no real recipient" no longer reaches this status —
+    // that scope mails the managers instead. The only way left to land
+    // here is having nobody to show the run to at all, which is still
+    // nobody notified and still no quarter consumed.
+    await seedReviewWorthyStake({ manual_seat_review_dry_run: true });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome).toMatchObject({
+      status: 'no-recipients',
+      dryRun: true,
+      scopes: 1,
+      // Real recipients exist for GE (the bishop) — this scope is
+      // skipped only because there was no manager to show the
+      // rehearsal to, not because the real recipient rule found
+      // nobody. The per-scope accounting has to say so.
+      scopesSkipped: 1,
+    });
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'GE', mailedTo: [], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
+    expect(emails).toHaveLength(0);
+    expect((await readStake()).last_manual_seat_review_date).toBeUndefined();
+  });
+
+  it('reports both recipient sets per scope, so a run that mails nothing still says what it decided', async () => {
+    // The comparison is the dry run's whole output, and it has to
+    // survive a run that produces no mail to read it off — which is the
+    // rehearsal scenario below.
+    await seedDryRunStake();
+    await seedWard('BR', 'Brookside Ward');
+    await seedSeat({ member_canonical: 'ed@gmail.com', scope: 'BR' });
+    const { sender } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'BR', mailedTo: ['alice@gmail.com'], wouldHaveMailed: [] },
+      { scope: 'GE', mailedTo: ['alice@gmail.com'], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
+  }, 15_000);
+
+  it('logs every scope’s decision before the send, so the kill-switch cannot hide it', async () => {
+    // Recipient resolution and the redirect both happen before the
+    // email wrapper's `emailsEnabled` gate, which is what lets a
+    // suppressed run leave a complete record. Pinned because the
+    // operator's staging environment runs kill-switched, so these lines
+    // are the only evidence the rehearsal produces.
+    await seedDryRunStake({ notifications_enabled: false });
+    const { sender } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('mailing scope'),
+      expect.objectContaining({
+        stakeId: STAKE_ID,
+        scope: 'GE',
+        dryRun: true,
+        recipients: ['alice@gmail.com'],
+        intendedRecipients: ['bishop@gmail.com'],
+        emailSuppressed: true,
+      }),
+    );
+    info.mockRestore();
+  });
+
+  it('rehearses on a kill-switched stake: no mail, suppressed, both sets still reported', async () => {
+    // The exact run the operator will make on staging.
+    await seedDryRunStake({ notifications_enabled: false });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails).toHaveLength(0);
+    // `emailSuppressed` is the suppression signal; the status stays
+    // `sent` because a suppressed send is a decision that consumes the
+    // quarter, and that classification predates the dry run.
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, emailSuppressed: true });
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'GE', mailedTo: ['alice@gmail.com'], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
+  });
+
+  it('still honours the email kill-switch, and says plainly that it did', async () => {
+    // The kill-switch is the kill-switch. But an operator who set the
+    // flag and then watched an empty inbox has no other way to tell this
+    // apart from a broken feature.
+    await seedDryRunStake({ notifications_enabled: false });
+    const { sender, calls: emails } = mockResend([]);
+    restoreResend = _setResendSender(sender);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails).toHaveLength(0);
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true, emailSuppressed: true });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('DRY RUN suppressed by notifications_enabled=false'),
+      expect.objectContaining({ dryRun: true }),
+    );
+    warn.mockRestore();
+  });
+
+  it('warns while it is actually mailing, not only when it is suppressed', async () => {
+    // Severity tracks risk, not volume. A flag left set redirects a REAL
+    // quarter to the managers and the wards hear nothing for ~150 days;
+    // the suppressed case above is harmless. The mailing case must not be
+    // the quieter of the two.
+    await seedDryRunStake();
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails).toHaveLength(1);
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true });
+    expect(outcome.emailSuppressed).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('DRY RUN is sending mail'),
+      expect.objectContaining({ dryRun: true }),
+    );
+    warn.mockRestore();
+  });
+
+  it('changes nothing at all when the flag is absent', async () => {
+    await seedReviewWorthyStake();
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome.dryRun).toBeUndefined();
+    const email = emails[0]!;
+    expect(email.to).toEqual(['bishop@gmail.com']);
+    for (const part of [email.subject, email.text, email.html!]) {
+      expect(part).not.toContain('DRY RUN');
+      expect(part).not.toContain('A real run would have sent this to');
+    }
+  });
+
+  it('reads an explicit false as off', async () => {
+    await seedReviewWorthyStake({ manual_seat_review_dry_run: false });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(outcome.dryRun).toBeUndefined();
+    expect(emails[0]!.to).toEqual(['bishop@gmail.com']);
+    expect(emails[0]!.subject).not.toContain('DRY RUN');
+  });
+});
