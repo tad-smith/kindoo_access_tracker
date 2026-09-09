@@ -113,9 +113,7 @@ export function siteKeyLabel(
  */
 export function homeSiteName(
   stake:
-    | Pick<Stake, 'stake_name' | 'kindoo_expected_site_name' | 'kindoo_config'>
-    | null
-    | undefined,
+    Pick<Stake, 'stake_name' | 'kindoo_expected_site_name' | 'kindoo_config'> | null | undefined,
 ): string | null {
   if (!stake) return null;
   return (

@@ -42,8 +42,7 @@ export interface KindooSession {
 export type KindooSessionError = 'no-token' | 'no-eid';
 
 export type KindooSessionResult =
-  | { ok: true; session: KindooSession }
-  | { ok: false; error: KindooSessionError };
+  { ok: true; session: KindooSession } | { ok: false; error: KindooSessionError };
 
 function readToken(storage: Storage): string | null {
   const raw = storage.getItem('kindoo_token');

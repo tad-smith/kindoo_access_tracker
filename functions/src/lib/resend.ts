@@ -33,8 +33,7 @@ export type EmailPayload = {
  * surface a message string.
  */
 export type SendResult =
-  | { ok: true; id: string }
-  | { ok: false; error: { message: string; code?: string } };
+  { ok: true; id: string } | { ok: false; error: { message: string; code?: string } };
 
 /** Surface the trigger consumes — narrower than the SDK so tests can stub it. */
 export type ResendSender = {
