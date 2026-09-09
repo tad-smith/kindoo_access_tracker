@@ -96,7 +96,12 @@ export const SYNC_STALE_DAYS = 7;
  * stopped being true the moment a stale sync could fire on its own.
  */
 export type SyncReminderStatus =
-  'sent' | 'stake-missing' | 'setup-incomplete' | 'nothing-due' | 'backed-off' | 'no-managers';
+  | 'sent'
+  | 'stake-missing'
+  | 'setup-incomplete'
+  | 'nothing-due'
+  | 'backed-off'
+  | 'no-managers';
 
 export type SyncReminderOutcome = {
   stakeId: string;

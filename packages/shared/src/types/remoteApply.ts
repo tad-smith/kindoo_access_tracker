@@ -95,7 +95,12 @@ export type RemoteApplyDesktopWithId = RemoteApplyDesktop & { site_key: string }
  * SBA — the phone must not report that as "nothing happened".
  */
 export type RemoteApplyJobStatus =
-  'queued' | 'running' | 'applied' | 'partial' | 'failed' | 'cancelled';
+  | 'queued'
+  | 'running'
+  | 'applied'
+  | 'partial'
+  | 'failed'
+  | 'cancelled';
 
 export type RemoteApplyOutcomeCode =
   | 'applied'
