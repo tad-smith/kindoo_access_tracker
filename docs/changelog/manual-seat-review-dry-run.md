@@ -23,7 +23,7 @@ D41 is a one-way door. Turning **Quarterly access reviews** on for a real stake 
 
 ## The operator procedure
 
-Two variants. The staging one proves the machinery. The prod one is what removes the last place you would be trusting the flag rather than observing it.
+Two variants. The staging one proves the machinery cheaply. The prod one runs in **three passes**, and its ordering is the whole safety property — see "Why three passes" below before following it.
 
 ### Staging rehearsal
 
@@ -43,22 +43,39 @@ Read the log, not the inbox. On staging you can — and should — leave `notifi
 5. **Clear the stamp.** The run wrote `last_manual_seat_review_date` even though nothing sent. Delete it in the console, or the next real run will decline for a quarter.
 6. **Remove `manual_seat_review_dry_run`** from the document. Deleting the field is preferred over setting it `false`: the field's absence is the state the schema documents, and a `false` left lying around is a thing a future reader has to interpret.
 
-### Production rehearsal
+**Staging stops here — there is deliberately no mailed pass on staging.** The mailed pass below exists to inspect a real stake's rendered lists in a real inbox, and staging's seats, callings and manager set are fixtures, so a staging mail would render data that proves nothing about the stake you are actually about to enable. A staging send would also exercise staging's Resend key and sending domain rather than production's. If a template change needs a cheap visual check, turning `notifications_enabled` on for a staging dry run is harmless and available — it is just not part of this procedure.
 
-Same shape, with the kill-switch doing the protecting instead of the environment. This is the variant worth the trouble, because it runs against the callings data the real mail would use.
+### Production rehearsal — three passes
 
-1. Configuration → Config: turn **Email Notifications Enabled** off. Note that this suppresses *all* of the stake's mail while it is off, so keep the window short and do it outside working hours.
-2. Set `manual_seat_review_dry_run: true` on `stakes/{stakeId}`; delete `last_manual_seat_review_date`.
-3. Wait for the dispatch pass. Read the logs exactly as above — `delaySeconds: 0`, then one `mailing scope` line per scope with `dryRun: true`, `emailSuppressed: true`, and the two recipient lists.
-4. Check the `intendedRecipients` lists against what you expect each ward's bishopric to be. This is the whole exercise; everything else is scaffolding for it.
-5. Delete `last_manual_seat_review_date`, remove `manual_seat_review_dry_run`, turn **Email Notifications Enabled** back on.
-6. Delete `last_manual_seat_review_date` once more if step 5's ordering left one, then let the next pass run for real.
+The flag stays set across the first two passes. Clear `last_manual_seat_review_date` and back-date `next_trigger_time` between **every** pass: each pass consumes the quarter, and the dispatcher stamps `next_trigger_time` forward to the next monthly slot on each one.
 
-If step 4 turns up a wrong or empty recipient list, fix the callings data (or the rule) and rehearse again before re-enabling mail — that is the entire point of having spent the quarter.
+**Pass 1 — kill-switched. Proves the flag is read on this document while nothing *can* send.**
+
+1. Configuration → Config: turn **Email Notifications Enabled** off. This suppresses *all* of the stake's mail while it is off, so keep the window short and do it outside working hours.
+2. On `stakes/{stakeId}`: set `manual_seat_review_dry_run` to boolean `true`, and read the field name back off the document. See "The limitation" below for why that is not paranoia.
+3. On `stakes/{stakeId}`: delete `last_manual_seat_review_date`. On `stakeSchedules/{stakeId}`, back-date the `manualSeatReview` row's `next_trigger_time` to a past instant and confirm `enabled: true`.
+4. Wait for the next hourly dispatch pass, then read the logs: `delaySeconds: 0`, one `mailing scope` line per scope with `dryRun: true` and `emailSuppressed: true`, and the WARN naming the kill-switch.
+5. **Check every scope's `intendedRecipients` against who you expect that ward's bishopric to be.** This is the check the whole mode exists for. An empty list is a finding, not a blank. If anything here is wrong, fix the callings data or the rule and repeat pass 1 — do not go on to pass 2.
+
+**Pass 2 — mailed, to the Kindoo Managers only. The flag stays set.**
+
+6. Delete `last_manual_seat_review_date` again, and back-date `next_trigger_time` again.
+7. Turn **Email Notifications Enabled** back on. **Leave `manual_seat_review_dry_run` set.**
+8. Wait for the dispatch pass. One `[DRY RUN]`-marked mail per scope lands in the Kindoo Managers' inboxes, each naming in its banner who it would really have gone to.
+9. Read them as mail, not as logs: the subject mark, the banner's wording, the intended-recipient list as rendered, the grant table, and the CTA link — click it and confirm it lands on the right roster for that scope. These are the things no log line can check.
+
+**Pass 3 — the real run. The first time bishoprics are in scope at all.**
+
+10. Delete `last_manual_seat_review_date`, and remove `manual_seat_review_dry_run` from the document — delete the field rather than setting it `false`; the field's absence is the state the schema documents.
+11. Either back-date `next_trigger_time` to run it now, or leave it and let the next monthly slot fire it. Pass 3 is a real run, so there is no reason to hurry it.
+
+### Why three passes
+
+The ordering is the point, and it is worth stating rather than inferring from the step list. **Pass 1 proves the flag is read on that exact document while nothing is permitted to send** — the kill-switch, not the flag, is what protects it, so a misread flag costs nothing. **Pass 2 trusts that proof to send something real, and sends it only to the managers** — the mail is genuine, so the templates, the marking, the banner, the rendered recipient list and the live CTA links are all exercised, but a mistake still reaches nobody outside the people running the rehearsal. **Pass 3 is the first moment bishoprics can receive anything**, and by then the flag has been observed working twice on that document, once with mail impossible and once with mail flowing. Collapsing 1 and 2 into a single pass would mean the first mail the feature ever sends is sent on an unverified flag; skipping 2 would mean the first mail it ever sends goes to bishoprics. Either inverts the safety property the whole change exists for.
 
 ### The limitation
 
-Both layers read the same field off the same document, so **a misspelled field name fails both together**, and the run then looks exactly like a stake that simply is not in dry run: a non-zero `delaySeconds`, no `dryRun: true` anywhere, and — if `notifications_enabled` is on — real mail to real bishoprics. The observability proves the flag was read and acted on; it cannot prove you typed the right key. Reading the field back off the document is the only check for that, which is why it is step 1 and not a footnote. Doing the first rehearsal with the kill-switch off makes the failure harmless rather than merely unlikely.
+Both layers read the same field off the same document, so **a misspelled field name fails both together**, and the run then looks exactly like a stake that simply is not in dry run: a non-zero `delaySeconds`, no `dryRun: true` anywhere, and — if `notifications_enabled` is on — real mail to real bishoprics. The observability proves the flag was read and acted on; it cannot prove you typed the right key. Reading the field back off the document is the only check for that, which is why it sits in pass 1 rather than in a footnote. Pass 1's kill-switch is the other half of the answer: it makes that failure harmless rather than merely unlikely, which is precisely why pass 2 is not allowed to be the first pass.
 
 ## Why
 
