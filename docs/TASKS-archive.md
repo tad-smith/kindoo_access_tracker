@@ -8,6 +8,23 @@ Format is unchanged — see the header of `TASKS.md`.
 
 ---
 
+## [T-109] Operator dry run for the quarterly manual-seat review
+Status: done (2026-09-08 — PR #300)
+Owner: @backend-engineer + @docs-keeper
+Phase: cross-cutting
+
+[T-108] shipped a job that, on its first firing against a real stake, mails every ward's bishopric — computed from importer-sourced callings no test fixture can vouch for. The operator wanted to enable it on a real stake and watch what it produces without mailing a dozen bishoprics, and more sharply, wanted to prove the safety flag is actually being read before trusting it with real addresses. The second problem is what most of the design answers.
+
+**The flag.** `stake.manual_seat_review_dry_run?: boolean` — hidden, operator-only, no UI, set by hand in the Firestore console and removed again after the run. Modelled on `web_base_url_override` (`spec.md` §9), the escape hatch it sits beside. Every scope's mail redirects to the active Kindoo Managers; the real recipient rule still runs and its answer is **reported, not obeyed**. Subject and body are marked `[DRY RUN]` from one shared banner so the two parts can't drift.
+
+**The deliberate divergence.** A scope whose real recipient set is empty **still sends**, saying a real run would have reached nobody and would have skipped it silently. That silent skip is the failure an operator would never otherwise notice, so a rehearsal that reproduced it faithfully would report nothing.
+
+**The dispatcher seam.** `ScheduledJob.skipJitter?: (stake) => boolean` — the job owns the predicate, the dispatcher never names any job's field, and a throw is caught, logged at ERROR, and read as "no skip". `jitterDelaySeconds` is untouched and still pure. Needed because `csnorth`'s offset is 23,643s (6h 34m) and nobody can sit through that for a rehearsal.
+
+**Not free, and not repeatable.** The stamp is still written — a dry run consumes the quarter, chosen over a repeatable run — so deleting `last_manual_seat_review_date` in the console afterwards is a real step of the procedure. `notifications_enabled: false` still suppresses, with its own WARN.
+
+**Done.** Shipped on `feat/msr-dry-run` (PR #300): dry-run mode `24082fd`, both layers' observability `6ce77dd`. Recorded as `architecture.md` D42, amending D38's enqueue step and D41(b)/(c)/(e) in place. The operator procedure — staging and prod variants, and the honest limitation that both layers read the same field so a misspelling fails both together — is in `docs/changelog/manual-seat-review-dry-run.md`.
+
 ## [T-108] Quarterly manual-seat review
 Status: done (2026-09-06 — PR #298)
 Owner: @backend-engineer + @web-engineer + @docs-keeper
