@@ -45,6 +45,7 @@ export type { KindooConfig, OverCapEntry, Stake } from './stake.js';
 export type {
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
+  ChurchBuildingsMismatchPayload,
   KindooOnlyPayload,
   KindooUnparseablePayload,
   SbaOnlyRemovePayload,

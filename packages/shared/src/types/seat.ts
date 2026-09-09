@@ -63,6 +63,26 @@ export type DuplicateGrant = {
    * id→name at render time.
    */
   organization_id?: string | null;
+  /**
+   * Buildings on this grant whose door access the Church Access
+   * Automation grants directly, as observed from Kindoo's per-door
+   * `GrantedBy` data. The complement of `building_names` is what a
+   * Kindoo Manager added, and therefore what an `edit_auto` request may
+   * remove.
+   *
+   * TRI-STATE. Absent / `null` means "never observed" — NOT "none".
+   * Consumers must read unknown as "assume all of it is Church-granted":
+   * that direction locks the edit UI, it never unlocks it. `[]` is a
+   * real observation (the Church grants nothing on this grant).
+   *
+   * NOT clamped to `building_names` — it records what Kindoo said. A
+   * name here that is missing from `building_names` is a
+   * `buildings-mismatch` the Sync detector already surfaces; clamping on
+   * write would hide it.
+   *
+   * Server-written only, via the `church-buildings-mismatch` Sync fix.
+   */
+  church_granted_buildings?: string[] | null;
   detected_at: TimestampLike;
 };
 
@@ -91,6 +111,26 @@ export type Seat = {
   /** ISO date `YYYY-MM-DD` — `'temp'` only. */
   end_date?: string;
   building_names: string[];
+  /**
+   * Buildings on this grant whose door access the Church Access
+   * Automation grants directly, as observed from Kindoo's per-door
+   * `GrantedBy` data. The complement of `building_names` is what a
+   * Kindoo Manager added, and therefore what an `edit_auto` request may
+   * remove.
+   *
+   * TRI-STATE. Absent / `null` means "never observed" — NOT "none".
+   * Consumers must read unknown as "assume all of it is Church-granted":
+   * that direction locks the edit UI, it never unlocks it. `[]` is a
+   * real observation (the Church grants nothing on this grant).
+   *
+   * NOT clamped to `building_names` — it records what Kindoo said. A
+   * name here that is missing from `building_names` is a
+   * `buildings-mismatch` the Sync detector already surfaces; clamping on
+   * write would hide it.
+   *
+   * Server-written only, via the `church-buildings-mismatch` Sync fix.
+   */
+  church_granted_buildings?: string[] | null;
 
   // ----- Manual/temp linkage -----
   /** Request UUID that justifies this seat. Absent for `type='auto'`. */

@@ -412,6 +412,49 @@ describe('configuration buildingRenameBlocker', () => {
       ),
     ).toBeNull();
   });
+
+  it('blocks when the only reference is the primary church_granted_buildings snapshot (not in building_names)', () => {
+    // church_granted_buildings is NOT clamped to building_names (it
+    // records what Kindoo said, independently) — a rename could strand
+    // it even when building_names itself no longer mentions the old
+    // name.
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [
+        seat({
+          building_names: ['Maple Building'],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          church_granted_buildings: ['Black Forest'] as any,
+        }),
+      ],
+      [],
+    );
+    expect(msg).toContain('Can\'t rename "Black Forest"');
+    expect(msg).toContain('1 seat references it');
+  });
+
+  it('blocks when the only reference is a duplicate-grant church_granted_buildings snapshot', () => {
+    const msg = buildingRenameBlocker(
+      'Black Forest',
+      [
+        seat({
+          building_names: ['Maple Building'],
+          duplicate_grants: [
+            {
+              scope: 'PR',
+              type: 'manual',
+              building_names: ['Cedar Building'],
+              church_granted_buildings: ['Black Forest'],
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any,
+          ],
+        }),
+      ],
+      [],
+    );
+    expect(msg).toContain('Can\'t rename "Black Forest"');
+    expect(msg).toContain('1 seat references it');
+  });
 });
 
 // ---- Ward write-through on building rename (T-74) -------------------

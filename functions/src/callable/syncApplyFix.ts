@@ -104,6 +104,7 @@ import type {
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
+  ChurchBuildingsMismatchPayload,
   DuplicateGrant,
   KindooManager,
   KindooOnlyPayload,
@@ -308,6 +309,8 @@ export const syncApplyFix = onCall(
         );
       case 'buildings-mismatch':
         return applyBuildingsMismatch(stakeId, fix.payload as BuildingsMismatchPayload);
+      case 'church-buildings-mismatch':
+        return applyChurchBuildingsMismatch(stakeId, fix.payload as ChurchBuildingsMismatchPayload);
       case 'sba-only':
         return applySbaOnlyRemove(stakeId, fix.payload as SbaOnlyRemovePayload);
       default:
@@ -721,6 +724,14 @@ function patchGrant(
     reason?: string | null;
     building_names?: string[];
     /**
+     * Church Access Automation's observed subset of `building_names` for
+     * this grant. `[]` is a real observation and is written as-is —
+     * unlike `building_names`, an empty array here is not refused.
+     */
+    /** `null` clears it back to "never observed" — the safe, locking
+     *  state. Used when a write invalidates the stored provenance. */
+    church_granted_buildings?: string[] | null;
+    /**
      * Explicit because delete and write-`null` are different writes and the
      * handlers need both: `scope-mismatch` DELETES on a move to stake (the
      * absent field is the home representation, B-15) but writes an explicit
@@ -740,6 +751,8 @@ function patchGrant(
     if (patch.callings !== undefined) out.callings = patch.callings ?? [];
     if (patch.reason !== undefined) out.reason = patch.reason ?? FieldValue.delete();
     if (patch.building_names !== undefined) out.building_names = patch.building_names;
+    if (patch.church_granted_buildings !== undefined)
+      out.church_granted_buildings = patch.church_granted_buildings;
     if (patch.site) {
       out.kindoo_site_id = patch.site.op === 'delete' ? FieldValue.delete() : patch.site.value;
     }
@@ -762,6 +775,8 @@ function patchGrant(
     else delete next.reason;
   }
   if (patch.building_names !== undefined) next.building_names = patch.building_names;
+  if (patch.church_granted_buildings !== undefined)
+    next.church_granted_buildings = patch.church_granted_buildings;
   // On a duplicate entry `null` IS the home representation, so a delete and
   // a set-to-home land on the same value.
   if (patch.site) next.kindoo_site_id = patch.site.op === 'delete' ? null : patch.site.value;
@@ -1269,7 +1284,21 @@ async function applyTypeMismatch(
     const grant = grantAt(seat, slot);
     // `type` rides in the grant patch, NOT here: a top-level `type` on a
     // duplicate-surfaced fix would flip the PRIMARY's type as a side effect.
-    const grantPatch: Parameters<typeof patchGrant>[2] = { type: newType };
+    // A type flip invalidates the stored Church subset, and on PROMOTE it
+    // is GUARANTEED wrong rather than merely stale. A `manual` seat can
+    // only ever be stamped `[]`: check 6 fires PROMOTE the moment
+    // `directGrantBuildings` is non-empty and `continue`s, so a manual
+    // seat with a real Church grant never reaches check 9. Apply the
+    // promote and that `[]` now sits on a ward-scope AUTO seat, where it
+    // reads as "the Church grants nothing" and unlocks every building in
+    // the edit dialog — including the one the Church actually grants.
+    // Clearing to `null` restores "never observed", which locks, and the
+    // next Sync re-stamps it. DEMOTE clears it for the same reason, even
+    // though nothing reads a manual seat's copy.
+    const grantPatch: Parameters<typeof patchGrant>[2] = {
+      type: newType,
+      church_granted_buildings: null,
+    };
     const update: Record<string, unknown> = {
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
@@ -1628,7 +1657,86 @@ async function applyBuildingsMismatch(
     const slot = resolveGrantSlot(seat, payload);
     if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
     tx.update(seatRef, {
-      ...patchGrant(seat, slot, { building_names: newBuildingNames }),
+      // Replacing `building_names` INVALIDATES the stored Church subset:
+      // it was observed against the old set, and this write is the one
+      // place the two can disagree. The cascade guarantees
+      // `buildings-mismatch` and `church-buildings-mismatch` never apply
+      // in the same Sync pass (check 7 `continue`s before check 9), so
+      // without this the seat sits with stale provenance until a later
+      // round-trip — and a newly Church-granted building would render
+      // checked AND ENABLED, letting a manager edit the seat down to
+      // under-report. Clearing to `null` restores "never observed",
+      // which locks (the safe direction) and re-stamps on the next run.
+      ...patchGrant(seat, slot, {
+        building_names: newBuildingNames,
+        church_granted_buildings: null,
+      }),
+      last_modified_at: FieldValue.serverTimestamp(),
+      last_modified_by: actor,
+      lastActor: actor,
+    });
+    return { success: true, seatId: canonical };
+  });
+}
+
+/**
+ * `church-buildings-mismatch` — records which of the surfaced grant's
+ * buildings the Church Access Automation grants directly. Bookkeeping
+ * only: it never changes access, it records where existing access came
+ * from. Modeled on `applyBuildingsMismatch` above, with one deliberate
+ * difference — `[]` is a legitimate observation ("the Church grants
+ * nothing on this grant") and MUST be written, not refused. Refusing it
+ * would leave `church_granted_buildings` permanently unstamped for
+ * members whose Church grant really is empty, which is the exact bug
+ * this fix exists to prevent (the field's tri-state doc comment on
+ * `Seat.church_granted_buildings` — absent/null means "never observed",
+ * `[]` means "observed as empty").
+ */
+async function applyChurchBuildingsMismatch(
+  stakeId: string,
+  payload: ChurchBuildingsMismatchPayload | undefined,
+): Promise<SyncApplyFixResult> {
+  if (!payload || typeof payload !== 'object') {
+    throw new HttpsError('invalid-argument', 'payload required');
+  }
+  const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  // NO `?? []` here, unlike every sibling handler. `[]` is not "unknown"
+  // for this field — it is the affirmative observation that the Church
+  // grants nothing on this grant, and it UNLOCKS every building on the
+  // auto primary in the edit dialog. The tri-state's whole guarantee is
+  // that an unobserved value locks; coercing a missing key to `[]` is
+  // the one path that would turn a malformed payload into an unlock.
+  // (`applyBuildingsMismatch` survives its own `??` only because it
+  // rejects empty on the very next line.)
+  if (!Array.isArray(payload.churchGrantedBuildingNames)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'churchGrantedBuildingNames must be an array — omitting it is not "the Church grants nothing"',
+    );
+  }
+  const churchGrantedBuildingNames = dedupePreserveOrder(
+    cleanStringArray(payload.churchGrantedBuildingNames, 'churchGrantedBuildingNames'),
+  );
+  const canonical = canonicalEmail(memberEmail);
+  if (canonical === '') {
+    throw new HttpsError('invalid-argument', 'memberEmail did not canonicalize');
+  }
+
+  const db = getDb();
+  const seatRef = db.doc(`stakes/${stakeId}/seats/${canonical}`);
+  const actor = syncActor('church-buildings-mismatch');
+
+  return db.runTransaction<SyncApplyFixResult>(async (tx) => {
+    const snap = await tx.get(seatRef);
+    if (!snap.exists) {
+      return { success: false, error: 'seat not found' };
+    }
+    const seat = snap.data() as Seat;
+    // B-16/B-24: write the SURFACED grant, not unconditionally the primary.
+    const slot = resolveGrantSlot(seat, payload);
+    if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
+    tx.update(seatRef, {
+      ...patchGrant(seat, slot, { church_granted_buildings: churchGrantedBuildingNames }),
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,

@@ -77,6 +77,7 @@ async function seedSeat(opts: {
   building_names?: string[];
   sort_order?: number | null;
   organization_id?: string | null;
+  church_granted_buildings?: string[] | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? MEMBER_EMAIL;
@@ -96,6 +97,8 @@ async function seedSeat(opts: {
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
   if (opts.organization_id !== undefined) body.organization_id = opts.organization_id;
+  if (opts.church_granted_buildings !== undefined)
+    body.church_granted_buildings = opts.church_granted_buildings;
   await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
 }
 
@@ -1579,6 +1582,47 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // ----- type-mismatch -----
 
   describe("code='type-mismatch'", () => {
+    it('PROMOTE clears stored provenance, so a manual seat\u2019s [] cannot unlock an auto seat', async () => {
+      // Regression, PR #301 fourth review. This is the GUARANTEED-wrong
+      // case, not merely a stale window. A `manual` seat can only ever be
+      // stamped `[]`: check 6 fires PROMOTE the moment
+      // `directGrantBuildings` is non-empty and `continue`s, so a manual
+      // seat with a real Church grant never reaches check 9. Apply the
+      // promote with `[]` left behind and it now sits on a ward-scope AUTO
+      // seat, where `[]` reads as "the Church grants nothing" and unlocks
+      // every building in the edit dialog — including the one the Church
+      // actually grants.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        building_names: ['Maple Building'],
+        church_granted_buildings: [],
+      });
+      await requireEmulators().db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        reason: 'Ward Clerk',
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'type-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: ['Ward Clerk'] },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.type).toBe('auto');
+      // `null` is "never observed", which LOCKS. `[]` would unlock.
+      expect(seat.church_granted_buildings).toBeNull();
+    });
+
     it('promote (manual → auto): scope + buildings untouched, type flips, lastActor stamped', async () => {
       await seedManager();
       // Well-formed manual seat: callings empty, calling in reason (§6.1).
@@ -2258,6 +2302,177 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
     });
   });
 
+  // ----- church-buildings-mismatch -----
+  //
+  // Bookkeeping only: this fix never changes access, it records which of
+  // the grant's buildings the Church Access Automation grants directly.
+  // Unlike `buildings-mismatch`, `[]` is a legitimate observation ("the
+  // Church grants nothing on this grant") and must be WRITTEN, not
+  // refused — refusing it would leave the field permanently unstamped.
+
+  describe("code='church-buildings-mismatch'", () => {
+    it('writes church_granted_buildings; other fields untouched', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: ['Ward Clerk'],
+        building_names: ['Maple Building', 'Briargate Building'],
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'church-buildings-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                churchGrantedBuildingNames: ['Maple Building'],
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.church_granted_buildings).toEqual(['Maple Building']);
+      // building_names / scope / type / callings are a different axis.
+      expect(seat.building_names).toEqual(['Maple Building', 'Briargate Building']);
+      expect(seat.scope).toBe('CO');
+      expect(seat.type).toBe('manual');
+      expect(seat.callings).toEqual(['Ward Clerk']);
+      expect(seat.lastActor).toEqual({
+        email: 'SyncActor:church-buildings-mismatch',
+        canonical: 'SyncActor:church-buildings-mismatch',
+      });
+    });
+
+    it('writes an empty array — [] is a valid observation, not refused', async () => {
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: ['Ward Clerk'],
+        building_names: ['Maple Building'],
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'church-buildings-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                churchGrantedBuildingNames: [],
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.church_granted_buildings).toEqual([]);
+    });
+
+    it('buildings-mismatch clears stored provenance, so a stale Church subset cannot unlock', async () => {
+      // Regression, PR #301 third review. `buildings-mismatch` replaces
+      // `building_names`; the stored Church subset was observed against
+      // the OLD set. The detector cascade guarantees the two codes never
+      // apply in the same Sync pass (check 7 `continue`s before check 9),
+      // so leaving provenance behind means a building the Church newly
+      // grants renders checked AND ENABLED in the edit dialog until a
+      // later round-trip. Clearing to `null` restores "never observed",
+      // which locks.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Maple Building'],
+        church_granted_buildings: ['Maple Building'],
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'buildings-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                newBuildingNames: ['Maple Building', 'Cedar Building'],
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.building_names).toEqual(['Maple Building', 'Cedar Building']);
+      expect(seat.church_granted_buildings).toBeNull();
+    });
+
+    it('REJECTS an omitted churchGrantedBuildingNames rather than coercing it to []', async () => {
+      // Regression, PR #301 review. Every sibling handler defaults a
+      // missing array to `[]`. Here that is the one unsafe direction:
+      // `[]` is not "unknown", it is the affirmative observation that
+      // the Church grants nothing, and it UNLOCKS every building on the
+      // auto primary in the edit dialog. The tri-state's guarantee is
+      // that an unobserved value LOCKS, so a malformed payload must
+      // fail, not silently unlock.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Maple Building'],
+      });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'church-buildings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL },
+              },
+            },
+          }),
+        ),
+      ).rejects.toThrow(/churchGrantedBuildingNames must be an array/);
+      // And the seat is untouched — no partial write.
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.church_granted_buildings).toBeUndefined();
+    });
+
+    it('returns soft failure when the seat is missing', async () => {
+      await seedManager();
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'church-buildings-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                churchGrantedBuildingNames: ['Maple Building'],
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: false, error: 'seat not found' });
+    });
+  });
+
   // ----- sba-only (Remove From SBA — Kindoo-authoritative orphan delete) -----
   //
   // Kindoo is authoritative: an SBA seat with no Kindoo presence is an
@@ -2376,6 +2591,33 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       const seat = await readSeat();
       expect(seat.building_names).toEqual(['Lexington Building']);
       expect(seat.duplicate_grants[0]!.building_names).toEqual(['Black Forest', 'Annex']);
+    });
+
+    it('church-buildings-mismatch patches the duplicate, not the primary, and allows []', async () => {
+      await seedMergedSeat();
+      await run('church-buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        churchGrantedBuildingNames: [],
+        ...ref(),
+      });
+      const seat = await readSeat();
+      // The primary's field is untouched — this is the B-16/B-24 bug class:
+      // writing the primary when the row was surfaced from a duplicate.
+      expect(seat.church_granted_buildings).toBeUndefined();
+      expect(seat.duplicate_grants[0]!.church_granted_buildings).toEqual([]);
+    });
+
+    it('church-buildings-mismatch soft-fails when the named grant is no longer on the seat', async () => {
+      await seedMergedSeat();
+      const result = await run('church-buildings-mismatch', {
+        memberEmail: MEMBER_EMAIL,
+        churchGrantedBuildingNames: ['Annex'],
+        scope: 'GONE',
+        kindooSiteId: 'east-stake',
+      });
+      // Never fall back to the primary — falling back IS the bug.
+      expect(result).toMatchObject({ success: false });
+      expect((await readSeat()).church_granted_buildings).toBeUndefined();
     });
 
     it('kindoo-unparseable on a HOME duplicate keeps access rather than reaping one-way', async () => {

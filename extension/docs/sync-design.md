@@ -133,10 +133,12 @@ Iterate over the union of (SBA seat emails) ∪ (Kindoo user emails). For each e
 | seat (manual/temp) | Kindoo user, `derivedBuildings === null`, accessSchedules' rule set ≠ seat.building_names mapped to RIDs via v2.1 config | `buildings-mismatch` (AccessSchedules fallback) |
 | seat (auto) | Kindoo user, `derivedBuildings === null` (per-user derivation failed) | (buildings check skipped — fallback) |
 | seat (auto only) | Kindoo parsed callings ≠ seat `callings[]` as normalized sets (either direction), Kindoo set non-empty — see Stage 1 (e) | `callings-mismatch` (drift — Update SBA replaces the seat's `callings[]` with Kindoo's full parsed set) |
+| seat (any type) | Kindoo user, `directGrantBuildings !== null`, and the surfaced grant's stored `church_granted_buildings` is **absent** or differs from it **as a set** | `church-buildings-mismatch` (drift — Update SBA records the provenance; **last** in the cascade) |
+| seat (any type) | Kindoo user, `directGrantBuildings === null` (per-user derivation failed) | (church-buildings check skipped — a failed observation stamps nothing) |
 | seat | Kindoo user, all-good | (no row) |
 
 Severity:
-- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `callings-mismatch` → **drift** (an unambiguous SBA-side action is available).
+- `sba-only`, `kindoo-only`, `scope-mismatch`, `type-mismatch`, `buildings-mismatch`, `callings-mismatch`, `church-buildings-mismatch` → **drift** (an unambiguous SBA-side action is available).
 - `kindoo-unparseable` → **drift** for any home-site seat (all roles) with an unaligned seat. On a foreign site or an already-aligned seat it emits no row at all.
 - `kindoo-no-description` → **review** (a blank Kindoo Description yields nothing Sync can reconcile). Two paths reach this code: a member with **both** sides present (seat + blank-Description Kindoo user), and a **no-seat** member whose blank-Description Kindoo add would otherwise be a `manual` `kindoo-only` row (Guest, no church-direct grant — nothing to mint a seat from). In the no-seat case the row's `sba` block is `null`, the same as a `kindoo-only` row.
 
@@ -169,6 +171,8 @@ The detector's `buildings-mismatch` rule then, for ALL seat types:
 Wall-time estimate: ~313 per-user calls at concurrency 4 and ~150 ms median latency → ~12 s. The summary header still surfaces seat / user counts; the operator sees the per-user progress while the loop runs.
 
 **Every fix targets the grant its row was surfaced from (B-16).** `projectSeatForSite` returns the projection for the active site; the row's `sba` block IS that projection, so its `scope` / `kindooSiteId` name the surfaced grant. `buildCallableInput` puts them on every grant-writing payload via `surfacedGrantRef(d)`, and the callable resolves them to the primary or a `duplicate_grants[]` entry. No code is withheld any more — the interim `duplicateGuard.ts` is deleted, since the writes are correct rather than unavailable. A scope the seat no longer holds soft-fails; a payload with no scope keeps the historical primary write for older builds.
+
+**`SbaBlock.churchGrantedBuildings` is read off the FIRST contributing grant, not unioned.** `projectSeatForSite` unions `buildingNames` across every grant that projects onto the active site, because the manager is looking at one member's total access there. Provenance cannot be unioned that way: it is the value `church-buildings-mismatch` overwrites, and the payload's `SurfacedGrantRef` (`kindooSiteId` + `scope`) names the **first** contributor. Taking the first grant's value is what keeps the compared value and the written slot the same one. `toSbaBlock` — the single-grant path — reads `seat.church_granted_buildings` directly.
 
 **`scope-mismatch` sends the site-filtered scope (B-26).** `KindooBlock.siteScope` is the scope of the segment `pickSegmentForSite` chose — the same one the detector compared against to emit the row. `primaryScope` is the unfiltered pick and can name a segment on another site, so sending it moved the grant somewhere the row never mentioned. `kindoo-only` uses `siteScope` for the same reason.
 
@@ -289,6 +293,7 @@ Each discrepancy row gains one or two specific-action buttons. Per-row only — 
 | `scope-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'scope-mismatch'` carrying Kindoo's parsed primary scope. No "Update Kindoo" — Sync never writes SBA → Kindoo. |
 | `type-mismatch` | "Update SBA" only | Grants own the type decision (promote/demote), so the only action is Update SBA, which flips the seat to the grant-derived target (`grantTargetType`) via `syncApplyFix` with `code: 'type-mismatch'`. No "Update Kindoo" — the extension can't write church grants. |
 | `buildings-mismatch` | "Update SBA" only | `syncApplyFix` with `code: 'buildings-mismatch'`. Sources from `derivedBuildings` (the direct + rule-grant any-overlap chain) for ALL seat types — never the AccessSchedules-derived `buildingNames`, which misses direct grants and would wipe buildings for auto users. Update SBA refuses (button disabled) when `derivedBuildings === null` (per-user door read failed). No "Update Kindoo" — Sync never writes SBA → Kindoo. |
+| `church-buildings-mismatch` | "Update SBA" (`testId: update-sba`) | `syncApplyFix` with `code: 'church-buildings-mismatch'`, payload `{ …surfacedGrantRef, memberEmail, churchGrantedBuildingNames }`. **Bookkeeping — it changes no access.** It records which of the surfaced grant's buildings the Church Access Automation grants directly, into `seat.church_granted_buildings` (or the resolved `duplicate_grants[]` entry's), so the web `edit_auto` dialog can tell a Church grant from a manager-added one and offer Remove on only the latter (`spec.md` §6.1 Policy B, `architecture.md` D43). Sources from `directGrantBuildings` — the Church-granted subset of the same any-overlap door chain `derivedBuildings` runs over. Unlike `buildings-mismatch`, an **empty array is a legitimate observation and is written**, not refused: `[]` means the Church grants nothing on this grant, which is exactly the state that unlocks the dialog's controls, and refusing it would leave those members permanently unstamped. Only a **failed** derivation (`directGrantBuildings === null`) is refused, and the detector already suppresses the row in that case — `buildCallableInput`'s throw is defensive parity with the sibling case. No "Update Kindoo" — Sync never writes SBA → Kindoo. |
 | `kindoo-unparseable` | "Update SBA" (drift rows only — never on the review variant) | SBA-side: `syncApplyFix` with `code: 'kindoo-unparseable'`, payload `{ memberEmail, calling }` where `calling` is the raw Kindoo Description text. The home-site unaligned variant is drift and carries the button for every seat role (the no-primary fallback is review → no action per the review-guard invariant). On apply, the callable sets the seat to `scope='stake'`, **clears `kindoo_site_id`** (stake-scope ⇒ home, spec §15), preserves `type`, and writes the calling per the §6.1 convention (auto → `callings[]`; manual/temp → free-text `reason`, callings cleared, temp dates preserved). For an auto seat it reaps the OLD scope's `importer_callings` and then writes `importer_callings['stake'] = [calling]` **iff** the calling matches a `give_app_access` **stake** template — a bare template name (e.g. `Stake Clerk`) keeps stake-scope app access; a non-template calling earns no new grant (old scope still reaped, access doc deleted if it ends up empty). One coherent write (`writeStakeScopeAccessForUnparseable`). |
 | `kindoo-no-description` | none | Review-only. A blank Kindoo Description yields nothing Sync can reconcile, so no SBA-side action is offered; the operator decides manually. |
 
@@ -683,9 +688,13 @@ from the FULL parsed list, not
 everything — which would otherwise record the calling nowhere).
 
 **Detector check order (c + e).** Within the both-sides-present branch the order is
-scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → **callings-mismatch
-(last)**. Each `continue`s, so at most one row per email; a genuine type/scope/buildings drift
-preempts a calling reconciliation.
+scope-mismatch → type-mismatch (promote/demote) → buildings-mismatch → callings-mismatch →
+**church-buildings-mismatch (last)**. Each `continue`s, so at most one row per email; a genuine
+type/scope/buildings drift preempts a calling reconciliation, and every one of them preempts the
+provenance bookkeeping. `church-buildings-mismatch` sits last deliberately: it will fire for
+essentially every seat on a stake's first stamped run, and a bookkeeping row that outranked a real
+drift would bury the drift under it. The manager fixes the access first; the provenance row
+surfaces on a later run, once nothing else is wrong.
 
 **`callings-mismatch` is AUTO-only (e — operator decision 2026-05-30).** The diff fires only
 when the SBA seat `type === 'auto'`: compare the seat's `callings[]` against Kindoo's parsed

@@ -54,6 +54,7 @@ export const SYNC_DISCREPANCY_CODES = [
   'type-mismatch',
   'kindoo-unparseable',
   'buildings-mismatch',
+  'church-buildings-mismatch',
   'sba-only',
 ] as const;
 

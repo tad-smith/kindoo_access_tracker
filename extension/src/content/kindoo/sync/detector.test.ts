@@ -1486,6 +1486,7 @@ describe('detect', () => {
             // this test is strictly about buildings not drifting.
             reason: 'Building Greeter',
             building_names: ['Maple Building'],
+            church_granted_buildings: [],
           }),
         ],
         kindooUsers: [
@@ -1708,6 +1709,7 @@ describe('detect', () => {
             callings: [],
             reason: 'After-hours building access',
             building_names: ['Maple Building'],
+            church_granted_buildings: [],
           }),
         ],
         kindooUsers: [
@@ -1732,6 +1734,7 @@ describe('detect', () => {
             callings: [],
             reason: 'Visiting speaker',
             building_names: ['Maple Building'],
+            church_granted_buildings: ['Maple Building'],
           }),
         ],
         kindooUsers: [
@@ -1759,6 +1762,7 @@ describe('detect', () => {
             type: 'auto',
             callings: ['Sunday School Teacher'],
             building_names: ['Maple Building'],
+            church_granted_buildings: ['Maple Building'],
           }),
         ],
         kindooUsers: [
@@ -2846,6 +2850,7 @@ describe('detect + real door-grant derivation (B-25)', () => {
             type: 'auto',
             callings: ['Sunday School Teacher'],
             building_names: ['Maple Building'],
+            church_granted_buildings: ['Maple Building'],
           }),
         ],
         kindooUsers: [await enrichPartiallyCovered()],
@@ -2980,11 +2985,246 @@ describe('detect + real door-grant derivation (B-25)', () => {
             type: 'auto',
             callings: ['Sunday School Teacher'],
             building_names: ['Maple Building'],
+            church_granted_buildings: ['Maple Building'],
           }),
         ],
         kindooUsers: [enriched],
       }),
     );
     expect(result.discrepancies).toEqual([]);
+  });
+});
+
+describe('detect — church-buildings-mismatch (provenance bookkeeping)', () => {
+  it('sinks provenance rows below every other drift row, regardless of email order', () => {
+    // Regression, PR #301 review. Placing the check last in the cascade
+    // only stops a member with real drift from ALSO producing a
+    // provenance row; it says nothing about report order, and
+    // `compareDiscrepancies` sorted drift-then-email, so ~250 first-sweep
+    // provenance rows interleaved with the handful of real ones. The
+    // Kindoo Manager guide promises the opposite.
+    //
+    // `a@` sorts before `z@`, so email order alone would put the
+    // provenance row first. It must come last anyway.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'a@example.com',
+            member_email: 'a@example.com',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+            // provenance never observed → bookkeeping row
+          }),
+          seat({
+            member_canonical: 'z-orphan@example.com',
+            member_email: 'z-orphan@example.com',
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'a@example.com',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+          // z-orphan has no Kindoo presence → sba-only, a real drift row.
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(2);
+    expect(result.discrepancies[0]?.code).toBe('sba-only');
+    expect(result.discrepancies[1]?.code).toBe('church-buildings-mismatch');
+  });
+
+  it('emits a row when SBA has never recorded the Church-granted set', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+            // `church_granted_buildings` absent — never observed.
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('church-buildings-mismatch');
+    expect(row.severity).toBe('drift');
+    expect(row.reason).toBe(
+      "SBA has no record of which of this member's buildings come from the Church. " +
+        'Kindoo says the Church grants [Maple Building]; the seat lists [Maple Building].',
+    );
+    expect(row.sba?.churchGrantedBuildings).toBeNull();
+    expect(row.kindoo?.directGrantBuildings).toEqual(['Maple Building']);
+  });
+
+  it('emits the out-of-date wording when the stored set differs', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+            church_granted_buildings: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('church-buildings-mismatch');
+    expect(row.reason).toBe(
+      "SBA's record of the Church-granted buildings is out of date. " +
+        'SBA=[Maple Building], Kindoo=[Maple Building, Pine Creek Building].',
+    );
+    expect(row.sba?.churchGrantedBuildings).toEqual(['Maple Building']);
+  });
+
+  it('emits no row when the stored set already matches (order-independent)', () => {
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building', 'Pine Creek Building'],
+            church_granted_buildings: ['Pine Creek Building', 'Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building', 'Pine Creek Building'],
+            directGrantBuildings: ['Maple Building', 'Pine Creek Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('emits NO row when door-grant derivation failed, even with nothing stored', () => {
+    // The load-bearing case: a failed observation is not evidence. Filing
+    // off one would stamp a record that then reads as observed. The seat
+    // stays unstamped and self-heals on the next successful run.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: null,
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toEqual([]);
+  });
+
+  it('emits a row for an OBSERVED empty set against a stored non-empty one, and sends []', () => {
+    // `[]` means "the Church grants nothing on this grant" — a real
+    // observation, and the one that unlocks the web edit-seat controls.
+    // Manual seat so the auto DEMOTE branch (zero church grants) doesn't
+    // claim the row first.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'manual',
+            callings: [],
+            reason: 'Building Greeter',
+            building_names: ['Maple Building'],
+            church_granted_buildings: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Building Greeter)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: [],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('church-buildings-mismatch');
+    expect(row.reason).toBe(
+      "SBA's record of the Church-granted buildings is out of date. " +
+        'SBA=[Maple Building], Kindoo=[(none)].',
+    );
+    const input = buildCallableInput('csnorth', row);
+    expect(input.fix.code).toBe('church-buildings-mismatch');
+    expect(input.fix.payload).toMatchObject({
+      memberEmail: 'someone@example.com',
+      churchGrantedBuildingNames: [],
+    });
+  });
+
+  it('is suppressed while the member has higher-priority drift in the same run', () => {
+    // Last in the cascade: real drift outranks bookkeeping, so the
+    // provenance row waits for a later run. Here the seat's callings
+    // disagree with Kindoo AND provenance was never recorded.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            type: 'auto',
+            callings: ['Ward Clerk'],
+            building_names: ['Maple Building'],
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            description: 'Maple Ward (Sunday School Teacher)',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(1);
+    expect(result.discrepancies[0]?.code).toBe('callings-mismatch');
+  });
+
+  it('offers exactly one Update SBA action on the row', () => {
+    const result = detect(
+      baseInputs({
+        seats: [seat({ type: 'auto', callings: ['Sunday School Teacher'] })],
+        kindooUsers: [
+          kuser({
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+        ],
+      }),
+    );
+    const row = result.discrepancies[0]!;
+    expect(row.code).toBe('church-buildings-mismatch');
+    expect(fixActionsFor(row)).toEqual([
+      { side: 'sba', label: 'Update SBA', testId: 'update-sba' },
+    ]);
   });
 });

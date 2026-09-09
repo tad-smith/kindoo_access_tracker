@@ -110,9 +110,9 @@ export function isLimitedInStake(principal: Principal, stakeId: string): boolean
  *      granted access to every stake building; nothing to add or
  *      constrain. Hidden everywhere; no UI affordance. Ward-scope auto
  *      seats ARE editable from the roster pages via `EditSeatDialog`'s
- *      constrained `edit_auto` sub-mode (currently-granted buildings
- *      locked; additions only) — Policy 1 covers the stake-scope case
- *      only.
+ *      constrained `edit_auto` sub-mode (Church-granted buildings
+ *      locked; manager-added ones removable, D43) — Policy 1 covers the
+ *      stake-scope case only.
  *
  *   2. **D25 — a limited user edits temp seats and nothing else.** Auto
  *      and manual seats are durable grants outside their authority, so

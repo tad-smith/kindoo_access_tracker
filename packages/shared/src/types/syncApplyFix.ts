@@ -31,6 +31,11 @@
 //                                stake scope and set the calling from the
 //                                raw description text.
 //   - `buildings-mismatch`     → replace seat `building_names` wholesale.
+//   - `church-buildings-mismatch` → record which of the grant's buildings
+//                                the Church Access Automation grants
+//                                directly. Bookkeeping only: it never
+//                                changes access, it records where the
+//                                access came from.
 //   - `sba-only`               → delete an orphaned SBA seat (an SBA
 //                                seat with no Kindoo presence). Kindoo
 //                                is authoritative, so the seat is stale.
@@ -227,6 +232,17 @@ export type KindooUnparseablePayload = SurfacedGrantRef & {
   calling: string;
 };
 
+/** Payload for the `church-buildings-mismatch` fix (sync direction:
+ * kindoo-to-sba). Records which of the grant's buildings the Church
+ * Access Automation grants directly, so the edit-seat dialog can tell a
+ * Church grant from a manager-added one. Replaces
+ * `church_granted_buildings` wholesale (no merge); `[]` is a legitimate
+ * value meaning "the Church grants nothing on this grant". */
+export type ChurchBuildingsMismatchPayload = SurfacedGrantRef & {
+  memberEmail: string;
+  churchGrantedBuildingNames: string[];
+};
+
 /** Discriminated union — one `code` + matching `payload` per call. */
 export type SyncApplyFixInput = {
   stakeId: string;
@@ -237,6 +253,7 @@ export type SyncApplyFixInput = {
     | { code: 'type-mismatch'; payload: TypeMismatchPayload }
     | { code: 'kindoo-unparseable'; payload: KindooUnparseablePayload }
     | { code: 'buildings-mismatch'; payload: BuildingsMismatchPayload }
+    | { code: 'church-buildings-mismatch'; payload: ChurchBuildingsMismatchPayload }
     | { code: 'sba-only'; payload: SbaOnlyRemovePayload };
 };
 
