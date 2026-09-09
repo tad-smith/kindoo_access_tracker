@@ -261,4 +261,5 @@ export type SyncApplyFixInput = {
  * domain-level misses (no matching seat) and throws an `HttpsError` for
  * auth / shape errors. */
 export type SyncApplyFixResult =
-  { success: true; seatId: string } | { success: false; error: string };
+  | { success: true; seatId: string }
+  | { success: false; error: string };
