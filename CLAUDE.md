@@ -64,9 +64,9 @@ This governs *how* you read them, not whether they bind. `docs/spec.md` is still
 
 ### Subagent dispatch: pick the model from the brief, not the agent
 
-Nothing was pinned, so every agent inherited Opus. T-104 ran four Opus agents in parallel against five Opus review runs drawing on the same subscription pool, and hit the session limit twice.
+Nothing was pinned, so every agent inherited Opus. T-104 ran four Opus agents in parallel against five Opus review runs drawing on the same subscription pool, and hit the session limit twice. So the model is now a deliberate call — Opus where the work is judgement, Sonnet where it's transcription. The pins below run both directions.
 
-- **`docs-keeper` and `infra-engineer` are pinned to `model: sonnet`** in their frontmatter.
+- **`docs-keeper` is pinned to `model: opus`** in its frontmatter — docs work here is judgement, not transcription. **`infra-engineer` is pinned to `model: sonnet`.**
 - **`backend-engineer`, `web-engineer`, and `extension-engineer` are decided per dispatch.** Judge the brief that was actually written: one that names the file, the line, and the replacement is a targeted change and gets `model: "sonnet"`; one that states a goal and leaves the design open gets Opus, which is what an omitted override already means. Make the call **before** launching — the same agent transcribes on one dispatch and designs on the next, so the model rides on the brief, not on the agent's name.
 - **`effort: high` on every agent, never `xhigh`.** The frontmatter key is `effort`; accepted values are `low | medium | high | xhigh | max`.
 
