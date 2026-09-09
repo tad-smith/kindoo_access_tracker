@@ -1,7 +1,7 @@
 # Quarterly manual-seat review — operator dry run
 
 **Shipped:** 2026-09-08
-**Commits:** PR #300 (`feat/msr-dry-run`) — dry-run mode `24082fd`, observability at both layers `6ce77dd`, docs `<this commit>` (T-109)
+**Commits:** PR #300 (`feat/msr-dry-run`) — dry-run mode `24082fd`, observability at both layers `6ce77dd`, docs `72ff8b3` (T-109)
 
 ## What shipped
 
