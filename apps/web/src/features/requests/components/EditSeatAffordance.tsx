@@ -5,8 +5,8 @@
 //      affordance renders nothing for those rows (Church-granted access
 //      to every stake building; no editable surface). Ward-scope auto
 //      seats ARE editable via `EditSeatDialog`'s constrained edit_auto
-//      sub-mode (currently-granted buildings locked, additions only);
-//      Policy 1 covers the stake-scope case only.
+//      sub-mode (Church-granted buildings locked, manager-added ones
+//      removable — D43); Policy 1 covers the stake-scope case only.
 //
 //   2. **Role-for-scope.** Mirrors `RemovalAffordance`: same
 //      `canEditSeat` predicate (which composes the stake-auto carve-out

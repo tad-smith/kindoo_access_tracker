@@ -2334,6 +2334,41 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.church_granted_buildings).toEqual([]);
     });
 
+    it('REJECTS an omitted churchGrantedBuildingNames rather than coercing it to []', async () => {
+      // Regression, PR #301 review. Every sibling handler defaults a
+      // missing array to `[]`. Here that is the one unsafe direction:
+      // `[]` is not "unknown", it is the affirmative observation that
+      // the Church grants nothing, and it UNLOCKS every building on the
+      // auto primary in the edit dialog. The tri-state's guarantee is
+      // that an unobserved value LOCKS, so a malformed payload must
+      // fail, not silently unlock.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Maple Building'],
+      });
+      await expect(
+        syncApplyFix.run(
+          callableReq({
+            auth: { email: MANAGER_EMAIL },
+            data: {
+              stakeId: STAKE_ID,
+              fix: {
+                code: 'church-buildings-mismatch',
+                payload: { memberEmail: MEMBER_EMAIL },
+              },
+            },
+          }),
+        ),
+      ).rejects.toThrow(/churchGrantedBuildingNames must be an array/);
+      // And the seat is untouched — no partial write.
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.church_granted_buildings).toBeUndefined();
+    });
+
     it('returns soft failure when the seat is missing', async () => {
       await seedManager();
       const result = await syncApplyFix.run(

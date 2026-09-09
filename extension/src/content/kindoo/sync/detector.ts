@@ -676,6 +676,17 @@ export function kindooRole(kuser: KindooEnvironmentUser): KindooRole {
 function compareDiscrepancies(a: Discrepancy, b: Discrepancy): number {
   // drift first, then review.
   if (a.severity !== b.severity) return a.severity === 'drift' ? -1 : 1;
+  // `church-buildings-mismatch` sinks below every other drift row.
+  // It is bookkeeping — it records where existing access came from and
+  // never changes anyone's access — and the first sweep of a site emits
+  // one for nearly every seat. Sorted by email alongside the others, a
+  // handful of real scope / type / buildings drift would be buried in
+  // ~250 rows of it. Its placement last in the detector cascade already
+  // stops a member with real drift from producing one; this is the
+  // report-ordering half of the same intent.
+  const aBook = a.code === 'church-buildings-mismatch';
+  const bBook = b.code === 'church-buildings-mismatch';
+  if (aBook !== bBook) return aBook ? 1 : -1;
   return a.displayEmail.localeCompare(b.displayEmail);
 }
 

@@ -1671,8 +1671,22 @@ async function applyChurchBuildingsMismatch(
     throw new HttpsError('invalid-argument', 'payload required');
   }
   const memberEmail = requireString(payload.memberEmail, 'memberEmail');
+  // NO `?? []` here, unlike every sibling handler. `[]` is not "unknown"
+  // for this field — it is the affirmative observation that the Church
+  // grants nothing on this grant, and it UNLOCKS every building on the
+  // auto primary in the edit dialog. The tri-state's whole guarantee is
+  // that an unobserved value locks; coercing a missing key to `[]` is
+  // the one path that would turn a malformed payload into an unlock.
+  // (`applyBuildingsMismatch` survives its own `??` only because it
+  // rejects empty on the very next line.)
+  if (!Array.isArray(payload.churchGrantedBuildingNames)) {
+    throw new HttpsError(
+      'invalid-argument',
+      'churchGrantedBuildingNames must be an array — omitting it is not "the Church grants nothing"',
+    );
+  }
   const churchGrantedBuildingNames = dedupePreserveOrder(
-    cleanStringArray(payload.churchGrantedBuildingNames ?? [], 'churchGrantedBuildingNames'),
+    cleanStringArray(payload.churchGrantedBuildingNames, 'churchGrantedBuildingNames'),
   );
   const canonical = canonicalEmail(memberEmail);
   if (canonical === '') {

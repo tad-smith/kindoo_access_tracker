@@ -108,6 +108,25 @@ function errorMessage(err: unknown): string {
  * nothing to edit). Returns empty for any non-ward-auto seat as a
  * defense in depth.
  */
+/**
+ * The auto-primary's OWN buildings, Church-granted or manager-added.
+ *
+ * Distinct from `churchLockedBuildingsFor`, and the two are not
+ * interchangeable. This set answers "which buildings does the primary
+ * grant hold?" and is used ONLY to decide which visually-locked names
+ * are dup-ONLY (and must therefore stay out of an `edit_auto` wire
+ * body). Subtracting the Church subset instead would classify a
+ * manager-added primary building that ALSO sits on a same-scope dup as
+ * dup-only, dropping it from the primary on submit while its checkbox
+ * rendered checked and disabled — a silent destructive edit, and one
+ * Sync cannot see afterwards because the roster row's building set is
+ * the union of both grants and still matches Kindoo.
+ */
+function primaryOwnedBuildingsFor(seat: Seat): string[] {
+  if (seat.type !== 'auto' || seat.scope === 'stake') return [];
+  return [...seat.building_names];
+}
+
 function churchLockedBuildingsFor(seat: Seat): string[] {
   if (seat.type !== 'auto' || seat.scope === 'stake') return [];
   return seat.church_granted_buildings != null
@@ -233,6 +252,15 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
     return raw.filter((n) => visibleNames.has(n));
   }, [seat, visibleBuildings]);
 
+  // The primary grant's own buildings, clamped to visible. Only input to
+  // the dup-only classification below; never unioned into the wire body
+  // (an unchecked manager-added building must actually leave).
+  const primaryOwnedBuildings = useMemo(() => {
+    const raw = seat ? primaryOwnedBuildingsFor(seat) : [];
+    const visibleNames = new Set(visibleBuildings.map((b) => b.building_name));
+    return raw.filter((n) => visibleNames.has(n));
+  }, [seat, visibleBuildings]);
+
   // Initial form values are derived from the seat. `values` (not
   // `defaultValues`) re-syncs when the prop changes, so opening for a
   // different seat starts pre-populated correctly. Comment always
@@ -332,7 +360,7 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
     //     this is belt-and-braces against the rare race where a dup
     //     was added between the dialog open and submit.
     const dupOnlyBuildings = new Set(
-      lockedBuildings.filter((n) => !churchLockedBuildings.includes(n)),
+      lockedBuildings.filter((n) => !primaryOwnedBuildings.includes(n)),
     );
     const finalBuildings =
       editType === 'edit_auto'

@@ -270,10 +270,18 @@ export function planAddMerge(opts: {
  * slot matches, returns `null` — caller throws a `failed-precondition`
  * error.
  *
- * `edit_auto`: replaces `building_names` only. Per Policy B the template's
- * `allowed_buildings` are pre-checked AND disabled in the modal so the
- * incoming `building_names` is the template's set plus extras; no extra
- * server-side enforcement needed.
+ * `edit_auto`: replaces `building_names` only — and per Policy B (D43)
+ * the incoming set may now be SHORTER than the seat's, because a
+ * manager-added building is removable once Sync has stamped
+ * `church_granted_buildings`. Only the Church-granted subset is locked
+ * in the modal.
+ *
+ * Enforcement stays UI-only, deliberately. `seat.church_granted_buildings`
+ * is in hand here and this could reject a body that drops a Church name,
+ * but it isn't worth the coupling: SBA writes AccessRules and cannot
+ * revoke a Church-DIRECT door grant, so a dropped Church name costs
+ * nothing in Kindoo and the next Sync raises `buildings-mismatch` and
+ * restores it. Add the check if that ever stops being true.
  *
  * `edit_manual`: replaces `reason` + `building_names`. Manual seats
  * store the operator-typed calling name in `reason`. `seat.callings`

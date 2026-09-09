@@ -2996,6 +2996,47 @@ describe('detect + real door-grant derivation (B-25)', () => {
 });
 
 describe('detect — church-buildings-mismatch (provenance bookkeeping)', () => {
+  it('sinks provenance rows below every other drift row, regardless of email order', () => {
+    // Regression, PR #301 review. Placing the check last in the cascade
+    // only stops a member with real drift from ALSO producing a
+    // provenance row; it says nothing about report order, and
+    // `compareDiscrepancies` sorted drift-then-email, so ~250 first-sweep
+    // provenance rows interleaved with the handful of real ones. The
+    // Kindoo Manager guide promises the opposite.
+    //
+    // `a@` sorts before `z@`, so email order alone would put the
+    // provenance row first. It must come last anyway.
+    const result = detect(
+      baseInputs({
+        seats: [
+          seat({
+            member_canonical: 'a@example.com',
+            member_email: 'a@example.com',
+            type: 'auto',
+            callings: ['Sunday School Teacher'],
+            building_names: ['Maple Building'],
+            // provenance never observed → bookkeeping row
+          }),
+          seat({
+            member_canonical: 'z-orphan@example.com',
+            member_email: 'z-orphan@example.com',
+          }),
+        ],
+        kindooUsers: [
+          kuser({
+            username: 'a@example.com',
+            derivedBuildings: ['Maple Building'],
+            directGrantBuildings: ['Maple Building'],
+          }),
+          // z-orphan has no Kindoo presence → sba-only, a real drift row.
+        ],
+      }),
+    );
+    expect(result.discrepancies).toHaveLength(2);
+    expect(result.discrepancies[0]?.code).toBe('sba-only');
+    expect(result.discrepancies[1]?.code).toBe('church-buildings-mismatch');
+  });
+
   it('emits a row when SBA has never recorded the Church-granted set', () => {
     const result = detect(
       baseInputs({

@@ -268,6 +268,59 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(arg.building_names).not.toContain('Cedar Building');
   });
 
+  it('keeps a manager-added PRIMARY building that also sits on a same-scope dup (overlap is not dup-only)', async () => {
+    // Regression, PR #301 review. `dupOnlyBuildings` decides which
+    // visually-locked names must stay OUT of the wire body. It has to
+    // subtract the primary's FULL set, not the Church subset — the two
+    // differ exactly on manager-added primary buildings.
+    //
+    // Here Cedar is on the auto primary AND on a same-scope manual dup.
+    // Subtracting the Church subset would classify Cedar as dup-only,
+    // drop it from the wire body, and silently remove it from the
+    // PRIMARY grant while its checkbox rendered checked + disabled.
+    // Sync cannot see that afterwards: the roster row's building set is
+    // the union of both grants, so it still matches Kindoo.
+    // `applyBuildingsMismatch` writes the whole door-derived union onto
+    // the surfaced grant, so this overlap is routine, not exotic.
+    const user = userEvent.setup();
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [
+        makeBuilding({ building_id: 'maple', building_name: 'Maple Building' }),
+        makeBuilding({ building_id: 'cedar', building_name: 'Cedar Building' }),
+      ],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Maple Building', 'Cedar Building'],
+      church_granted_buildings: ['Maple Building'],
+      duplicate_grants: [
+        {
+          scope: 'CO',
+          type: 'manual',
+          building_names: ['Cedar Building'],
+          detected_at: FAKE_TS,
+        },
+      ],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    await user.type(screen.getByTestId('edit-seat-comment'), 'note');
+    await user.click(screen.getByTestId('edit-seat-confirm'));
+    await waitFor(() => expect(submitMutateAsync).toHaveBeenCalledTimes(1));
+    const arg = submitMutateAsync.mock.calls[0]?.[0] as Record<string, unknown> & {
+      building_names: string[];
+    };
+    expect(arg.type).toBe('edit_auto');
+    // Cedar is the primary's own building. An untouched submit must not
+    // strip it.
+    expect(arg.building_names).toEqual(
+      expect.arrayContaining(['Maple Building', 'Cedar Building']),
+    );
+    expect(arg.building_names).toHaveLength(2);
+  });
+
   it('a stamped seat whose dup grants still render locked (the dup branch is untouched)', () => {
     mockCatalogue(
       [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
