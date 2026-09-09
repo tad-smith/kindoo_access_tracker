@@ -1017,6 +1017,40 @@ describe('EmailService — pure builders', () => {
     expect(html.match(/Review the roster/g)).toHaveLength(1);
   });
 
+  it('dry-run banner explains the CTA swap on a ward/branch scope, in both parts', () => {
+    const opts = {
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['bishop@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: SEATS_LINK });
+    for (const part of [text, html]) {
+      expect(part).toContain('the button below opens the manager seats view');
+      expect(part).toContain('/bishopric/roster');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
+  it('dry-run banner omits the CTA-swap line on the stake scope, but keeps the flag reminder', () => {
+    // The stake scope's CTA never changes under a dry run — its real
+    // recipients are already the managers — so the banner must not claim
+    // a swap that didn't happen.
+    const opts = {
+      scope: 'stake',
+      scopeLabel: 'Stake',
+      grants: reviewGrants,
+      dryRun: { intendedRecipients: ['alice@gmail.com'] },
+    };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK });
+    for (const part of [text, html]) {
+      expect(part).not.toContain('the button below opens the manager seats view');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
   // ---- quote safety across every html builder -------------------------------
 
   // Regression: a raw `"` inside an inline style or an interpolated value

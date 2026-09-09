@@ -736,11 +736,16 @@ const DRY_RUN_BANNER_PARA = 'margin:0 0 8px;color:#744210';
  * The banner, as plain sentences — the HTML part boxes them and the
  * text part prints them, so the two can't say different things.
  *
- * Two jobs, in order. First, be unmistakable: a manager finding this in
+ * Four jobs, in order. First, be unmistakable: a manager finding this in
  * their inbox next week must not act on it as a real review. Second,
  * name who the mail would really have gone to — that recipient rule is
  * the part most likely to be wrong, and a dry run over every ward is
- * the only place to check it without mailing a dozen bishoprics.
+ * the only place to check it without mailing a dozen bishoprics. Third,
+ * on a ward/branch scope, explain the CTA swap — otherwise the manager
+ * reading this reads the manager-seats link as the one bishoprics get,
+ * which is a wrong answer presented as a right one. Fourth, remind
+ * whoever is reading this — the one audience who can act on it — to
+ * clear the flag, since nothing else ever will.
  */
 function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
   const intended = o.dryRun?.intendedRecipients ?? [];
@@ -753,6 +758,14 @@ function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
       : `A real run would have sent this to NOBODY: no one qualifies as a recipient for ` +
         `${o.scopeLabel}, so in a real run this scope would have been skipped silently and its ` +
         `manual seats would have gone unreviewed.`,
+    ...(o.scope === 'stake'
+      ? []
+      : [
+          `Because this is a rehearsal, the button below opens the manager seats view, not the ` +
+            `/bishopric/roster page a real run would send.`,
+        ]),
+    `Rehearsal done? Delete manual_seat_review_dry_run from the stake document — left set, the ` +
+      `next real quarterly review redirects here too.`,
   ];
 }
 
@@ -1191,11 +1204,20 @@ export async function notifyScopeManualSeatReview(
   if (recipients.length === 0 || grants.length === 0) return 'suppressed';
 
   // A Kindoo Manager passes `/stake/roster`'s role gate through the
-  // manager superset, so the stake-scope link resolves for them.
+  // manager superset, so the stake-scope link resolves for them in every
+  // mode. A ward/branch scope's real CTA is `/bishopric/roster`, gated on
+  // the bishopric claim — under a dry run the audience is Kindoo Managers,
+  // who may hold no bishopric claim at all, or hold a different ward's, so
+  // that page either turns them away or (worse) silently shows the wrong
+  // ward. The dry-run CTA moves instead to `/manager/seats`, which the
+  // manager superset passes and which filters to this ward's manual
+  // grants — the same content the bishopric roster would show.
   const route =
     scope === 'stake'
       ? `/stake/roster?stake=${encodeURIComponent(stakeId)}`
-      : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
+      : dryRun
+        ? `/manager/seats?ward=${encodeURIComponent(scope)}&type=manual&stake=${encodeURIComponent(stakeId)}`
+        : `/bishopric/roster?ward=${encodeURIComponent(scope)}&stake=${encodeURIComponent(stakeId)}`;
   const link = safeBuildLink(deps, route);
   // A misconfigured base URL already wrote its own audit row. It is a
   // fault, not a decision, so it must not consume the caller's quarter.

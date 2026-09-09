@@ -918,11 +918,47 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
     // out this was a test.
     expect(email.text.indexOf('DRY RUN')).toBe(0);
     expect(email.html!.indexOf('DRY RUN')).toBeLessThan(email.html!.indexOf('Greenwood Ward'));
-    // Everything else is the real review: same table, same live CTA.
+    // Everything else is the real review: same table. The CTA is NOT the
+    // real one, though — a manager reading this may hold no bishopric
+    // claim (or the wrong ward's), so `/bishopric/roster` is not
+    // reachable, and even where it resolves it would show the wrong
+    // ward. The dry run points instead at the manager-reachable
+    // equivalent.
     expect(email.text).toContain('Jane Doe (jane@gmail.com) — Ward music chair — Greenwood');
     expect(email.text).toContain(
-      'https://stakebuildingaccess.org/bishopric/roster?ward=GE&stake=manual-review-suite',
+      'https://stakebuildingaccess.org/manager/seats?ward=GE&type=manual&stake=manual-review-suite',
     );
+    // The banner names /bishopric/roster (it says what the real mail
+    // would use), but that path is not the CTA — the button itself is
+    // the manager/seats link asserted above, and the banner says so, in
+    // both parts.
+    for (const part of [email.text, email.html!]) {
+      expect(part).toContain('the button below opens the manager seats view');
+      expect(part).toContain('/bishopric/roster');
+      expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
+    }
+  });
+
+  it('leaves the stake-scope CTA unchanged under a dry run', async () => {
+    // The stake scope's real recipients are already the managers, so
+    // there is no wrong-audience problem for `/stake/roster` to cause —
+    // it stays the CTA in both modes.
+    await seedStake({ manual_seat_review_dry_run: true });
+    await seedSeat({ scope: 'stake', reason: 'Stake activities' });
+    await seedManager('alice@gmail.com', true);
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+
+    await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails[0]!.text).toContain(
+      'https://stakebuildingaccess.org/stake/roster?stake=manual-review-suite',
+    );
+    // The stake scope's own CTA never changes, so the banner does not
+    // claim it did.
+    expect(emails[0]!.text).not.toContain('the button below opens the manager seats view');
+    // The flag-removal reminder still applies to every scope's mail.
+    expect(emails[0]!.text).toContain('Delete manual_seat_review_dry_run from the stake document');
   });
 
   it('still mails a scope whose real recipient set is empty, saying so', async () => {
