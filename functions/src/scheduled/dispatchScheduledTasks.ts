@@ -44,10 +44,11 @@ import {
   isTaskDue,
   nextTriggerTime,
   type ScheduledTask,
+  type Stake,
   type StakeSchedule,
 } from '@kindoo/shared';
 import { APP_SA, getDb } from '../lib/admin.js';
-import { SCHEDULED_JOBS, type JobRegistry } from '../lib/taskRegistry.js';
+import { SCHEDULED_JOBS, type JobRegistry, type ScheduledJob } from '../lib/taskRegistry.js';
 
 /** Name of the `onTaskDispatched` function every scheduled job is enqueued against. */
 export const TASK_RUNNER_NAME = 'runScheduledTask';
@@ -192,6 +193,34 @@ export function jitterDelaySeconds(
   return fnv1a32(`${stakeId}--${job}`) % window;
 }
 
+/**
+ * Does this job waive its jitter for this stake?
+ *
+ * The predicate belongs to the job, so the dispatcher never names any
+ * job's field. It runs against a hand-edited Firestore document inside
+ * the per-stake loop, so a throw is caught here and read as "no skip":
+ * letting it reach the per-stake catch would strand every sibling job's
+ * enqueue and stamp over a question that only affects delivery timing.
+ */
+function skipsJitter(
+  job: ScheduledJob | undefined,
+  stake: Partial<Stake>,
+  stakeId: string,
+  jobName: string,
+): boolean {
+  if (!job?.skipJitter) return false;
+  try {
+    return job.skipJitter(stake) === true;
+  } catch (err) {
+    logger.error('dispatchScheduledTasks: skipJitter predicate threw — jittering as usual', {
+      stakeId,
+      job: jobName,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 /** FNV-1a, 32-bit. `Math.imul` keeps the product inside 32 bits. */
 function fnv1a32(input: string): number {
   let hash = 0x811c9dc5;
@@ -228,7 +257,11 @@ export async function dispatchDue(
   for (const stakeDoc of stakesSnap.docs) {
     const stakeId = stakeDoc.id;
     try {
-      const timezone = (stakeDoc.data() as { timezone?: string }).timezone;
+      // The whole doc, not just the timezone: a job's `skipJitter`
+      // predicate reads its own field off it, and this read already
+      // happened.
+      const stake = stakeDoc.data() as Partial<Stake>;
+      const timezone = stake.timezone;
       const scheduleRef = db.doc(`stakeSchedules/${stakeId}`);
       const scheduleSnap = await scheduleRef.get();
       const stored = scheduleSnap.exists ? (scheduleSnap.data() as Partial<StakeSchedule>) : null;
@@ -292,14 +325,27 @@ export async function dispatchDue(
         // and a task waiting in the queue can't be re-enqueued behind
         // itself; and the Cloud Tasks id keeps its reservation for the
         // whole wait, so same-hour dedupe is unaffected.
-        const delaySeconds = jitterDelaySeconds(
-          stakeId,
-          task.job,
-          registry[task.job]?.jitterSeconds,
-        );
+        // A job may waive its own jitter for a stake — see `skipJitter`.
+        // Decided here rather than inside `jitterDelaySeconds`, which
+        // stays pure and deterministic: its "stake X runs at second N,
+        // always" property is what makes an incident review possible.
+        const delaySeconds = skipsJitter(registry[task.job], stake, stakeId, task.job)
+          ? 0
+          : jitterDelaySeconds(stakeId, task.job, registry[task.job]?.jitterSeconds);
         try {
           await enqueue({ stakeId, job: task.job }, id, delaySeconds);
           summary.enqueued += 1;
+          // One line per enqueue. `delaySeconds` is the observable
+          // proof of what the dispatcher decided: 0 where a job's
+          // `skipJitter` fired, the stake's deterministic offset
+          // otherwise. At target scale this is a couple of lines an
+          // hour, not a firehose.
+          logger.info('dispatchScheduledTasks: enqueued', {
+            stakeId,
+            job: task.job,
+            taskId: id,
+            delaySeconds,
+          });
         } catch (err) {
           if (errorCode(err) === TASK_ALREADY_EXISTS) {
             // Already enqueued for this hour by an earlier attempt.

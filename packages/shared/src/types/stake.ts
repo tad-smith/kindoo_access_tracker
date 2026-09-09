@@ -120,6 +120,24 @@ export type Stake = {
    * Affects email links only — never routing, hosting, or auth domains.
    */
   web_base_url_override?: string;
+  /**
+   * Hidden operator-only escape hatch — there is no UI for it anywhere;
+   * set it by hand in the Firestore console, and expected to be removed
+   * again once the run it was set for has been read.
+   *
+   * True ⇒ the next quarterly manual-seat review on this stake sends
+   * every scope's mail to the active Kindoo Managers instead of to the
+   * scope's real recipients, marks it as a dry run, and names in the
+   * body who it would really have gone to. The real recipient rule
+   * still runs — it is reported, not obeyed — and a scope that would
+   * have reached nobody still sends, since that is the finding worth
+   * surfacing. Absent or false ⇒ off.
+   *
+   * Not repeatable: a dry run still stamps
+   * `last_manual_seat_review_date`, so it consumes the quarter.
+   * `notifications_enabled: false` still suppresses every send.
+   */
+  manual_seat_review_dry_run?: boolean;
 
   // ----- Operational state (server-written) -----
   /** Pools currently over cap; written at end of the over-cap recompute path. Empty array == all clear. */

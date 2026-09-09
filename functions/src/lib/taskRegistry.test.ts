@@ -6,7 +6,7 @@
 // one.
 
 import { describe, expect, it } from 'vitest';
-import { MANUAL_SEAT_REVIEW_JOB, SYNC_REMINDER_JOB } from '@kindoo/shared';
+import { MANUAL_SEAT_REVIEW_JOB, SYNC_REMINDER_JOB, type Stake } from '@kindoo/shared';
 import { sendManualSeatReviewIfDue } from '../services/ManualSeatReviewService.js';
 import { sendSyncReminderIfDue } from '../services/SyncReminderService.js';
 import { DISPATCH_DEADLINE_SECONDS } from '../scheduled/dispatchScheduledTasks.js';
@@ -70,6 +70,28 @@ describe('SCHEDULED_JOBS', () => {
     // since the date stamp is written last, the retry re-mails every
     // scope that already succeeded.
     expect(DISPATCH_DEADLINE_SECONDS).toBeGreaterThan(TIMEOUT_SECONDS);
+  });
+
+  it('skips jitter for a manual-seat-review dry run, and only for exactly `true`', () => {
+    // The typo this guards against passes CI silently otherwise: nothing
+    // else in the suite calls the real registry's `skipJitter`, every
+    // dispatcher test builds a synthetic predicate instead.
+    const skip = SCHEDULED_JOBS[MANUAL_SEAT_REVIEW_JOB]?.skipJitter;
+    expect(skip).toBeTypeOf('function');
+    expect(skip?.({ manual_seat_review_dry_run: true })).toBe(true);
+    expect(skip?.({})).toBe(false);
+    expect(skip?.({ manual_seat_review_dry_run: false })).toBe(false);
+    // Hand-edited in a console — a stringly-typed mis-entry is realistic
+    // and must not enable a dry run. Requires `=== true`, not truthiness.
+    expect(
+      skip?.({ manual_seat_review_dry_run: 'true' as unknown as boolean } as Partial<Stake>),
+    ).toBe(false);
+  });
+
+  it('leaves the sync reminder with no skipJitter at all', () => {
+    // A future edit giving it one should have to add this assertion back
+    // deliberately, not slip in unnoticed.
+    expect(SCHEDULED_JOBS[SYNC_REMINDER_JOB]?.skipJitter).toBeUndefined();
   });
 
   it('seeds every job disabled', () => {
