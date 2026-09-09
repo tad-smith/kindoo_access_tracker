@@ -728,7 +728,9 @@ function patchGrant(
      * this grant. `[]` is a real observation and is written as-is —
      * unlike `building_names`, an empty array here is not refused.
      */
-    church_granted_buildings?: string[];
+    /** `null` clears it back to "never observed" — the safe, locking
+     *  state. Used when a write invalidates the stored provenance. */
+    church_granted_buildings?: string[] | null;
     /**
      * Explicit because delete and write-`null` are different writes and the
      * handlers need both: `scope-mismatch` DELETES on a move to stake (the
@@ -1641,7 +1643,20 @@ async function applyBuildingsMismatch(
     const slot = resolveGrantSlot(seat, payload);
     if (slot === null) return { success: false, error: 'that grant is no longer on the seat' };
     tx.update(seatRef, {
-      ...patchGrant(seat, slot, { building_names: newBuildingNames }),
+      // Replacing `building_names` INVALIDATES the stored Church subset:
+      // it was observed against the old set, and this write is the one
+      // place the two can disagree. The cascade guarantees
+      // `buildings-mismatch` and `church-buildings-mismatch` never apply
+      // in the same Sync pass (check 7 `continue`s before check 9), so
+      // without this the seat sits with stale provenance until a later
+      // round-trip — and a newly Church-granted building would render
+      // checked AND ENABLED, letting a manager edit the seat down to
+      // under-report. Clearing to `null` restores "never observed",
+      // which locks (the safe direction) and re-stamps on the next run.
+      ...patchGrant(seat, slot, {
+        building_names: newBuildingNames,
+        church_granted_buildings: null,
+      }),
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,
       lastActor: actor,

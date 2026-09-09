@@ -2334,6 +2334,45 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
       expect(seat.church_granted_buildings).toEqual([]);
     });
 
+    it('buildings-mismatch clears stored provenance, so a stale Church subset cannot unlock', async () => {
+      // Regression, PR #301 third review. `buildings-mismatch` replaces
+      // `building_names`; the stored Church subset was observed against
+      // the OLD set. The detector cascade guarantees the two codes never
+      // apply in the same Sync pass (check 7 `continue`s before check 9),
+      // so leaving provenance behind means a building the Church newly
+      // grants renders checked AND ENABLED in the edit dialog until a
+      // later round-trip. Clearing to `null` restores "never observed",
+      // which locks.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'auto',
+        callings: ['Bishop'],
+        building_names: ['Maple Building'],
+        church_granted_buildings: ['Maple Building'],
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'buildings-mismatch',
+              payload: {
+                memberEmail: MEMBER_EMAIL,
+                newBuildingNames: ['Maple Building', 'Cedar Building'],
+              },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.building_names).toEqual(['Maple Building', 'Cedar Building']);
+      expect(seat.church_granted_buildings).toBeNull();
+    });
+
     it('REJECTS an omitted churchGrantedBuildingNames rather than coercing it to []', async () => {
       // Regression, PR #301 review. Every sibling handler defaults a
       // missing array to `[]`. Here that is the one unsafe direction:
