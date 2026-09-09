@@ -1017,7 +1017,7 @@ describe('SyncPanel', () => {
   // combined via AND.
   // --------------------------------------------------------------------
 
-  it('renders the code-filter dropdown with All codes + 8 codes', async () => {
+  it('renders the code-filter dropdown with All codes + 9 codes', async () => {
     getSyncDataMock.mockResolvedValue(bundle());
     listAllEnvironmentUsersMock.mockResolvedValue([]);
     const user = userEvent.setup();
@@ -1039,6 +1039,7 @@ describe('SyncPanel', () => {
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
+      'church-buildings-mismatch',
       'callings-mismatch',
     ]);
     const optionLabels = Array.from(select.options).map((o) => o.textContent);
@@ -1051,6 +1052,7 @@ describe('SyncPanel', () => {
       'scope-mismatch',
       'type-mismatch',
       'buildings-mismatch',
+      'church-buildings-mismatch',
       'callings-mismatch',
     ]);
   });

@@ -94,6 +94,11 @@ export function fixActionsFor(d: Discrepancy): FixAction[] {
       return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
     case 'buildings-mismatch':
       return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
+    case 'church-buildings-mismatch':
+      // Bookkeeping: records which of the grant's buildings the Church
+      // grants directly. No access changes, so it reuses the plain
+      // Update SBA button rather than introducing a new one.
+      return [{ side: 'sba', label: 'Update SBA', testId: 'update-sba' }];
     case 'kindoo-unparseable':
       // Present-but-unparseable: treat as a church-wide stake-scope
       // calling. The callable moves the seat to stake scope and sets the
@@ -352,6 +357,33 @@ export function buildCallableInput(stakeId: string, d: Discrepancy): SyncApplyFi
             ...surfacedGrantRef(d),
             memberEmail: d.displayEmail,
             newBuildingNames,
+          },
+        },
+      };
+    }
+    case 'church-buildings-mismatch': {
+      if (!d.kindoo) throw new Error('church-buildings-mismatch row missing Kindoo block');
+      // `directGrantBuildings` is the Church-Access-Automation subset of
+      // the same door-grant chain `derivedBuildings` runs over. Unlike
+      // `buildings-mismatch`, an EMPTY array is a legitimate observation
+      // ("the Church grants nothing on this grant") and must be sent —
+      // it is exactly what unlocks the edit-seat controls for a seat the
+      // manager provisioned entirely themselves. Only a FAILED
+      // derivation is refused; the detector already guards it, so this
+      // is defensive parity with the sibling case.
+      if (d.kindoo.directGrantBuildings === null || d.kindoo.directGrantBuildings === undefined) {
+        throw new Error(
+          'door-grant derivation failed; cannot record Church-granted buildings — re-run Sync.',
+        );
+      }
+      return {
+        stakeId,
+        fix: {
+          code: 'church-buildings-mismatch',
+          payload: {
+            ...surfacedGrantRef(d),
+            memberEmail: d.displayEmail,
+            churchGrantedBuildingNames: d.kindoo.directGrantBuildings,
           },
         },
       };
