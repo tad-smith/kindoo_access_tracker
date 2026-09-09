@@ -657,6 +657,13 @@ export type ManualSeatReviewGrant = {
 export type ManualSeatReviewDryRun = {
   /** What the real recipient rule answered for this scope. May be empty. */
   intendedRecipients: string[];
+  /**
+   * Who this mail actually went to (the Kindoo Managers). Optional only
+   * for callers that don't have it to hand — absent reads as "assume no
+   * overlap" in the banner, which is the safe direction: it never turns
+   * a true "nobody received it" into a false one.
+   */
+  mailedTo?: string[];
 };
 
 export type ManualSeatReviewEmailOpts = {
@@ -749,10 +756,11 @@ const DRY_RUN_BANNER_PARA = 'margin:0 0 8px;color:#744210';
  */
 function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
   const intended = o.dryRun?.intendedRecipients ?? [];
+  const mailedTo = o.dryRun?.mailedTo ?? [];
   const noun = manualSeatReviewScopeNoun(o.scope, o.scopeLabel);
   return [
     `${DRY_RUN_MARK} — this is a test of the quarterly access review, sent only to the Kindoo ` +
-      `Managers. Nobody on the ${noun} received it, and nothing below has been asked of anyone.`,
+      `Managers. ${audienceReceivedClause(intended, mailedTo, noun)}`,
     intended.length > 0
       ? `A real run would have sent this to: ${intended.join(', ')}.`
       : `A real run would have sent this to NOBODY: no one qualifies as a recipient for ` +
@@ -767,6 +775,33 @@ function dryRunBannerLines(o: ManualSeatReviewConditions): string[] {
     `Rehearsal done? Delete manual_seat_review_dry_run from the stake document — left set, the ` +
       `next real quarterly review redirects here too.`,
   ];
+}
+
+/**
+ * Whether this scope's real audience actually received the rehearsal —
+ * true only when it did NOT, since that is the claim the banner makes.
+ *
+ * On a stake-scope mail the real recipients ARE the Kindoo Managers, so
+ * "nobody received it" would be false; a ward/branch scope's bishopric
+ * can also overlap the managers in part (someone holding both roles).
+ * Compares by exact string, matching the canonicalised addresses both
+ * lists already carry.
+ */
+function audienceReceivedClause(intended: string[], mailedTo: string[], noun: string): string {
+  const overlap = intended.filter((address) => mailedTo.includes(address));
+  if (overlap.length === 0) {
+    return `Nobody on the ${noun} received it, and nothing below has been asked of anyone.`;
+  }
+  if (overlap.length === intended.length) {
+    return (
+      `Everyone this scope would really notify is also a Kindoo Manager, so this rehearsal did ` +
+      `reach them — but nothing below has been asked of anyone.`
+    );
+  }
+  return (
+    `${overlap.join(', ')} sit on both the ${noun} and the Kindoo Managers, so this rehearsal did ` +
+    `reach them — but nothing below has been asked of anyone.`
+  );
 }
 
 /**

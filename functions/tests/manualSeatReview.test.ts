@@ -896,6 +896,13 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
     expect(emails[0]!.to).toEqual(['alice@gmail.com']);
     expect(emails[0]!.subject).toContain('[DRY RUN]');
     expect(emails[0]!.text).toContain('A real run would have sent this to: alice@gmail.com.');
+    // The stake scope's real recipients ARE the managers this rehearsal
+    // mails, so the banner must not claim nobody on the stake received
+    // it — that would be false on this scope specifically.
+    expect(emails[0]!.text).not.toContain('Nobody on the stake received it');
+    expect(emails[0]!.text).toContain(
+      'Everyone this scope would really notify is also a Kindoo Manager',
+    );
   });
 
   it('marks the mail in the subject and in both body parts', async () => {
@@ -913,6 +920,10 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
     for (const part of [email.text, email.html!]) {
       expect(part).toContain('DRY RUN');
       expect(part).toContain('sent only to the Kindoo Managers');
+      // `seedDryRunStake` seeds alice/sleepy as managers and the ward's
+      // bishopric is bishop@gmail.com — disjoint sets, so this claim is
+      // still true on this scope and must still be made.
+      expect(part).toContain('Nobody on the ward received it');
     }
     // The banner leads the body — nobody should have to scroll to find
     // out this was a test.
@@ -1036,7 +1047,19 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
 
     const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
 
-    expect(outcome).toMatchObject({ status: 'no-recipients', dryRun: true, scopes: 1 });
+    expect(outcome).toMatchObject({
+      status: 'no-recipients',
+      dryRun: true,
+      scopes: 1,
+      // Real recipients exist for GE (the bishop) — this scope is
+      // skipped only because there was no manager to show the
+      // rehearsal to, not because the real recipient rule found
+      // nobody. The per-scope accounting has to say so.
+      scopesSkipped: 1,
+    });
+    expect(outcome.dryRunRecipients).toEqual([
+      { scope: 'GE', mailedTo: [], wouldHaveMailed: ['bishop@gmail.com'] },
+    ]);
     expect(emails).toHaveLength(0);
     expect((await readStake()).last_manual_seat_review_date).toBeUndefined();
   });

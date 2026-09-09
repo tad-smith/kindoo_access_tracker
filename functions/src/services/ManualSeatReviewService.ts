@@ -82,11 +82,14 @@ export type ManualSeatReviewOutcome = {
    */
   mailsFailed: number;
   /**
-   * Scopes with manual grants that the REAL recipient rule answers
-   * nobody for. In a production run that is also the count of scopes
-   * that sent nothing. Under a dry run it is the finding rather than the
-   * consequence — those scopes are mailed to the managers anyway, and
-   * this number is what the operator is looking for.
+   * Scopes that sent nothing to their own real audience — either the
+   * REAL recipient rule answered nobody for the scope, or (dry run
+   * only) there was no active Kindoo Manager to redirect the rehearsal
+   * to. In a production run this is also the count of scopes that sent
+   * nothing at all. Under a dry run the first cause is the finding
+   * rather than the consequence — those scopes are mailed to the
+   * managers anyway — and this number is what the operator is looking
+   * for.
    */
   scopesSkipped: number;
   /** Stake-local date stamped on the stake doc, when this run sent. */
@@ -249,7 +252,11 @@ export async function sendManualSeatReviewIfDue(
     if (recipients.length === 0) {
       // Dry run on a stake with no active Kindoo Managers: nobody to
       // show the run to at all. Unreachable in a production run, which
-      // already continued above.
+      // already continued above. Still a skipped scope — recorded with
+      // an empty `mailedTo` so the per-scope accounting stays complete
+      // even though nothing went out.
+      scopesSkipped += 1;
+      dryRunRecipients.push({ scope, mailedTo: [], wouldHaveMailed: [...intendedRecipients] });
       logger.info('manualSeatReview: dry run has no Kindoo Manager to mail', {
         stakeId,
         scope,
@@ -296,7 +303,7 @@ export async function sendManualSeatReviewIfDue(
       scopeLabel: labelScope(scope),
       grants: byScope.get(scope) ?? [],
       recipients,
-      ...(dryRun ? { dryRun: { intendedRecipients } } : {}),
+      ...(dryRun ? { dryRun: { intendedRecipients, mailedTo: recipients } } : {}),
     });
     if (result === 'failed') {
       mailsFailed += 1;
