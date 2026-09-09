@@ -1284,7 +1284,21 @@ async function applyTypeMismatch(
     const grant = grantAt(seat, slot);
     // `type` rides in the grant patch, NOT here: a top-level `type` on a
     // duplicate-surfaced fix would flip the PRIMARY's type as a side effect.
-    const grantPatch: Parameters<typeof patchGrant>[2] = { type: newType };
+    // A type flip invalidates the stored Church subset, and on PROMOTE it
+    // is GUARANTEED wrong rather than merely stale. A `manual` seat can
+    // only ever be stamped `[]`: check 6 fires PROMOTE the moment
+    // `directGrantBuildings` is non-empty and `continue`s, so a manual
+    // seat with a real Church grant never reaches check 9. Apply the
+    // promote and that `[]` now sits on a ward-scope AUTO seat, where it
+    // reads as "the Church grants nothing" and unlocks every building in
+    // the edit dialog — including the one the Church actually grants.
+    // Clearing to `null` restores "never observed", which locks, and the
+    // next Sync re-stamps it. DEMOTE clears it for the same reason, even
+    // though nothing reads a manual seat's copy.
+    const grantPatch: Parameters<typeof patchGrant>[2] = {
+      type: newType,
+      church_granted_buildings: null,
+    };
     const update: Record<string, unknown> = {
       last_modified_at: FieldValue.serverTimestamp(),
       last_modified_by: actor,

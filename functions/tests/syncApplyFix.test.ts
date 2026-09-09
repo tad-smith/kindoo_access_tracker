@@ -77,6 +77,7 @@ async function seedSeat(opts: {
   building_names?: string[];
   sort_order?: number | null;
   organization_id?: string | null;
+  church_granted_buildings?: string[] | null;
 }): Promise<void> {
   const { db } = requireEmulators();
   const canonical = opts.canonical ?? MEMBER_EMAIL;
@@ -96,6 +97,8 @@ async function seedSeat(opts: {
   };
   if (opts.sort_order !== undefined) body.sort_order = opts.sort_order;
   if (opts.organization_id !== undefined) body.organization_id = opts.organization_id;
+  if (opts.church_granted_buildings !== undefined)
+    body.church_granted_buildings = opts.church_granted_buildings;
   await db.doc(`stakes/${STAKE_ID}/seats/${canonical}`).set(body);
 }
 
@@ -1579,6 +1582,47 @@ describe.skipIf(!hasEmulators())('syncApplyFix callable', () => {
   // ----- type-mismatch -----
 
   describe("code='type-mismatch'", () => {
+    it('PROMOTE clears stored provenance, so a manual seat\u2019s [] cannot unlock an auto seat', async () => {
+      // Regression, PR #301 fourth review. This is the GUARANTEED-wrong
+      // case, not merely a stale window. A `manual` seat can only ever be
+      // stamped `[]`: check 6 fires PROMOTE the moment
+      // `directGrantBuildings` is non-empty and `continue`s, so a manual
+      // seat with a real Church grant never reaches check 9. Apply the
+      // promote with `[]` left behind and it now sits on a ward-scope AUTO
+      // seat, where `[]` reads as "the Church grants nothing" and unlocks
+      // every building in the edit dialog — including the one the Church
+      // actually grants.
+      await seedManager();
+      await seedSeat({
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        building_names: ['Maple Building'],
+        church_granted_buildings: [],
+      });
+      await requireEmulators().db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).update({
+        reason: 'Ward Clerk',
+      });
+      const result = await syncApplyFix.run(
+        callableReq({
+          auth: { email: MANAGER_EMAIL },
+          data: {
+            stakeId: STAKE_ID,
+            fix: {
+              code: 'type-mismatch',
+              payload: { memberEmail: MEMBER_EMAIL, newType: 'auto', callings: ['Ward Clerk'] },
+            },
+          },
+        }),
+      );
+      expect(result).toEqual({ success: true, seatId: MEMBER_EMAIL });
+      const { db } = requireEmulators();
+      const seat = (await db.doc(`stakes/${STAKE_ID}/seats/${MEMBER_EMAIL}`).get()).data() as Seat;
+      expect(seat.type).toBe('auto');
+      // `null` is "never observed", which LOCKS. `[]` would unlock.
+      expect(seat.church_granted_buildings).toBeNull();
+    });
+
     it('promote (manual → auto): scope + buildings untouched, type flips, lastActor stamped', async () => {
       await seedManager();
       // Well-formed manual seat: callings empty, calling in reason (§6.1).

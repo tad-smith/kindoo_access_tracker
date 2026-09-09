@@ -86,6 +86,25 @@ function errorMessage(err: unknown): string {
 }
 
 /**
+ * The auto-primary's OWN buildings, Church-granted or manager-added.
+ *
+ * Distinct from `churchLockedBuildingsFor`, and the two are not
+ * interchangeable. This set answers "which buildings does the primary
+ * grant hold?" and is used ONLY to decide which visually-locked names
+ * are dup-ONLY (and must therefore stay out of an `edit_auto` wire
+ * body). Subtracting the Church subset instead would classify a
+ * manager-added primary building that ALSO sits on a same-scope dup as
+ * dup-only, dropping it from the primary on submit while its checkbox
+ * rendered checked and disabled — a silent destructive edit, and one
+ * Sync cannot see afterwards because the roster row's building set is
+ * the union of both grants and still matches Kindoo.
+ */
+function primaryOwnedBuildingsFor(seat: Seat): string[] {
+  if (seat.type !== 'auto' || seat.scope === 'stake') return [];
+  return [...seat.building_names];
+}
+
+/**
  * Buildings on the auto-primary slot that submit must NEVER drop — the
  * Church-granted subset, per `seat.church_granted_buildings` (tri-state:
  * absent/`null` means "never observed", so it reads as "assume all of
@@ -108,25 +127,6 @@ function errorMessage(err: unknown): string {
  * nothing to edit). Returns empty for any non-ward-auto seat as a
  * defense in depth.
  */
-/**
- * The auto-primary's OWN buildings, Church-granted or manager-added.
- *
- * Distinct from `churchLockedBuildingsFor`, and the two are not
- * interchangeable. This set answers "which buildings does the primary
- * grant hold?" and is used ONLY to decide which visually-locked names
- * are dup-ONLY (and must therefore stay out of an `edit_auto` wire
- * body). Subtracting the Church subset instead would classify a
- * manager-added primary building that ALSO sits on a same-scope dup as
- * dup-only, dropping it from the primary on submit while its checkbox
- * rendered checked and disabled — a silent destructive edit, and one
- * Sync cannot see afterwards because the roster row's building set is
- * the union of both grants and still matches Kindoo.
- */
-function primaryOwnedBuildingsFor(seat: Seat): string[] {
-  if (seat.type !== 'auto' || seat.scope === 'stake') return [];
-  return [...seat.building_names];
-}
-
 function churchLockedBuildingsFor(seat: Seat): string[] {
   if (seat.type !== 'auto' || seat.scope === 'stake') return [];
   return seat.church_granted_buildings != null
