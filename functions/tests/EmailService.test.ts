@@ -998,6 +998,19 @@ describe('EmailService — pure builders', () => {
       link: ROSTER_LINK,
     });
     expect(text).toContain('submit a remove request');
+    // The two parts differ here in words, not just markup — the HTML has
+    // a real button, the text part a bare URL — so both directions are
+    // pinned. See spec.md §9.
+    expect(text).toContain('open the link below');
+    expect(text).not.toContain('click the button below');
+    const htmlPart = buildManualSeatReviewHtmlBody({
+      scope: 'GE',
+      scopeLabel: 'Greenwood Ward',
+      grants: reviewGrants,
+      link: ROSTER_LINK,
+    });
+    expect(htmlPart).toContain('click the button below');
+    expect(htmlPart).not.toContain('open the link below');
     // The verb the copy must never use bare: it would read as the access
     // ending on the tap rather than being queued for a manager.
     expect(text).not.toContain('remove anyone who');

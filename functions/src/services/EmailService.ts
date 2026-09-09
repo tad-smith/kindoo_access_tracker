@@ -691,7 +691,7 @@ export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): str
     ...(o.dryRun ? [...dryRunBannerLines(o), ''] : []),
     `${manualSeatReviewLead(o)}.`,
     '',
-    manualSeatReviewAction(o.scope, o.scopeLabel),
+    manualSeatReviewAction(o.scope, o.scopeLabel, 'text'),
     '',
   ];
   for (const g of o.grants) {
@@ -714,7 +714,7 @@ export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): str
         ]
       : []),
     `<p style="${PARA}">${escapeHtml(`${manualSeatReviewLead(o)}.`)}</p>`,
-    `<p style="${PARA}">${escapeHtml(manualSeatReviewAction(o.scope, o.scopeLabel))}</p>`,
+    `<p style="${PARA}">${escapeHtml(manualSeatReviewAction(o.scope, o.scopeLabel, 'html'))}</p>`,
     `<table role="presentation" style="${TABLE}">`,
     `<tr><th style="${TH}">Member</th><th style="${TH}">Reason</th><th style="${TH}">Buildings</th></tr>`,
     ...o.grants.map(
@@ -830,13 +830,19 @@ function manualSeatReviewLead(o: ManualSeatReviewConditions): string {
  * `noun` rather than a literal "ward": the same sentence serves branch
  * and stake scopes.
  */
-function manualSeatReviewAction(scope: string, scopeLabel: string): string {
+function manualSeatReviewAction(scope: string, scopeLabel: string, part: 'html' | 'text'): string {
   const noun = manualSeatReviewScopeNoun(scope, scopeLabel);
+  // The one place the two parts diverge in words rather than markup, and
+  // only because the thing being pointed at differs: the HTML part
+  // renders a real button, the text part a bare URL. "Click the button
+  // below" in a plain-text mail sends the reader looking for something
+  // that is not there.
+  const cta = part === 'html' ? 'click the button below' : 'open the link below';
   return (
     `Manual seats never expire, so they stay on the ${noun} roster until someone takes them ` +
     `off. Review the list below and identify anyone that no longer needs access — a calling ` +
-    `change is the usual reason. If someone needs to be removed from the list, click the ` +
-    `button below and submit a remove request in SBA.`
+    `change is the usual reason. If someone needs to be removed from the list, ${cta} and ` +
+    `submit a remove request in SBA.`
   );
 }
 
