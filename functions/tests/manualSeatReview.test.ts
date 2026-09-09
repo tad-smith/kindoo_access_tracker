@@ -1124,6 +1124,28 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue — dry run', () => 
     warn.mockRestore();
   });
 
+  it('warns while it is actually mailing, not only when it is suppressed', async () => {
+    // Severity tracks risk, not volume. A flag left set redirects a REAL
+    // quarter to the managers and the wards hear nothing for ~150 days;
+    // the suppressed case above is harmless. The mailing case must not be
+    // the quieter of the two.
+    await seedDryRunStake();
+    const { sender, calls: emails } = mockResend([{ ok: true, id: 'mid-1' }]);
+    restoreResend = _setResendSender(sender);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    const outcome = await sendManualSeatReviewIfDue(STAKE_ID, NOW);
+
+    expect(emails).toHaveLength(1);
+    expect(outcome).toMatchObject({ status: 'sent', dryRun: true });
+    expect(outcome.emailSuppressed).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('DRY RUN is sending mail'),
+      expect.objectContaining({ dryRun: true }),
+    );
+    warn.mockRestore();
+  });
+
   it('changes nothing at all when the flag is absent', async () => {
     await seedReviewWorthyStake();
     await seedManager('alice@gmail.com', true);

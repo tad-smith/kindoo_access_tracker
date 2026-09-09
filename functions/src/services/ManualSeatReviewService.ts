@@ -199,6 +199,19 @@ export async function sendManualSeatReviewIfDue(
       stakeId,
       dryRun: true,
     });
+  } else if (dryRun) {
+    // WARN, not INFO, and the severity is the point. A flag left set
+    // redirects a REAL quarter to the managers and the wards hear
+    // nothing for ~150 days — the one hazard this feature's own safety
+    // argument doesn't cover, since nothing clears the flag and nothing
+    // may (clearing it would turn the rehearsal's second pass into a
+    // real send). The suppressed case above is harmless and already
+    // shouts; a dry run that is genuinely mailing must not be quieter
+    // than one that isn't.
+    logger.warn('manualSeatReview: DRY RUN is sending mail — is this flag still meant to be set?', {
+      stakeId,
+      dryRun: true,
+    });
   }
 
   let mailsSent = 0;
