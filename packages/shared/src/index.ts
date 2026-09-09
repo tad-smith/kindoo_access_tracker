@@ -134,6 +134,7 @@ export type {
   Building,
   BuildingsMismatchPayload,
   CallingsMismatchPayload,
+  ChurchBuildingsMismatchPayload,
   CompletionStatus,
   CreateStakeError,
   CreateStakeInput,
