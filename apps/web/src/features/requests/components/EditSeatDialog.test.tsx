@@ -534,7 +534,14 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
     expect(arg.building_names).not.toContain('Cedar Building');
   });
 
-  it('surfaces a Church-Automation tooltip on a Church-locked checkbox (unknown provenance still locks + labels it Church-granted)', () => {
+  it('locks an UNSTAMPED seat without claiming the Church granted it', () => {
+    // Regression, PR #301 second review. `null` provenance must lock —
+    // that is the safe direction and matches the pre-PR dialog — but the
+    // REASON is "SBA has not looked yet", not "the Church granted this".
+    // Before the first Sync sweep every seat is in this state, and some
+    // of those locked buildings were added by a manager in a prior
+    // edit_auto. Labelling them Church-granted asserts an observation
+    // nobody made.
     mockCatalogue(
       [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
       [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
@@ -544,13 +551,37 @@ describe('<EditSeatDialog /> — edit_auto sub-type', () => {
       scope: 'CO',
       callings: ['Bishop'],
       building_names: ['Maple Building'],
+      // `church_granted_buildings` absent — never observed.
     });
     render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
     const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
-    // The title attribute is what the browser surfaces as a tooltip on
-    // hover; for the disabled checkbox the same title goes on the
-    // wrapping label too so the hover surface includes the text label.
+    expect(mapleCb.disabled).toBe(true);
+    expect(mapleCb.getAttribute('title')).not.toMatch(/church access automation/i);
+    expect(mapleCb.getAttribute('title')).toMatch(/not yet recorded/i);
+    expect(screen.getByTestId('edit-seat-building-locked-maple')).toHaveTextContent(
+      /locked until the next sync/i,
+    );
+  });
+
+  it('claims the Church grant only once provenance has actually been observed', () => {
+    mockCatalogue(
+      [makeWard({ ward_code: 'CO', building_name: 'Maple Building' })],
+      [makeBuilding({ building_id: 'maple', building_name: 'Maple Building' })],
+    );
+    const seat = makeSeat({
+      type: 'auto',
+      scope: 'CO',
+      callings: ['Bishop'],
+      building_names: ['Maple Building'],
+      church_granted_buildings: ['Maple Building'],
+    });
+    render(<EditSeatDialog seat={seat} onOpenChange={() => {}} />);
+    const mapleCb = screen.getByTestId('edit-seat-building-maple') as HTMLInputElement;
+    expect(mapleCb.disabled).toBe(true);
     expect(mapleCb.getAttribute('title')).toMatch(/church access automation/i);
+    expect(screen.getByTestId('edit-seat-building-locked-maple')).toHaveTextContent(
+      /granted by the Church/i,
+    );
   });
 
   it('surfaces the "separate request" tooltip on a dup-locked checkbox, unchanged from before', () => {

@@ -529,7 +529,24 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
             <ul className="kd-checkbox-list">
               {visibleBuildings.map((b: Building) => {
                 const isLocked = lockedBuildings.includes(b.building_name);
-                const isChurchLocked = churchLockedBuildings.includes(b.building_name);
+                // Only claim a Church grant when one was actually
+                // OBSERVED. With `church_granted_buildings` absent the
+                // whole primary locks (the safe direction), but the
+                // reason is "SBA hasn't looked yet", not "the Church
+                // granted this" — and on an unstamped seat some of these
+                // buildings are manager-added. Asserting Church
+                // provenance there would be a claim we have no
+                // observation for, shown to every user before the first
+                // Sync sweep.
+                const provenanceObserved = seat.church_granted_buildings != null;
+                const isChurchLocked =
+                  provenanceObserved && churchLockedBuildings.includes(b.building_name);
+                // A locked building NOT on the primary is dup-only, and the dup
+                // wording stays right for it regardless of provenance.
+                const isUnobservedLock =
+                  isLocked &&
+                  !provenanceObserved &&
+                  primaryOwnedBuildings.includes(b.building_name);
                 const checked = isLocked || watchedBuildings.includes(b.building_name);
                 // Tooltip on the disabled checkbox + a visible note next
                 // to the label. Two reasons a building can be locked, with
@@ -540,8 +557,11 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
                 const lockedTooltip = isLocked
                   ? isChurchLocked
                     ? 'The Church Access Automation grants this one directly; SBA cannot revoke it.'
-                    : 'Already granted to this user at this scope. Add new buildings here; ' +
-                      'remove existing access via a separate request.'
+                    : isUnobservedLock
+                      ? 'SBA has not yet recorded which of this seat\u2019s buildings come from ' +
+                        'the Church, so none can be removed. The next Sync records it.'
+                      : 'Already granted to this user at this scope. Add new buildings here; ' +
+                        'remove existing access via a separate request.'
                   : undefined;
                 return (
                   <li key={b.building_id}>
@@ -574,7 +594,9 @@ export function EditSeatDialog({ seat, onOpenChange }: EditSeatDialogProps) {
                           (
                           {isChurchLocked
                             ? 'granted by the Church — locked'
-                            : 'already granted — locked'}
+                            : isUnobservedLock
+                              ? 'locked until the next Sync'
+                              : 'already granted — locked'}
                           )
                         </small>
                       ) : null}
