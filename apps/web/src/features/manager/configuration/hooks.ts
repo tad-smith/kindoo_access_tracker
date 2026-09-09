@@ -458,16 +458,25 @@ export function isNonTerminalRequest(req: AccessRequest): boolean {
 
 /**
  * True when a seat references `name` anywhere in its display-name
- * arrays — the primary grant's `building_names` OR any
- * `duplicate_grants[].building_names`. A member can hold a primary seat
- * in building X plus a duplicate-site grant (T-43) on building Y, where
- * the Y reference lives ONLY in `duplicate_grants[].building_names`;
- * renaming Y would stale that snapshot, so the rename guard must walk
- * both. Counted once per seat regardless of how many arrays match.
+ * arrays — the primary grant's `building_names` / `church_granted_buildings`
+ * OR any `duplicate_grants[].building_names` /
+ * `duplicate_grants[].church_granted_buildings`. A member can hold a
+ * primary seat in building X plus a duplicate-site grant (T-43) on
+ * building Y, where the Y reference lives ONLY in
+ * `duplicate_grants[].building_names`; renaming Y would stale that
+ * snapshot, so the rename guard must walk both. `church_granted_buildings`
+ * is a name-provenance snapshot, not clamped to `building_names` (see its
+ * doc comment), so a rename could strand it even when `building_names`
+ * itself is already clean — it needs its own check. Counted once per
+ * seat regardless of how many arrays match.
  */
 function seatReferencesBuilding(seat: Seat, name: string): boolean {
   if ((seat.building_names ?? []).includes(name)) return true;
-  return (seat.duplicate_grants ?? []).some((g) => (g.building_names ?? []).includes(name));
+  if ((seat.church_granted_buildings ?? []).includes(name)) return true;
+  return (seat.duplicate_grants ?? []).some(
+    (g) =>
+      (g.building_names ?? []).includes(name) || (g.church_granted_buildings ?? []).includes(name),
+  );
 }
 
 /**
