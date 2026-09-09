@@ -55,6 +55,7 @@ export type DiscrepancyCode =
   | 'scope-mismatch'
   | 'type-mismatch'
   | 'buildings-mismatch'
+  | 'church-buildings-mismatch'
   | 'callings-mismatch';
 
 export type Severity = 'drift' | 'review';
@@ -93,6 +94,22 @@ export interface SbaBlock {
   callings: string[];
   reason?: string | undefined;
   buildingNames: string[];
+  /**
+   * The surfaced grant's stored `church_granted_buildings` — SBA's
+   * record of which of its buildings the Church Access Automation
+   * grants directly.
+   *
+   * TRI-STATE, and `null` here covers both "absent" and an explicit
+   * stored `null`: never observed. `[]` is a real observation (the
+   * Church grants nothing on this grant).
+   *
+   * Read off the FIRST contributing grant, not unioned across them the
+   * way `buildingNames` is — this is the value the
+   * `church-buildings-mismatch` fix overwrites, and
+   * {@link SbaBlock.kindooSiteId} + `scope` (the surfaced-grant ref the
+   * payload carries) name that same first contributor.
+   */
+  churchGrantedBuildings: string[] | null;
   /**
    * Kindoo site of the grant this projection was built from — `null`
    * home, a site id for a foreign site. Sent on the `sba-only` payload
@@ -276,6 +293,7 @@ function toSbaBlock(seat: Seat): SbaBlock {
     callings: seat.callings ?? [],
     reason: seat.reason,
     buildingNames: seat.building_names ?? [],
+    churchGrantedBuildings: seat.church_granted_buildings ?? null,
   };
 }
 
@@ -337,6 +355,7 @@ function projectSeatForSite(
     callings: string[];
     reason: string | undefined;
     buildings: string[];
+    churchBuildings: string[] | null;
   };
   const contributors: Contributor[] = [];
   // Primary first (preserves "primary wins on scope/type" when it
@@ -348,6 +367,7 @@ function projectSeatForSite(
       callings: seat.callings ?? [],
       reason: seat.reason,
       buildings: seat.building_names ?? [],
+      churchBuildings: seat.church_granted_buildings ?? null,
     });
   }
   for (const dup of seat.duplicate_grants ?? []) {
@@ -361,6 +381,7 @@ function projectSeatForSite(
       // inherit from the ward's assigned building. Parallel-site
       // duplicates always carry their own `building_names`.
       buildings: dup.building_names ?? wardBuildingsForScope(dup.scope, wards, buildings),
+      churchBuildings: dup.church_granted_buildings ?? null,
     });
   }
   if (contributors.length === 0) return null;
@@ -380,6 +401,7 @@ function projectSeatForSite(
     callings: first.callings,
     reason: first.reason,
     buildingNames: unioned,
+    churchGrantedBuildings: first.churchBuildings,
     kindooSiteId: wantSiteId,
   };
 }
@@ -458,6 +480,13 @@ function setsEqual(a: string[], b: string[]): boolean {
   const sa = new Set(a);
   for (const v of b) if (!sa.has(v)) return false;
   return true;
+}
+
+/** Render a list for a reason string. `(none)` for empty, matching the
+ * other codes — an empty set is a real observation, not a failure, and
+ * a bare `[]` reads as a missing value. */
+function listOrNone(xs: string[]): string {
+  return xs.length > 0 ? xs.join(', ') : '(none)';
 }
 
 /**
@@ -1175,6 +1204,51 @@ export function detect(inputs: DetectInputs): DetectResult {
             undefined,
             kindooCallings,
           ),
+        });
+        continue;
+      }
+    }
+
+    // 9. church-buildings-mismatch — BOOKKEEPING, and deliberately the
+    // LAST check in the cascade.
+    //
+    // Every branch above `continue`s after pushing, so a member yields
+    // at most one row per run. Sitting last means real drift (scope,
+    // type, buildings, callings) always outranks provenance: the
+    // manager fixes the access first and the provenance row surfaces on
+    // a later run, once nothing else is wrong.
+    //
+    // Applying it changes nobody's access — it records WHERE the
+    // member's existing access came from, so the web edit-seat dialog
+    // can tell a Church-granted building from one a Kindoo Manager
+    // added and offer Remove on only the latter.
+    //
+    // Fires when derivation SUCCEEDED and SBA's record disagrees:
+    //   - `directGrantBuildings === null` (skipped / failed) → NO row.
+    //     A failed observation is not evidence of anything; filing off
+    //     one would stamp a wrong record that then looks observed.
+    //     Unstamped self-heals on the next successful run.
+    //   - stored `null`/absent → row (never observed).
+    //   - stored differs as a SET → row (out of date).
+    //   - `[]` on either side is a legitimate value, not an error: the
+    //     Church grants nothing on this grant.
+    const churchGrants = kuser.directGrantBuildings ?? null;
+    if (churchGrants !== null) {
+      const stored = sbaBlock.churchGrantedBuildings;
+      if (stored === null || !setsEqual(stored, churchGrants)) {
+        const kindooList = listOrNone(churchGrants);
+        const reason =
+          stored === null
+            ? `SBA has no record of which of this member's buildings come from the Church. Kindoo says the Church grants [${kindooList}]; the seat lists [${listOrNone(sbaBlock.buildingNames)}].`
+            : `SBA's record of the Church-granted buildings is out of date. SBA=[${listOrNone(stored)}], Kindoo=[${kindooList}].`;
+        discrepancies.push({
+          canonical: canon,
+          displayEmail,
+          code: 'church-buildings-mismatch',
+          severity: 'drift',
+          reason,
+          sba: sbaBlock,
+          kindoo: buildKindooBlock(kuser, parsed, intended, inputs.buildings, eqOpts),
         });
         continue;
       }

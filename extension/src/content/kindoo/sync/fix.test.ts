@@ -120,7 +120,13 @@ describe('fixActionsFor', () => {
     const actions = fixActionsFor(
       discrepancy({
         code: 'callings-mismatch',
-        sba: { scope: 'CO', type: 'auto', callings: ['Sunday School Teacher'], buildingNames: [] },
+        sba: {
+          scope: 'CO',
+          type: 'auto',
+          callings: ['Sunday School Teacher'],
+          buildingNames: [],
+          churchGrantedBuildings: null,
+        },
       }),
     );
     expect(actions).toHaveLength(1);
@@ -220,6 +226,7 @@ describe('buildCallableInput', () => {
           type: 'auto',
           callings: ['Ward Clerk'],
           buildingNames: ['Pine Building'],
+          churchGrantedBuildings: null,
           kindooSiteId: 'east-stake',
         },
         kindoo: kb(over),
@@ -504,7 +511,13 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'scope-mismatch',
-        sba: { scope: 'PC', type: 'auto', callings: [], buildingNames: [] },
+        sba: {
+          scope: 'PC',
+          type: 'auto',
+          callings: [],
+          buildingNames: [],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({ memberName: 'S M' }),
       }),
     );
@@ -521,7 +534,13 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'type-mismatch',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        sba: {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({
           intendedType: 'manual',
           intendedCallings: [],
@@ -542,7 +561,13 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'type-mismatch',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        sba: {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({
           description: 'Maple Ward (Sunday School Teacher, Accompanist)',
           intendedType: 'manual',
@@ -569,6 +594,7 @@ describe('buildCallableInput', () => {
           type: 'auto',
           callings: ['Sunday School Teacher'],
           buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
         },
         kindoo: kb({
           intendedCallings: ['Sunday School Teacher'],
@@ -592,7 +618,13 @@ describe('buildCallableInput', () => {
         'csnorth',
         discrepancy({
           code: 'type-mismatch',
-          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: [] },
+          sba: {
+            scope: 'CO',
+            type: 'auto',
+            callings: [],
+            buildingNames: [],
+            churchGrantedBuildings: null,
+          },
           kindoo: kb({}),
         }),
       ),
@@ -609,7 +641,13 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: [] },
+        sba: {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          buildingNames: [],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({
           description: 'Maple Ward (Building Greeter)',
           memberName: 'B M',
@@ -635,7 +673,13 @@ describe('buildCallableInput', () => {
         'csnorth',
         discrepancy({
           code: 'buildings-mismatch',
-          sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+          sba: {
+            scope: 'CO',
+            type: 'manual',
+            callings: [],
+            buildingNames: ['Maple Building'],
+            churchGrantedBuildings: null,
+          },
           kindoo: kb({
             description: 'Maple Ward (Building Greeter)',
             memberName: 'B M',
@@ -661,7 +705,13 @@ describe('buildCallableInput', () => {
       'csnorth',
       discrepancy({
         code: 'buildings-mismatch',
-        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+        sba: {
+          scope: 'CO',
+          type: 'auto',
+          callings: [],
+          buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({
           memberName: 'A A',
           ruleIds: [],
@@ -680,7 +730,13 @@ describe('buildCallableInput', () => {
         'csnorth',
         discrepancy({
           code: 'buildings-mismatch',
-          sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+          sba: {
+            scope: 'CO',
+            type: 'auto',
+            callings: [],
+            buildingNames: ['Maple Building'],
+            churchGrantedBuildings: null,
+          },
           kindoo: kb({ memberName: 'A A', ruleIds: [], buildingNames: [], derivedBuildings: null }),
         }),
       ),
@@ -696,7 +752,13 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'sba-only',
         displayEmail: 'Orphan.Seat@Example.com',
-        sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+        sba: {
+          scope: 'CO',
+          type: 'auto',
+          callings: [],
+          buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
+        },
         kindoo: null,
       }),
     );
@@ -718,7 +780,13 @@ describe('buildCallableInput', () => {
       discrepancy({
         code: 'kindoo-unparseable',
         displayEmail: 'Weird.User@Example.com',
-        sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+        sba: {
+          scope: 'CO',
+          type: 'manual',
+          callings: [],
+          buildingNames: ['Maple Building'],
+          churchGrantedBuildings: null,
+        },
         kindoo: kb({ description: '  Stake Technology Specialist  ' }),
       }),
     );
@@ -773,7 +841,13 @@ describe('applyFix', () => {
     const d = discrepancy({
       code: 'sba-only',
       displayEmail: 'orphan@example.com',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+      sba: {
+        scope: 'CO',
+        type: 'auto',
+        callings: [],
+        buildingNames: ['Maple Building'],
+        churchGrantedBuildings: null,
+      },
       kindoo: null,
     });
     const action = fixActionsFor(d)[0]!;
@@ -802,7 +876,13 @@ describe('applyFix', () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'buildings-mismatch',
-      sba: { scope: 'CO', type: 'auto', callings: [], buildingNames: ['Maple Building'] },
+      sba: {
+        scope: 'CO',
+        type: 'auto',
+        callings: [],
+        buildingNames: ['Maple Building'],
+        churchGrantedBuildings: null,
+      },
       kindoo: kb({ memberName: 'A A', ruleIds: [], buildingNames: [], derivedBuildings: null }),
     });
     const sbaAction = fixActionsFor(d).find((a) => a.side === 'sba')!;
@@ -819,7 +899,13 @@ describe('applyFix', () => {
     // write church grants, so there is no Kindoo-side action.
     const d = discrepancy({
       code: 'type-mismatch',
-      sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+      sba: {
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        buildingNames: ['Maple Building'],
+        churchGrantedBuildings: null,
+      },
       kindoo: kb({
         intendedType: 'manual',
         intendedCallings: [],
@@ -838,7 +924,13 @@ describe('applyFix', () => {
     const ctx = ctxWith();
     const d = discrepancy({
       code: 'type-mismatch',
-      sba: { scope: 'CO', type: 'manual', callings: [], buildingNames: ['Maple Building'] },
+      sba: {
+        scope: 'CO',
+        type: 'manual',
+        callings: [],
+        buildingNames: ['Maple Building'],
+        churchGrantedBuildings: null,
+      },
       kindoo: kb({
         intendedType: 'manual',
         intendedCallings: [],
@@ -855,5 +947,73 @@ describe('applyFix', () => {
     const sent = (ctx.callSyncApplyFix as ReturnType<typeof vi.fn>).mock.calls[0]![0];
     expect(sent.fix.code).toBe('type-mismatch');
     expect(sent.fix.payload.newType).toBe('auto');
+  });
+});
+
+describe('church-buildings-mismatch dispatch', () => {
+  const row = (over: Partial<KindooBlock> = {}) =>
+    discrepancy({
+      code: 'church-buildings-mismatch',
+      displayEmail: 'a@example.com',
+      sba: {
+        scope: 'FT',
+        type: 'auto',
+        callings: ['Ward Clerk'],
+        buildingNames: ['Pine Building'],
+        churchGrantedBuildings: null,
+        kindooSiteId: 'east-stake',
+      },
+      kindoo: kb({
+        derivedBuildings: ['Pine Building'],
+        directGrantBuildings: ['Pine Building'],
+        ...over,
+      }),
+    });
+
+  it('exposes one Update SBA action', () => {
+    expect(fixActionsFor(row())).toEqual([
+      { side: 'sba', label: 'Update SBA', testId: 'update-sba' },
+    ]);
+  });
+
+  it('sends the observed Church set plus the surfaced grant ref', () => {
+    const input = buildCallableInput('csnorth', row());
+    expect(input.stakeId).toBe('csnorth');
+    expect(input.fix.code).toBe('church-buildings-mismatch');
+    // The `(scope, kindooSiteId)` discriminator names the grant the row
+    // was surfaced from, not the seat's primary — a duplicate-surfaced
+    // row must stamp provenance on that duplicate.
+    expect(input.fix.payload).toEqual({
+      scope: 'FT',
+      kindooSiteId: 'east-stake',
+      memberEmail: 'a@example.com',
+      churchGrantedBuildingNames: ['Pine Building'],
+    });
+  });
+
+  it('sends an EMPTY observed set rather than refusing it', () => {
+    // Unlike `buildings-mismatch`, `[]` is a legitimate value here: the
+    // Church grants nothing on this grant, so every building on it is
+    // manager-added and removable in the web edit-seat dialog.
+    const input = buildCallableInput('csnorth', row({ directGrantBuildings: [] }));
+    expect(input.fix.payload).toMatchObject({ churchGrantedBuildingNames: [] });
+  });
+
+  it('refuses when door-grant derivation failed', async () => {
+    const ctx = ctxWith();
+    const d = row({ directGrantBuildings: null });
+    const action = fixActionsFor(d)[0]!;
+    const outcome = await applyFix(d, action, ctx);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toMatch(/derivation/i);
+    expect(ctx.callSyncApplyFix).not.toHaveBeenCalled();
+  });
+
+  it('dispatches through the SBA callable on Update SBA', async () => {
+    const ctx = ctxWith();
+    const d = row();
+    const outcome = await applyFix(d, fixActionsFor(d)[0]!, ctx);
+    expect(outcome).toEqual({ ok: true });
+    expect(ctx.callSyncApplyFix).toHaveBeenCalledTimes(1);
   });
 });

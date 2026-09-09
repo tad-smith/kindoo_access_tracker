@@ -100,6 +100,7 @@ const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
   'scope-mismatch',
   'type-mismatch',
   'buildings-mismatch',
+  'church-buildings-mismatch',
   'callings-mismatch',
 ];
 
@@ -113,6 +114,7 @@ const CODE_FILTER_OPTIONS: readonly DiscrepancyCode[] = [
 const INTENDED_TYPE_HIDDEN_CODES: ReadonlySet<DiscrepancyCode> = new Set([
   'scope-mismatch',
   'buildings-mismatch',
+  'church-buildings-mismatch',
   'callings-mismatch',
   'kindoo-unparseable',
 ]);
