@@ -997,8 +997,10 @@ describe('EmailService — pure builders', () => {
       grants: reviewGrants,
       link: ROSTER_LINK,
     });
-    expect(text).toContain('Remove submits a removal request');
-    expect(text).toContain('a Kindoo Manager completes it');
+    expect(text).toContain('submit a remove request');
+    // The verb the copy must never use bare: it would read as the access
+    // ending on the tap rather than being queued for a manager.
+    expect(text).not.toContain('remove anyone who');
   });
 
   it('manual-seat-review html carries the three columns and one button', () => {

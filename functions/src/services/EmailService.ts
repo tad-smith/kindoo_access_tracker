@@ -819,20 +819,24 @@ function manualSeatReviewLead(o: ManualSeatReviewConditions): string {
 }
 
 /**
- * What the recipient is being asked to do.
+ * What the recipient is being asked to do. Operator-authored copy.
  *
- * Accurate about what Remove actually does: on a roster page it submits
- * a removal REQUEST, which a Kindoo Manager then completes. Telling a
- * bishopric that tapping Remove ends the access would have them assume
- * a seat was gone when it was queued.
+ * Still accurate about what Remove does — it says "submit a remove
+ * request", not "remove" — because on a roster page it files a REQUEST a
+ * Kindoo Manager then completes. Telling a bishopric that tapping Remove
+ * ends the access would have them assume a seat was gone when it was
+ * queued. Keep that distinction in any future rewording.
+ *
+ * `noun` rather than a literal "ward": the same sentence serves branch
+ * and stake scopes.
  */
 function manualSeatReviewAction(scope: string, scopeLabel: string): string {
   const noun = manualSeatReviewScopeNoun(scope, scopeLabel);
   return (
-    `Review the list and remove anyone who no longer needs building access — a calling change ` +
-    `is the usual reason. Manual seats never expire and no Sync clears them, so they stay on the ` +
-    `${noun} roster until someone takes them off. Remove submits a removal request; a Kindoo ` +
-    `Manager completes it, and the access ends then.`
+    `Manual seats never expire, so they stay on the ${noun} roster until someone takes them ` +
+    `off. Review the list below and identify anyone that no longer needs access — a calling ` +
+    `change is the usual reason. If someone needs to be removed from the list, click the ` +
+    `button below and submit a remove request in SBA.`
   );
 }
 
