@@ -18,8 +18,12 @@ infra/
 ├── scripts/
 │   ├── deploy-staging.sh
 │   ├── deploy-prod.sh
-│   ├── seed-staging.ts
-│   └── stamp-version.js
+│   ├── stamp-version.js
+│   ├── ensure-version-gen.js
+│   ├── generate-icons.mjs
+│   ├── icon-sources/
+│   ├── lib/
+│   └── tests/
 ├── runbooks/
 │   ├── deploy.md
 │   ├── restore.md
@@ -29,6 +33,7 @@ infra/
 │   ├── custom-domain.md
 │   ├── extension-deploy.md
 │   ├── granting-importer-sheet-access.md
+│   ├── seed-platform-superadmin.md
 │   └── bootstrap-admin-recovery.md
 ├── ci/
 │   └── workflows/

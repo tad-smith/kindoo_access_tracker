@@ -48,9 +48,10 @@ src/
 │   └── runScheduledTask.ts            # the ONE onTaskDispatched worker; resolves a job from the registry
 ├── services/                          # business logic (EmailService, SyncReminderService)
 ├── lib/                               # admin SDK init, resend client, audit diff, task registry, helpers
-├── tests/                             # vitest suites mirroring src/
 └── index.ts                           # function exports for Firebase deploy
 ```
+
+Unit specs sit beside their source as `src/**/*.test.ts`; integration suites live in `functions/tests/`.
 
 No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow` — the LCR Sheet importer was removed in T-45 (see `docs/architecture.md` D14). The extension's Sync feature is now the sole auto-seat source; `syncApplyFix` is its server entry point.
 
@@ -60,7 +61,7 @@ No Sheets-client wrapper, no importer service, no `runImporter` / `runImportNow`
 - **Idempotency by deterministic write paths.** Audit trigger uses `{writeTime}_{collection}_{docId}` so retries write the same row.
 - **The nine audit registrations set `retry: true`.** Firestore triggers don't retry by default, so a failed audit write would silently lose the row after the entity write already committed. The deterministic doc id above is what makes that safe — a redelivery carries the original CloudEvent time, so every retry `set()`s the same row. Don't enable retries on a trigger whose write isn't idempotent.
 - **All shared types from `packages/shared/`.** No duplicated `Seat`/`Request`/`Access` types.
-- **Canonical email helper from `packages/shared/canonicalEmail.ts`.** Don't re-implement.
+- **Canonical email helper from `packages/shared/src/canonicalEmail.ts`.** Don't re-implement.
 - **Wrap all multi-doc writes in `db.runTransaction(...)`** — same atomicity guarantees as client transactions.
 - **All secrets via env injection** (`process.env.RESEND_API_KEY`); never in code.
 - **Cloud Functions 2nd gen** for everything (Cloud Run under the hood). Default timeout 60s; bump to 540s for any long-running callable. Default memory 256MB.
@@ -119,5 +120,5 @@ Details: `functions/deploy-lock/README.md`, `functions/scripts/deploy-deps.mjs`,
 
 ## Deploy
 
-- Functions deploy via `pnpm deploy:functions:staging` / `:prod` (scripts in `infra/scripts/`).
+- Functions deploy with the rest of the stack via `pnpm deploy:staging` / `pnpm deploy:prod` (`infra/scripts/deploy-*.sh`).
 - 2nd-gen functions inherit Cloud Run service identity; service account `kindoo-app@<project>.iam.gserviceaccount.com` needs Firestore + Secret Manager roles (plus FCM admin + Eventarc consumer roles for the push / Firestore-trigger paths — see `infra/runbooks/provision-firebase-projects.md` step 1.8).

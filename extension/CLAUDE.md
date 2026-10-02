@@ -39,14 +39,13 @@ Chrome MV3 extension that bridges the Stake Building Access (SBA) pending-reques
 - TypeScript strict (`tsconfig.base.json` extended)
 - Vite 8 + `@crxjs/vite-plugin` for the MV3 build
 - React 19 (panel UI)
-- Firebase SDK (Auth + Functions) — runs in the service worker only
+- Firebase SDK (Auth + Functions + Firestore) — runs in the service worker only
 - Vitest + jsdom for unit tests; chrome / firebase boundary mocked
 
 ## File layout
 
 ```
 extension/
-├── manifest.config.ts             # MV3 manifest source (built into dist/manifest.json)
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts
@@ -55,11 +54,12 @@ extension/
 ├── public/icons/                  # toolbar / Web Store icons (placeholders in v1)
 ├── test/setup.ts                  # vitest jsdom setup + chrome global stub
 ├── src/
-│   ├── manifest.config.ts         # (mirror — see top)
+│   ├── manifest.config.ts         # MV3 manifest source (built into dist/<mode>/manifest.json)
 │   ├── background/
-│   │   ├── service-worker.ts      # SW entry — wires the three subsystems below
+│   │   ├── service-worker.ts      # SW entry — wires the subsystems below
 │   │   ├── messages.ts            # chrome.runtime.onMessage dispatcher
 │   │   ├── authPush.ts            # broadcast auth state to all CS tabs
+│   │   ├── data.ts                # direct Firestore reads / writes as the signed-in manager
 │   │   └── actionToggle.ts        # toolbar click → CS toggle message
 │   ├── content/
 │   │   ├── content-script.ts      # CS entry — calls mountPanel
@@ -186,7 +186,7 @@ Subsequent builds for the same env reuse the existing `.env.<mode>` — only re-
 
 - **Unit:** pure functions in `src/lib/` + `src/background/` + `src/content/` (callable wrappers, auth-flow steps, message handlers, Shadow-DOM mount). Mock the Chrome / Firebase boundary.
 - **Component:** `src/panel/App.test.tsx` exercises the four-state router with mocked extensionApi hooks.
-- **No E2E yet.** Playwright MV3 extension testing is doable but invasive; deferred until v2.
+- **No browser-level E2E of the panel.** The closed shadow root forecloses it — see Conventions, "Shadow DOM for the panel".
 
 ## Deploy
 

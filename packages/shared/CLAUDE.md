@@ -27,7 +27,6 @@ src/
 │   ├── request.ts
 │   └── ...
 ├── canonicalEmail.ts       # the Gmail-aware canonicalization
-├── hash.ts                 # source-row-hash equivalent (if still needed)
 ├── buildingSlug.ts         # building name → URL-safe slug
 ├── existingSeatGate.ts     # can an add be provisioned onto an existing seat
 ├── remoteApply.ts          # remote-apply timings, freshness, site keys, claim rule

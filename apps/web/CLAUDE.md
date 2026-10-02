@@ -84,7 +84,7 @@ src/
 
 - vite-plugin-pwa configured in `vite.config.ts`. Workbox: cache-first for static assets, network-first for `index.html`, never cache Firestore traffic.
 - Manifest auto-generated from config.
-- Push notifications via FCM Web. Service worker at `public/firebase-messaging-sw.js` handles background pushes; coexists with the vite-plugin-pwa SW at distinct scope.
+- Push notifications via FCM Web. Its service worker is rendered from `src/firebase-messaging-sw.template.js` by `vite.config.ts` and served at `/firebase-messaging-sw.js`; it handles background pushes and coexists with the vite-plugin-pwa SW at distinct scope.
 
 ## Help guides
 
