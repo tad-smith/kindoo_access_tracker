@@ -15,9 +15,13 @@
 import { registerActionToggle } from './actionToggle';
 import { registerMessageHandlers } from './messages';
 import { registerAuthStatePush } from './authPush';
+import { registerOffscreenSpike } from './offscreenSpike';
 
 registerActionToggle();
 registerMessageHandlers();
 registerAuthStatePush();
+// SPIKE — offscreen realtime listener. Runs alongside the production
+// poll loop and never touches it; remove with the rest of the spike.
+registerOffscreenSpike();
 
 export {};
