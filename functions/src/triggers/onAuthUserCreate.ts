@@ -43,6 +43,30 @@ export const onAuthUserCreate = v1Auth.user().onCreate(async (user: UserRecord) 
     // the SPA's role check.
     return;
   }
+  // Mint nothing for an address the account holder has not proven they
+  // control. `seedClaimsFromRoleData` below resolves `kindooManagers`,
+  // `access` and `platformSuperadmins` rows by email alone, so without this
+  // gate anyone who can create an account for an address can take whatever
+  // role that address already holds. The Web API key is public and the
+  // Identity Toolkit `signUp` endpoint is reachable with it, so "can create
+  // an account" is not a privileged position.
+  //
+  // Both real sign-in paths clear this. Verified against the Auth emulator
+  // on 2026-09-07: email-link sign-in creates the record with
+  // `emailVerified: true` (receiving the link is the proof), while password
+  // `signUp` creates it `false`. Google is verified by the provider.
+  //
+  // Deliberately bails BEFORE the `userIndex` write, not just before the
+  // claim seed: `uidForCanonical` reads that document, so an entry here
+  // would let the three sync triggers mint claims onto this uid later on
+  // any role-data write. One gate, one place.
+  //
+  // The account is not stranded by design so much as by consequence — this
+  // trigger fires once per account, ever, so verifying afterwards does not
+  // re-run it. That is the right trade while no supported flow produces an
+  // unverified account; revisit it the day one does.
+  if (!user.emailVerified) return;
+
   const canonical = canonicalize(typedEmail);
   if (!canonical) return;
 

@@ -68,7 +68,7 @@ describe.skipIf(!hasEmulators())('mintExtensionToken callable', () => {
 
   it('omits developerClaims and leaves the user record claims untouched', async () => {
     const { auth } = requireEmulators();
-    await auth.createUser({ uid: UID, email: EMAIL });
+    await auth.createUser({ uid: UID, email: EMAIL, emailVerified: true });
     const stakeClaims = {
       canonical: EMAIL,
       stakes: { csnorth: { manager: true, stake: false, wards: [] } },
