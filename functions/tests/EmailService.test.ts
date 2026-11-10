@@ -70,6 +70,9 @@ const QUEUE_LINK = 'https://stakebuildingaccess.org/manager/queue';
 const MY_LINK = 'https://stakebuildingaccess.org/my-requests';
 const SEATS_LINK = 'https://stakebuildingaccess.org/manager/seats';
 const ROSTER_LINK = 'https://stakebuildingaccess.org/bishopric/roster?ward=GE&stake=csnorth';
+const APP_LINK = 'https://stakebuildingaccess.org/';
+const GUIDE_LINK = 'https://stakebuildingaccess.org/help/requesting-access.html';
+const REVIEW_LINKS = { appLink: APP_LINK, guideLink: GUIDE_LINK };
 
 function requestOpts(over: Partial<RequestEmailOpts> = {}): RequestEmailOpts {
   return { req: baseRequest, scope: WARD, link: MY_LINK, ...over };
@@ -940,6 +943,7 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(text).toContain(
       'Two manual seats on Greenwood Ward are due for their quarterly review.',
@@ -957,6 +961,7 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: [reviewGrants[0]!],
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(text).toContain('One manual seat on Greenwood Ward is due for its quarterly review.');
   });
@@ -967,18 +972,21 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     const branch = buildManualSeatReviewTextBody({
       scope: 'PB',
       scopeLabel: 'Peterson Branch',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     const stake = buildManualSeatReviewTextBody({
       scope: 'stake',
       scopeLabel: 'Stake',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(ward).toContain('stay on the ward roster');
     expect(branch).toContain('stay on the branch roster');
@@ -996,6 +1004,7 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(text).toContain('submit a remove request');
     // The two parts differ here in words, not just markup — the HTML has
@@ -1008,6 +1017,7 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(htmlPart).toContain('click the button below');
     expect(htmlPart).not.toContain('open the link below');
@@ -1022,6 +1032,7 @@ describe('EmailService — pure builders', () => {
       scopeLabel: 'Greenwood Ward',
       grants: reviewGrants,
       link: ROSTER_LINK,
+      ...REVIEW_LINKS,
     });
     expect(html).toContain('>Member</th>');
     expect(html).toContain('>Reason</th>');
@@ -1032,6 +1043,35 @@ describe('EmailService — pure builders', () => {
     expect(html.match(/Review the roster/g)).toHaveLength(1);
   });
 
+  it('manual-seat-review carries the SBA reminder footer on a ward/branch scope, in both parts', () => {
+    const opts = { scope: 'PB', scopeLabel: 'Peterson Branch', grants: reviewGrants };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    expect(text).toContain(
+      `Use SBA (${APP_LINK}) to request building access for your branch. You can also use it to ` +
+        'see who in your branch currently has access, and to request that access be removed. ' +
+        `Full documentation: ${GUIDE_LINK}`,
+    );
+    expect(html).toContain(`href="${APP_LINK}"`);
+    expect(html).toContain(`href="${GUIDE_LINK}"`);
+    for (const part of [text, html]) {
+      expect(part).toContain('Using Stake Building Access');
+      expect(part).toContain('Continue with Google');
+      expect(part).toContain('Send me a sign-in link');
+    }
+  });
+
+  it('manual-seat-review omits the footer on the stake scope', () => {
+    // The stake scope mails the Kindoo Managers, who need no SBA primer.
+    const opts = { scope: 'stake', scopeLabel: 'Stake', grants: reviewGrants };
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    for (const part of [text, html]) {
+      expect(part).not.toContain('Using Stake Building Access');
+      expect(part).not.toContain(GUIDE_LINK);
+    }
+  });
+
   it('dry-run banner explains the CTA swap on a ward/branch scope, in both parts', () => {
     const opts = {
       scope: 'GE',
@@ -1039,8 +1079,8 @@ describe('EmailService — pure builders', () => {
       grants: reviewGrants,
       dryRun: { intendedRecipients: ['bishop@gmail.com'] },
     };
-    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
-    const html = buildManualSeatReviewHtmlBody({ ...opts, link: SEATS_LINK });
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK, ...REVIEW_LINKS });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: SEATS_LINK, ...REVIEW_LINKS });
     for (const part of [text, html]) {
       expect(part).toContain('the button below opens the manager seats view');
       expect(part).toContain('/bishopric/roster');
@@ -1055,7 +1095,7 @@ describe('EmailService — pure builders', () => {
       grants: reviewGrants,
       dryRun: { intendedRecipients: ['bishop@gmail.com'], mailedTo: ['alice@gmail.com'] },
     };
-    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK, ...REVIEW_LINKS });
     expect(text).toContain('Nobody on the ward received it, and nothing below has been asked');
   });
 
@@ -1069,8 +1109,8 @@ describe('EmailService — pure builders', () => {
       grants: reviewGrants,
       dryRun: { intendedRecipients: ['alice@gmail.com'], mailedTo: ['alice@gmail.com'] },
     };
-    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK });
-    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK });
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
     for (const part of [text, html]) {
       expect(part).not.toContain('Nobody on the stake received it');
       expect(part).toContain('Everyone this scope would really notify is also a Kindoo Manager');
@@ -1090,7 +1130,7 @@ describe('EmailService — pure builders', () => {
         mailedTo: ['alice@gmail.com', 'sleepy@gmail.com'],
       },
     };
-    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK });
+    const text = buildManualSeatReviewTextBody({ ...opts, link: SEATS_LINK, ...REVIEW_LINKS });
     expect(text).not.toContain('Nobody on the ward received it');
     expect(text).toContain('alice@gmail.com sit on both the ward and the Kindoo Managers');
     expect(text).toContain('nothing below has been asked of anyone');
@@ -1106,8 +1146,8 @@ describe('EmailService — pure builders', () => {
       grants: reviewGrants,
       dryRun: { intendedRecipients: ['alice@gmail.com'] },
     };
-    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK });
-    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK });
+    const text = buildManualSeatReviewTextBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
+    const html = buildManualSeatReviewHtmlBody({ ...opts, link: ROSTER_LINK, ...REVIEW_LINKS });
     for (const part of [text, html]) {
       expect(part).not.toContain('the button below opens the manager seats view');
       expect(part).toContain('Delete manual_seat_review_dry_run from the stake document');
@@ -1183,6 +1223,7 @@ describe('EmailService — pure builders', () => {
           },
         ],
         link: ROSTER_LINK,
+        ...REVIEW_LINKS,
       }),
     ];
     for (const html of bodies) {
