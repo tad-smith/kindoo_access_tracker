@@ -480,6 +480,12 @@ describe.skipIf(!hasEmulators())('sendManualSeatReviewIfDue', () => {
     expect(email.text).toContain(
       'https://stakebuildingaccess.org/bishopric/roster?ward=GE&stake=manual-review-suite',
     );
+    // The footer's links are built per send, off the same base as the CTA.
+    expect(email.text).toContain('Using Stake Building Access');
+    expect(email.text).toContain('Use SBA (https://stakebuildingaccess.org/)');
+    expect(email.text).toContain(
+      'Full documentation: https://stakebuildingaccess.org/help/requesting-access.html',
+    );
   });
 
   it('sends the stake scope to the active Kindoo Managers, and only them', async () => {

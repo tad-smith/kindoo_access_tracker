@@ -673,11 +673,17 @@ export type ManualSeatReviewEmailOpts = {
   scopeLabel: string;
   grants: ManualSeatReviewGrant[];
   link: string;
+  /** App root and requester guide, for the ward/branch footer. */
+  appLink: string;
+  guideLink: string;
   dryRun?: ManualSeatReviewDryRun;
 };
 
-/** Everything the subject and lead need, minus the CTA. */
-export type ManualSeatReviewConditions = Omit<ManualSeatReviewEmailOpts, 'link'>;
+/** Everything the subject and lead need, minus the links. */
+export type ManualSeatReviewConditions = Omit<
+  ManualSeatReviewEmailOpts,
+  'link' | 'appLink' | 'guideLink'
+>;
 
 export function buildManualSeatReviewSubject(o: ManualSeatReviewConditions): string {
   // The mark leads the subject, ahead of the scope: someone finding this
@@ -698,6 +704,17 @@ export function buildManualSeatReviewTextBody(o: ManualSeatReviewEmailOpts): str
     lines.push(`  ${memberText(g)} — ${manualSeatReason(g)} — ${manualSeatBuildings(g)}`);
   }
   lines.push('', `${MANUAL_SEAT_REVIEW_CTA}: ${o.link}`);
+  if (o.scope !== 'stake') {
+    const noun = manualSeatReviewScopeNoun(o.scope, o.scopeLabel);
+    lines.push(
+      '',
+      '---',
+      MANUAL_SEAT_REVIEW_FOOTER_TITLE,
+      `Use SBA (${o.appLink}) ${manualSeatReviewFooterUse(noun)} Full documentation: ${o.guideLink}`,
+      '',
+      MANUAL_SEAT_REVIEW_FOOTER_SIGN_IN,
+    );
+  }
   return lines.join('\n');
 }
 
@@ -726,11 +743,49 @@ export function buildManualSeatReviewHtmlBody(o: ManualSeatReviewEmailOpts): str
     `</table>`,
     `<p style="${BUTTON_PARA}"><a href="${escapeHtml(o.link)}" style="${BUTTON}">` +
       `${MANUAL_SEAT_REVIEW_CTA}</a></p>`,
+    ...(o.scope !== 'stake' ? manualSeatReviewFooterHtml(o) : []),
     `</div>`,
   ].join('\n');
 }
 
 const MANUAL_SEAT_REVIEW_CTA = 'Review the roster';
+
+/**
+ * Ward/branch footer: a standing reminder of what SBA is for and how to
+ * sign in. Many bishopric members were given access before the welcome
+ * email existed, so this is the only place they get it. The stake scope
+ * mails the Kindoo Managers, who need none of it. Operator-authored copy;
+ * "request that access be removed" keeps the remove-is-a-request wording.
+ */
+const MANUAL_SEAT_REVIEW_FOOTER_TITLE = 'Using Stake Building Access';
+const MANUAL_SEAT_REVIEW_FOOTER_SIGN_IN =
+  'Signing in doesn\'t need a password. If your email is a Gmail address, click "Continue with ' +
+  'Google." Otherwise, enter your email and click "Send me a sign-in link."';
+const FOOTER =
+  'margin:32px 0 0;padding-top:16px;border-top:1px solid #e2e8f0;font-size:13px;color:#5c6b7a';
+const FOOTER_PARA = 'margin:0 0 8px';
+
+function manualSeatReviewFooterUse(noun: string): string {
+  return (
+    `to request building access for your ${noun}. You can also use it to see who in your ` +
+    `${noun} currently has access, and to request that access be removed.`
+  );
+}
+
+function manualSeatReviewFooterHtml(o: ManualSeatReviewEmailOpts): string[] {
+  const noun = manualSeatReviewScopeNoun(o.scope, o.scopeLabel);
+  const app = escapeHtml(o.appLink);
+  const guide = escapeHtml(o.guideLink);
+  return [
+    `<div style="${FOOTER}">`,
+    `<p style="${FOOTER_PARA}"><strong>${MANUAL_SEAT_REVIEW_FOOTER_TITLE}</strong></p>`,
+    `<p style="${FOOTER_PARA}">Use <a href="${app}" style="${LINK}">SBA</a> ` +
+      `${escapeHtml(manualSeatReviewFooterUse(noun))} ` +
+      `<a href="${guide}" style="${LINK}">Full documentation</a>.</p>`,
+    `<p style="margin:0">${escapeHtml(MANUAL_SEAT_REVIEW_FOOTER_SIGN_IN)}</p>`,
+    `</div>`,
+  ];
+}
 
 /** One string, so subject and banner can never drift apart. */
 const DRY_RUN_MARK = 'DRY RUN';
@@ -1267,12 +1322,18 @@ export async function notifyScopeManualSeatReview(
   // A misconfigured base URL already wrote its own audit row. It is a
   // fault, not a decision, so it must not consume the caller's quarter.
   if (link === undefined) return 'failed';
+  const appLink = safeBuildLink(deps, '/');
+  if (appLink === undefined) return 'failed';
+  const guideLink = safeBuildLink(deps, REQUESTER_GUIDE_PATH);
+  if (guideLink === undefined) return 'failed';
 
   const opts: ManualSeatReviewEmailOpts = {
     scope,
     scopeLabel,
     grants,
     link,
+    appLink,
+    guideLink,
     ...(dryRun ? { dryRun } : {}),
   };
   return await sendOne(deps, {
